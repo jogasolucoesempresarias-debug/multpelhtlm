@@ -452,10 +452,18 @@ def enviar_relatorio_email(usuario_id):
     if not user.get('ativo'):
         return {'ok': False, 'error': f'Usuário {usuario_id} desativado'}
 
-    try:
-        csv_bytes, pdf_bytes, count = _gerar_relatorio_para_usuario(user)
-    except Exception as e:
-        return {'ok': False, 'error': f'Falha ao gerar relatório: {e}'}
+    # Cron roda em background SEM request HTTP. Funções como _carregar_carteira_full
+    # usam session.get() pra RBAC e cache_key_for_user. Simula contexto com a session
+    # do próprio usuário pra RBAC filtrar corretamente (e o cache não colidir entre users).
+    with app.test_request_context():
+        session['user_id'] = user['id']
+        session['role'] = user.get('role')
+        session['codusur'] = user.get('codusur')
+        session['codsupervisor'] = user.get('codsupervisor')
+        try:
+            csv_bytes, pdf_bytes, count = _gerar_relatorio_para_usuario(user)
+        except Exception as e:
+            return {'ok': False, 'error': f'Falha ao gerar relatório: {e}'}
 
     from datetime import date as _date
     data_iso = _date.today().isoformat()
