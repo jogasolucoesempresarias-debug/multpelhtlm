@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Multpel Analytics — Vendedores</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2338bdf8'/%3E%3Cstop offset='1' stop-color='%23818cf8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='6' fill='url(%23g)'/%3E%3Ctext x='16' y='22' font-family='DM Sans,sans-serif' font-size='18' font-weight='700' text-anchor='middle' fill='%230a0e17'%3EM%3C/text%3E%3C/svg%3E">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+<script src="/static/fetch-resiliente.js"></script>
+<style>
+  :root {
+    --bg: #0a0e17; --surface: #111827; --surface2: #1a2235; --border: #1e293b;
+    --text: #e2e8f0; --text-dim: #94a3b8;
+    --accent: #38bdf8; --accent2: #818cf8;
+    --green: #34d399; --red: #f87171; --orange: #fb923c; --yellow: #fbbf24;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  body::before {
+    content:''; position: fixed; inset: 0; opacity: 0.03; pointer-events: none; z-index: 9999;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+  .dashboard { padding: 24px; max-width: 1600px; margin: 0 auto; animation: fadeUp 0.4s ease; }
+  .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; flex-wrap: wrap; gap: 14px; }
+  .top-bar .brand { display: flex; align-items: center; gap: 12px; }
+  .top-bar .brand .mark { width: 36px; height: 36px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--bg); font-size: 1.05rem; }
+  .top-bar h1 { font-size: 1.3rem; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .meta { font-size: 0.74rem; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; }
+  .nav { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn-sm { padding: 7px 14px; background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-weight: 500; font-size: 0.78rem; border-radius: 7px; cursor: pointer; transition: all 0.15s; text-decoration: none; display: inline-block; }
+  .btn-sm:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm.active { border-color: var(--accent); color: var(--accent); background: rgba(56,189,248,0.08); }
+
+  .filtros-card { background: var(--surface); border: 1px solid var(--border); border-radius: 11px; padding: 12px 16px; margin-bottom: 14px; display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+  .ff label { display: block; font-size: 0.66rem; color: var(--text-dim); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+  .ff input, .ff select { padding: 7px 10px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.82rem; min-width: 140px; }
+  .ff input:focus, .ff select:focus { outline: none; border-color: var(--accent); }
+  .ff label.check-inline { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--text); text-transform: none; letter-spacing: 0; }
+
+  .charts-grid { display: grid; gap: 14px; margin-bottom: 14px; grid-template-columns: 1.4fr 1fr; }
+  @media (max-width: 1100px) { .charts-grid { grid-template-columns: 1fr; } }
+  .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 11px; padding: 14px 16px; }
+  .chart-card h3 { font-size: 0.72rem; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+  .chart-wrap { position: relative; height: 280px; }
+
+  .table-card { background: var(--surface); border: 1px solid var(--border); border-radius: 11px; overflow: hidden; }
+  .table-info { padding: 10px 14px; font-size: 0.78rem; color: var(--text-dim); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
+  .table-scroll { overflow-x: auto; max-height: 60vh; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.8rem; white-space: nowrap; }
+  thead th { position: sticky; top: 0; background: var(--surface2); padding: 9px 12px; text-align: left; font-weight: 600; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; z-index: 2; }
+  thead th:hover { color: var(--accent); }
+  thead th.num, td.num { text-align: right; }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: rgba(56,189,248,0.05); }
+  td.num { font-family: 'JetBrains Mono', monospace; }
+  td a { color: var(--accent); text-decoration: none; font-weight: 600; }
+  td a:hover { text-decoration: underline; }
+  .badge { padding: 2px 7px; border-radius: 4px; font-size: 0.68rem; font-weight: 600; background: var(--surface2); display: inline-block; }
+
+  .loading-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; gap: 14px; }
+  .spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .hidden { display: none !important; }
+  .row-gradient { background-image: linear-gradient(90deg, transparent 0%, transparent 95%, var(--strip-color, transparent) 100%); }
+</style>
+</head>
+<body>
+
+<div id="loading" class="loading-screen">
+  <div class="spinner"></div>
+  <div style="color: var(--text-dim); font-size: 0.85rem;">Carregando vendedores (3 queries DAX paralelas)...</div>
+</div>
+
+<div id="app" class="dashboard hidden">
+
+  <div class="top-bar">
+    <div class="brand">
+      <div class="mark">M</div>
+      <div>
+        <h1>Vendedores</h1>
+        <div class="meta" id="userInfo"></div>
+      </div>
+    </div>
+    <div class="nav">
+      <a href="/" class="btn-sm">Dashboard</a>
+      <a href="/carteira" class="btn-sm">Carteira</a>
+      <a href="/vendedores" class="btn-sm active">Vendedores</a>
+      <a href="/categorias" class="btn-sm">Categorias</a>
+      <a href="/mix" class="btn-sm">Mix</a>
+      <a href="/tendencias" class="btn-sm">Tendências</a>
+      <a id="linkAdmin" href="/admin" class="btn-sm hidden">Admin</a>
+      <a href="/logout" class="btn-sm">Sair</a>
+    </div>
+  </div>
+
+  <div class="filtros-card">
+    <div class="ff">
+      <label>Tipo</label>
+      <select id="filt_tipovend" onchange="aplicarFiltros()">
+        <option value="R" selected>R — Rota (externo)</option>
+        <option value="I">I — Interno (caixa/balcão)</option>
+        <option value="P">P — Pré-vendedor</option>
+        <option value="">Todos</option>
+      </select>
+    </div>
+    <div class="ff">
+      <label>Supervisor (time)</label>
+      <input list="lista_supervisores" id="filt_supervisor" placeholder="Todos · digite pra filtrar" onchange="aplicarFiltros()">
+      <datalist id="lista_supervisores"></datalist>
+    </div>
+    <div class="ff">
+      <label>UF</label>
+      <select id="filt_uf" onchange="aplicarFiltros()"><option value="">Todas</option></select>
+    </div>
+    <div class="ff" style="flex:1;">
+      <label>Busca (nome ou código)</label>
+      <input type="text" id="filt_busca" oninput="debouncedFilter()" placeholder="ex: joao, 573">
+    </div>
+    <div class="ff">
+      <label class="check-inline">
+        <input type="checkbox" id="filt_internos" onchange="aplicarFiltros()">
+        <span>Mostrar internos (caixa)</span>
+      </label>
+    </div>
+    <div class="ff">
+      <label>&nbsp;</label>
+      <button class="btn-sm" onclick="limparFiltros()">Limpar</button>
+    </div>
+  </div>
+
+  <div class="charts-grid">
+    <div class="chart-card">
+      <h3>Top 10 por Lucro 12m</h3>
+      <div class="chart-wrap"><canvas id="chartTop10"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Distribuição: Taxa de Positivação</h3>
+      <div class="chart-wrap"><canvas id="chartHistPos"></canvas></div>
+    </div>
+  </div>
+
+  <div class="table-card">
+    <div class="table-info">
+      <span><strong id="tabela_total">0</strong> vendedores</span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:0.74rem;">click no nome → cockpit individual</span>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th onclick="ordenarPor('rank')">#</th>
+            <th onclick="ordenarPor('nome')">Vendedor</th>
+            <th>Tipo</th>
+            <th>Time (Supervisor)</th>
+            <th>UF</th>
+            <th class="num" onclick="ordenarPor('venda_liq')">Venda 12m</th>
+            <th class="num" onclick="ordenarPor('lucro')">Lucro 12m</th>
+            <th class="num" onclick="ordenarPor('ticket_medio')">Ticket</th>
+            <th class="num" onclick="ordenarPor('taxa_positivacao')">Positivação</th>
+            <th class="num" onclick="ordenarPor('clientes_unicos')">Clientes</th>
+            <th class="num" onclick="ordenarPor('yoy_receita')">YoY</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// Captura QUALQUER erro JS e mostra no loading-screen pra diagnóstico.
+window.addEventListener('error', (ev) => {
+  const el = document.getElementById('loading');
+  if (el) el.innerHTML = `<div style="color:#f87171;padding:20px;max-width:600px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:0.78rem;word-break:break-word;"><div style="font-size:1rem;margin-bottom:8px;color:#fb923c;">JS Error</div><div>${ev.message || ev.error}</div><div style="color:#94a3b8;margin-top:8px;">${ev.filename || ''}:${ev.lineno || ''}</div></div>`;
+});
+window.addEventListener('unhandledrejection', (ev) => {
+  const el = document.getElementById('loading');
+  if (el) el.innerHTML = `<div style="color:#f87171;padding:20px;max-width:600px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:0.78rem;word-break:break-word;"><div style="font-size:1rem;margin-bottom:8px;color:#fb923c;">Promise rejected</div><div>${ev.reason && ev.reason.message ? ev.reason.message : String(ev.reason)}</div></div>`;
+});
+
+const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
+const BRL2 = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+const NUM = new Intl.NumberFormat('pt-BR');
+const PCT = (v) => (v == null ? '—' : (v * 100).toFixed(1).replace('.', ',') + '%');
+
+Chart.defaults.font.family = "'DM Sans', sans-serif";
+Chart.defaults.color = '#94a3b8';
+Chart.defaults.borderColor = '#1e293b';
+
+let _todos = [];
+let _ordem = { campo: 'rank', dir: 'asc' };
+let _filtros = { tipovend: 'R', supervisor: '', uf: '', busca: '', internos: false };
+let _charts = {};
+
+// fetchJSON vem do /static/fetch-resiliente.js (retry + backoff + timeout)
+// Wrapper local pra preservar UX de 403 (innerHTML custom).
+// IMPORTANTE: usar arrow function (não `async function fetchJSON`) — declarações de função
+// são HOISTED e sobrescrevem window.fetchJSON antes do const capturar, causando recursão infinita.
+const _fetchJSON_shared = window.fetchJSON;
+const fetchJSON = async (url, opts) => {
+  try {
+    return await _fetchJSON_shared(url, opts);
+  } catch (e) {
+    if (e && e.message === 'forbidden') {
+      document.body.innerHTML = '<div style="padding:40px;color:#f87171;font-family:sans-serif;">Você não tem permissão pra ver vendedores.</div>';
+    }
+    throw e;
+  }
+};
+
+async function loadMe() {
+  try {
+    const j = await fetchJSON('/api/me');
+    document.getElementById('userInfo').textContent = `${j.nome} · ${j.role}`;
+    if (j.role === 'admin') document.getElementById('linkAdmin').classList.remove('hidden');
+  } catch (e) {}
+}
+
+function drawChart(id, cfg) {
+  if (_charts[id]) _charts[id].destroy();
+  _charts[id] = new Chart(document.getElementById(id), cfg);
+}
+
+async function loadVendedores() {
+  const params = new URLSearchParams({
+    tipovend: _filtros.tipovend,
+    incluir_internos: _filtros.internos ? 'true' : 'false',
+  });
+  if (_filtros.supervisor) params.set('supervisor', _filtros.supervisor);
+  if (_filtros.uf) params.set('uf', _filtros.uf);
+  if (_filtros.busca) params.set('busca', _filtros.busca);
+
+  const r = await fetchJSON('/api/vendedores?' + params.toString());
+  _todos = r.vendedores || [];
+  popularFiltrosDinamicos();
+  renderTudo();
+}
+
+let _supMap = {};  // {codsupervisor_str: {nome, tipo}}
+
+async function loadSupervisores() {
+  try {
+    const j = await fetchJSON('/api/_internal/supervisores-map');
+    _supMap = j.supervisores || {};
+  } catch (e) { console.warn('supervisores-map:', e); }
+}
+
+function extrairCodigo(valor) {
+  if (!valor) return '';
+  const m = String(valor).match(/\((\d+)\)\s*$/);
+  if (m) return m[1];
+  if (/^\d+$/.test(valor.trim())) return valor.trim();
+  return '';
+}
+
+function popularFiltrosDinamicos() {
+  // Supervisor: pega únicos da lista carregada + enriquece com nome real (datalist)
+  const dl_sup = document.getElementById('lista_supervisores');
+  const sups = [...new Set(_todos.map(v => v.codsupervisor).filter(Boolean))]
+    .sort((a, b) => {
+      const na = (_supMap[String(a)] && _supMap[String(a)].nome) || ('Sup ' + a);
+      const nb = (_supMap[String(b)] && _supMap[String(b)].nome) || ('Sup ' + b);
+      return na.localeCompare(nb);
+    });
+  dl_sup.innerHTML = sups.map(s => {
+    const nome = (_supMap[String(s)] && _supMap[String(s)].nome) || ('Sup ' + s);
+    return `<option value="${nome} (${s})">`;
+  }).join('');
+
+  // UF: select clássico (poucas opções)
+  const sel_uf = document.getElementById('filt_uf');
+  if (sel_uf.options.length <= 1) {
+    const ufs = [...new Set(_todos.map(v => v.estado).filter(Boolean))].sort();
+    sel_uf.innerHTML = '<option value="">Todas</option>' + ufs.map(u => `<option value="${u}">${u}</option>`).join('');
+  }
+}
+
+function renderTudo() {
+  // Ordena cópia
+  const ord = [..._todos].sort((a,b) => {
+    const va = a[_ordem.campo]; const vb = b[_ordem.campo];
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    if (typeof va === 'string') return _ordem.dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+    return _ordem.dir === 'asc' ? va - vb : vb - va;
+  });
+  renderTabela(ord);
+  renderTop10(ord);
+  renderHistPos(ord);
+  document.getElementById('tabela_total').textContent = NUM.format(_todos.length);
+}
+
+function renderTabela(rows) {
+  const maxLucro = Math.max(1, ...rows.map(v => v.lucro || 0));
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = rows.map(v => {
+    const ratio = (v.lucro || 0) / maxLucro;
+    const cor = ratio > 0.7 ? 'rgba(52,211,153,0.18)' : ratio > 0.3 ? 'rgba(251,191,36,0.15)' : 'rgba(248,113,113,0.13)';
+    const yoy = v.yoy_receita;
+    const yoyStr = yoy == null ? '—' : (yoy >= 0 ? '<span style="color:var(--green);">↗ ' : '<span style="color:var(--red);">↘ ') + PCT(yoy) + '</span>';
+    return `
+      <tr style="background-image:linear-gradient(90deg, ${cor} 0%, ${cor} ${Math.round(ratio*100)}%, transparent ${Math.round(ratio*100)}%, transparent 100%);">
+        <td><strong>${v.rank}</strong></td>
+        <td><a href="/vendedor/${v.codusur}">${v.nome}</a></td>
+        <td><span class="badge">${v.tipo || '—'}</span></td>
+        <td><span style="font-size:0.74rem;color:var(--text-dim);">${(_supMap[String(v.codsupervisor)] && _supMap[String(v.codsupervisor)].nome) || (v.codsupervisor ? 'Sup ' + v.codsupervisor : '—')}</span></td>
+        <td>${v.estado || '—'}</td>
+        <td class="num">${BRL.format(v.venda_liq || 0)}</td>
+        <td class="num"><strong>${BRL.format(v.lucro || 0)}</strong></td>
+        <td class="num">${BRL2.format(v.ticket_medio || 0)}</td>
+        <td class="num">${PCT(v.taxa_positivacao)}</td>
+        <td class="num">${NUM.format(v.clientes_unicos || 0)}</td>
+        <td class="num">${yoyStr}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function renderTop10(rows) {
+  const top = [...rows].sort((a,b) => (b.lucro||0) - (a.lucro||0)).slice(0, 10);
+  drawChart('chartTop10', {
+    type: 'bar',
+    data: {
+      labels: top.map(v => v.nome.slice(0, 22) + (v.nome.length > 22 ? '…' : '')),
+      datasets: [{ label: 'Lucro 12m', data: top.map(v => v.lucro), backgroundColor: '#34d399' }]
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => BRL.format(c.parsed.x) } } },
+      scales: { x: { ticks: { callback: v => BRL.format(v) } } }
+    }
+  });
+}
+
+function renderHistPos(rows) {
+  // Bins de taxa de positivação: 0-2%, 2-5%, 5-10%, 10-20%, 20%+
+  const bins = [{label: '0-2%', min: 0, max: 0.02, count: 0}, {label: '2-5%', min: 0.02, max: 0.05, count: 0},
+                {label: '5-10%', min: 0.05, max: 0.1, count: 0}, {label: '10-20%', min: 0.1, max: 0.2, count: 0},
+                {label: '20%+', min: 0.2, max: 999, count: 0}];
+  for (const v of rows) {
+    const t = v.taxa_positivacao || 0;
+    for (const b of bins) {
+      if (t >= b.min && t < b.max) { b.count++; break; }
+    }
+  }
+  drawChart('chartHistPos', {
+    type: 'bar',
+    data: {
+      labels: bins.map(b => b.label),
+      datasets: [{ label: 'Qtd vendedores', data: bins.map(b => b.count), backgroundColor: '#38bdf8' }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { y: { ticks: { precision: 0 } } }
+    }
+  });
+}
+
+function aplicarFiltros() {
+  _filtros.tipovend = document.getElementById('filt_tipovend').value;
+  _filtros.supervisor = extrairCodigo(document.getElementById('filt_supervisor').value);
+  _filtros.uf = document.getElementById('filt_uf').value;
+  _filtros.internos = document.getElementById('filt_internos').checked;
+  loadVendedores();
+}
+
+let _debounceId;
+function debouncedFilter() {
+  clearTimeout(_debounceId);
+  _debounceId = setTimeout(() => {
+    _filtros.busca = document.getElementById('filt_busca').value;
+    loadVendedores();
+  }, 300);
+}
+
+function limparFiltros() {
+  document.getElementById('filt_tipovend').value = 'R';
+  document.getElementById('filt_supervisor').value = '';
+  document.getElementById('filt_uf').value = '';
+  document.getElementById('filt_busca').value = '';
+  document.getElementById('filt_internos').checked = false;
+  _filtros = { tipovend: 'R', supervisor: '', uf: '', busca: '', internos: false };
+  loadVendedores();
+}
+
+function ordenarPor(campo) {
+  if (_ordem.campo === campo) {
+    _ordem.dir = _ordem.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    _ordem.campo = campo;
+    _ordem.dir = (campo === 'rank' || campo === 'nome') ? 'asc' : 'desc';
+  }
+  renderTudo();
+}
+
+async function carregarTudo() {
+  try {
+    await loadMe();
+    await loadSupervisores();   // popula _supMap antes do dropdown
+    await loadVendedores();
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+  } catch (e) {
+    console.error('Falha em carregarTudo:', e);
+    const msg = (e && e.message) ? e.message : String(e);
+    document.getElementById('loading').innerHTML = `
+      <div style="color:var(--red); max-width:480px; text-align:center; padding:20px;">
+        <div style="font-size:1.05rem; margin-bottom:8px;">Erro ao carregar vendedores</div>
+        <div style="color:var(--text-dim); font-size:0.85rem; font-family:'JetBrains Mono',monospace; word-break:break-word;">${msg}</div>
+        <button onclick="location.reload()" style="margin-top:14px; padding:8px 16px; background:var(--accent); color:var(--bg); border:none; border-radius:6px; cursor:pointer; font-weight:600;">Tentar novamente</button>
+      </div>`;
+  }
+}
+
+carregarTudo();
+</script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Secrets — nunca commitar
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+.pytest_cache/
+.coverage
+*.log
+_tmp.json
+cookies.txt
+.idea/
+.vscode/
+
+# Docs internas
+_PROGRESSO.md
+_rca_*.json
+
+# Exports gerados em dev
+*.xlsx
+*.pdf
+relatorio_*.csv

@@ -1,0 +1,31 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {
+              "[CODUSUR]": 573,
+              "[NOME]": "JOAO VICTOR",
+              "[CPF]": "123.456.789-00",
+              "[EMAIL]": "joao@multpel.com",
+              "[TELEFONE1]": "(73) 99999-9999",
+              "[CELULAR]": "(73) 88888-8888",
+              "[CIDADE]": "ILHEUS",
+              "[ESTADO]": "BA",
+              "[BAIRRO]": "CENTRO",
+              "[TIPOVEND]": "R",
+              "[CODSUPERVISOR]": 18,
+              "[CODEQUIPE]": 5,
+              "[BLOQUEIO]": "N",
+              "[DTADMISSAO]": "2020-03-01T00:00:00",
+              "[DTDEMISSAO]": null,
+              "[PERCOMISSAO]": 2.5,
+              "[PERMETA]": 100.0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1197 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Multpel Analytics — Carteira RFM</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2338bdf8'/%3E%3Cstop offset='1' stop-color='%23818cf8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='6' fill='url(%23g)'/%3E%3Ctext x='16' y='22' font-family='DM Sans,sans-serif' font-size='18' font-weight='700' text-anchor='middle' fill='%230a0e17'%3EM%3C/text%3E%3C/svg%3E">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+<script src="/static/fetch-resiliente.js"></script>
+<link rel="stylesheet" href="/static/drill-cliente.css">
+<script defer src="/static/drill-cliente.js"></script>
+<style>
+  :root {
+    --bg: #0a0e17;
+    --surface: #111827;
+    --surface2: #1a2235;
+    --border: #1e293b;
+    --text: #e2e8f0;
+    --text-dim: #94a3b8;
+    --accent: #38bdf8;
+    --accent2: #818cf8;
+    --green: #34d399;
+    --red: #f87171;
+    --orange: #fb923c;
+    --yellow: #fbbf24;
+    --purple: #a78bfa;
+    --gray: #475569;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh;
+  }
+  body::before {
+    content:''; position: fixed; inset: 0; opacity: 0.03;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    pointer-events: none; z-index: 9999;
+  }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+  .dashboard { padding: 24px; max-width: 1600px; margin: 0 auto; animation: fadeUp 0.4s ease; }
+  .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; flex-wrap: wrap; gap: 14px; }
+  .top-bar .brand { display: flex; align-items: center; gap: 12px; }
+  .top-bar .brand .mark {
+    width: 36px; height: 36px; border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; color: var(--bg); font-size: 1.05rem;
+  }
+  .top-bar h1 {
+    font-size: 1.3rem; font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .meta { font-size: 0.74rem; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; }
+  .nav { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn-sm {
+    padding: 7px 14px; background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); font-weight: 500; font-size: 0.78rem; border-radius: 7px;
+    cursor: pointer; transition: all 0.15s; text-decoration: none; display: inline-block;
+  }
+  .btn-sm:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm.active { border-color: var(--accent); color: var(--accent); background: rgba(56,189,248,0.08); }
+
+  /* Atalhos compactos pro filtro "dias sem comprar" */
+  .btn-dias-shortcut {
+    padding: 6px 8px; background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text-dim); font-weight: 600; font-size: 0.72rem; font-family: 'JetBrains Mono', monospace;
+    border-radius: 5px; cursor: pointer; transition: all 0.15s;
+  }
+  .btn-dias-shortcut:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-dias-shortcut.active { border-color: var(--accent); color: var(--accent); background: rgba(56,189,248,0.12); }
+
+  /* Blocos */
+  .bloco { margin-bottom: 18px; }
+  .bloco-titulo {
+    font-size: 0.74rem; font-weight: 700; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .bloco-titulo::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+  .bloco-grid {
+    display: grid; gap: 14px;
+    grid-template-columns: 1.4fr 1fr;
+  }
+  @media (max-width: 1100px) { .bloco-grid { grid-template-columns: 1fr; } }
+
+  /* Cards */
+  .cards-grid {
+    display: grid; gap: 10px;
+    grid-template-columns: repeat(4, 1fr);
+  }
+  @media (max-width: 700px) { .cards-grid { grid-template-columns: repeat(2, 1fr); } }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 11px; padding: 14px 16px;
+    cursor: pointer; transition: all 0.15s; position: relative; overflow: hidden;
+  }
+  .card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .card::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    border-radius: 11px 11px 0 0; background: var(--border);
+  }
+  /* Cores de status régua removidas — feature descontinuada */
+  .card.s-champions::before          { background: var(--green); }
+  .card.s-loyal::before              { background: var(--accent); }
+  .card.s-at_risk::before            { background: var(--yellow); }
+  .card.s-cant_lose::before          { background: var(--orange); }
+  .card.s-potential_loyalist::before { background: var(--accent2); }
+  .card.s-new::before                { background: var(--purple); }
+  .card.s-hibernating::before        { background: var(--gray); }
+  .card.s-lost::before               { background: var(--red); }
+  .card .label { font-size: 0.66rem; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+  .card .value { font-size: 1.6rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+  .card .sub { font-size: 0.7rem; color: var(--text-dim); margin-top: 2px; }
+  .pct-info {
+    font-size: 0.74rem; color: var(--text-dim); margin-top: 10px; text-align: right;
+  }
+  .pct-info strong { color: var(--accent); font-family: 'JetBrains Mono', monospace; }
+
+  /* Chart cards */
+  .chart-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 11px; padding: 14px 16px;
+  }
+  .chart-card h3 {
+    font-size: 0.72rem; font-weight: 600; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px;
+  }
+  .chart-wrap { position: relative; height: 240px; }
+
+  /* Filtros + tabela */
+  .filtros-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 11px; padding: 12px 16px; margin-bottom: 10px;
+    display: flex; gap: 12px; flex-wrap: wrap; align-items: end;
+  }
+  .ff label { display: block; font-size: 0.66rem; color: var(--text-dim); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+  .ff input, .ff select {
+    padding: 7px 10px; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text); font-size: 0.82rem; min-width: 140px;
+  }
+  .ff input:focus, .ff select:focus { outline: none; border-color: var(--accent); }
+  .filtros-card .grow { flex: 1; }
+
+  /* Chips multiselect (Status + Segmento) — substituem selects */
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    padding: 5px 11px; border-radius: 14px; border: 1px solid var(--border);
+    cursor: pointer; font-size: 0.76rem; color: var(--text-dim);
+    user-select: none; transition: all 0.12s;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--text); }
+  .chip.active {
+    background: var(--accent); color: var(--bg); font-weight: 600; border-color: var(--accent);
+  }
+  /* Cores específicas pros chips de status (matching badges) */
+  /* Chips de status régua removidos */
+  /* Chips de segmento */
+  .chip.g-champions.active          { background: var(--green);   border-color: var(--green); }
+  .chip.g-loyal.active              { background: var(--accent);  border-color: var(--accent); }
+  .chip.g-cant_lose.active          { background: var(--orange);  border-color: var(--orange); }
+  .chip.g-at_risk.active            { background: var(--yellow);  border-color: var(--yellow); color: #0a0e17; }
+  .chip.g-potential_loyalist.active { background: var(--accent2); border-color: var(--accent2); }
+  .chip.g-new.active                { background: var(--purple);  border-color: var(--purple); }
+  .chip.g-hibernating.active        { background: var(--gray);    border-color: var(--gray); }
+  .chip.g-lost.active               { background: var(--red);     border-color: var(--red); }
+  /* Datalist inputs */
+  input[list] { min-width: 200px; }
+  .btn-export {
+    padding: 8px 14px; background: linear-gradient(135deg, var(--accent), var(--accent2));
+    color: var(--bg); border: none; border-radius: 7px; cursor: pointer;
+    font-weight: 700; font-size: 0.8rem; font-family: inherit;
+  }
+  .table-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 11px; overflow: hidden;
+  }
+  .table-info {
+    padding: 10px 14px; font-size: 0.78rem; color: var(--text-dim);
+    border-bottom: 1px solid var(--border); display: flex; justify-content: space-between;
+  }
+  .table-scroll { overflow-x: auto; max-height: 60vh; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.78rem; white-space: nowrap; }
+  thead th {
+    position: sticky; top: 0; background: var(--surface2); padding: 9px 12px;
+    text-align: left; font-weight: 600; font-size: 0.68rem; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--text-dim); border-bottom: 1px solid var(--border);
+    user-select: none; z-index: 2;
+  }
+  thead th.sortable { cursor: pointer; }
+  thead th.sortable:hover { color: var(--accent); }
+  thead th .sort-ind { font-size: 0.7rem; margin-left: 4px; opacity: 0.5; }
+  thead th.sort-asc .sort-ind, thead th.sort-desc .sort-ind { color: var(--accent); opacity: 1; }
+  thead th:hover { color: var(--accent); }
+  thead th.num, td.num { text-align: right; }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: rgba(56,189,248,0.05); }
+  td.num { font-family: 'JetBrains Mono', monospace; }
+  .badge { padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; display: inline-block; }
+  /* Badges b-ok/b-normal/b-atencao/b-urgente removidos — coluna Status excluída */
+  .b-champions { background: rgba(52,211,153,0.15); color: var(--green); }
+  .b-loyal     { background: rgba(56,189,248,0.15); color: var(--accent); }
+  .b-at_risk   { background: rgba(251,191,36,0.15); color: var(--yellow); }
+  .b-lost      { background: rgba(248,113,113,0.15); color: var(--red); }
+  .b-cant_lose { background: rgba(251,146,60,0.15); color: var(--orange); }
+  .b-new       { background: rgba(167,139,250,0.15); color: var(--purple); }
+  .b-potential_loyalist { background: rgba(129,140,248,0.15); color: var(--accent2); }
+  .b-hibernating { background: rgba(71,85,105,0.25); color: var(--text-dim); }
+
+  /* (Drill 360° foi extraído pra /static/drill-cliente.css — incluído via <link> no head) */
+
+  /* Loading + banner */
+  .loading-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; gap: 14px; }
+  .spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .banner-aviso {
+    background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.3);
+    color: var(--yellow); padding: 10px 14px; border-radius: 8px; margin-bottom: 12px;
+    font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center;
+  }
+  .banner-aviso button { background: var(--yellow); color: var(--bg); border: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.78rem; }
+  .hidden { display: none !important; }
+  /* .backdrop também extraída pra /static/drill-cliente.css */
+</style>
+</head>
+<body>
+
+<div id="loading" class="loading-screen">
+  <div class="spinner"></div>
+  <div style="color: var(--text-dim); font-size: 0.85rem;">Carregando carteira (3 queries DAX paralelas)...</div>
+</div>
+
+<div id="app" class="dashboard hidden">
+
+  <div class="top-bar">
+    <div class="brand">
+      <div class="mark">M</div>
+      <div>
+        <h1>Carteira RFM</h1>
+        <div class="meta" id="userInfo"></div>
+      </div>
+    </div>
+    <div class="nav">
+      <a href="/" class="btn-sm">Dashboard</a>
+      <a href="/carteira" class="btn-sm active">Carteira</a>
+      <a id="linkVendedores" href="/vendedores" class="btn-sm">Vendedores</a>
+      <a href="/categorias" class="btn-sm">Categorias</a>
+      <a href="/mix" class="btn-sm">Mix</a>
+      <a href="/tendencias" class="btn-sm">Tendências</a>
+      <a id="linkAdmin" href="/admin" class="btn-sm hidden">Admin</a>
+      <a href="/logout" class="btn-sm">Sair</a>
+    </div>
+  </div>
+
+  <div id="bannerErro" class="banner-aviso hidden">
+    <span id="bannerErroMsg">Dados em atualização. Tente em alguns minutos.</span>
+    <button onclick="carregarTudo(true)">Tentar agora</button>
+  </div>
+
+  <!-- BLOCO 1: Filtros + Visão geral RFM -->
+  <div class="bloco">
+    <div class="bloco-titulo">
+      Filtros &amp; Visão geral
+      <span id="filtros-ativos" style="color:var(--accent);font-size:0.7rem;text-transform:none;letter-spacing:0;"></span>
+      <span style="flex:0;font-weight:400;text-transform:none;letter-spacing:0;font-size:0.74rem;color:var(--text-dim);">Total ativos (24m): <span id="total_clientes" style="color:var(--text);font-weight:600;">—</span></span>
+    </div>
+    <div class="bloco-grid">
+      <div>
+        <div class="filtros-card">
+          <div class="ff">
+            <label>Time (supervisor)</label>
+            <input list="lista_times" id="filt_time" placeholder="Todos · digite pra filtrar" onchange="aplicarFiltros()">
+            <datalist id="lista_times"></datalist>
+          </div>
+          <div class="ff">
+            <label>Vendedor</label>
+            <input list="lista_vendedores" id="filt_vendedor" placeholder="Todos · digite pra filtrar" onchange="aplicarFiltros()">
+            <datalist id="lista_vendedores"></datalist>
+          </div>
+          <div class="ff">
+            <label>UF (praça)</label>
+            <select id="filt_uf" onchange="onUFChange()"><option value="">Todas</option></select>
+          </div>
+          <div class="ff">
+            <label>Cidade</label>
+            <input list="lista_cidades" id="filt_cidade" placeholder="Todas · digite pra filtrar" onchange="aplicarFiltros()">
+            <datalist id="lista_cidades"></datalist>
+          </div>
+          <div class="ff grow">
+            <label>Busca (cliente, cidade, código, vendedor, time)</label>
+            <input type="text" id="filt_busca" oninput="debouncedFilter()" placeholder="ex: padaria, ilheus, 12345, joao, 1519, time rj">
+          </div>
+          <div class="ff">
+            <label>Dias s/ comprar (mín.)</label>
+            <div style="display:flex;gap:4px;align-items:center;">
+              <input type="number" id="filt_dias_min" min="0" step="1" placeholder="ex: 10"
+                     oninput="debouncedDiasMin()" style="width:80px;">
+              <button type="button" class="btn-dias-shortcut" onclick="setDiasMin(10)" title="10 dias ou mais">10+</button>
+              <button type="button" class="btn-dias-shortcut" onclick="setDiasMin(30)" title="30 dias ou mais">30+</button>
+              <button type="button" class="btn-dias-shortcut" onclick="setDiasMin(60)" title="60 dias ou mais">60+</button>
+              <button type="button" class="btn-dias-shortcut" onclick="setDiasMin(90)" title="90 dias ou mais">90+</button>
+            </div>
+          </div>
+          <div class="ff">
+            <label>&nbsp;</label>
+            <button class="btn-sm" onclick="limparFiltros()">Limpar</button>
+          </div>
+          <div class="ff">
+            <label>&nbsp;</label>
+            <button class="btn-export" onclick="exportarCSV()" title="Baixar como Excel/CSV">⬇ CSV</button>
+          </div>
+          <div class="ff">
+            <label>&nbsp;</label>
+            <button class="btn-export" onclick="exportarPDF()" title="Baixar como PDF" style="background:linear-gradient(135deg,#fb923c,#f87171);">📄 PDF</button>
+          </div>
+        </div>
+        <div class="filtros-card" style="margin-top: 0;">
+          <div class="ff grow">
+            <label>Segmento</label>
+            <div class="chips" id="chips_segmento">
+              <span class="chip g-champions"          data-val="champions"          onclick="toggleChip('segmento', this)">Campeões</span>
+              <span class="chip g-loyal"              data-val="loyal"              onclick="toggleChip('segmento', this)">Fiéis</span>
+              <span class="chip g-cant_lose"          data-val="cant_lose"          onclick="toggleChip('segmento', this)">Não Perder</span>
+              <span class="chip g-at_risk"            data-val="at_risk"            onclick="toggleChip('segmento', this)">Em Risco</span>
+              <span class="chip g-potential_loyalist" data-val="potential_loyalist" onclick="toggleChip('segmento', this)">Promissores</span>
+              <span class="chip g-new"                data-val="new"                onclick="toggleChip('segmento', this)">Novos</span>
+              <span class="chip g-hibernating"        data-val="hibernating"        onclick="toggleChip('segmento', this)">Inativos</span>
+              <span class="chip g-lost"               data-val="lost"               onclick="toggleChip('segmento', this)">Perdidos</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="chart-card">
+        <h3>Segmentação RFM (8 segmentos)</h3>
+        <div class="chart-wrap"><canvas id="chartDonut"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BLOCO 2: Segmentação avançada -->
+  <div class="bloco">
+    <div class="bloco-titulo">
+      Segmentação avançada (quintis R × F × M)
+      <span style="flex:0;font-weight:400;text-transform:none;letter-spacing:0;font-size:0.74rem;color:var(--text-dim);">8 segmentos canônicos</span>
+    </div>
+
+    <details style="background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:10px 16px;margin-bottom:12px;font-size:0.84rem;">
+      <summary style="cursor:pointer;color:var(--accent);font-weight:600;list-style:none;">ⓘ Como funciona a segmentação RFM?</summary>
+      <div style="color:var(--text-dim);margin-top:10px;line-height:1.55;font-size:0.82rem;">
+        <p style="margin-bottom:8px;"><strong style="color:var(--text);">RFM</strong> classifica cada cliente em 3 dimensões dos últimos 12 meses:</p>
+        <ul style="margin-bottom:10px;padding-left:18px;">
+          <li><strong style="color:var(--text);">R</strong> (Recência): dias desde a última compra. Quanto menor, melhor (quintil 5).</li>
+          <li><strong style="color:var(--text);">F</strong> (Frequência): número de compras. Quanto mais, melhor.</li>
+          <li><strong style="color:var(--text);">M</strong> (Monetário): lucro gerado. Quanto maior, melhor.</li>
+        </ul>
+        <p style="margin-bottom:8px;">Cada cliente recebe nota 1-5 nas 3 dimensões (quintis) e é classificado em um dos <strong style="color:var(--text);">8 segmentos canônicos</strong> abaixo (cards). Soma de todos = total de clientes ativos nos últimos 24 meses.</p>
+        <p style="font-size:0.78rem;color:var(--text-dim);"><em>Dados-fonte: FATURAMENTO_VENDAS dos últimos 24m (universo total) e 12m (frequência+lucro). RBAC aplicado automaticamente — vendedor logado vê apenas sua carteira.</em></p>
+      </div>
+    </details>
+
+    <div class="cards-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 12px;">
+      <div class="card s-champions" data-segmento="champions" onclick="filtrarSegmento('champions')">
+        <div class="label">Campeões</div><div class="value" id="s_champions">—</div><div class="sub">Premiar</div>
+      </div>
+      <div class="card s-loyal" data-segmento="loyal" onclick="filtrarSegmento('loyal')">
+        <div class="label">Fiéis</div><div class="value" id="s_loyal">—</div><div class="sub">Fidelizar</div>
+      </div>
+      <div class="card s-at_risk" data-segmento="at_risk" onclick="filtrarSegmento('at_risk')">
+        <div class="label">Em Risco</div><div class="value" id="s_at_risk">—</div><div class="sub">Resgatar urgente</div>
+      </div>
+      <div class="card s-cant_lose" data-segmento="cant_lose" onclick="filtrarSegmento('cant_lose')">
+        <div class="label">Não Perder</div><div class="value" id="s_cant_lose">—</div><div class="sub">Alto valor, parou</div>
+      </div>
+    </div>
+    <div class="cards-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 12px;">
+      <div class="card s-potential_loyalist" data-segmento="potential_loyalist" onclick="filtrarSegmento('potential_loyalist')">
+        <div class="label">Promissores</div><div class="value" id="s_potential_loyalist">—</div><div class="sub">Potencial de fidelizar</div>
+      </div>
+      <div class="card s-new" data-segmento="new" onclick="filtrarSegmento('new')">
+        <div class="label">Novos</div><div class="value" id="s_new">—</div><div class="sub">Recém-chegados</div>
+      </div>
+      <div class="card s-hibernating" data-segmento="hibernating" onclick="filtrarSegmento('hibernating')">
+        <div class="label">Inativos</div><div class="value" id="s_hibernating">—</div><div class="sub">Dormentes</div>
+      </div>
+      <div class="card s-lost" data-segmento="lost" onclick="filtrarSegmento('lost')">
+        <div class="label">Perdidos</div><div class="value" id="s_lost">—</div><div class="sub">Última tentativa</div>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <h3>Receita líquida × Clientes positivados — últimos 12 meses</h3>
+      <div class="chart-wrap"><canvas id="chartReceitaPos"></canvas></div>
+    </div>
+  </div>
+
+  <!-- BLOCO 3: Tabela acionável (filtros agora estão no BLOCO 1 — pedido do diretor) -->
+  <div class="bloco">
+    <div class="bloco-titulo">
+      Tabela acionável
+    </div>
+    <div class="table-card">
+      <div class="table-info">
+        <span><strong id="tabela_total">0</strong> clientes &nbsp;·&nbsp; mostrando <span id="tabela_range">—</span></span>
+        <span><button class="btn-sm" onclick="paginar(-1)">‹ Ant</button> <button class="btn-sm" onclick="paginar(1)">Próx ›</button></span>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th class="num sortable" data-sort="codcli"          onclick="ordenarPor('codcli')">CodCli<span class="sort-ind">↕</span></th>
+              <th class="sortable"     data-sort="cliente"         onclick="ordenarPor('cliente')">Cliente<span class="sort-ind">↕</span></th>
+              <th class="sortable"     data-sort="cidade"          onclick="ordenarPor('cidade')">Cidade/UF<span class="sort-ind">↕</span></th>
+              <th class="sortable"     data-sort="vendedor"        onclick="ordenarPor('vendedor')">Vendedor<span class="sort-ind">↕</span></th>
+              <th class="sortable"     data-sort="time"            onclick="ordenarPor('time')">Time<span class="sort-ind">↕</span></th>
+              <th class="num sortable" data-sort="recencia"        onclick="ordenarPor('recencia')">R (dias)<span class="sort-ind">↕</span></th>
+              <th class="num sortable" data-sort="frequencia"      onclick="ordenarPor('frequencia')">F (12m)<span class="sort-ind">↕</span></th>
+              <th class="num sortable" data-sort="venda_12m"       onclick="ordenarPor('venda_12m')">Venda 12m<span class="sort-ind">↕</span></th>
+              <th class="num sortable" data-sort="media_venda"     onclick="ordenarPor('media_venda')" title="Venda 12m ÷ 12 meses">Média Venda<span class="sort-ind">↕</span></th>
+              <th class="num sortable" data-sort="receita_perdida" onclick="ordenarPor('receita_perdida')">⚠ Receita Perdida proj.<span class="sort-ind">↓</span></th>
+              <th class="sortable"     data-sort="segmento"        onclick="ordenarPor('segmento')">Segmento<span class="sort-ind">↕</span></th>
+              <th>Tel</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Drill 360° (HTML + JS injetados automaticamente por /static/drill-cliente.js) -->
+
+<script>
+const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
+const BRL2 = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+const NUM = new Intl.NumberFormat('pt-BR');
+const PCT = (v) => (v == null ? '—' : (v * 100).toFixed(1).replace('.', ',') + '%');
+const MESES = ['','Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+Chart.defaults.font.family = "'DM Sans', sans-serif";
+Chart.defaults.color = '#94a3b8';
+Chart.defaults.borderColor = '#1e293b';
+// Plugin datalabels: desativado por padrão; habilitado individualmente no donut RFM
+if (window.ChartDataLabels) {
+  Chart.defaults.plugins = Chart.defaults.plugins || {};
+  Chart.defaults.plugins.datalabels = { display: false };
+}
+
+const COR_SEG = {
+  champions: '#34d399', loyal: '#38bdf8', cant_lose: '#fb923c', at_risk: '#fbbf24',
+  new: '#a78bfa', potential_loyalist: '#818cf8', lost: '#f87171', hibernating: '#475569',
+};
+const NOME_SEG = {
+  champions:          'Campeões',
+  loyal:              'Fiéis',
+  at_risk:            'Em Risco',
+  cant_lose:          'Não Perder',
+  potential_loyalist: 'Promissores',
+  new:                'Novos',
+  hibernating:        'Inativos',
+  lost:               'Perdidos',
+};
+const SUB_SEG = {
+  champions:          'Premiar',
+  loyal:              'Fidelizar',
+  at_risk:            'Resgatar urgente',
+  cant_lose:          'Alto valor, parou',
+  potential_loyalist: 'Potencial de fidelizar',
+  new:                'Recém-chegados',
+  hibernating:        'Dormentes',
+  lost:               'Última tentativa',
+};
+
+// Estado global
+const _modo = 'personalizada';  // régua FIXA removida — sempre personalizada
+let _vendedoresMap = {};
+let _ultimoRfm = null;  // resposta do /rfm
+// Filtros como ARRAYS pra suportar multi-seleção (chips)
+let _filtros = { segmento: [], vendedor: '', time: '', uf: '', cidade: '', busca: '', dias_min: '', sort: 'receita_perdida', dir: 'desc' };
+const _SORT_DEFAULT = { sort: 'receita_perdida', dir: 'desc' };
+let _cidadesAtivas = [];  // [{cidade, uf}] — populado por loadRfm
+let _offset = 0;
+const PAGE_SIZE = 50;
+let _charts = {};
+
+function setText(id, v) { document.getElementById(id).textContent = v; }
+function drawChart(id, cfg) {
+  if (_charts[id]) _charts[id].destroy();
+  _charts[id] = new Chart(document.getElementById(id), cfg);
+}
+
+// fetchJSON vem do /static/fetch-resiliente.js (retry + backoff + timeout)
+
+async function loadMe() {
+  try {
+    const j = await fetchJSON('/api/me');
+    document.getElementById('userInfo').textContent = `${j.nome} · ${j.role}`;
+    if (j.role === 'admin') document.getElementById('linkAdmin').classList.remove('hidden');
+    if (j.role === 'vendedor') document.getElementById('linkVendedores').style.display = 'none';
+  } catch (e) {}
+}
+
+async function loadVendedores() {
+  try {
+    const j = await fetchJSON('/api/_internal/vendedores-map');
+    _vendedoresMap = j.vendedores || {};
+    // Datalist será preenchido por loadRfm (só com vendedores ativos)
+  } catch (e) { console.warn('vendedores-map:', e); }
+}
+
+async function loadTimes() {
+  try {
+    const j = await fetchJSON('/api/_internal/supervisores-map');
+    _timesMap = j.supervisores || {};
+    // Datalist será preenchido por loadRfm
+  } catch (e) { console.warn('supervisores-map:', e); }
+}
+
+async function loadRfm() {
+  const r = await fetchJSON(`/api/carteira/rfm?modo=${_modo}`);
+  _ultimoRfm = r;
+  renderCards(r);
+  renderDonut(r.segmentos);
+  renderReceitaPositivacao();   // novo gráfico de barras (não depende de r.matriz_rf)
+  _crossTuples = r.cross_filter_tuples || [];
+  repopularTodosFiltros();
+}
+
+let _timesMap = {};  // {codsupervisor_str: {nome, tipo}} — cache global
+
+// Tuplas únicas (codusur, codsupervisor, uf, cidade) da carteira atual.
+// Usadas pra cross-filter: ao escolher 1 filtro, os outros 3 narram pra valores válidos.
+let _crossTuples = [];
+
+// Lê os valores atualmente digitados nos 4 inputs de filtro (não confia em _filtros)
+function _lerFiltrosAtuais() {
+  return {
+    vendedor: extrairCodigo(document.getElementById('filt_vendedor').value),
+    time:     extrairCodigo(document.getElementById('filt_time').value),
+    uf:       document.getElementById('filt_uf').value,
+    cidade:   document.getElementById('filt_cidade').value,
+  };
+}
+
+// Filtra _crossTuples pelos filtros ATIVOS, IGNORANDO o filtro 'ignorar' (pra recalcular suas opções)
+function _tuplasFiltradas(ignorar) {
+  const f = _lerFiltrosAtuais();
+  return _crossTuples.filter(t => {
+    if (ignorar !== 'vendedor' && f.vendedor && String(t.codusur) !== f.vendedor) return false;
+    if (ignorar !== 'time'     && f.time     && String(t.codsupervisor) !== f.time) return false;
+    if (ignorar !== 'uf'       && f.uf       && t.uf !== f.uf) return false;
+    if (ignorar !== 'cidade'   && f.cidade   && t.cidade !== f.cidade) return false;
+    return true;
+  });
+}
+
+function popularDatalistVendedor() {
+  const validos = new Set(_tuplasFiltradas('vendedor').map(t => String(t.codusur)));
+  const dl = document.getElementById('lista_vendedores');
+  const lista = Object.entries(_vendedoresMap)
+    .filter(([cu]) => validos.has(cu))
+    .sort((a, b) => (a[1].nome || '').localeCompare(b[1].nome || ''));
+  dl.innerHTML = lista.map(([cu, v]) =>
+    `<option value="${v.nome} (${cu})">`
+  ).join('');
+}
+
+function popularDatalistTime() {
+  const validos = new Set(_tuplasFiltradas('time').map(t => String(t.codsupervisor)));
+  const dl = document.getElementById('lista_times');
+  const lista = Object.entries(_timesMap)
+    .filter(([cs]) => validos.has(cs))
+    .sort((a, b) => (a[1].nome || '').localeCompare(b[1].nome || ''));
+  dl.innerHTML = lista.map(([cs, v]) =>
+    `<option value="${v.nome} (${cs})">`
+  ).join('');
+}
+
+function popularDatalistCidade() {
+  const validos = [...new Set(_tuplasFiltradas('cidade').map(t => t.cidade).filter(Boolean))].sort();
+  const dl = document.getElementById('lista_cidades');
+  dl.innerHTML = validos.map(c => `<option value="${c}">`).join('');
+}
+
+function popularSelectUF() {
+  const validos = [...new Set(_tuplasFiltradas('uf').map(t => t.uf).filter(Boolean))].sort();
+  const selUF = document.getElementById('filt_uf');
+  const valAtual = selUF.value;
+  selUF.innerHTML = '<option value="">Todas</option>' +
+    validos.map(u => `<option value="${u}">${u}</option>`).join('');
+  if (validos.includes(valAtual)) selUF.value = valAtual;
+}
+
+// Repopula os 4 dropdowns — chamado após qualquer mudança de filtro
+function repopularTodosFiltros() {
+  popularSelectUF();
+  popularDatalistVendedor();
+  popularDatalistTime();
+  popularDatalistCidade();
+}
+
+// Limpa filtros que ficaram inválidos após mudança em outro filtro
+function _limparFiltrosInvalidos() {
+  const v = _filtros.vendedor;
+  if (v) {
+    const validos = new Set(_tuplasFiltradas('vendedor').map(t => String(t.codusur)));
+    if (!validos.has(v)) {
+      document.getElementById('filt_vendedor').value = '';
+      _filtros.vendedor = '';
+    }
+  }
+  const t = _filtros.time;
+  if (t) {
+    const validos = new Set(_tuplasFiltradas('time').map(x => String(x.codsupervisor)));
+    if (!validos.has(t)) {
+      document.getElementById('filt_time').value = '';
+      _filtros.time = '';
+    }
+  }
+  const u = _filtros.uf;
+  if (u) {
+    const validos = new Set(_tuplasFiltradas('uf').map(x => x.uf).filter(Boolean));
+    if (!validos.has(u)) {
+      document.getElementById('filt_uf').value = '';
+      _filtros.uf = '';
+    }
+  }
+  const c = _filtros.cidade;
+  if (c) {
+    const validos = new Set(_tuplasFiltradas('cidade').map(x => x.cidade).filter(Boolean));
+    if (!validos.has(c)) {
+      document.getElementById('filt_cidade').value = '';
+      _filtros.cidade = '';
+    }
+  }
+}
+
+// Mantido como wrapper de aplicarFiltros (chamado pelo onchange do select UF)
+function onUFChange() {
+  aplicarFiltros();
+}
+
+function renderCards(r) {
+  setText('total_clientes', NUM.format(r.total_clientes));
+  // 8 segmentos canônicos (todos os cards) — RFM only, status cards removidos
+  for (const k of Object.keys(NOME_SEG)) {
+    const el = document.getElementById('s_' + k);
+    if (el) el.textContent = NUM.format(r.segmentos[k] || 0);
+  }
+}
+
+function renderDonut(segs) {
+  const labels = Object.keys(segs).map(k => NOME_SEG[k] || k);
+  const data = Object.values(segs);
+  const cores = Object.keys(segs).map(k => COR_SEG[k] || '#475569');
+  const total = data.reduce((a,b) => a+b, 0);
+  drawChart('chartDonut', {
+    type: 'doughnut',
+    data: { labels, datasets: [{ data, backgroundColor: cores, borderWidth: 0 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: { callbacks: { label: c => `${c.label}: ${NUM.format(c.parsed)} (${total ? (c.parsed/total*100).toFixed(1) : '0'}%)` } },
+        // % dentro das fatias (só se for grande o bastante pra caber)
+        datalabels: {
+          display: true,  // override do default global (false) — habilita só aqui
+          color: '#0a0e17',
+          font: { weight: 'bold', size: 11 },
+          formatter: (value) => {
+            if (!total || value/total < 0.04) return '';  // esconde fatias <4%
+            return (value/total*100).toFixed(1) + '%';
+          }
+        }
+      }
+    },
+    plugins: [ChartDataLabels],
+  });
+}
+
+const MESES_ABREV = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+async function renderReceitaPositivacao() {
+  // Bar chart receita+positivação 12m. Reage aos filtros aplicados via _paramsExport().
+  // Coerente com cards/donut/tabela: single source of truth.
+  let rows = [];
+  const params = _paramsExport();
+  try {
+    const d = await fetchJSON('/api/carteira/receita-positivacao-12m?' + params.toString());
+    rows = (d.rows || []).slice().sort((a,b) => (a.AnoMes||0) - (b.AnoMes||0));
+  } catch (e) { console.warn('receita-positivacao-12m:', e); return; }
+
+  const labels = rows.map(r => {
+    const am = String(r.AnoMes || '');
+    return MESES_ABREV[parseInt(am.slice(4,6),10)-1] + '/' + am.slice(2,4);
+  });
+  const receita     = rows.map(r => r.VendaLiquida || 0);
+  const positivados = rows.map(r => r.ClientesUnicos || 0);
+
+  // Mês corrente é parcial — tooltip avisa "(parcial — N dias até hoje)"
+  const hoje = new Date();
+  const mesCorrenteAnoMes = hoje.getFullYear() * 100 + (hoje.getMonth() + 1);
+  const diasNoMesAteHoje = hoje.getDate();
+
+  drawChart('chartReceitaPos', {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Receita líquida', data: receita, backgroundColor: 'rgba(56,189,248,0.7)', borderColor: '#38bdf8', borderWidth: 1, yAxisID: 'y', order: 2 },
+        { label: 'Clientes positivados', data: positivados, backgroundColor: 'rgba(52,211,153,0.85)', borderColor: '#34d399', borderWidth: 1, yAxisID: 'y1', order: 1 },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      onHover: (evt, items, chart) => { chart.canvas.style.cursor = items.length ? 'pointer' : 'default'; },
+      onClick: (evt, items, chart) => {
+        // Click numa barra OU em qualquer área do mês → abre painel de detalhe
+        let idx = items.length ? items[0].index : null;
+        if (idx == null) {
+          // Click fora de barra: detecta mês mais próximo pelo X
+          const xScale = chart.scales.x;
+          const canvasPos = Chart.helpers.getRelativePosition(evt, chart);
+          const labelIdx = xScale.getValueForPixel(canvasPos.x);
+          if (labelIdx != null && labelIdx >= 0 && labelIdx < rows.length) idx = Math.round(labelIdx);
+        }
+        if (idx != null && rows[idx]) {
+          const anomes = rows[idx].AnoMes;
+          const nome = labels[idx] || `Mês ${anomes}`;
+          abrirPainelMes(anomes, nome);
+        }
+      },
+      plugins: {
+        legend: { position: 'bottom' },
+        tooltip: {
+          callbacks: {
+            label: c => {
+              if (c.dataset.yAxisID === 'y') return 'Receita: ' + BRL.format(c.parsed.y);
+              return 'Clientes positivados: ' + NUM.format(c.parsed.y);
+            },
+            afterBody: (items) => {
+              const linhas = [];
+              const idx = items[0].dataIndex;
+              if (rows[idx] && rows[idx].AnoMes === mesCorrenteAnoMes) {
+                linhas.push('⚠ Mês parcial — ' + diasNoMesAteHoje + ' dias até hoje');
+              }
+              linhas.push('');
+              linhas.push('↗ Click pra ver top clientes do mês');
+              return linhas;
+            },
+          }
+        }
+      },
+      scales: {
+        y:  { position: 'left',  ticks: { callback: v => BRL.format(v) }, title: { display: true, text: 'Receita (R$)' } },
+        y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { callback: v => NUM.format(v) }, title: { display: true, text: 'Clientes únicos' } },
+      }
+    }
+  });
+}
+
+async function loadClientes() {
+  const params = new URLSearchParams({
+    modo: _modo,
+    limit: PAGE_SIZE,
+    offset: _offset,
+    sort: _filtros.sort,
+    dir: _filtros.dir,
+  });
+  // Arrays viram comma-separated (backend faz split)
+  if (_filtros.segmento && _filtros.segmento.length) params.set('segmento', _filtros.segmento.join(','));
+  if (_filtros.vendedor) params.set('vendedor', _filtros.vendedor);
+  if (_filtros.time)     params.set('time', _filtros.time);
+  if (_filtros.uf)       params.set('uf', _filtros.uf);
+  if (_filtros.cidade)   params.set('cidade', _filtros.cidade);
+  if (_filtros.busca)    params.set('busca', _filtros.busca);
+  if (_filtros.dias_min !== '' && _filtros.dias_min != null) params.set('dias_min', _filtros.dias_min);
+
+  const r = await fetchJSON('/api/carteira/clientes?' + params.toString());
+  renderTabela(r);
+  // Cards/donut refletem TODOS os filtros aplicados (single source of truth com a tabela)
+  if (r.segmentos) {
+    atualizarCardsEDonut(r.segmentos, r.total);
+  }
+  // Chart Receita+Positivação também reage aos filtros (fire-and-forget)
+  renderReceitaPositivacao();
+}
+
+// Atualiza os 8 cards de segmento + donut + total clientes com a contagem do filtrado
+function atualizarCardsEDonut(segmentos, total) {
+  setText('total_clientes', NUM.format(total || 0));
+  // Garante que todos segmentos canônicos apareçam (com 0 se vazio)
+  const segs8 = {};
+  for (const k of Object.keys(NOME_SEG)) {
+    segs8[k] = segmentos[k] || 0;
+    const el = document.getElementById('s_' + k);
+    if (el) el.textContent = NUM.format(segs8[k]);
+  }
+  renderDonut(segs8);
+}
+
+function renderTabela(r) {
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = (r.rows || []).map(c => `
+    <tr onclick="abrirDrill(${c.codcli})">
+      <td class="num"><span style="font-size:0.72rem;color:var(--text-dim);">${c.codcli || '—'}</span></td>
+      <td><strong>${c.cliente || '—'}</strong></td>
+      <td>${c.cidade || '—'}<span style="color:var(--text-dim);">/${c.uf || '—'}</span></td>
+      <td>${c.vendedor || '—'}</td>
+      <td><span style="font-size:0.74rem;color:var(--text-dim);">${c.time || '—'}</span></td>
+      <td class="num">${c.recencia_dias != null ? NUM.format(c.recencia_dias) : '—'}</td>
+      <td class="num">${NUM.format(c.frequencia_12m || 0)}</td>
+      <td class="num">${BRL.format(c.venda_12m || 0)}</td>
+      <td class="num">${BRL.format((c.venda_12m || 0) / 12)}</td>
+      <td class="num">${c.receita_perdida_proj > 0 ? '<strong style="color:var(--red);">' + BRL.format(c.receita_perdida_proj) + '</strong>' : '—'}</td>
+      <td><span class="badge b-${c.segmento}">${NOME_SEG[c.segmento] || c.segmento}</span></td>
+      <td>${c.telefone || '—'}</td>
+    </tr>
+  `).join('');
+  setText('tabela_total', NUM.format(r.total || 0));
+  const fim = Math.min(r.offset + r.rows.length, r.total);
+  setText('tabela_range', `${r.offset + 1}–${fim}`);
+  document.getElementById('filtros-ativos').textContent = filtrosAtivosLabel();
+}
+
+function filtrosAtivosLabel() {
+  const parts = [];
+  if (_filtros.segmento.length) parts.push(`segmento=${_filtros.segmento.map(s => NOME_SEG[s] || s).join('+')}`);
+  if (_filtros.vendedor) {
+    const v = _vendedoresMap[_filtros.vendedor];
+    parts.push(`vendedor=${v ? v.nome : _filtros.vendedor}`);
+  }
+  if (_filtros.time) {
+    const t = _timesMap[_filtros.time];
+    parts.push(`time=${t ? t.nome : _filtros.time}`);
+  }
+  if (_filtros.uf)     parts.push(`uf=${_filtros.uf}`);
+  if (_filtros.cidade) parts.push(`cidade=${_filtros.cidade}`);
+  if (_filtros.busca)  parts.push(`busca="${_filtros.busca}"`);
+  if (_filtros.dias_min !== '' && _filtros.dias_min != null) parts.push(`${_filtros.dias_min}+ dias s/ comprar`);
+  return parts.length ? '· ' + parts.join(' · ') : '';
+}
+
+function filtrarSegmento(s) {
+  const chip = document.querySelector(`#chips_segmento .chip[data-val="${s}"]`);
+  if (chip) toggleChip('segmento', chip);
+}
+
+// Toggle chip multiselect (chamado pelo onclick dos spans .chip)
+function toggleChip(grupo, el) {
+  const val = el.dataset.val;
+  el.classList.toggle('active');
+  const arr = _filtros[grupo];
+  const idx = arr.indexOf(val);
+  if (idx >= 0) arr.splice(idx, 1);
+  else arr.push(val);
+  // Sincroniza highlight dos cards superiores (status régua + segmentos canônicos)
+  document.querySelectorAll(`.card[data-${grupo}]`).forEach(c => {
+    c.classList.toggle('active', arr.includes(c.dataset[grupo]));
+  });
+  _offset = 0;
+  loadClientes();
+}
+
+// Extrai código do valor "Nome (123)" do datalist; aceita também só dígitos
+function extrairCodigo(valor) {
+  if (!valor) return '';
+  const m = String(valor).match(/\((\d+)\)\s*$/);
+  if (m) return m[1];
+  if (/^\d+$/.test(valor.trim())) return valor.trim();
+  return '';
+}
+
+function aplicarFiltros() {
+  _filtros.vendedor = extrairCodigo(document.getElementById('filt_vendedor').value);
+  _filtros.time     = extrairCodigo(document.getElementById('filt_time').value);
+  _filtros.uf       = document.getElementById('filt_uf').value;
+  _filtros.cidade   = document.getElementById('filt_cidade').value;
+  // status e segmento agora vêm dos chips, não dos selects
+  _limparFiltrosInvalidos();   // ex: cidade não existe na UF nova → limpa
+  repopularTodosFiltros();     // cross-filter: 1 dropdown muda → outros 3 narram
+  _offset = 0;
+  loadClientes();
+}
+
+let _debounceId;
+function debouncedFilter() {
+  clearTimeout(_debounceId);
+  _debounceId = setTimeout(() => {
+    _filtros.busca = document.getElementById('filt_busca').value;
+    _offset = 0;
+    loadClientes();
+  }, 300);
+}
+
+let _debounceDiasId;
+function debouncedDiasMin() {
+  clearTimeout(_debounceDiasId);
+  _debounceDiasId = setTimeout(() => {
+    const v = document.getElementById('filt_dias_min').value.trim();
+    aplicarDiasMin(v === '' ? '' : parseInt(v, 10));
+  }, 350);
+}
+
+function setDiasMin(n) {
+  document.getElementById('filt_dias_min').value = n;
+  aplicarDiasMin(n);
+}
+
+function aplicarDiasMin(val) {
+  // val: '' (limpar) ou inteiro
+  const ativo = val !== '' && Number.isFinite(val) && val >= 0;
+  _filtros.dias_min = ativo ? val : '';
+  // Aplica/limpa highlight nos atalhos
+  document.querySelectorAll('.btn-dias-shortcut').forEach(b => {
+    b.classList.toggle('active', ativo && parseInt(b.textContent, 10) === val);
+  });
+  // Quando o filtro liga: força sort por recência crescente (do quase-recente pro mais antigo).
+  // Quando desliga: volta sort pro default (lucro perdido desc).
+  if (ativo) {
+    _filtros.sort = 'recencia';
+    _filtros.dir = 'asc';
+  } else {
+    _filtros.sort = _SORT_DEFAULT.sort;
+    _filtros.dir = _SORT_DEFAULT.dir;
+  }
+  atualizarIndicadorSort();
+  _offset = 0;
+  loadClientes();
+}
+
+function limparFiltros() {
+  _filtros = { segmento: [], status: [], vendedor: '', time: '', uf: '', cidade: '', busca: '', dias_min: '', sort: 'receita_perdida', dir: 'desc' };
+  document.getElementById('filt_vendedor').value = '';
+  document.getElementById('filt_time').value = '';
+  document.getElementById('filt_uf').value = '';
+  document.getElementById('filt_cidade').value = '';
+  document.getElementById('filt_busca').value = '';
+  document.getElementById('filt_dias_min').value = '';
+  document.querySelectorAll('.chip.active').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('.card.active').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('.btn-dias-shortcut.active').forEach(b => b.classList.remove('active'));
+  repopularTodosFiltros();   // todos os dropdowns voltam pra lista completa
+  _offset = 0;
+  atualizarIndicadorSort();
+  loadClientes();
+}
+
+function ordenarPor(campo) {
+  if (_filtros.sort === campo) {
+    _filtros.dir = _filtros.dir === 'desc' ? 'asc' : 'desc';
+  } else {
+    _filtros.sort = campo;
+    // textos default asc, números default desc
+    _filtros.dir = ['cliente', 'cidade', 'vendedor', 'time', 'status', 'segmento'].includes(campo) ? 'asc' : 'desc';
+  }
+  atualizarIndicadorSort();
+  _offset = 0;
+  loadClientes();
+}
+
+function atualizarIndicadorSort() {
+  document.querySelectorAll('thead th.sortable').forEach(th => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    const ind = th.querySelector('.sort-ind');
+    if (th.dataset.sort === _filtros.sort) {
+      th.classList.add(_filtros.dir === 'asc' ? 'sort-asc' : 'sort-desc');
+      if (ind) ind.textContent = _filtros.dir === 'asc' ? '↑' : '↓';
+    } else {
+      if (ind) ind.textContent = '↕';
+    }
+  });
+}
+
+function paginar(dir) {
+  _offset = Math.max(0, _offset + dir * PAGE_SIZE);
+  loadClientes();
+}
+
+function _paramsExport() {
+  const params = new URLSearchParams({ modo: _modo });
+  const arr = (v) => Array.isArray(v) ? v.join(',') : v;
+  if (_filtros.segmento && (Array.isArray(_filtros.segmento) ? _filtros.segmento.length : _filtros.segmento)) params.set('segmento', arr(_filtros.segmento));
+  if (_filtros.vendedor) params.set('vendedor', _filtros.vendedor);
+  if (_filtros.time)     params.set('time',     _filtros.time);
+  if (_filtros.uf)       params.set('uf',       _filtros.uf);
+  if (_filtros.cidade)   params.set('cidade',   _filtros.cidade);
+  if (_filtros.busca)    params.set('busca',    _filtros.busca);
+  if (_filtros.dias_min !== '' && _filtros.dias_min != null) params.set('dias_min', _filtros.dias_min);
+  return params;
+}
+function exportarCSV() { window.location.href = '/api/carteira/csv?' + _paramsExport().toString(); }
+function exportarPDF() { window.location.href = '/api/carteira/pdf?' + _paramsExport().toString(); }
+
+// Drill 360°: funções abrirDrill() e fecharDrill() expostas globalmente por /static/drill-cliente.js.
+// Estado _modo é lido por aquele script via window._modo. Sempre 'personalizada' agora.
+window._modo = _modo;
+
+async function carregarTudo(retry) {
+  document.getElementById('bannerErro').classList.add('hidden');
+  if (retry) document.getElementById('loading').classList.remove('hidden');
+  try {
+    await loadMe();
+    await Promise.all([loadVendedores(), loadTimes()]);
+    await loadRfm();
+    await loadClientes();
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+  } catch (e) {
+    console.error(e);
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+    document.getElementById('bannerErroMsg').textContent = 'Erro ao carregar carteira. Power BI pode estar em atualização.';
+    document.getElementById('bannerErro').classList.remove('hidden');
+  }
+}
+
+// Cross-filter dos 4 dropdowns (Time, Vendedor, UF, Cidade) agora é feito por
+// aplicarFiltros() → _limparFiltrosInvalidos() + repopularTodosFiltros().
+// Não precisa de listener separado pra cascata Time→Vendedor (caso antigo).
+
+carregarTudo().then(() => atualizarIndicadorSort());
+</script>
+
+<!-- Painel lateral: detalhe de mês (drill no bar chart Receita+Positivação) -->
+<div class="backdrop" id="mesBackdrop" onclick="fecharPainelMes()"></div>
+<aside class="side-panel" id="mesPanel">
+  <div class="side-head">
+    <div>
+      <h2 id="mesTitulo">Detalhe do mês</h2>
+      <div class="meta-cli" id="mesSubtitulo">—</div>
+    </div>
+    <button onclick="fecharPainelMes()" aria-label="Fechar">×</button>
+  </div>
+  <div class="side-body" id="mesBody">
+    <div style="text-align:center;color:var(--text-dim);padding:30px;">Carregando...</div>
+  </div>
+</aside>
+
+<style>
+  /* Painel mês usa as classes .side-panel + .side-head + .side-body já carregadas via drill-cliente.css */
+  .mes-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+  .mes-kpi { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .mes-kpi .label { font-size: 0.66rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+  .mes-kpi .value { font-size: 1.05rem; font-weight: 700; color: var(--text); margin-top: 3px; font-family: 'JetBrains Mono', monospace; }
+  .mes-kpi .delta { font-size: 0.72rem; margin-top: 2px; font-family: 'JetBrains Mono', monospace; }
+  .mes-kpi .delta.up   { color: var(--green); }
+  .mes-kpi .delta.down { color: var(--red); }
+  .mes-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; margin-bottom: 16px; }
+  .mes-table th, .mes-table td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--border); }
+  .mes-table th { color: var(--text-dim); font-weight: 600; font-size: 0.66rem; text-transform: uppercase; background: var(--surface2); }
+  .mes-table td.num { text-align: right; font-family: 'JetBrains Mono', monospace; }
+  .mes-table tr:hover td { background: var(--surface2); cursor: pointer; }
+  .mes-section-title { font-size: 0.72rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; margin-bottom: 8px; margin-top: 16px; }
+  .dept-bar { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
+  .dept-bar .nome { flex: 0 0 38%; font-size: 0.78rem; }
+  .dept-bar .barwrap { flex: 1; background: var(--surface2); height: 14px; border-radius: 3px; overflow: hidden; }
+  .dept-bar .barfill { background: linear-gradient(90deg, var(--accent), var(--accent2)); height: 100%; }
+  .dept-bar .val { flex: 0 0 95px; text-align: right; font-size: 0.74rem; font-family: 'JetBrains Mono', monospace; color: var(--text-dim); }
+</style>
+
+<script>
+function _fmtPct(v) {
+  if (v == null) return '—';
+  const sign = v >= 0 ? '+' : '';
+  return sign + (v * 100).toFixed(1).replace('.', ',') + '%';
+}
+function _deltaClass(v) { return v == null ? '' : (v >= 0 ? 'up' : 'down'); }
+function _deltaArrow(v) { return v == null ? '' : (v >= 0 ? '↗' : '↘'); }
+
+async function abrirPainelMes(anomes, nomeMes) {
+  document.getElementById('mesPanel').classList.add('open');
+  document.getElementById('mesBackdrop').classList.add('show');
+  document.getElementById('mesTitulo').textContent = nomeMes;
+  document.getElementById('mesSubtitulo').textContent = `Detalhe completo de ${nomeMes}`;
+  document.getElementById('mesBody').innerHTML =
+    '<div style="text-align:center;color:var(--text-dim);padding:30px;">Carregando dados do mês...</div>';
+
+  // Passa os filtros atuais — drill respeita o contexto (UF=BA + Out/25 → top 10 de BA em Out/25)
+  const params = _paramsExport();
+  try {
+    const d = await fetchJSON(`/api/carteira/mes/${anomes}?` + params.toString());
+    renderPainelMes(d);
+  } catch (e) {
+    document.getElementById('mesBody').innerHTML =
+      `<div style="color:var(--red);padding:20px;">Falha ao carregar: ${e.message || e}</div>`;
+  }
+}
+
+function fecharPainelMes() {
+  document.getElementById('mesPanel').classList.remove('open');
+  document.getElementById('mesBackdrop').classList.remove('show');
+}
+
+function renderPainelMes(d) {
+  const r = d.resumo || {};
+  const c = d.comparativo || {};
+  const tops = d.top_clientes || [];
+  const depts = d.top_deptos || [];
+  const produtos = d.top_produtos || [];
+
+  const badgeFiltro = d.filtros_aplicados
+    ? `<div style="background:rgba(56,189,248,0.12);border:1px solid var(--accent);color:var(--accent);padding:6px 10px;border-radius:6px;font-size:0.74rem;margin-bottom:14px;">🔍 Filtrado: ${d.codclis_no_filtro || 0} clientes no escopo dos filtros aplicados</div>`
+    : '';
+
+  const html = `
+    ${badgeFiltro}
+    <div class="mes-section-title">Resumo do mês</div>
+    <div class="mes-kpis">
+      <div class="mes-kpi">
+        <div class="label">Receita líquida</div>
+        <div class="value">${BRL.format(r.venda_total || 0)}</div>
+        <div class="delta ${_deltaClass(c.venda_vs_mes_anterior_pct)}">${_deltaArrow(c.venda_vs_mes_anterior_pct)} ${_fmtPct(c.venda_vs_mes_anterior_pct)} vs mês ant.</div>
+      </div>
+      <div class="mes-kpi">
+        <div class="label">Clientes únicos</div>
+        <div class="value">${NUM.format(r.clientes_unicos || 0)}</div>
+        <div class="delta ${_deltaClass(c.clientes_vs_mes_anterior_pct)}">${_deltaArrow(c.clientes_vs_mes_anterior_pct)} ${_fmtPct(c.clientes_vs_mes_anterior_pct)} vs mês ant.</div>
+      </div>
+      <div class="mes-kpi">
+        <div class="label">Lucro total</div>
+        <div class="value">${BRL.format(r.lucro_total || 0)}</div>
+        <div class="delta">${r.venda_total ? ((r.lucro_total / r.venda_total) * 100).toFixed(1).replace('.', ',') + '% margem' : '—'}</div>
+      </div>
+      <div class="mes-kpi">
+        <div class="label">Ticket médio</div>
+        <div class="value">${BRL.format(r.ticket_medio || 0)}</div>
+        <div class="delta">${NUM.format(r.vendedores_ativos || 0)} vendedores ativos</div>
+      </div>
+    </div>
+
+    <div class="mes-section-title">Vs mesmo mês ano anterior</div>
+    <div class="mes-kpis">
+      <div class="mes-kpi">
+        <div class="label">Receita YoY</div>
+        <div class="value">${BRL.format(c.venda_ano_anterior || 0)}</div>
+        <div class="delta ${_deltaClass(c.venda_vs_ano_anterior_pct)}">${_deltaArrow(c.venda_vs_ano_anterior_pct)} ${_fmtPct(c.venda_vs_ano_anterior_pct)}</div>
+      </div>
+      <div class="mes-kpi">
+        <div class="label">Clientes YoY</div>
+        <div class="value">${_fmtPct(c.clientes_vs_ano_anterior_pct)}</div>
+        <div class="delta ${_deltaClass(c.clientes_vs_ano_anterior_pct)}">${_deltaArrow(c.clientes_vs_ano_anterior_pct)} vs ano anterior</div>
+      </div>
+    </div>
+
+    <div class="mes-section-title">🏆 Top 10 clientes do mês</div>
+    <table class="mes-table">
+      <thead>
+        <tr><th>#</th><th>Cliente</th><th>Vendedor</th><th class="num">Venda</th><th class="num">Lucro</th></tr>
+      </thead>
+      <tbody>
+        ${tops.map((c, i) => `
+          <tr onclick="abrirDrill(${c.codcli})" title="Click pra ver drill 360° do cliente">
+            <td>${i + 1}</td>
+            <td><strong>${(c.cliente || '').substring(0, 30)}</strong><br><span style="color:var(--text-dim);font-size:0.7rem;">#${c.codcli} · ${c.uf || '—'}</span></td>
+            <td style="font-size:0.74rem;">${c.vendedor}</td>
+            <td class="num"><strong>${BRL.format(c.venda || 0)}</strong></td>
+            <td class="num" style="color:var(--green);">${BRL.format(c.lucro || 0)}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+
+    <div class="mes-section-title">📦 Top 5 departamentos do mês</div>
+    ${depts.map(dp => `
+      <div class="dept-bar">
+        <div class="nome">${dp.nome}</div>
+        <div class="barwrap"><div class="barfill" style="width:${(dp.share_pct * 100 / (depts[0].share_pct || 1)).toFixed(1)}%;"></div></div>
+        <div class="val">${BRL.format(dp.venda)}<br><span style="color:var(--text-dim);font-size:0.66rem;">${(dp.share_pct * 100).toFixed(1)}%</span></div>
+      </div>
+    `).join('')}
+
+    ${produtos.length ? `
+    <div class="mes-section-title">🛒 Top 20 produtos do mês</div>
+    ${produtos.map((p, i) => `
+      <div class="dept-bar">
+        <div class="nome" title="${(p.descricao || '').replace(/"/g, '&quot;')}">${i + 1}. ${(p.descricao || '').substring(0, 38)}</div>
+        <div class="barwrap"><div class="barfill" style="width:${(p.share_pct * 100 / (produtos[0].share_pct || 1)).toFixed(1)}%;"></div></div>
+        <div class="val">${BRL.format(p.venda || 0)}<br><span style="color:var(--text-dim);font-size:0.66rem;">${NUM.format(p.quantidade || 0)} un</span></div>
+      </div>
+    `).join('')}
+    ` : ''}
+
+    <div style="margin-top:18px;text-align:center;color:var(--text-dim);font-size:0.7rem;">
+      💡 Click em qualquer cliente acima abre o drill 360°
+    </div>
+  `;
+  document.getElementById('mesBody').innerHTML = html;
+}
+</script>
+</body>
+</html>

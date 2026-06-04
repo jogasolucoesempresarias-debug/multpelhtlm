@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Multpel Analytics — Cockpit Vendedor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2338bdf8'/%3E%3Cstop offset='1' stop-color='%23818cf8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='6' fill='url(%23g)'/%3E%3Ctext x='16' y='22' font-family='DM Sans,sans-serif' font-size='18' font-weight='700' text-anchor='middle' fill='%230a0e17'%3EM%3C/text%3E%3C/svg%3E">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+<script src="/static/fetch-resiliente.js"></script>
+<link rel="stylesheet" href="/static/drill-cliente.css">
+<script defer src="/static/drill-cliente.js"></script>
+<style>
+  :root {
+    --bg: #0a0e17; --surface: #111827; --surface2: #1a2235; --border: #1e293b;
+    --text: #e2e8f0; --text-dim: #94a3b8;
+    --accent: #38bdf8; --accent2: #818cf8;
+    --green: #34d399; --red: #f87171; --orange: #fb923c; --yellow: #fbbf24;
+    --purple: #a78bfa; --gray: #475569;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  body::before { content:''; position: fixed; inset: 0; opacity: 0.03; pointer-events: none; z-index: 9999; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+  .dashboard { padding: 24px; max-width: 1600px; margin: 0 auto; animation: fadeUp 0.4s ease; }
+  .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; flex-wrap: wrap; gap: 14px; }
+  .top-bar .brand { display: flex; align-items: center; gap: 12px; }
+  .top-bar .brand .mark { width: 36px; height: 36px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--bg); font-size: 1.05rem; }
+  .top-bar h1 { font-size: 1.3rem; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .meta { font-size: 0.74rem; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; }
+  .nav { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn-sm { padding: 7px 14px; background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-weight: 500; font-size: 0.78rem; border-radius: 7px; cursor: pointer; transition: all 0.15s; text-decoration: none; display: inline-block; }
+  .btn-sm:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Header perfil */
+  .perfil-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 22px; margin-bottom: 14px; }
+  .perfil-card h2 { font-size: 1.4rem; font-weight: 700; margin-bottom: 4px; }
+  .perfil-card .perfil-meta { font-size: 0.84rem; color: var(--text-dim); display: flex; flex-wrap: wrap; gap: 12px 22px; }
+  .perfil-card .perfil-meta span strong { color: var(--text); font-family: 'JetBrains Mono', monospace; font-weight: 500; }
+
+  /* KPIs */
+  .kpi-grid { display: grid; gap: 12px; margin-bottom: 14px; grid-template-columns: repeat(4, 1fr); }
+  @media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+  .kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: 11px; padding: 14px 16px; position: relative; overflow: hidden; }
+  .kpi-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; border-radius: 11px 11px 0 0; background: var(--accent); }
+  .kpi-card:nth-child(2)::before { background: var(--green); }
+  .kpi-card:nth-child(3)::before { background: var(--accent2); }
+  .kpi-card:nth-child(4)::before { background: var(--orange); }
+  .kpi-card .label { font-size: 0.66rem; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+  .kpi-card .value { font-size: 1.5rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+  .kpi-card .sub { font-size: 0.72rem; color: var(--text-dim); margin-top: 4px; }
+  .kpi-card .sub.up { color: var(--green); }
+  .kpi-card .sub.down { color: var(--red); }
+
+  /* Alertas */
+  .alertas-card { background: var(--surface); border: 1px solid var(--border); border-radius: 11px; padding: 14px 16px; margin-bottom: 14px; }
+  .alertas-card h3 { font-size: 0.72rem; font-weight: 700; color: var(--yellow); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+  .alerta { padding: 10px 12px; background: var(--surface2); border-left: 3px solid var(--yellow); border-radius: 6px; margin-bottom: 8px; font-size: 0.86rem; }
+  .alerta.at_risk { border-left-color: var(--red); }
+  .alerta.champions_top3 { border-left-color: var(--green); }
+  .alerta .alerta-msg { font-weight: 500; margin-bottom: 6px; }
+  .alerta .champs-list { display: flex; gap: 10px; flex-wrap: wrap; font-size: 0.78rem; color: var(--text-dim); }
+  .alerta .champs-list .ch { background: var(--surface); padding: 3px 8px; border-radius: 4px; cursor: pointer; }
+  .alerta .champs-list .ch:hover { color: var(--accent); }
+
+  /* Charts grid */
+  .charts-grid { display: grid; gap: 12px; margin-bottom: 14px; grid-template-columns: 1.4fr 1fr 1fr; }
+  @media (max-width: 1100px) { .charts-grid { grid-template-columns: 1fr; } }
+  .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 11px; padding: 14px 16px; }
+  .chart-card h3 { font-size: 0.72rem; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+  .chart-wrap { position: relative; height: 240px; }
+
+  /* Tabela */
+  .table-card { background: var(--surface); border: 1px solid var(--border); border-radius: 11px; overflow: hidden; }
+  .table-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .table-header h3 { font-size: 0.84rem; font-weight: 600; color: var(--text); }
+  .table-header .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .table-header select { padding: 6px 10px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.78rem; }
+  /* Toggle régua FIXA/PERSONALIZADA */
+  /* Toggle régua removido — sempre PERSONALIZADA */
+  /* Chips multiselect (Status + Segmento) */
+  .chips { display: flex; gap: 4px; flex-wrap: wrap; }
+  .chip { padding: 4px 9px; border-radius: 12px; border: 1px solid var(--border); cursor: pointer; font-size: 0.72rem; color: var(--text-dim); user-select: none; transition: all 0.12s; }
+  .chip:hover { border-color: var(--accent); color: var(--text); }
+  .chip.active { background: var(--accent); color: var(--bg); font-weight: 600; border-color: var(--accent); }
+  /* Chips de status régua removidos */
+  .chip.g-champions.active          { background: var(--green);   border-color: var(--green); }
+  .chip.g-loyal.active              { background: var(--accent);  border-color: var(--accent); }
+  .chip.g-cant_lose.active          { background: var(--orange);  border-color: var(--orange); }
+  .chip.g-at_risk.active            { background: var(--yellow);  border-color: var(--yellow); color: #0a0e17; }
+  .chip.g-potential_loyalist.active { background: var(--accent2); border-color: var(--accent2); }
+  .chip.g-new.active                { background: var(--purple);  border-color: var(--purple); }
+  .chip.g-hibernating.active        { background: var(--gray);    border-color: var(--gray); }
+  .chip.g-lost.active               { background: var(--red);     border-color: var(--red); }
+  .btn-export { padding: 7px 12px; background: linear-gradient(135deg, var(--accent), var(--accent2)); color: var(--bg); border: none; border-radius: 6px; cursor: pointer; font-weight: 700; font-size: 0.78rem; font-family: inherit; }
+  .table-scroll { overflow-x: auto; max-height: 60vh; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.8rem; white-space: nowrap; }
+  thead th { position: sticky; top: 0; background: var(--surface2); padding: 9px 12px; text-align: left; font-weight: 600; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); border-bottom: 1px solid var(--border); z-index: 2; }
+  thead th.num, td.num { text-align: right; }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: rgba(56,189,248,0.05); }
+  td.num { font-family: 'JetBrains Mono', monospace; }
+  .badge { padding: 2px 7px; border-radius: 4px; font-size: 0.68rem; font-weight: 600; display: inline-block; background: var(--surface2); }
+  /* Badges de status régua removidos */
+  .b-champions { background: rgba(52,211,153,0.15); color: var(--green); }
+  .b-loyal     { background: rgba(56,189,248,0.15); color: var(--accent); }
+  .b-at_risk   { background: rgba(251,191,36,0.15); color: var(--yellow); }
+  .b-lost      { background: rgba(248,113,113,0.15); color: var(--red); }
+  .b-cant_lose { background: rgba(251,146,60,0.15); color: var(--orange); }
+  .b-new       { background: rgba(167,139,250,0.15); color: var(--purple); }
+  .b-potential_loyalist { background: rgba(129,140,248,0.15); color: var(--accent2); }
+  .b-hibernating { background: rgba(71,85,105,0.25); color: var(--text-dim); }
+
+  .loading-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; gap: 14px; }
+  .spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="loading" class="loading-screen">
+  <div class="spinner"></div>
+  <div style="color: var(--text-dim); font-size: 0.85rem;">Carregando cockpit...</div>
+</div>
+
+<div id="app" class="dashboard hidden">
+
+  <div class="top-bar">
+    <div class="brand">
+      <div class="mark">M</div>
+      <div>
+        <h1>Cockpit Vendedor</h1>
+        <div class="meta" id="userInfo"></div>
+      </div>
+    </div>
+    <div class="nav">
+      <a href="/" class="btn-sm">Dashboard</a>
+      <a href="/carteira" class="btn-sm">Carteira</a>
+      <a id="linkVendedores" href="/vendedores" class="btn-sm">Vendedores</a>
+      <a href="/categorias" class="btn-sm">Categorias</a>
+      <a href="/mix" class="btn-sm">Mix</a>
+      <a href="/tendencias" class="btn-sm">Tendências</a>
+      <a id="linkAdmin" href="/admin" class="btn-sm hidden">Admin</a>
+      <a href="/logout" class="btn-sm">Sair</a>
+    </div>
+  </div>
+
+  <!-- Header perfil -->
+  <div class="perfil-card">
+    <h2 id="p_nome">—</h2>
+    <div class="perfil-meta" id="p_meta">—</div>
+  </div>
+
+  <!-- KPIs -->
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="label">Sua Venda 12m</div>
+      <div class="value" id="k_venda">—</div>
+      <div class="sub" id="k_venda_yoy">&nbsp;</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Seu Lucro 12m</div>
+      <div class="value" id="k_lucro">—</div>
+      <div class="sub" id="k_rank">&nbsp;</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Sua Carteira</div>
+      <div class="value" id="k_carteira">—</div>
+      <div class="sub" id="k_carteira_seg">&nbsp;</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label" id="l_pos">Positivação</div>
+      <div class="value" id="k_pos">—</div>
+      <div class="sub" id="k_pos_eq">&nbsp;</div>
+    </div>
+  </div>
+
+  <!-- Alertas -->
+  <div id="alertasBox" class="alertas-card hidden">
+    <h3>⚠ Alertas acionáveis</h3>
+    <div id="alertas_lista"></div>
+  </div>
+
+  <!-- Charts -->
+  <div class="charts-grid">
+    <div class="chart-card">
+      <h3>Série 12m (Venda + Lucro)</h3>
+      <div class="chart-wrap"><canvas id="chartSerie"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Sua carteira (RFM)</h3>
+      <div class="chart-wrap"><canvas id="chartRfm"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Tabela carteira -->
+  <div class="table-card">
+    <div class="table-header">
+      <h3>Sua carteira (ordenada por receita perdida)</h3>
+      <div class="controls">
+        <button class="btn-export" onclick="exportarCSV()">⬇ CSV</button>
+      </div>
+    </div>
+    <div style="padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; gap: 16px; flex-wrap: wrap; align-items: end;">
+      <div style="flex: 1;">
+        <div style="font-size: 0.66rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; margin-bottom: 4px;">Segmento</div>
+        <div class="chips" id="chips_segmento">
+          <span class="chip g-champions"          data-val="champions"          onclick="toggleChip('segmento', this)">Campeões</span>
+          <span class="chip g-loyal"              data-val="loyal"              onclick="toggleChip('segmento', this)">Fiéis</span>
+          <span class="chip g-cant_lose"          data-val="cant_lose"          onclick="toggleChip('segmento', this)">Não Perder</span>
+          <span class="chip g-at_risk"            data-val="at_risk"            onclick="toggleChip('segmento', this)">Em Risco</span>
+          <span class="chip g-potential_loyalist" data-val="potential_loyalist" onclick="toggleChip('segmento', this)">Promissores</span>
+          <span class="chip g-new"                data-val="new"                onclick="toggleChip('segmento', this)">Novos</span>
+          <span class="chip g-hibernating"        data-val="hibernating"        onclick="toggleChip('segmento', this)">Inativos</span>
+          <span class="chip g-lost"               data-val="lost"               onclick="toggleChip('segmento', this)">Perdidos</span>
+        </div>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th class="num">CodCli</th>
+            <th>Cliente</th>
+            <th>Cidade/UF</th>
+            <th class="num">R (dias)</th>
+            <th class="num">F (12m)</th>
+            <th class="num">Venda 12m</th>
+            <th class="num">⚠ Receita Perdida</th>
+            <th>Segmento</th>
+            <th>Tel</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
+const BRL2 = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+const NUM = new Intl.NumberFormat('pt-BR');
+const PCT = (v) => (v == null ? '—' : (v * 100).toFixed(1).replace('.', ',') + '%');
+const MESES = ['','Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+const NOME_SEG = {
+  champions:          'Campeões',
+  loyal:              'Fiéis',
+  at_risk:            'Em Risco',
+  cant_lose:          'Não Perder',
+  potential_loyalist: 'Promissores',
+  new:                'Novos',
+  hibernating:        'Inativos',
+  lost:               'Perdidos',
+};
+const COR_SEG = {
+  champions: '#34d399', loyal: '#38bdf8', cant_lose: '#fb923c', at_risk: '#fbbf24',
+  new: '#a78bfa', potential_loyalist: '#818cf8', lost: '#f87171', hibernating: '#475569',
+};
+window._modo = 'personalizada';  // legado — drill-cliente.js ainda lê (manter pra não quebrar)
+
+Chart.defaults.font.family = "'DM Sans', sans-serif";
+Chart.defaults.color = '#94a3b8';
+Chart.defaults.borderColor = '#1e293b';
+
+// codusur vem da URL: /vendedor/573
+const CODUSUR = parseInt(window.location.pathname.split('/').pop(), 10);
+let _charts = {};
+function drawChart(id, cfg) { if (_charts[id]) _charts[id].destroy(); _charts[id] = new Chart(document.getElementById(id), cfg); }
+
+// fetchJSON vem do /static/fetch-resiliente.js (retry + backoff + timeout)
+// Wrapper local pra UX de 403 (innerHTML custom).
+// IMPORTANTE: usar arrow function (não `async function fetchJSON`) — declarações de função
+// são HOISTED e sobrescrevem window.fetchJSON antes do const capturar, causando recursão infinita.
+const _fetchJSON_shared = window.fetchJSON;
+const fetchJSON = async (url, opts) => {
+  try {
+    return await _fetchJSON_shared(url, opts);
+  } catch (e) {
+    if (e && e.message === 'forbidden') {
+      document.body.innerHTML = '<div style="padding:40px;color:#f87171;font-family:sans-serif;text-align:center;"><h2>Sem permissão</h2><p>Você não pode ver este vendedor.</p><a href="/" style="color:#38bdf8;">Voltar pra Dashboard</a></div>';
+    }
+    throw e;
+  }
+};
+
+async function loadMe() {
+  try {
+    const j = await fetchJSON('/api/me');
+    document.getElementById('userInfo').textContent = `${j.nome} · ${j.role}`;
+    if (j.role === 'admin') document.getElementById('linkAdmin').classList.remove('hidden');
+    if (j.role === 'vendedor') document.getElementById('linkVendedores').style.display = 'none';
+  } catch (e) {}
+}
+
+async function loadCockpit() {
+  const d = await fetchJSON('/api/vendedor/' + CODUSUR);
+  const p = d.perfil;
+  const k = d.kpis;
+  const c = d.carteira;
+  const ce = d.comparativo_equipe;
+
+  // Header perfil
+  document.getElementById('p_nome').textContent = `${p.nome || '—'} · RCA ${p.codusur}`;
+  document.getElementById('p_meta').innerHTML = `
+    <span>Tipo: <strong>${p.tipo || '—'}</strong></span>
+    <span>Supervisor: <strong>${p.supervisor_nome || (p.codsupervisor || '—')}</strong></span>
+    <span>Cidade/UF: <strong>${p.cidade || '—'}/${p.estado || '—'}</strong></span>
+    <span>Tel: <strong>${p.telefone || '—'}</strong></span>
+    <span>Admitido: <strong>${p.dt_admissao || '—'}</strong></span>
+    <span>Status: <strong>${p.bloqueio === 'S' ? 'BLOQUEADO' : 'Ativo'}</strong></span>
+  `;
+
+  // KPIs
+  document.getElementById('k_venda').textContent = BRL.format(k.venda_liq || 0);
+  if (k.yoy_receita != null) {
+    const up = k.yoy_receita >= 0;
+    document.getElementById('k_venda_yoy').textContent = (up ? '↗ ' : '↘ ') + PCT(k.yoy_receita) + ' vs 12m anterior';
+    document.getElementById('k_venda_yoy').className = 'sub ' + (up ? 'up' : 'down');
+  }
+  document.getElementById('k_lucro').textContent = BRL.format(k.lucro || 0);
+  document.getElementById('k_rank').textContent = k.rank ? `#${k.rank} no ranking` : '';
+  document.getElementById('k_carteira').textContent = `${NUM.format(c.cadastrados)} cad`;
+  document.getElementById('k_carteira_seg').textContent = `${NUM.format(c.positivados)} positivados · ${c.champions} Champions · ${c.at_risk} At Risk`;
+  document.getElementById('k_pos').textContent = PCT(k.taxa_positivacao);
+  if (ce) {
+    const diff = (k.taxa_positivacao || 0) - ce.media_equipe;
+    const sign = diff >= 0 ? '▲' : '▼';
+    const cor = diff >= 0 ? 'var(--green)' : 'var(--red)';
+    document.getElementById('k_pos_eq').innerHTML = `<span style="color:${cor};">${sign} ${PCT(Math.abs(diff))}</span> · ${ce.label} (média ${PCT(ce.media_equipe)})`;
+  } else {
+    document.getElementById('k_pos_eq').textContent = '(sem comparativo)';
+  }
+
+  renderRfm(c);
+  loadAlertas();
+  loadSerie();
+  recarregarCarteira();
+}
+
+function renderRfm(c) {
+  // c tem: cadastrados, positivados, champions, at_risk — vou mostrar só esses 2 + outros (resto)
+  const outros = c.cadastrados - c.champions - c.at_risk;
+  drawChart('chartRfm', {
+    type: 'doughnut',
+    data: {
+      labels: ['Campeões', 'Em Risco', 'Outros'],
+      datasets: [{ data: [c.champions, c.at_risk, Math.max(0, outros)], backgroundColor: [COR_SEG.champions, COR_SEG.at_risk, '#475569'], borderWidth: 0 }]
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } } }
+  });
+}
+
+async function loadAlertas() {
+  try {
+    const d = await fetchJSON('/api/vendedor/' + CODUSUR + '/alertas');
+    const box = document.getElementById('alertasBox');
+    const lista = document.getElementById('alertas_lista');
+    if (!d.alertas || d.alertas.length === 0) { box.classList.add('hidden'); return; }
+    box.classList.remove('hidden');
+    lista.innerHTML = d.alertas.map(a => {
+      if (a.tipo === 'champions_top3') {
+        return `<div class="alerta ${a.tipo}">
+          <div class="alerta-msg">${a.msg}</div>
+          <div class="champs-list">
+            ${a.champions.map(ch => `<span class="ch" onclick="abrirDrill(${ch.codcli})" title="Drill 360°">${ch.cliente} (R$ ${NUM.format(Math.round(ch.lucro_12m))}/ano · ${ch.recencia_dias}d)</span>`).join('')}
+          </div>
+        </div>`;
+      }
+      return `<div class="alerta ${a.tipo}"><div class="alerta-msg">${a.msg}</div></div>`;
+    }).join('');
+  } catch (e) { console.warn('alertas:', e); }
+}
+
+async function loadSerie() {
+  try {
+    const d = await fetchJSON('/api/vendedor/' + CODUSUR + '/serie?periodo=12m');
+    const rows = (d.rows || []).slice().sort((a,b) => (a.AnoMes||0) - (b.AnoMes||0));
+    const labels = rows.map(r => { const am = String(r.AnoMes || ''); return MESES[parseInt(am.slice(4,6),10)] + '/' + am.slice(2,4); });
+    drawChart('chartSerie', {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Venda', data: rows.map(r => r.VendaLiquida), borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.1)', tension: 0.3 },
+          { label: 'Lucro', data: rows.map(r => r.LucroTotal),   borderColor: '#34d399', backgroundColor: 'rgba(52,211,153,0.1)', tension: 0.3 },
+        ]
+      },
+      options: { responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: c => c.dataset.label + ': ' + BRL.format(c.parsed.y) } } },
+        scales: { y: { ticks: { callback: v => BRL.format(v) } } }
+      }
+    });
+  } catch (e) { console.warn('serie:', e); }
+}
+
+// Filtro como array (multiselect via chips de segmento)
+let _fSeg = [];
+
+function toggleChip(grupo, el) {
+  // grupo é sempre 'segmento' agora (chips de status foram removidos)
+  const val = el.dataset.val;
+  el.classList.toggle('active');
+  const idx = _fSeg.indexOf(val);
+  if (idx >= 0) _fSeg.splice(idx, 1);
+  else _fSeg.push(val);
+  recarregarCarteira();
+}
+
+async function recarregarCarteira() {
+  const params = new URLSearchParams({ limit: 100, offset: 0, sort: 'receita_perdida', dir: 'desc' });
+  if (_fSeg.length) params.set('segmento', _fSeg.join(','));
+  try {
+    const d = await fetchJSON('/api/vendedor/' + CODUSUR + '/carteira?' + params.toString());
+    renderCarteira(d);
+  } catch (e) { console.warn('carteira:', e); }
+}
+
+function renderCarteira(d) {
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = (d.rows || []).map(c => `
+    <tr onclick="abrirDrill(${c.codcli})">
+      <td class="num"><span style="font-size:0.72rem;color:var(--text-dim);">${c.codcli || '—'}</span></td>
+      <td><strong>${c.cliente || '—'}</strong></td>
+      <td>${c.cidade || '—'}/${c.uf || '—'}</td>
+      <td class="num">${c.recencia_dias != null ? c.recencia_dias : '—'}</td>
+      <td class="num">${NUM.format(c.frequencia_12m || 0)}</td>
+      <td class="num">${BRL.format(c.venda_12m || 0)}</td>
+      <td class="num">${c.receita_perdida_proj > 0 ? '<strong style="color:var(--red);">' + BRL.format(c.receita_perdida_proj) + '</strong>' : '—'}</td>
+      <td><span class="badge b-${c.segmento}">${NOME_SEG[c.segmento] || c.segmento}</span></td>
+      <td>${c.telefone || '—'}</td>
+    </tr>
+  `).join('');
+}
+
+function exportarCSV() {
+  const params = new URLSearchParams({ vendedor: CODUSUR });
+  if (_fSeg.length) params.set('segmento', _fSeg.join(','));
+  // Reutiliza endpoint da carteira (já tem RBAC)
+  window.location.href = '/api/carteira/csv?' + params.toString();
+}
+
+async function carregarTudo() {
+  if (isNaN(CODUSUR)) {
+    document.getElementById('loading').innerHTML = '<div style="color:var(--red);">URL inválida.</div>';
+    return;
+  }
+  try {
+    await loadMe();
+    await loadCockpit();
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+  } catch (e) {
+    if (e.message !== 'forbidden') {
+      document.getElementById('loading').innerHTML = '<div style="color:var(--red);">Erro ao carregar cockpit: ' + e.message + '</div>';
+    }
+  }
+}
+
+carregarTudo();
+</script>
+</body>
+</html>

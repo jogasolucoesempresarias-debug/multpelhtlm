@@ -1,0 +1,14 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {"[CODSEC]": 100, "[SECAO]": "Sec A"},
+            {"[CODSEC]": 200, "[SECAO]": "Sec B"}
+          ]
+        }
+      ]
+    }
+  ]
+}

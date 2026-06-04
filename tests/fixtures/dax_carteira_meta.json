@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {"[CODCLI]": 1, "[CLIENTE]": "PADARIA TOP",   "[FANTASIA]": "TOP", "[MUNICENT]": "ILHEUS",   "[MUNICCOB]": "ILHEUS",   "[ESTENT]": "BA", "[TELCOB]": "(73) 9999", "[TELENT]": null, "[CODUSUR1]": 573, "[BLOQUEIO]": "N"},
+            {"[CODCLI]": 2, "[CLIENTE]": "BAR LOST",      "[FANTASIA]": null, "[MUNICENT]": "SALVADOR", "[MUNICCOB]": "SALVADOR", "[ESTENT]": "BA", "[TELCOB]": null,        "[TELENT]": null, "[CODUSUR1]": 100, "[BLOQUEIO]": "S"},
+            {"[CODCLI]": 3, "[CLIENTE]": "MERCADO MID",   "[FANTASIA]": null, "[MUNICENT]": "VITORIA",  "[MUNICCOB]": "VITORIA",  "[ESTENT]": "ES", "[TELCOB]": "(27) 8888", "[TELENT]": null, "[CODUSUR1]": 573, "[BLOQUEIO]": "N"}
+          ]
+        }
+      ]
+    }
+  ]
+}

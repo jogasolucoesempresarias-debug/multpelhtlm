@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {"[CODEPTO]": 1, "[VendaLiquida]": 500000.0, "[LucroTotal]": 100000.0, "[ClientesUnicos]": 80, "[ProdutosUnicos]": 50},
+            {"[CODEPTO]": 2, "[VendaLiquida]": 300000.0, "[LucroTotal]": 60000.0, "[ClientesUnicos]": 60, "[ProdutosUnicos]": 30},
+            {"[CODEPTO]": null, "[VendaLiquida]": 100000.0, "[LucroTotal]": 15000.0, "[ClientesUnicos]": 40, "[ProdutosUnicos]": 20}
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {"[CODUSUR]": 573, "[VendaLiq]": 850000.0, "[LucroTotal]": 145000.0},
+            {"[CODUSUR]": 100, "[VendaLiq]": 620000.0, "[LucroTotal]": 98000.0},
+            {"[CODUSUR]": 820, "[VendaLiq]": 410000.0, "[LucroTotal]": 65000.0}
+          ]
+        }
+      ]
+    }
+  ]
+}

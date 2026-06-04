@@ -1,0 +1,16 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {"[CODUSUR]": 573, "[NOME]": "JOAO VICTOR",       "[CODSUPERVISOR]": 18, "[TIPOVEND]": "R", "[CIDADE]": "ILHEUS",   "[ESTADO]": "BA", "[BLOQUEIO]": "N"},
+            {"[CODUSUR]": 100, "[NOME]": "MARIA SILVA",       "[CODSUPERVISOR]": 18, "[TIPOVEND]": "R", "[CIDADE]": "ILHEUS",   "[ESTADO]": "BA", "[BLOQUEIO]": "N"},
+            {"[CODUSUR]": 820, "[NOME]": "OUTRO TIME",        "[CODSUPERVISOR]": 99, "[TIPOVEND]": "R", "[CIDADE]": "VITORIA",  "[ESTADO]": "ES", "[BLOQUEIO]": "N"},
+            {"[CODUSUR]": 999, "[NOME]": "RCA TRANSFERENCIA", "[CODSUPERVISOR]": 1,  "[TIPOVEND]": "I", "[CIDADE]": null,        "[ESTADO]": null, "[BLOQUEIO]": "N"}
+          ]
+        }
+      ]
+    }
+  ]
+}

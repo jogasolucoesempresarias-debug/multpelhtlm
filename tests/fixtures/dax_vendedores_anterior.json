@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {"[CODUSUR]": 573, "[VendaLiqAnt]": 720000.0},
+            {"[CODUSUR]": 100, "[VendaLiqAnt]": 700000.0},
+            {"[CODUSUR]": 820, "[VendaLiqAnt]": 380000.0}
+          ]
+        }
+      ]
+    }
+  ]
+}

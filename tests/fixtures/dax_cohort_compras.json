@@ -1,0 +1,20 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {"[CODCLI]": 1, "[AnoMes]": 202505},
+            {"[CODCLI]": 1, "[AnoMes]": 202506},
+            {"[CODCLI]": 1, "[AnoMes]": 202507},
+            {"[CODCLI]": 2, "[AnoMes]": 202505},
+            {"[CODCLI]": 2, "[AnoMes]": 202506},
+            {"[CODCLI]": 3, "[AnoMes]": 202505},
+            {"[CODCLI]": 4, "[AnoMes]": 202506},
+            {"[CODCLI]": 4, "[AnoMes]": 202507}
+          ]
+        }
+      ]
+    }
+  ]
+}

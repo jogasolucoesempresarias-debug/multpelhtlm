@@ -1,0 +1,14 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {"[CODEPTO]": 1, "[DEPARTAMENTO]": "ALIMENTICIOS"},
+            {"[CODEPTO]": 2, "[DEPARTAMENTO]": "EMBALAGENS"}
+          ]
+        }
+      ]
+    }
+  ]
+}

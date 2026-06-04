@@ -1,0 +1,14 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {"[CODCLI]": 1, "[Compras12m]": 20, "[Lucro12m]": 50000.0, "[Venda12m]": 200000.0},
+            {"[CODCLI]": 3, "[Compras12m]": 5,  "[Lucro12m]": 8000.0,  "[Venda12m]": 30000.0}
+          ]
+        }
+      ]
+    }
+  ]
+}

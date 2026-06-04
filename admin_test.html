@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Multpel Analytics — Admin</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2338bdf8'/%3E%3Cstop offset='1' stop-color='%23818cf8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='6' fill='url(%23g)'/%3E%3Ctext x='16' y='22' font-family='DM Sans,sans-serif' font-size='18' font-weight='700' text-anchor='middle' fill='%230a0e17'%3EM%3C/text%3E%3C/svg%3E">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="/static/fetch-resiliente.js"></script>
+<style>
+  :root {
+    --bg: #0a0e17; --surface: #111827; --surface2: #1a2235; --border: #1e293b;
+    --text: #e2e8f0; --text-dim: #94a3b8;
+    --accent: #38bdf8; --accent2: #818cf8;
+    --green: #34d399; --red: #f87171; --orange: #fb923c; --yellow: #fbbf24;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  body::before { content: ''; position: fixed; inset: 0; background: radial-gradient(circle at 25% 0%, rgba(56,189,248,0.05), transparent 60%); pointer-events: none; z-index: -1; }
+  .topbar { padding: 14px 26px; display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--border); background: rgba(17,24,39,0.7); backdrop-filter: blur(6px); }
+  .topbar a { color: var(--text-dim); text-decoration: none; font-size: 0.84rem; padding: 6px 10px; border-radius: 6px; transition: 0.15s; }
+  .topbar a:hover { color: var(--text); background: var(--surface2); }
+  .topbar a.active { color: var(--accent); background: var(--surface2); font-weight: 600; }
+  .topbar .spacer { flex: 1; }
+  .topbar #userInfo { color: var(--text-dim); font-size: 0.78rem; }
+  .container { padding: 22px 26px; max-width: 1400px; margin: 0 auto; }
+  h1 { font-size: 1.4rem; font-weight: 700; margin-bottom: 16px; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 11px; padding: 16px; margin-bottom: 16px; }
+  .panel h2 { font-size: 0.86rem; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-dim); font-weight: 600; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; background: var(--surface2); }
+  tr:hover td { background: var(--surface2); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+  .b-admin    { background: rgba(56,189,248,0.15); color: var(--accent); }
+  .b-supervisor { background: rgba(251,146,60,0.15); color: var(--orange); }
+  .b-vendedor { background: rgba(52,211,153,0.15); color: var(--green); }
+  .b-viewer   { background: var(--surface2); color: var(--text-dim); }
+  .b-inativo  { background: rgba(248,113,113,0.15); color: var(--red); }
+  .btn { padding: 6px 12px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); border-radius: 6px; cursor: pointer; font-size: 0.78rem; font-family: inherit; font-weight: 500; }
+  .btn:hover { border-color: var(--accent); }
+  .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: var(--bg); border-color: transparent; font-weight: 700; }
+  .btn-danger { color: var(--red); border-color: rgba(248,113,113,0.3); }
+  .btn-success { color: var(--green); border-color: rgba(52,211,153,0.3); }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .ff { display: flex; flex-direction: column; gap: 4px; }
+  .ff label { font-size: 0.72rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+  .ff input, .ff select { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 7px 10px; border-radius: 6px; font-size: 0.84rem; font-family: inherit; }
+  .ff input:focus, .ff select:focus { outline: none; border-color: var(--accent); }
+  .ff.full { grid-column: 1 / -1; }
+  .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .toolbar .grow { flex: 1; }
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
+  .modal-bg.show { display: flex; }
+  .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 22px; width: 100%; max-width: 600px; max-height: 90vh; overflow-y: auto; }
+  .modal h3 { font-size: 1.1rem; margin-bottom: 14px; }
+  .modal-acoes { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+  .toast { position: fixed; bottom: 20px; right: 20px; background: var(--surface); border: 1px solid var(--accent); color: var(--text); padding: 12px 18px; border-radius: 8px; font-size: 0.86rem; z-index: 100; display: none; max-width: 420px; }
+  .toast.show { display: block; animation: slidein 0.2s ease-out; }
+  .toast.err { border-color: var(--red); color: var(--red); }
+  .toast.ok { border-color: var(--green); color: var(--green); }
+  @keyframes slidein { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+  .hidden { display: none !important; }
+  .cron-info { font-size: 0.74rem; color: var(--text-dim); }
+  .cron-on { color: var(--green); }
+  .cron-off { color: var(--text-dim); }
+  .mono { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <strong style="color:var(--accent);">Multpel</strong>
+  <a href="/">Dashboard</a>
+  <a href="/carteira">Carteira</a>
+  <a href="/vendedores">Vendedores</a>
+  <a href="/categorias">Categorias</a>
+  <a href="/mix">Mix</a>
+  <a href="/tendencias">Tendências</a>
+  <a href="/admin" class="active">Admin</a>
+  <span class="spacer"></span>
+  <span id="userInfo">—</span>
+  <a href="/logout">Sair</a>
+</div>
+
+<div class="container">
+  <h1>Administração de usuários</h1>
+
+  <div class="panel">
+    <div class="toolbar">
+      <h2 style="margin:0;">Usuários cadastrados</h2>
+      <span class="grow"></span>
+      <button class="btn btn-primary" onclick="abrirNovo()">+ Novo usuário</button>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Nome</th>
+          <th>Email</th>
+          <th>Role</th>
+          <th>Vendedor/Time</th>
+          <th>Telefone</th>
+          <th>Cron envio</th>
+          <th>Ações</th>
+        </tr>
+      </thead>
+      <tbody id="tbodyUsers"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Modal criar/editar -->
+<div class="modal-bg" id="modal">
+  <div class="modal">
+    <h3 id="modalTitulo">Novo usuário</h3>
+    <div class="form-grid">
+      <div class="ff">
+        <label>Nome</label>
+        <input type="text" id="f_nome" placeholder="Ex: João Silva">
+      </div>
+      <div class="ff">
+        <label>Email</label>
+        <input type="email" id="f_email" placeholder="email@multpel.com.br">
+      </div>
+      <div class="ff">
+        <label>Role</label>
+        <select id="f_role" onchange="atualizarVisibilidadeRoleFields()">
+          <option value="vendedor">Vendedor</option>
+          <option value="supervisor">Supervisor</option>
+          <option value="admin">Admin</option>
+          <option value="viewer">Viewer (somente leitura)</option>
+        </select>
+      </div>
+      <div class="ff" id="ff_telefone">
+        <label>Telefone</label>
+        <input type="text" id="f_telefone" placeholder="(11) 91234-5678">
+      </div>
+      <div class="ff" id="ff_codusur">
+        <label>Vendedor (codusur)</label>
+        <input list="dl_vendedores" id="f_codusur" placeholder="Digite nome ou código">
+        <datalist id="dl_vendedores"></datalist>
+      </div>
+      <div class="ff" id="ff_codsupervisor">
+        <label>Supervisor (codsupervisor)</label>
+        <input list="dl_supervisores" id="f_codsupervisor" placeholder="Digite nome ou código">
+        <datalist id="dl_supervisores"></datalist>
+      </div>
+      <div class="ff full">
+        <label>Senha (deixe vazio pra gerar automática)</label>
+        <input type="text" id="f_senha" placeholder="(opcional — auto-gerada se vazio)">
+      </div>
+      <div class="ff">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" id="f_cron_enabled" style="width:auto;">
+          Cron ativo (envia relatório por email)
+        </label>
+      </div>
+      <div class="ff">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" id="f_ativo" checked style="width:auto;">
+          Usuário ativo (pode logar)
+        </label>
+      </div>
+      <div class="ff">
+        <label>Horário de envio</label>
+        <input type="time" id="f_cron_horario" value="08:00">
+      </div>
+      <div class="ff">
+        <label>Frequência</label>
+        <select id="f_cron_frequencia">
+          <option value="diaria">Diária</option>
+          <option value="semanal_seg">Semanal (segunda)</option>
+          <option value="semanal_sex">Semanal (sexta)</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-acoes">
+      <button class="btn" onclick="fecharModal()">Cancelar</button>
+      <button class="btn btn-primary" id="btnSalvar" onclick="salvar()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+let _users = [];
+let _vendedoresMap = {};
+let _supervisoresMap = {};
+let _editandoId = null;
+
+function toast(msg, tipo) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (tipo || 'ok');
+  setTimeout(() => t.className = 'toast', 4500);
+}
+
+async function loadMe() {
+  try {
+    const j = await fetchJSON('/api/me');
+    document.getElementById('userInfo').textContent = `${j.nome} · ${j.role}`;
+  } catch (e) {}
+}
+
+async function loadMaps() {
+  try {
+    const v = await fetchJSON('/api/_internal/vendedores-map');
+    _vendedoresMap = v.vendedores || {};
+    const s = await fetchJSON('/api/_internal/supervisores-map');
+    _supervisoresMap = s.supervisores || {};
+    // Popula datalists
+    const dlV = document.getElementById('dl_vendedores');
+    dlV.innerHTML = Object.entries(_vendedoresMap)
+      .sort((a, b) => (a[1].nome || '').localeCompare(b[1].nome || ''))
+      .map(([cu, v]) => `<option value="${v.nome} (${cu})">`).join('');
+    const dlS = document.getElementById('dl_supervisores');
+    dlS.innerHTML = Object.entries(_supervisoresMap)
+      .sort((a, b) => (a[1].nome || '').localeCompare(b[1].nome || ''))
+      .map(([cs, s]) => `<option value="${s.nome} (${cs})">`).join('');
+  } catch (e) { console.warn('maps:', e); }
+}
+
+async function loadUsers() {
+  try {
+    const j = await fetchJSON('/api/admin/users');
+    _users = j.users || [];
+    renderTabela();
+  } catch (e) {
+    toast('Falha ao carregar usuários: ' + (e.message || e), 'err');
+  }
+}
+
+function nomeVendedor(cu) {
+  if (!cu) return '—';
+  const v = _vendedoresMap[String(cu)];
+  return v ? `${v.nome} (${cu})` : `RCA ${cu}`;
+}
+function nomeSupervisor(cs) {
+  if (!cs) return '—';
+  const s = _supervisoresMap[String(cs)];
+  return s ? `${s.nome} (${cs})` : `Sup ${cs}`;
+}
+
+function renderTabela() {
+  const tbody = document.getElementById('tbodyUsers');
+  tbody.innerHTML = _users.map(u => {
+    const vendedorTime = u.role === 'vendedor'
+      ? nomeVendedor(u.codusur)
+      : (u.role === 'supervisor' ? nomeSupervisor(u.codsupervisor) : '—');
+    const cron = u.cron_enabled
+      ? `<span class="cron-on">${u.cron_horario || ''} · ${u.cron_frequencia || ''}</span>`
+      : `<span class="cron-off">desligado</span>`;
+    const inativoTag = !u.ativo ? ' <span class="badge b-inativo">INATIVO</span>' : '';
+    return `
+      <tr>
+        <td>${u.nome}${inativoTag}</td>
+        <td class="mono">${u.email}</td>
+        <td><span class="badge b-${u.role}">${u.role.toUpperCase()}</span></td>
+        <td>${vendedorTime}</td>
+        <td class="mono">${u.telefone || '—'}</td>
+        <td class="cron-info">${cron}</td>
+        <td>
+          <button class="btn" onclick="abrirEdicao(${u.id})">Editar</button>
+          <button class="btn btn-success" onclick="enviarRelatorio(${u.id})" title="Enviar relatório por email agora">📧 Enviar</button>
+          ${u.ativo ? `<button class="btn btn-danger" onclick="desativar(${u.id})">Desativar</button>` : ''}
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function extrairCodigo(valor) {
+  if (!valor) return '';
+  const m = String(valor).match(/\((\d+)\)\s*$/);
+  if (m) return m[1];
+  if (/^\d+$/.test(String(valor).trim())) return String(valor).trim();
+  return '';
+}
+
+function atualizarVisibilidadeRoleFields() {
+  const role = document.getElementById('f_role').value;
+  document.getElementById('ff_codusur').style.display       = (role === 'vendedor')   ? '' : 'none';
+  document.getElementById('ff_codsupervisor').style.display = (role === 'supervisor') ? '' : 'none';
+}
+
+function abrirNovo() {
+  _editandoId = null;
+  document.getElementById('modalTitulo').textContent = 'Novo usuário';
+  document.getElementById('f_nome').value = '';
+  document.getElementById('f_email').value = '';
+  document.getElementById('f_role').value = 'vendedor';
+  document.getElementById('f_telefone').value = '';
+  document.getElementById('f_codusur').value = '';
+  document.getElementById('f_codsupervisor').value = '';
+  document.getElementById('f_senha').value = '';
+  document.getElementById('f_cron_enabled').checked = false;
+  document.getElementById('f_ativo').checked = true;
+  document.getElementById('f_cron_horario').value = '08:00';
+  document.getElementById('f_cron_frequencia').value = 'diaria';
+  atualizarVisibilidadeRoleFields();
+  document.getElementById('modal').classList.add('show');
+}
+
+function abrirEdicao(id) {
+  const u = _users.find(x => x.id === id);
+  if (!u) return;
+  _editandoId = id;
+  document.getElementById('modalTitulo').textContent = 'Editar usuário';
+  document.getElementById('f_nome').value = u.nome || '';
+  document.getElementById('f_email').value = u.email || '';
+  document.getElementById('f_role').value = u.role || 'viewer';
+  document.getElementById('f_telefone').value = u.telefone || '';
+  document.getElementById('f_codusur').value = u.codusur ? nomeVendedor(u.codusur) : '';
+  document.getElementById('f_codsupervisor').value = u.codsupervisor ? nomeSupervisor(u.codsupervisor) : '';
+  document.getElementById('f_senha').value = '';
+  document.getElementById('f_cron_enabled').checked = !!u.cron_enabled;
+  document.getElementById('f_ativo').checked = !!u.ativo;
+  document.getElementById('f_cron_horario').value = (u.cron_horario || '08:00').substring(0, 5);
+  document.getElementById('f_cron_frequencia').value = u.cron_frequencia || 'diaria';
+  atualizarVisibilidadeRoleFields();
+  document.getElementById('modal').classList.add('show');
+}
+
+function fecharModal() {
+  document.getElementById('modal').classList.remove('show');
+  _editandoId = null;
+}
+
+async function salvar() {
+  const btn = document.getElementById('btnSalvar');
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  try {
+    const role = document.getElementById('f_role').value;
+    const codusur = role === 'vendedor' ? extrairCodigo(document.getElementById('f_codusur').value) : '';
+    const codsupervisor = role === 'supervisor' ? extrairCodigo(document.getElementById('f_codsupervisor').value) : '';
+
+    const body = {
+      nome: document.getElementById('f_nome').value.trim(),
+      email: document.getElementById('f_email').value.trim(),
+      role,
+      codusur: codusur ? parseInt(codusur, 10) : null,
+      codsupervisor: codsupervisor ? parseInt(codsupervisor, 10) : null,
+      telefone: document.getElementById('f_telefone').value.trim(),
+      cron_enabled: document.getElementById('f_cron_enabled').checked,
+      ativo: document.getElementById('f_ativo').checked,
+      cron_horario: document.getElementById('f_cron_horario').value,
+      cron_frequencia: document.getElementById('f_cron_frequencia').value,
+    };
+    const senha = document.getElementById('f_senha').value.trim();
+    if (senha) body.senha = senha;
+
+    const url = _editandoId ? `/api/admin/users/${_editandoId}` : '/api/admin/users';
+    const method = _editandoId ? 'PUT' : 'POST';
+    const r = await fetch(url, {
+      method, credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || 'Erro');
+
+    if (j.senha_gerada) {
+      toast(`Usuário criado. Senha inicial: ${j.senha_gerada} (copie e envie ao usuário)`, 'ok');
+    } else {
+      toast('Salvo com sucesso', 'ok');
+    }
+    fecharModal();
+    await loadUsers();
+  } catch (e) {
+    toast('Erro: ' + (e.message || e), 'err');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Salvar';
+  }
+}
+
+async function desativar(id) {
+  if (!confirm('Desativar este usuário? Ele não poderá mais fazer login.')) return;
+  try {
+    const r = await fetch(`/api/admin/users/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || 'Erro');
+    toast('Usuário desativado', 'ok');
+    await loadUsers();
+  } catch (e) {
+    toast('Erro: ' + (e.message || e), 'err');
+  }
+}
+
+async function enviarRelatorio(id) {
+  const u = _users.find(x => x.id === id);
+  if (!u) return;
+  if (!confirm(`Enviar relatório agora pra ${u.nome} (${u.email})?`)) return;
+  toast('Enviando...', 'ok');
+  try {
+    const r = await fetch(`/api/admin/enviar-relatorio/${id}`, { method: 'POST', credentials: 'same-origin' });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || 'Erro');
+    toast(`✓ Enviado! ${j.clientes_no_anexo || 0} clientes · ${j.anexos_kb || 0}KB · id=${j.message_id || '—'}`, 'ok');
+  } catch (e) {
+    toast('Erro ao enviar: ' + (e.message || e), 'err');
+  }
+}
+
+(async () => {
+  await loadMe();
+  await loadMaps();
+  await loadUsers();
+})();
+</script>
+</body>
+</html>

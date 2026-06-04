@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {"[CODCLI]": 1, "[UltimaCompra]": "2026-05-18T00:00:00"},
+            {"[CODCLI]": 2, "[UltimaCompra]": "2025-11-05T00:00:00"},
+            {"[CODCLI]": 3, "[UltimaCompra]": "2026-04-20T00:00:00"}
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+# Git
+.git
+.gitignore
+.github
+
+# Virtual envs
+.venv
+venv
+env
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.coverage
+htmlcov
+
+# Secrets (NUNCA na imagem)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs e cache local
+*.log
+logs/
+.cache/
+cookies.txt
+
+# Dev-only
+tests/
+docker-compose.dev.yml
+
+# Docs internas (não vão pra imagem)
+README.md
+_PROGRESSO.md
+
+# Snapshots do PBI (metadata interno)
+_rca_*.json
+
+# Exports gerados em dev
+*.xlsx
+*.pdf
+relatorio_*.csv

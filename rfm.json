@@ -1,0 +1,8133 @@
+{
+  "cidades_ativas": [
+    {
+      "cidade": "AFONSO CLAUDIO",
+      "uf": "ES"
+    },
+    {
+      "cidade": "AGUA DOCE DO NO",
+      "uf": "ES"
+    },
+    {
+      "cidade": "AGUA DOCE DO NORTE",
+      "uf": "ES"
+    },
+    {
+      "cidade": "AGUIA BRANCA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "AIMORES",
+      "uf": "MG"
+    },
+    {
+      "cidade": "ALCOBACA",
+      "uf": "BA"
+    },
+    {
+      "cidade": "ALCOBA\u00c7A",
+      "uf": "BA"
+    },
+    {
+      "cidade": "ALEGRE",
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALFREDO CHAVES",
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALTO RIO NOVO",
+      "uf": "ES"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "APERIBE",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "APIACA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "ARACRUZ",
+      "uf": "ES"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "BAIXO GUANDU",
+      "uf": "ES"
+    },
+    {
+      "cidade": "BARRA DE SAO FR",
+      "uf": "ES"
+    },
+    {
+      "cidade": "BARRA DE SAO FRANCISCO",
+      "uf": "ES"
+    },
+    {
+      "cidade": "BELO HORIZONTE",
+      "uf": "MG"
+    },
+    {
+      "cidade": "BIGUACU",
+      "uf": "SC"
+    },
+    {
+      "cidade": "BOA ESPERANCA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOM JESUS DO ITABAPOANA",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "BOM JESUS DO NORTE",
+      "uf": "ES"
+    },
+    {
+      "cidade": "BRASILIA",
+      "uf": "DF"
+    },
+    {
+      "cidade": "BREJETUBA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "CABO FRIO",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "uf": "ES"
+    },
+    {
+      "cidade": "CAMACAN",
+      "uf": "BA"
+    },
+    {
+      "cidade": "CAMBUCI",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CAMPOS DOS GOYTACAZES",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CANAVIEIRAS",
+      "uf": "BA"
+    },
+    {
+      "cidade": "CARANGOLA",
+      "uf": "MG"
+    },
+    {
+      "cidade": "CARAPEBUS",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CARAVELAS",
+      "uf": "BA"
+    },
+    {
+      "cidade": "CARDOSO MOREIRA",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CARIACICA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "uf": "ES"
+    },
+    {
+      "cidade": "COLATINA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DA BARRA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DE MACABU",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CONCEICAO DO CASTELO",
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEI\u00c7\u00c3O DA BA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "CUPARAQUE",
+      "uf": "MG"
+    },
+    {
+      "cidade": "DIAMANTINA",
+      "uf": "MG"
+    },
+    {
+      "cidade": "DIVINO DAS LARANJEIRAS",
+      "uf": "MG"
+    },
+    {
+      "cidade": "DIVINO DE SAO LOURENCO",
+      "uf": "ES"
+    },
+    {
+      "cidade": "DIVINO SAO LOUR",
+      "uf": "ES"
+    },
+    {
+      "cidade": "DOMINGOS MARTIN",
+      "uf": "ES"
+    },
+    {
+      "cidade": "DORES DO RIO PRETO",
+      "uf": "ES"
+    },
+    {
+      "cidade": "ECOPORANGA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "EUNAPOLIS",
+      "uf": "BA"
+    },
+    {
+      "cidade": "EUN\u00c1POLIS",
+      "uf": "BA"
+    },
+    {
+      "cidade": "FIRMINO ALVES",
+      "uf": "BA"
+    },
+    {
+      "cidade": "FLORESTA AZUL",
+      "uf": "BA"
+    },
+    {
+      "cidade": "FRUTAL",
+      "uf": "MG"
+    },
+    {
+      "cidade": "FUNDAO",
+      "uf": "ES"
+    },
+    {
+      "cidade": "GOVERNADOR LINDENBERG",
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUACUI",
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUAJERU",
+      "uf": "BA"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARATINGA",
+      "uf": "BA"
+    },
+    {
+      "cidade": "GUARULHOS",
+      "uf": "SP"
+    },
+    {
+      "cidade": "IBATIBA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "IBICARAI",
+      "uf": "BA"
+    },
+    {
+      "cidade": "IBICUI",
+      "uf": "BA"
+    },
+    {
+      "cidade": "IBIRACU",
+      "uf": "ES"
+    },
+    {
+      "cidade": "IBIRA\u00c7U",
+      "uf": "ES"
+    },
+    {
+      "cidade": "IBITIRAMA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "ICONHA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "IGUAI",
+      "uf": "BA"
+    },
+    {
+      "cidade": "ILHEUS",
+      "uf": "BA"
+    },
+    {
+      "cidade": "ILH\u00c9US",
+      "uf": "BA"
+    },
+    {
+      "cidade": "IRUPI",
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITABELA",
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITABUNA",
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITACARE",
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITAGIMIRIM",
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITAGUACU",
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAGUA\u00c7U",
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAJUIPE",
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITALVA",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ITAMARAJU",
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITAMBE",
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITAOCARA",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ITAPEBI",
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPERUNA",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ITAPETINGA",
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITARANA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITARANTIM",
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITORORO",
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITUIUTABA",
+      "uf": "MG"
+    },
+    {
+      "cidade": "IUNA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "JAGUARE",
+      "uf": "ES"
+    },
+    {
+      "cidade": "JEQUIE",
+      "uf": "BA"
+    },
+    {
+      "cidade": "JERONIMO MONTEI",
+      "uf": "ES"
+    },
+    {
+      "cidade": "JOAO NEIVA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "JO\u00c3O NEIVA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "LARANJA DA TERR",
+      "uf": "ES"
+    },
+    {
+      "cidade": "LINHARES",
+      "uf": "ES"
+    },
+    {
+      "cidade": "MACAE",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "MACARANI",
+      "uf": "BA"
+    },
+    {
+      "cidade": "MANTENA",
+      "uf": "MG"
+    },
+    {
+      "cidade": "MANTENOPOLIS",
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARAU",
+      "uf": "BA"
+    },
+    {
+      "cidade": "MARECHAL FLORIA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARILANDIA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "MASCOTE",
+      "uf": "BA"
+    },
+    {
+      "cidade": "MEDEIROS NETO",
+      "uf": "BA"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIRACEMA",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "MONTANHA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "MONTIVIDIU DO N",
+      "uf": "GO"
+    },
+    {
+      "cidade": "MUCURI",
+      "uf": "BA"
+    },
+    {
+      "cidade": "MUCURICI",
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUNIZ FREIRE",
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "uf": "ES"
+    },
+    {
+      "cidade": "NATIVIDADE",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "NOVA VENECIA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "NOVA VICOSA",
+      "uf": "BA"
+    },
+    {
+      "cidade": "PANCAD",
+      "uf": "ES"
+    },
+    {
+      "cidade": "PANCAS",
+      "uf": "ES"
+    },
+    {
+      "cidade": "PEDRO CANARIO",
+      "uf": "ES"
+    },
+    {
+      "cidade": "PENALVA",
+      "uf": "MA"
+    },
+    {
+      "cidade": "PINHEIROS",
+      "uf": "ES"
+    },
+    {
+      "cidade": "PIRAPETINGA",
+      "uf": "MG"
+    },
+    {
+      "cidade": "PIUMA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "POCOES",
+      "uf": "BA"
+    },
+    {
+      "cidade": "PONTO BELO",
+      "uf": "ES"
+    },
+    {
+      "cidade": "PORANGATU",
+      "uf": "GO"
+    },
+    {
+      "cidade": "PORCIUNCULA",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "PORTO SEGURO",
+      "uf": "BA"
+    },
+    {
+      "cidade": "POTIRAGUA",
+      "uf": "BA"
+    },
+    {
+      "cidade": "PRADO",
+      "uf": "BA"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "uf": "ES"
+    },
+    {
+      "cidade": "QUISSAMA",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "RIO BANANAL",
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO BONITO",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "RIO DAS OSTRAS",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "RIO DE JANEIRO",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA CRUZ CABRALIA",
+      "uf": "BA"
+    },
+    {
+      "cidade": "SANTA CRUZ DA VITORIA",
+      "uf": "BA"
+    },
+    {
+      "cidade": "SANTA LEOPOLDIN",
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA LUZIA",
+      "uf": "BA"
+    },
+    {
+      "cidade": "SANTA MARIA DE",
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA MARIA DE JETIBA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA TERESA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTO ANTONIO DE PADUA",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SAO DOMINGOS DO",
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO DOMINGOS DO NORTE",
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO FIDELIS",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SAO FRANCISCO DE ITABAPOANA",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SAO FRANCISCO DO GLORIA",
+      "uf": "MG"
+    },
+    {
+      "cidade": "SAO GABRIEL DA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO GABRIEL DA PALHA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO JOAO DA BAR",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SAO JOSE DA VITORIA",
+      "uf": "BA"
+    },
+    {
+      "cidade": "SAO JOSE DE UBA",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SAO JOSE DO CALCADO",
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO PAULO",
+      "uf": "SP"
+    },
+    {
+      "cidade": "SAO ROQUE DO CANAA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "SOORETAMA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "S\u00c3O JO\u00c3O DA BAR",
+      "uf": "RJ"
+    },
+    {
+      "cidade": "S\u00c3O MATEUS",
+      "uf": "ES"
+    },
+    {
+      "cidade": "TEIXEIRA DE FREITAS",
+      "uf": "BA"
+    },
+    {
+      "cidade": "TROMBUDO CENTRAL",
+      "uf": "SC"
+    },
+    {
+      "cidade": "UBAITABA",
+      "uf": "BA"
+    },
+    {
+      "cidade": "UNA",
+      "uf": "BA"
+    },
+    {
+      "cidade": "URUCUCA",
+      "uf": "BA"
+    },
+    {
+      "cidade": "VAREGM ALTA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "VENDA NOVA DO IMIGRANTE",
+      "uf": "ES"
+    },
+    {
+      "cidade": "VIANA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "VIEIRAS",
+      "uf": "MG"
+    },
+    {
+      "cidade": "VILA PAVAO",
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VALERIO",
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA DA CONQUISTA",
+      "uf": "BA"
+    },
+    {
+      "cidade": "VIT\u00d3RIA",
+      "uf": "ES"
+    }
+  ],
+  "cross_filter_tuples": [
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 2,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 17,
+      "codusur": 2,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 17,
+      "codusur": 2,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 17,
+      "codusur": 2,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VENDA NOVA DO IMIGRANTE",
+      "codsupervisor": 17,
+      "codusur": 2,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "codsupervisor": null,
+      "codusur": 4,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": null,
+      "codusur": 4,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": null,
+      "codusur": 4,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": null,
+      "codusur": 4,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": null,
+      "codusur": 4,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": null,
+      "codusur": 4,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": null,
+      "codusur": 4,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": 17,
+      "codusur": 7,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "codsupervisor": 17,
+      "codusur": 7,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 7,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUACUI",
+      "codsupervisor": 17,
+      "codusur": 7,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IRUPI",
+      "codsupervisor": 17,
+      "codusur": 7,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 17,
+      "codusur": 7,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 17,
+      "codusur": 7,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PIUMA",
+      "codsupervisor": 17,
+      "codusur": 7,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ARACRUZ",
+      "codsupervisor": 15,
+      "codusur": 12,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BAIXO GUANDU",
+      "codsupervisor": 15,
+      "codusur": 12,
+      "uf": "ES"
+    },
+    {
+      "cidade": "COLATINA",
+      "codsupervisor": 15,
+      "codusur": 12,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAGUACU",
+      "codsupervisor": 15,
+      "codusur": 12,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAGUA\u00c7U",
+      "codsupervisor": 15,
+      "codusur": 12,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITARANA",
+      "codsupervisor": 15,
+      "codusur": 12,
+      "uf": "ES"
+    },
+    {
+      "cidade": "LINHARES",
+      "codsupervisor": 15,
+      "codusur": 12,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARILANDIA",
+      "codsupervisor": 15,
+      "codusur": 12,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA MARIA DE",
+      "codsupervisor": 15,
+      "codusur": 12,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA MARIA DE JETIBA",
+      "codsupervisor": 15,
+      "codusur": 12,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA TERESA",
+      "codsupervisor": 15,
+      "codusur": 12,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO ROQUE DO CANAA",
+      "codsupervisor": 15,
+      "codusur": 12,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 23,
+      "codusur": 15,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 20,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 17,
+      "codusur": 20,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 17,
+      "codusur": 20,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 17,
+      "codusur": 20,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 25,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 17,
+      "codusur": 25,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DO CASTELO",
+      "codsupervisor": 17,
+      "codusur": 25,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DOMINGOS MARTIN",
+      "codsupervisor": 17,
+      "codusur": 25,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARECHAL FLORIA",
+      "codsupervisor": 17,
+      "codusur": 25,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VENDA NOVA DO IMIGRANTE",
+      "codsupervisor": 17,
+      "codusur": 25,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": 17,
+      "codusur": 27,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 27,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 17,
+      "codusur": 27,
+      "uf": "ES"
+    },
+    {
+      "cidade": "COLATINA",
+      "codsupervisor": 17,
+      "codusur": 27,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUACUI",
+      "codsupervisor": 17,
+      "codusur": 27,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 17,
+      "codusur": 27,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ICONHA",
+      "codsupervisor": 17,
+      "codusur": 27,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 27,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JERONIMO MONTEI",
+      "codsupervisor": 17,
+      "codusur": 27,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO JOSE DO CALCADO",
+      "codsupervisor": 17,
+      "codusur": 27,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 17,
+      "codusur": 27,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 17,
+      "codusur": 27,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOM JESUS DO ITABAPOANA",
+      "codsupervisor": 17,
+      "codusur": 27,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 29,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 29,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 17,
+      "codusur": 29,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": 17,
+      "codusur": 29,
+      "uf": "ES"
+    },
+    {
+      "cidade": "EUNAPOLIS",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ILHEUS",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITARANTIM",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITORORO",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "BA"
+    },
+    {
+      "cidade": "PORTO SEGURO",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "BA"
+    },
+    {
+      "cidade": "TEIXEIRA DE FREITAS",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "BA"
+    },
+    {
+      "cidade": "AGUIA BRANCA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALFREDO CHAVES",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "APIACA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ARACRUZ",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BARRA DE SAO FRANCISCO",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DA BARRA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DIVINO DE SAO LOURENCO",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DOMINGOS MARTIN",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DORES DO RIO PRETO",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "FUNDAO",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUACUI",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IBATIBA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ICONHA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IUNA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JERONIMO MONTEI",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JOAO NEIVA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "LINHARES",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MONTANHA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUNIZ FREIRE",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PIUMA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO BANANAL",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA TERESA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO GABRIEL DA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO ROQUE DO CANAA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VENDA NOVA DO IMIGRANTE",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VALERIO",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITUIUTABA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "MG"
+    },
+    {
+      "cidade": "APERIBE",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "BOM JESUS DO ITABAPOANA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CABO FRIO",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CAMPOS DOS GOYTACAZES",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ITAPERUNA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "MACAE",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "NATIVIDADE",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "RIO BONITO",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SANTO ANTONIO DE PADUA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SAO FRANCISCO DE ITABAPOANA",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "S\u00c3O JO\u00c3O DA BAR",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "GUARULHOS",
+      "codsupervisor": 35,
+      "codusur": 34,
+      "uf": "SP"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 31,
+      "codusur": 72,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": null,
+      "codusur": 99,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALFREDO CHAVES",
+      "codsupervisor": 17,
+      "codusur": 116,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "codsupervisor": 17,
+      "codusur": 116,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 116,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ICONHA",
+      "codsupervisor": 17,
+      "codusur": 116,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 116,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 17,
+      "codusur": 116,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PIUMA",
+      "codsupervisor": 17,
+      "codusur": 116,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 17,
+      "codusur": 116,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 4,
+      "codusur": 135,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": 4,
+      "codusur": 135,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 4,
+      "codusur": 223,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 32,
+      "codusur": 258,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "codsupervisor": null,
+      "codusur": 272,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": null,
+      "codusur": 272,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": null,
+      "codusur": 272,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": null,
+      "codusur": 272,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARULHOS",
+      "codsupervisor": null,
+      "codusur": 272,
+      "uf": "SP"
+    },
+    {
+      "cidade": "AFONSO CLAUDIO",
+      "codsupervisor": 17,
+      "codusur": 280,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DOMINGOS MARTIN",
+      "codsupervisor": 17,
+      "codusur": 280,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARECHAL FLORIA",
+      "codsupervisor": 17,
+      "codusur": 280,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VENDA NOVA DO IMIGRANTE",
+      "codsupervisor": 17,
+      "codusur": 280,
+      "uf": "ES"
+    },
+    {
+      "cidade": "AGUA DOCE DO NO",
+      "codsupervisor": 18,
+      "codusur": 573,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 18,
+      "codusur": 573,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DOMINGOS MARTIN",
+      "codsupervisor": 18,
+      "codusur": 573,
+      "uf": "ES"
+    },
+    {
+      "cidade": "FUNDAO",
+      "codsupervisor": 18,
+      "codusur": 573,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 18,
+      "codusur": 573,
+      "uf": "ES"
+    },
+    {
+      "cidade": "LINHARES",
+      "codsupervisor": 18,
+      "codusur": 573,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARECHAL FLORIA",
+      "codsupervisor": 18,
+      "codusur": 573,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 18,
+      "codusur": 573,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO BANANAL",
+      "codsupervisor": 18,
+      "codusur": 573,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 18,
+      "codusur": 573,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": 17,
+      "codusur": 594,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOM JESUS DO NORTE",
+      "codsupervisor": 17,
+      "codusur": 594,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DIVINO DE SAO LOURENCO",
+      "codsupervisor": 17,
+      "codusur": 594,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DIVINO SAO LOUR",
+      "codsupervisor": 17,
+      "codusur": 594,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DORES DO RIO PRETO",
+      "codsupervisor": 17,
+      "codusur": 594,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUACUI",
+      "codsupervisor": 17,
+      "codusur": 594,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IBITIRAMA",
+      "codsupervisor": 17,
+      "codusur": 594,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IUNA",
+      "codsupervisor": 17,
+      "codusur": 594,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUNIZ FREIRE",
+      "codsupervisor": 17,
+      "codusur": 594,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 7,
+      "codusur": 607,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": 7,
+      "codusur": 607,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 7,
+      "codusur": 607,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": 32,
+      "codusur": 621,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 621,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": 32,
+      "codusur": 621,
+      "uf": "ES"
+    },
+    {
+      "cidade": "AFONSO CLAUDIO",
+      "codsupervisor": 31,
+      "codusur": 700,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 31,
+      "codusur": 700,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 31,
+      "codusur": 700,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 31,
+      "codusur": 700,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 31,
+      "codusur": 700,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 31,
+      "codusur": 700,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALCOBACA",
+      "codsupervisor": 19,
+      "codusur": 705,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ALCOBA\u00c7A",
+      "codsupervisor": 19,
+      "codusur": 705,
+      "uf": "BA"
+    },
+    {
+      "cidade": "CARAVELAS",
+      "codsupervisor": 19,
+      "codusur": 705,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITAMARAJU",
+      "codsupervisor": 19,
+      "codusur": 705,
+      "uf": "BA"
+    },
+    {
+      "cidade": "MEDEIROS NETO",
+      "codsupervisor": 19,
+      "codusur": 705,
+      "uf": "BA"
+    },
+    {
+      "cidade": "MUCURI",
+      "codsupervisor": 19,
+      "codusur": 705,
+      "uf": "BA"
+    },
+    {
+      "cidade": "NOVA VICOSA",
+      "codsupervisor": 19,
+      "codusur": 705,
+      "uf": "BA"
+    },
+    {
+      "cidade": "PORTO SEGURO",
+      "codsupervisor": 19,
+      "codusur": 705,
+      "uf": "BA"
+    },
+    {
+      "cidade": "TEIXEIRA DE FREITAS",
+      "codsupervisor": 19,
+      "codusur": 705,
+      "uf": "BA"
+    },
+    {
+      "cidade": "EUNAPOLIS",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ILH\u00c9US",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITABUNA",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ARACRUZ",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "COLATINA",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DA BARRA",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEI\u00c7\u00c3O DA BA",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ECOPORANGA",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IBATIBA",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IBIRACU",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IBIRA\u00c7U",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IUNA",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JERONIMO MONTEI",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JO\u00c3O NEIVA",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "LINHARES",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARECHAL FLORIA",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MONTANHA",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUNIZ FREIRE",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "NOVA VENECIA",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PANCAS",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PEDRO CANARIO",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PIUMA",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA MARIA DE JETIBA",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SOORETAMA",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "S\u00c3O MATEUS",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MACAE",
+      "codsupervisor": 30,
+      "codusur": 744,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "PORTO SEGURO",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "BA"
+    },
+    {
+      "cidade": "AFONSO CLAUDIO",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DORES DO RIO PRETO",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUACUI",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IBATIBA",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ICONHA",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IUNA",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JERONIMO MONTEI",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "LINHARES",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MONTANHA",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUNIZ FREIRE",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "NOVA VENECIA",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PINHEIROS",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO GABRIEL DA",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO JOSE DO CALCADO",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VENDA NOVA DO IMIGRANTE",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VIANA",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOM JESUS DO ITABAPOANA",
+      "codsupervisor": 4,
+      "codusur": 750,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "AGUIA BRANCA",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BAIXO GUANDU",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BARRA DE SAO FRANCISCO",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "COLATINA",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DA BARRA",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUACUI",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IBATIBA",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ICONHA",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IRUPI",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITARANA",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IUNA",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "LINHARES",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MONTANHA",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "NOVA VENECIA",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PINHEIROS",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PIUMA",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PONTO BELO",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA TERESA",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SOORETAMA",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VALERIO",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 34,
+      "codusur": 751,
+      "uf": "ES"
+    },
+    {
+      "cidade": "APIACA",
+      "codsupervisor": 28,
+      "codusur": 820,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOM JESUS DO NORTE",
+      "codsupervisor": 28,
+      "codusur": 820,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 28,
+      "codusur": 820,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUNIZ FREIRE",
+      "codsupervisor": 28,
+      "codusur": 820,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO JOSE DO CALCADO",
+      "codsupervisor": 28,
+      "codusur": 820,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOM JESUS DO ITABAPOANA",
+      "codsupervisor": 28,
+      "codusur": 820,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CAMPOS DOS GOYTACAZES",
+      "codsupervisor": 28,
+      "codusur": 820,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ITAPERUNA",
+      "codsupervisor": 28,
+      "codusur": 820,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CAMACAN",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "EUNAPOLIS",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "GUARATINGA",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "IGUAI",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ILHEUS",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITABUNA",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITAGIMIRIM",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITAMARAJU",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITAPEBI",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITAPETINGA",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITORORO",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "JEQUIE",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "MASCOTE",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "NOVA VICOSA",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "POCOES",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "PORTO SEGURO",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "SANTA CRUZ CABRALIA",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "SANTA LUZIA",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "TEIXEIRA DE FREITAS",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "UBAITABA",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "UNA",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "URUCUCA",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "VITORIA DA CONQUISTA",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "BA"
+    },
+    {
+      "cidade": "NOVA VENECIA",
+      "codsupervisor": 19,
+      "codusur": 879,
+      "uf": "ES"
+    },
+    {
+      "cidade": "AFONSO CLAUDIO",
+      "codsupervisor": 17,
+      "codusur": 895,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALFREDO CHAVES",
+      "codsupervisor": 17,
+      "codusur": 895,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BREJETUBA",
+      "codsupervisor": 17,
+      "codusur": 895,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 895,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 17,
+      "codusur": 895,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DOMINGOS MARTIN",
+      "codsupervisor": 17,
+      "codusur": 895,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IBATIBA",
+      "codsupervisor": 17,
+      "codusur": 895,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IRUPI",
+      "codsupervisor": 17,
+      "codusur": 895,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 895,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IUNA",
+      "codsupervisor": 17,
+      "codusur": 895,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUNIZ FREIRE",
+      "codsupervisor": 17,
+      "codusur": 895,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PEDRO CANARIO",
+      "codsupervisor": 17,
+      "codusur": 895,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": 17,
+      "codusur": 895,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 17,
+      "codusur": 895,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 17,
+      "codusur": 895,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": 17,
+      "codusur": 899,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "codsupervisor": 17,
+      "codusur": 899,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "codsupervisor": 17,
+      "codusur": 899,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 899,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 17,
+      "codusur": 899,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DO CASTELO",
+      "codsupervisor": 17,
+      "codusur": 899,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 899,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 17,
+      "codusur": 899,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 17,
+      "codusur": 899,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": 17,
+      "codusur": 899,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PIUMA",
+      "codsupervisor": 17,
+      "codusur": 899,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": 17,
+      "codusur": 899,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 17,
+      "codusur": 899,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 17,
+      "codusur": 899,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": 32,
+      "codusur": 920,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 920,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 32,
+      "codusur": 920,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DOMINGOS MARTIN",
+      "codsupervisor": 32,
+      "codusur": 920,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 32,
+      "codusur": 920,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 32,
+      "codusur": 920,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": 32,
+      "codusur": 920,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 32,
+      "codusur": 920,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VAREGM ALTA",
+      "codsupervisor": 32,
+      "codusur": 920,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 32,
+      "codusur": 920,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VENDA NOVA DO IMIGRANTE",
+      "codsupervisor": 32,
+      "codusur": 920,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PENALVA",
+      "codsupervisor": 32,
+      "codusur": 920,
+      "uf": "MA"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": 15,
+      "codusur": 927,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 15,
+      "codusur": 927,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ILHEUS",
+      "codsupervisor": 19,
+      "codusur": 945,
+      "uf": "BA"
+    },
+    {
+      "cidade": "PORTO SEGURO",
+      "codsupervisor": 19,
+      "codusur": 945,
+      "uf": "BA"
+    },
+    {
+      "cidade": "SANTA CRUZ CABRALIA",
+      "codsupervisor": 19,
+      "codusur": 945,
+      "uf": "BA"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 19,
+      "codusur": 945,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ILHEUS",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "BA"
+    },
+    {
+      "cidade": "PORTO SEGURO",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "BA"
+    },
+    {
+      "cidade": "AGUIA BRANCA",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOM JESUS DO NORTE",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DA BARRA",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DOMINGOS MARTIN",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUACUI",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ICONHA",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IUNA",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JERONIMO MONTEI",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "LINHARES",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MONTANHA",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUNIZ FREIRE",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PIUMA",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOM JESUS DO ITABAPOANA",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ITAPERUNA",
+      "codsupervisor": 4,
+      "codusur": 950,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ALCOBACA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "BA"
+    },
+    {
+      "cidade": "CARAVELAS",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ILHEUS",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITAMBE",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITAPETINGA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "BA"
+    },
+    {
+      "cidade": "PORTO SEGURO",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "BA"
+    },
+    {
+      "cidade": "SANTA CRUZ CABRALIA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "BA"
+    },
+    {
+      "cidade": "TEIXEIRA DE FREITAS",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "BA"
+    },
+    {
+      "cidade": "BRASILIA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "DF"
+    },
+    {
+      "cidade": "AFONSO CLAUDIO",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "AGUA DOCE DO NORTE",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "AGUIA BRANCA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALFREDO CHAVES",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALTO RIO NOVO",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ARACRUZ",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BARRA DE SAO FR",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BARRA DE SAO FRANCISCO",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOA ESPERANCA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOM JESUS DO NORTE",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DA BARRA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DO CASTELO",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DIVINO DE SAO LOURENCO",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DOMINGOS MARTIN",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DORES DO RIO PRETO",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ECOPORANGA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "FUNDAO",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GOVERNADOR LINDENBERG",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUACUI",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IBITIRAMA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ICONHA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAGUACU",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IUNA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JAGUARE",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JERONIMO MONTEI",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JOAO NEIVA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "LINHARES",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MANTENOPOLIS",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MONTANHA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUCURICI",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUNIZ FREIRE",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "NOVA VENECIA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PANCAD",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PANCAS",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PEDRO CANARIO",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PINHEIROS",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PIUMA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PONTO BELO",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO BANANAL",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA LEOPOLDIN",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA MARIA DE",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA MARIA DE JETIBA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA TERESA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO DOMINGOS DO",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO DOMINGOS DO NORTE",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO GABRIEL DA PALHA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO JOSE DO CALCADO",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO ROQUE DO CANAA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SOORETAMA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VENDA NOVA DO IMIGRANTE",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VIANA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA PAVAO",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VALERIO",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MONTIVIDIU DO N",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "GO"
+    },
+    {
+      "cidade": "CARANGOLA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "MG"
+    },
+    {
+      "cidade": "BOM JESUS DO ITABAPOANA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CAMPOS DOS GOYTACAZES",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CARDOSO MOREIRA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ITALVA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ITAOCARA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ITAPERUNA",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SAO FIDELIS",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SAO JOAO DA BAR",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "BIGUACU",
+      "codsupervisor": null,
+      "codusur": 999,
+      "uf": "SC"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1002,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 32,
+      "codusur": 1002,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": 32,
+      "codusur": 1002,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 32,
+      "codusur": 1002,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VENDA NOVA DO IMIGRANTE",
+      "codsupervisor": 32,
+      "codusur": 1002,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IUNA",
+      "codsupervisor": 31,
+      "codusur": 1059,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA LEOPOLDIN",
+      "codsupervisor": 31,
+      "codusur": 1059,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 31,
+      "codusur": 1059,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 31,
+      "codusur": 1059,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 31,
+      "codusur": 1059,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "codsupervisor": 17,
+      "codusur": 1083,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 17,
+      "codusur": 1083,
+      "uf": "ES"
+    },
+    {
+      "cidade": "AFONSO CLAUDIO",
+      "codsupervisor": 17,
+      "codusur": 1087,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "codsupervisor": 17,
+      "codusur": 1087,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 1087,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 17,
+      "codusur": 1087,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IBATIBA",
+      "codsupervisor": 17,
+      "codusur": 1087,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IRUPI",
+      "codsupervisor": 17,
+      "codusur": 1087,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 1087,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IUNA",
+      "codsupervisor": 17,
+      "codusur": 1087,
+      "uf": "ES"
+    },
+    {
+      "cidade": "LARANJA DA TERR",
+      "codsupervisor": 17,
+      "codusur": 1087,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARECHAL FLORIA",
+      "codsupervisor": 17,
+      "codusur": 1087,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUNIZ FREIRE",
+      "codsupervisor": 17,
+      "codusur": 1087,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 17,
+      "codusur": 1087,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPETINGA",
+      "codsupervisor": 19,
+      "codusur": 1125,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITARANTIM",
+      "codsupervisor": 19,
+      "codusur": 1125,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITORORO",
+      "codsupervisor": 19,
+      "codusur": 1125,
+      "uf": "BA"
+    },
+    {
+      "cidade": "MACARANI",
+      "codsupervisor": 19,
+      "codusur": 1125,
+      "uf": "BA"
+    },
+    {
+      "cidade": "POTIRAGUA",
+      "codsupervisor": 19,
+      "codusur": 1125,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "codsupervisor": 31,
+      "codusur": 1133,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 31,
+      "codusur": 1133,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 31,
+      "codusur": 1133,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 31,
+      "codusur": 1133,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 31,
+      "codusur": 1133,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 31,
+      "codusur": 1133,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ILHEUS",
+      "codsupervisor": 19,
+      "codusur": 1183,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITACARE",
+      "codsupervisor": 19,
+      "codusur": 1183,
+      "uf": "BA"
+    },
+    {
+      "cidade": "UNA",
+      "codsupervisor": 19,
+      "codusur": 1183,
+      "uf": "BA"
+    },
+    {
+      "cidade": "FIRMINO ALVES",
+      "codsupervisor": 19,
+      "codusur": 1189,
+      "uf": "BA"
+    },
+    {
+      "cidade": "FLORESTA AZUL",
+      "codsupervisor": 19,
+      "codusur": 1189,
+      "uf": "BA"
+    },
+    {
+      "cidade": "IBICARAI",
+      "codsupervisor": 19,
+      "codusur": 1189,
+      "uf": "BA"
+    },
+    {
+      "cidade": "IBICUI",
+      "codsupervisor": 19,
+      "codusur": 1189,
+      "uf": "BA"
+    },
+    {
+      "cidade": "IGUAI",
+      "codsupervisor": 19,
+      "codusur": 1189,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITAPETINGA",
+      "codsupervisor": 19,
+      "codusur": 1189,
+      "uf": "BA"
+    },
+    {
+      "cidade": "SANTA CRUZ DA VITORIA",
+      "codsupervisor": 19,
+      "codusur": 1189,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALFREDO CHAVES",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DIVINO DE SAO LOURENCO",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DORES DO RIO PRETO",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUACUI",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ICONHA",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "LINHARES",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "NOVA VENECIA",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA MARIA DE",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VENDA NOVA DO IMIGRANTE",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO FRANCISCO DO GLORIA",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "MG"
+    },
+    {
+      "cidade": "VIEIRAS",
+      "codsupervisor": 17,
+      "codusur": 1209,
+      "uf": "MG"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 7,
+      "codusur": 1217,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DA BARRA",
+      "codsupervisor": 15,
+      "codusur": 1243,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MONTANHA",
+      "codsupervisor": 15,
+      "codusur": 1243,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CAMPOS DOS GOYTACAZES",
+      "codsupervisor": 28,
+      "codusur": 1265,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CARAPEBUS",
+      "codsupervisor": 28,
+      "codusur": 1265,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CONCEICAO DE MACABU",
+      "codsupervisor": 28,
+      "codusur": 1265,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "MACAE",
+      "codsupervisor": 28,
+      "codusur": 1265,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "QUISSAMA",
+      "codsupervisor": 28,
+      "codusur": 1265,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CANAVIEIRAS",
+      "codsupervisor": 19,
+      "codusur": 1300,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ILHEUS",
+      "codsupervisor": 19,
+      "codusur": 1300,
+      "uf": "BA"
+    },
+    {
+      "cidade": "MARAU",
+      "codsupervisor": 19,
+      "codusur": 1300,
+      "uf": "BA"
+    },
+    {
+      "cidade": "SANTA LUZIA",
+      "codsupervisor": 19,
+      "codusur": 1300,
+      "uf": "BA"
+    },
+    {
+      "cidade": "UNA",
+      "codsupervisor": 19,
+      "codusur": 1300,
+      "uf": "BA"
+    },
+    {
+      "cidade": "URUCUCA",
+      "codsupervisor": 19,
+      "codusur": 1300,
+      "uf": "BA"
+    },
+    {
+      "cidade": "CAMPOS DOS GOYTACAZES",
+      "codsupervisor": 28,
+      "codusur": 1323,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SAO JOAO DA BAR",
+      "codsupervisor": 28,
+      "codusur": 1323,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 28,
+      "codusur": 1327,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CAMPOS DOS GOYTACAZES",
+      "codsupervisor": 28,
+      "codusur": 1327,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SAO FRANCISCO DE ITABAPOANA",
+      "codsupervisor": 28,
+      "codusur": 1327,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SAO JOAO DA BAR",
+      "codsupervisor": 28,
+      "codusur": 1327,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "S\u00c3O JO\u00c3O DA BAR",
+      "codsupervisor": 28,
+      "codusur": 1327,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "BOA ESPERANCA",
+      "codsupervisor": 15,
+      "codusur": 1335,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ECOPORANGA",
+      "codsupervisor": 15,
+      "codusur": 1335,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PINHEIROS",
+      "codsupervisor": 15,
+      "codusur": 1335,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAMARAJU",
+      "codsupervisor": 31,
+      "codusur": 1339,
+      "uf": "BA"
+    },
+    {
+      "cidade": "NOVA VICOSA",
+      "codsupervisor": 31,
+      "codusur": 1339,
+      "uf": "BA"
+    },
+    {
+      "cidade": "TEIXEIRA DE FREITAS",
+      "codsupervisor": 31,
+      "codusur": 1339,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ARACRUZ",
+      "codsupervisor": 31,
+      "codusur": 1339,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 31,
+      "codusur": 1339,
+      "uf": "ES"
+    },
+    {
+      "cidade": "COLATINA",
+      "codsupervisor": 31,
+      "codusur": 1339,
+      "uf": "ES"
+    },
+    {
+      "cidade": "FUNDAO",
+      "codsupervisor": 31,
+      "codusur": 1339,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IBIRACU",
+      "codsupervisor": 31,
+      "codusur": 1339,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JOAO NEIVA",
+      "codsupervisor": 31,
+      "codusur": 1339,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PEDRO CANARIO",
+      "codsupervisor": 31,
+      "codusur": 1339,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 31,
+      "codusur": 1339,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 31,
+      "codusur": 1339,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "codsupervisor": 17,
+      "codusur": 1370,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 1370,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 17,
+      "codusur": 1370,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PORTO SEGURO",
+      "codsupervisor": 19,
+      "codusur": 1395,
+      "uf": "BA"
+    },
+    {
+      "cidade": "SANTA CRUZ CABRALIA",
+      "codsupervisor": 19,
+      "codusur": 1395,
+      "uf": "BA"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1398,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 32,
+      "codusur": 1398,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 31,
+      "codusur": 1400,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 31,
+      "codusur": 1400,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 31,
+      "codusur": 1400,
+      "uf": "ES"
+    },
+    {
+      "cidade": "COLATINA",
+      "codsupervisor": 15,
+      "codusur": 1404,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOA ESPERANCA",
+      "codsupervisor": 15,
+      "codusur": 1406,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PINHEIROS",
+      "codsupervisor": 15,
+      "codusur": 1406,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOM JESUS DO NORTE",
+      "codsupervisor": 28,
+      "codusur": 1408,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 28,
+      "codusur": 1408,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO JOSE DO CALCADO",
+      "codsupervisor": 28,
+      "codusur": 1408,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOM JESUS DO ITABAPOANA",
+      "codsupervisor": 28,
+      "codusur": 1408,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CAMPOS DOS GOYTACAZES",
+      "codsupervisor": 28,
+      "codusur": 1408,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ITAPERUNA",
+      "codsupervisor": 28,
+      "codusur": 1408,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SAO FIDELIS",
+      "codsupervisor": 28,
+      "codusur": 1408,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 31,
+      "codusur": 1412,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 31,
+      "codusur": 1412,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 31,
+      "codusur": 1412,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 31,
+      "codusur": 1412,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CAMPOS DOS GOYTACAZES",
+      "codsupervisor": 28,
+      "codusur": 1413,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SAO FRANCISCO DE ITABAPOANA",
+      "codsupervisor": 28,
+      "codusur": 1413,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "AFONSO CLAUDIO",
+      "codsupervisor": 17,
+      "codusur": 1414,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DOMINGOS MARTIN",
+      "codsupervisor": 17,
+      "codusur": 1414,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VENDA NOVA DO IMIGRANTE",
+      "codsupervisor": 17,
+      "codusur": 1414,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 33,
+      "codusur": 1416,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA MARIA DE JETIBA",
+      "codsupervisor": 33,
+      "codusur": 1416,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": 33,
+      "codusur": 1416,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 33,
+      "codusur": 1416,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 33,
+      "codusur": 1416,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 33,
+      "codusur": 1416,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 31,
+      "codusur": 1418,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 31,
+      "codusur": 1418,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 31,
+      "codusur": 1418,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 31,
+      "codusur": 1418,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1420,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1421,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DO CASTELO",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DOMINGOS MARTIN",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IBITIRAMA",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ICONHA",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IUNA",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JERONIMO MONTEI",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUNIZ FREIRE",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "NOVA VENECIA",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PIUMA",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SOORETAMA",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VENDA NOVA DO IMIGRANTE",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO DE JANEIRO",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SANTO ANTONIO DE PADUA",
+      "codsupervisor": 32,
+      "codusur": 1422,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1423,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": 32,
+      "codusur": 1423,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUAJERU",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ARACRUZ",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DIVINO DE SAO LOURENCO",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUACUI",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ICONHA",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IUNA",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JERONIMO MONTEI",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "LINHARES",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUNIZ FREIRE",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "NOVA VENECIA",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VENDA NOVA DO IMIGRANTE",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VIANA",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PORANGATU",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "GO"
+    },
+    {
+      "cidade": "DIVINO DAS LARANJEIRAS",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "MG"
+    },
+    {
+      "cidade": "BOM JESUS DO ITABAPOANA",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "TROMBUDO CENTRAL",
+      "codsupervisor": 32,
+      "codusur": 1426,
+      "uf": "SC"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUACUI",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ICONHA",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JERONIMO MONTEI",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PINHEIROS",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VENDA NOVA DO IMIGRANTE",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BELO HORIZONTE",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "MG"
+    },
+    {
+      "cidade": "CAMPOS DOS GOYTACAZES",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "RIO DE JANEIRO",
+      "codsupervisor": 32,
+      "codusur": 1427,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1429,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 32,
+      "codusur": 1429,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PIRAPETINGA",
+      "codsupervisor": 28,
+      "codusur": 1445,
+      "uf": "MG"
+    },
+    {
+      "cidade": "APERIBE",
+      "codsupervisor": 28,
+      "codusur": 1445,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CAMBUCI",
+      "codsupervisor": 28,
+      "codusur": 1445,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ITAOCARA",
+      "codsupervisor": 28,
+      "codusur": 1445,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "MIRACEMA",
+      "codsupervisor": 28,
+      "codusur": 1445,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SANTO ANTONIO DE PADUA",
+      "codsupervisor": 28,
+      "codusur": 1445,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SAO FIDELIS",
+      "codsupervisor": 28,
+      "codusur": 1445,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SAO JOSE DE UBA",
+      "codsupervisor": 28,
+      "codusur": 1445,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "AGUA DOCE DO NORTE",
+      "codsupervisor": 15,
+      "codusur": 1449,
+      "uf": "ES"
+    },
+    {
+      "cidade": "AGUIA BRANCA",
+      "codsupervisor": 15,
+      "codusur": 1449,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BARRA DE SAO FR",
+      "codsupervisor": 15,
+      "codusur": 1449,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BARRA DE SAO FRANCISCO",
+      "codsupervisor": 15,
+      "codusur": 1449,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ECOPORANGA",
+      "codsupervisor": 15,
+      "codusur": 1449,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA PAVAO",
+      "codsupervisor": 15,
+      "codusur": 1449,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DIAMANTINA",
+      "codsupervisor": 15,
+      "codusur": 1449,
+      "uf": "MG"
+    },
+    {
+      "cidade": "MANTENA",
+      "codsupervisor": 15,
+      "codusur": 1449,
+      "uf": "MG"
+    },
+    {
+      "cidade": "AGUIA BRANCA",
+      "codsupervisor": 15,
+      "codusur": 1461,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALTO RIO NOVO",
+      "codsupervisor": 15,
+      "codusur": 1461,
+      "uf": "ES"
+    },
+    {
+      "cidade": "COLATINA",
+      "codsupervisor": 15,
+      "codusur": 1461,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GOVERNADOR LINDENBERG",
+      "codsupervisor": 15,
+      "codusur": 1461,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JAGUARE",
+      "codsupervisor": 15,
+      "codusur": 1461,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MANTENOPOLIS",
+      "codsupervisor": 15,
+      "codusur": 1461,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARILANDIA",
+      "codsupervisor": 15,
+      "codusur": 1461,
+      "uf": "ES"
+    },
+    {
+      "cidade": "NOVA VENECIA",
+      "codsupervisor": 15,
+      "codusur": 1461,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PANCAS",
+      "codsupervisor": 15,
+      "codusur": 1461,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO BANANAL",
+      "codsupervisor": 15,
+      "codusur": 1461,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO DOMINGOS DO",
+      "codsupervisor": 15,
+      "codusur": 1461,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO DOMINGOS DO NORTE",
+      "codsupervisor": 15,
+      "codusur": 1461,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO GABRIEL DA",
+      "codsupervisor": 15,
+      "codusur": 1461,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO GABRIEL DA PALHA",
+      "codsupervisor": 15,
+      "codusur": 1461,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": 15,
+      "codusur": 1461,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VALERIO",
+      "codsupervisor": 15,
+      "codusur": 1461,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CUPARAQUE",
+      "codsupervisor": 15,
+      "codusur": 1461,
+      "uf": "MG"
+    },
+    {
+      "cidade": "EUNAPOLIS",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ARACRUZ",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BARRA DE SAO FRANCISCO",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BREJETUBA",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DA BARRA",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DIVINO DE SAO LOURENCO",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ECOPORANGA",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ICONHA",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "LINHARES",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUNIZ FREIRE",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PIUMA",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA MARIA DE",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA MARIA DE JETIBA",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VENDA NOVA DO IMIGRANTE",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VIANA",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CAMPOS DOS GOYTACAZES",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ITAPERUNA",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "MACAE",
+      "codsupervisor": 4,
+      "codusur": 1471,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "EUNAPOLIS",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "BA"
+    },
+    {
+      "cidade": "MACARANI",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "BA"
+    },
+    {
+      "cidade": "PORTO SEGURO",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "BA"
+    },
+    {
+      "cidade": "PRADO",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "BA"
+    },
+    {
+      "cidade": "TEIXEIRA DE FREITAS",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "BA"
+    },
+    {
+      "cidade": "UNA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "BA"
+    },
+    {
+      "cidade": "AGUA DOCE DO NORTE",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ARACRUZ",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BARRA DE SAO FRANCISCO",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOA ESPERANCA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BREJETUBA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "COLATINA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DA BARRA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DO CASTELO",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DOMINGOS MARTIN",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ECOPORANGA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUACUI",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IBATIBA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ICONHA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IRUPI",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITARANA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IUNA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JERONIMO MONTEI",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JOAO NEIVA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "LINHARES",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARECHAL FLORIA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MONTANHA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUCURICI",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUNIZ FREIRE",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PANCAS",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PINHEIROS",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PIUMA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA MARIA DE",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA TERESA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO DOMINGOS DO",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VENDA NOVA DO IMIGRANTE",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VIANA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VALERIO",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MANTENA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "MG"
+    },
+    {
+      "cidade": "BOM JESUS DO ITABAPOANA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CAMPOS DOS GOYTACAZES",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ITAPERUNA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "MACAE",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "MIRACEMA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SANTO ANTONIO DE PADUA",
+      "codsupervisor": 4,
+      "codusur": 1479,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ILHEUS",
+      "codsupervisor": 19,
+      "codusur": 1491,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITABUNA",
+      "codsupervisor": 19,
+      "codusur": 1491,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITACARE",
+      "codsupervisor": 19,
+      "codusur": 1491,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITAJUIPE",
+      "codsupervisor": 19,
+      "codusur": 1491,
+      "uf": "BA"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 31,
+      "codusur": 1492,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 31,
+      "codusur": 1492,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 31,
+      "codusur": 1492,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BARRA DE SAO FRANCISCO",
+      "codsupervisor": 15,
+      "codusur": 1494,
+      "uf": "ES"
+    },
+    {
+      "cidade": "COLATINA",
+      "codsupervisor": 15,
+      "codusur": 1494,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DA BARRA",
+      "codsupervisor": 15,
+      "codusur": 1494,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MONTANHA",
+      "codsupervisor": 15,
+      "codusur": 1494,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PEDRO CANARIO",
+      "codsupervisor": 15,
+      "codusur": 1494,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PINHEIROS",
+      "codsupervisor": 15,
+      "codusur": 1494,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA TERESA",
+      "codsupervisor": 15,
+      "codusur": 1494,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": 15,
+      "codusur": 1494,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SOORETAMA",
+      "codsupervisor": 15,
+      "codusur": 1494,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA PAVAO",
+      "codsupervisor": 15,
+      "codusur": 1494,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BAIXO GUANDU",
+      "codsupervisor": 15,
+      "codusur": 1495,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BARRA DE SAO FRANCISCO",
+      "codsupervisor": 15,
+      "codusur": 1495,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOA ESPERANCA",
+      "codsupervisor": 15,
+      "codusur": 1495,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ECOPORANGA",
+      "codsupervisor": 15,
+      "codusur": 1495,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PINHEIROS",
+      "codsupervisor": 15,
+      "codusur": 1495,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO BANANAL",
+      "codsupervisor": 15,
+      "codusur": 1495,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO GABRIEL DA",
+      "codsupervisor": 15,
+      "codusur": 1495,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO GABRIEL DA PALHA",
+      "codsupervisor": 15,
+      "codusur": 1495,
+      "uf": "ES"
+    },
+    {
+      "cidade": "AIMORES",
+      "codsupervisor": 15,
+      "codusur": 1495,
+      "uf": "MG"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "codsupervisor": 4,
+      "codusur": 1496,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 4,
+      "codusur": 1496,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 4,
+      "codusur": 1496,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 4,
+      "codusur": 1496,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PINHEIROS",
+      "codsupervisor": 4,
+      "codusur": 1496,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": 4,
+      "codusur": 1496,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 4,
+      "codusur": 1496,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VIANA",
+      "codsupervisor": 4,
+      "codusur": 1496,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CAMPOS DOS GOYTACAZES",
+      "codsupervisor": 4,
+      "codusur": 1496,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ITABELA",
+      "codsupervisor": 19,
+      "codusur": 1498,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITAPEBI",
+      "codsupervisor": 19,
+      "codusur": 1498,
+      "uf": "BA"
+    },
+    {
+      "cidade": "PORTO SEGURO",
+      "codsupervisor": 19,
+      "codusur": 1498,
+      "uf": "BA"
+    },
+    {
+      "cidade": "BARRA DE SAO FRANCISCO",
+      "codsupervisor": 15,
+      "codusur": 1499,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 15,
+      "codusur": 1499,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JAGUARE",
+      "codsupervisor": 15,
+      "codusur": 1499,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 15,
+      "codusur": 1499,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO GABRIEL DA",
+      "codsupervisor": 15,
+      "codusur": 1499,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": 15,
+      "codusur": 1499,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CAMPOS DOS GOYTACAZES",
+      "codsupervisor": 15,
+      "codusur": 1499,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 1501,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 17,
+      "codusur": 1501,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BAIXO GUANDU",
+      "codsupervisor": 15,
+      "codusur": 1510,
+      "uf": "ES"
+    },
+    {
+      "cidade": "COLATINA",
+      "codsupervisor": 15,
+      "codusur": 1510,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARILANDIA",
+      "codsupervisor": 15,
+      "codusur": 1510,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA MARIA DE JETIBA",
+      "codsupervisor": 15,
+      "codusur": 1510,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA TERESA",
+      "codsupervisor": 15,
+      "codusur": 1510,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 31,
+      "codusur": 1514,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA LEOPOLDIN",
+      "codsupervisor": 31,
+      "codusur": 1514,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VIANA",
+      "codsupervisor": 31,
+      "codusur": 1514,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PORTO SEGURO",
+      "codsupervisor": 19,
+      "codusur": 1516,
+      "uf": "BA"
+    },
+    {
+      "cidade": "SANTA CRUZ CABRALIA",
+      "codsupervisor": 19,
+      "codusur": 1516,
+      "uf": "BA"
+    },
+    {
+      "cidade": "CAMACAN",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "BA"
+    },
+    {
+      "cidade": "IBICARAI",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "BA"
+    },
+    {
+      "cidade": "MARAU",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "BA"
+    },
+    {
+      "cidade": "SAO JOSE DA VITORIA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "BA"
+    },
+    {
+      "cidade": "AFONSO CLAUDIO",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BARRA DE SAO FRANCISCO",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOA ESPERANCA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DA BARRA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DO CASTELO",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DOMINGOS MARTIN",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUACUI",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ICONHA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITARANA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IUNA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JERONIMO MONTEI",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JOAO NEIVA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "LINHARES",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARILANDIA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MONTANHA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PANCAS",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PIUMA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO GABRIEL DA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SOORETAMA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VENDA NOVA DO IMIGRANTE",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VIANA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOM JESUS DO ITABAPOANA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CAMPOS DOS GOYTACAZES",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "MACAE",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "PORCIUNCULA",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "RIO DE JANEIRO",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SAO PAULO",
+      "codsupervisor": 18,
+      "codusur": 1517,
+      "uf": "SP"
+    },
+    {
+      "cidade": "COLATINA",
+      "codsupervisor": 15,
+      "codusur": 1518,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MACAE",
+      "codsupervisor": 28,
+      "codusur": 1519,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "RIO DAS OSTRAS",
+      "codsupervisor": 28,
+      "codusur": 1519,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ARACRUZ",
+      "codsupervisor": 31,
+      "codusur": 1522,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOA ESPERANCA",
+      "codsupervisor": 31,
+      "codusur": 1522,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 31,
+      "codusur": 1522,
+      "uf": "ES"
+    },
+    {
+      "cidade": "FUNDAO",
+      "codsupervisor": 31,
+      "codusur": 1522,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 31,
+      "codusur": 1522,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO ROQUE DO CANAA",
+      "codsupervisor": 31,
+      "codusur": 1522,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 31,
+      "codusur": 1522,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VIANA",
+      "codsupervisor": 31,
+      "codusur": 1522,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 31,
+      "codusur": 1522,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 31,
+      "codusur": 1522,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 4,
+      "codusur": 1523,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "codsupervisor": 32,
+      "codusur": 1524,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "codsupervisor": 32,
+      "codusur": 1524,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1524,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 32,
+      "codusur": 1524,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DOMINGOS MARTIN",
+      "codsupervisor": 32,
+      "codusur": 1524,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IUNA",
+      "codsupervisor": 32,
+      "codusur": 1524,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 32,
+      "codusur": 1524,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 32,
+      "codusur": 1524,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 32,
+      "codusur": 1524,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 32,
+      "codusur": 1524,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1526,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 31,
+      "codusur": 1528,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 31,
+      "codusur": 1532,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 31,
+      "codusur": 1532,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 31,
+      "codusur": 1532,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CANAVIEIRAS",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITABELA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITORORO",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "BA"
+    },
+    {
+      "cidade": "PORTO SEGURO",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "BA"
+    },
+    {
+      "cidade": "TEIXEIRA DE FREITAS",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "BA"
+    },
+    {
+      "cidade": "AFONSO CLAUDIO",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALFREDO CHAVES",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ARACRUZ",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BARRA DE SAO FRANCISCO",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOA ESPERANCA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BREJETUBA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DA BARRA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DOMINGOS MARTIN",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DORES DO RIO PRETO",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IBATIBA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ICONHA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IRUPI",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JAGUARE",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JERONIMO MONTEI",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "LARANJA DA TERR",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "LINHARES",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MONTANHA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "NOVA VENECIA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PANCAS",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PEDRO CANARIO",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PIUMA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA MARIA DE",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA TERESA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO DOMINGOS DO NORTE",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO GABRIEL DA PALHA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO ROQUE DO CANAA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SOORETAMA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VENDA NOVA DO IMIGRANTE",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CAMPOS DOS GOYTACAZES",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ITAPERUNA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "QUISSAMA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "SAO FRANCISCO DE ITABAPOANA",
+      "codsupervisor": 18,
+      "codusur": 1534,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1536,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": 32,
+      "codusur": 1536,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": 32,
+      "codusur": 1538,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DORES DO RIO PRETO",
+      "codsupervisor": 32,
+      "codusur": 1538,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JOAO NEIVA",
+      "codsupervisor": 15,
+      "codusur": 1540,
+      "uf": "ES"
+    },
+    {
+      "cidade": "LINHARES",
+      "codsupervisor": 15,
+      "codusur": 1540,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": 15,
+      "codusur": 1540,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SOORETAMA",
+      "codsupervisor": 15,
+      "codusur": 1540,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BARRA DE SAO FRANCISCO",
+      "codsupervisor": 15,
+      "codusur": 1545,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IBATIBA",
+      "codsupervisor": 17,
+      "codusur": 1548,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IUNA",
+      "codsupervisor": 17,
+      "codusur": 1548,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO DAS OSTRAS",
+      "codsupervisor": 28,
+      "codusur": 1550,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "EUNAPOLIS",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "BA"
+    },
+    {
+      "cidade": "FIRMINO ALVES",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "BA"
+    },
+    {
+      "cidade": "IBICUI",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ILHEUS",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITAPETINGA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "BA"
+    },
+    {
+      "cidade": "MUCURI",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "BA"
+    },
+    {
+      "cidade": "PORTO SEGURO",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "BA"
+    },
+    {
+      "cidade": "SANTA CRUZ DA VITORIA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "BA"
+    },
+    {
+      "cidade": "SAO JOSE DA VITORIA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "BA"
+    },
+    {
+      "cidade": "UNA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "BA"
+    },
+    {
+      "cidade": "AFONSO CLAUDIO",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "AGUA DOCE DO NORTE",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ARACRUZ",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BOA ESPERANCA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "COLATINA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DO CASTELO",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DOMINGOS MARTIN",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ECOPORANGA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUACUI",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ICONHA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IRUPI",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITARANA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "IUNA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JAGUARE",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "JERONIMO MONTEI",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "LINHARES",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARECHAL FLORIA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUNIZ FREIRE",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PEDRO CANARIO",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PIUMA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO GABRIEL DA PALHA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "S\u00c3O MATEUS",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VENDA NOVA DO IMIGRANTE",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VIANA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA PAVAO",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BELO HORIZONTE",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "MG"
+    },
+    {
+      "cidade": "FRUTAL",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "MG"
+    },
+    {
+      "cidade": "CAMPOS DOS GOYTACAZES",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "ITAOCARA",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "MACAE",
+      "codsupervisor": 18,
+      "codusur": 1552,
+      "uf": "RJ"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1554,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUACUI",
+      "codsupervisor": 32,
+      "codusur": 1554,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 32,
+      "codusur": 1554,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": 32,
+      "codusur": 1554,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ALEGRE",
+      "codsupervisor": 32,
+      "codusur": 1555,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1555,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 32,
+      "codusur": 1555,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DOMINGOS MARTIN",
+      "codsupervisor": 32,
+      "codusur": 1555,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ECOPORANGA",
+      "codsupervisor": 32,
+      "codusur": 1555,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITARANA",
+      "codsupervisor": 32,
+      "codusur": 1555,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PRESIDENTE KENNEDY",
+      "codsupervisor": 32,
+      "codusur": 1555,
+      "uf": "ES"
+    },
+    {
+      "cidade": "RIO NOVO DO SUL",
+      "codsupervisor": 32,
+      "codusur": 1555,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 32,
+      "codusur": 1555,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VARGEM ALTA",
+      "codsupervisor": 32,
+      "codusur": 1555,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 32,
+      "codusur": 1555,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1556,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 32,
+      "codusur": 1556,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CONCEICAO DA BARRA",
+      "codsupervisor": 15,
+      "codusur": 1557,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PEDRO CANARIO",
+      "codsupervisor": 15,
+      "codusur": 1557,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PINHEIROS",
+      "codsupervisor": 15,
+      "codusur": 1557,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SAO MATEUS",
+      "codsupervisor": 15,
+      "codusur": 1557,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1558,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PORTO SEGURO",
+      "codsupervisor": 19,
+      "codusur": 1574,
+      "uf": "BA"
+    },
+    {
+      "cidade": "SANTA CRUZ CABRALIA",
+      "codsupervisor": 19,
+      "codusur": 1574,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "codsupervisor": 17,
+      "codusur": 1578,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 1578,
+      "uf": "ES"
+    },
+    {
+      "cidade": "GUARAPARI",
+      "codsupervisor": 17,
+      "codusur": 1578,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ICONHA",
+      "codsupervisor": 17,
+      "codusur": 1578,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITAPEMIRIM",
+      "codsupervisor": 17,
+      "codusur": 1578,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 17,
+      "codusur": 1578,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PIUMA",
+      "codsupervisor": 17,
+      "codusur": 1578,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 31,
+      "codusur": 1579,
+      "uf": "ES"
+    },
+    {
+      "cidade": "EUNAPOLIS",
+      "codsupervisor": 19,
+      "codusur": 1584,
+      "uf": "BA"
+    },
+    {
+      "cidade": "EUN\u00c1POLIS",
+      "codsupervisor": 19,
+      "codusur": 1584,
+      "uf": "BA"
+    },
+    {
+      "cidade": "GUARATINGA",
+      "codsupervisor": 19,
+      "codusur": 1584,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ITABELA",
+      "codsupervisor": 19,
+      "codusur": 1584,
+      "uf": "BA"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1585,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MONTANHA",
+      "codsupervisor": 15,
+      "codusur": 1587,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUCURICI",
+      "codsupervisor": 15,
+      "codusur": 1587,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PINHEIROS",
+      "codsupervisor": 15,
+      "codusur": 1587,
+      "uf": "ES"
+    },
+    {
+      "cidade": "PONTO BELO",
+      "codsupervisor": 15,
+      "codusur": 1587,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 31,
+      "codusur": 1589,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ANCHIETA",
+      "codsupervisor": 32,
+      "codusur": 1590,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 32,
+      "codusur": 1590,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 32,
+      "codusur": 1590,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 32,
+      "codusur": 1590,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DOMINGOS MARTIN",
+      "codsupervisor": 32,
+      "codusur": 1590,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 32,
+      "codusur": 1590,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 32,
+      "codusur": 1590,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VITORIA",
+      "codsupervisor": 32,
+      "codusur": 1590,
+      "uf": "ES"
+    },
+    {
+      "cidade": "ITARANTIM",
+      "codsupervisor": 18,
+      "codusur": 1591,
+      "uf": "BA"
+    },
+    {
+      "cidade": "MUCURI",
+      "codsupervisor": 18,
+      "codusur": 1591,
+      "uf": "BA"
+    },
+    {
+      "cidade": "ATILIO VIVACQUA",
+      "codsupervisor": 18,
+      "codusur": 1591,
+      "uf": "ES"
+    },
+    {
+      "cidade": "BARRA DE SAO FRANCISCO",
+      "codsupervisor": 18,
+      "codusur": 1591,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 18,
+      "codusur": 1591,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CARIACICA",
+      "codsupervisor": 18,
+      "codusur": 1591,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CASTELO",
+      "codsupervisor": 18,
+      "codusur": 1591,
+      "uf": "ES"
+    },
+    {
+      "cidade": "DOMINGOS MARTIN",
+      "codsupervisor": 18,
+      "codusur": 1591,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MARATAIZES",
+      "codsupervisor": 18,
+      "codusur": 1591,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MIMOSO DO SUL",
+      "codsupervisor": 18,
+      "codusur": 1591,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUNIZ FREIRE",
+      "codsupervisor": 18,
+      "codusur": 1591,
+      "uf": "ES"
+    },
+    {
+      "cidade": "MUQUI",
+      "codsupervisor": 18,
+      "codusur": 1591,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SANTA TERESA",
+      "codsupervisor": 18,
+      "codusur": 1591,
+      "uf": "ES"
+    },
+    {
+      "cidade": "SERRA",
+      "codsupervisor": 18,
+      "codusur": 1591,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VIANA",
+      "codsupervisor": 18,
+      "codusur": 1591,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA PAVAO",
+      "codsupervisor": 18,
+      "codusur": 1591,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VILA VELHA",
+      "codsupervisor": 18,
+      "codusur": 1591,
+      "uf": "ES"
+    },
+    {
+      "cidade": "VIT\u00d3RIA",
+      "codsupervisor": 18,
+      "codusur": 1591,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 18,
+      "codusur": 1592,
+      "uf": "ES"
+    },
+    {
+      "cidade": "CACHOEIRO DE ITAPEMIRIM",
+      "codsupervisor": 1,
+      "codusur": 5269,
+      "uf": "ES"
+    }
+  ],
+  "histograma_recencia": [
+    {
+      "bin": "0-7",
+      "count": 1325
+    },
+    {
+      "bin": "8-15",
+      "count": 1003
+    },
+    {
+      "bin": "16-30",
+      "count": 986
+    },
+    {
+      "bin": "31-60",
+      "count": 881
+    },
+    {
+      "bin": "61-90",
+      "count": 606
+    },
+    {
+      "bin": "91-180",
+      "count": 965
+    },
+    {
+      "bin": "181+",
+      "count": 2951
+    }
+  ],
+  "matriz_rf": [
+    {
+      "count": 1740,
+      "f": 1,
+      "m_avg": 0.0,
+      "r": 1,
+      "seg_share": 1.0,
+      "segmento_principal": "lost"
+    },
+    {
+      "count": 13,
+      "f": 1,
+      "m_avg": 0.0,
+      "r": 2,
+      "seg_share": 1.0,
+      "segmento_principal": "lost"
+    },
+    {
+      "count": 1259,
+      "f": 2,
+      "m_avg": 147.39,
+      "r": 2,
+      "seg_share": 0.7307,
+      "segmento_principal": "lost"
+    },
+    {
+      "count": 308,
+      "f": 3,
+      "m_avg": 502.31,
+      "r": 2,
+      "seg_share": 0.8214,
+      "segmento_principal": "at_risk"
+    },
+    {
+      "count": 112,
+      "f": 4,
+      "m_avg": 1595.57,
+      "r": 2,
+      "seg_share": 0.7054,
+      "segmento_principal": "cant_lose"
+    },
+    {
+      "count": 32,
+      "f": 5,
+      "m_avg": 4303.23,
+      "r": 2,
+      "seg_share": 0.9062,
+      "segmento_principal": "cant_lose"
+    },
+    {
+      "count": 538,
+      "f": 2,
+      "m_avg": 185.8,
+      "r": 3,
+      "seg_share": 1.0,
+      "segmento_principal": "hibernating"
+    },
+    {
+      "count": 551,
+      "f": 3,
+      "m_avg": 531.19,
+      "r": 3,
+      "seg_share": 0.8403,
+      "segmento_principal": "at_risk"
+    },
+    {
+      "count": 505,
+      "f": 4,
+      "m_avg": 1134.71,
+      "r": 3,
+      "seg_share": 0.6634,
+      "segmento_principal": "cant_lose"
+    },
+    {
+      "count": 142,
+      "f": 5,
+      "m_avg": 3417.02,
+      "r": 3,
+      "seg_share": 0.9437,
+      "segmento_principal": "cant_lose"
+    },
+    {
+      "count": 231,
+      "f": 2,
+      "m_avg": 187.37,
+      "r": 4,
+      "seg_share": 1.0,
+      "segmento_principal": "potential_loyalist"
+    },
+    {
+      "count": 331,
+      "f": 3,
+      "m_avg": 677.47,
+      "r": 4,
+      "seg_share": 1.0,
+      "segmento_principal": "potential_loyalist"
+    },
+    {
+      "count": 676,
+      "f": 4,
+      "m_avg": 1427.12,
+      "r": 4,
+      "seg_share": 0.9926,
+      "segmento_principal": "loyal"
+    },
+    {
+      "count": 484,
+      "f": 5,
+      "m_avg": 4750.77,
+      "r": 4,
+      "seg_share": 0.9979,
+      "segmento_principal": "loyal"
+    },
+    {
+      "count": 144,
+      "f": 2,
+      "m_avg": 264.28,
+      "r": 5,
+      "seg_share": 1.0,
+      "segmento_principal": "potential_loyalist"
+    },
+    {
+      "count": 189,
+      "f": 3,
+      "m_avg": 787.94,
+      "r": 5,
+      "seg_share": 1.0,
+      "segmento_principal": "potential_loyalist"
+    },
+    {
+      "count": 484,
+      "f": 4,
+      "m_avg": 1602.6,
+      "r": 5,
+      "seg_share": 0.9793,
+      "segmento_principal": "loyal"
+    },
+    {
+      "count": 978,
+      "f": 5,
+      "m_avg": 9196.11,
+      "r": 5,
+      "seg_share": 0.8446,
+      "segmento_principal": "champions"
+    }
+  ],
+  "modo": "personalizada",
+  "ok": true,
+  "regua": {
+    "atencao": 472,
+    "normal": 1283,
+    "ok": 2875,
+    "pct_ok_normal": 0.4769989675347023,
+    "urgente": 4087
+  },
+  "segmentos": {
+    "at_risk": 913,
+    "cant_lose": 577,
+    "champions": 826,
+    "hibernating": 1058,
+    "lost": 2673,
+    "loyal": 1775,
+    "new": 0,
+    "potential_loyalist": 895
+  },
+  "times_ativos": [
+    1,
+    4,
+    7,
+    15,
+    17,
+    18,
+    19,
+    23,
+    28,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35
+  ],
+  "total_clientes": 8717,
+  "ufs_ativas": [
+    "BA",
+    "DF",
+    "ES",
+    "GO",
+    "MA",
+    "MG",
+    "RJ",
+    "SC",
+    "SP"
+  ],
+  "vendedores_ativos": [
+    2,
+    4,
+    7,
+    12,
+    15,
+    20,
+    25,
+    27,
+    29,
+    34,
+    72,
+    99,
+    116,
+    135,
+    223,
+    258,
+    272,
+    280,
+    573,
+    594,
+    607,
+    621,
+    700,
+    705,
+    744,
+    750,
+    751,
+    820,
+    879,
+    895,
+    899,
+    920,
+    927,
+    945,
+    950,
+    999,
+    1002,
+    1059,
+    1083,
+    1087,
+    1125,
+    1133,
+    1183,
+    1189,
+    1209,
+    1217,
+    1243,
+    1265,
+    1300,
+    1323,
+    1327,
+    1335,
+    1339,
+    1370,
+    1395,
+    1398,
+    1400,
+    1404,
+    1406,
+    1408,
+    1412,
+    1413,
+    1414,
+    1416,
+    1418,
+    1420,
+    1421,
+    1422,
+    1423,
+    1426,
+    1427,
+    1429,
+    1445,
+    1449,
+    1461,
+    1471,
+    1479,
+    1491,
+    1492,
+    1494,
+    1495,
+    1496,
+    1498,
+    1499,
+    1501,
+    1510,
+    1514,
+    1516,
+    1517,
+    1518,
+    1519,
+    1522,
+    1523,
+    1524,
+    1526,
+    1528,
+    1532,
+    1534,
+    1536,
+    1538,
+    1540,
+    1545,
+    1548,
+    1550,
+    1552,
+    1554,
+    1555,
+    1556,
+    1557,
+    1558,
+    1574,
+    1578,
+    1579,
+    1584,
+    1585,
+    1587,
+    1589,
+    1590,
+    1591,
+    1592,
+    5269
+  ]
+}

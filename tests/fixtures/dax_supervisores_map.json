@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {"[CODSUPERVISOR]": 18, "[NOME]": "JOSE DE ANCHIETA", "[TIPOSUPERVISOR]": "P"},
+            {"[CODSUPERVISOR]": 19, "[NOME]": "START",            "[TIPOSUPERVISOR]": "I"},
+            {"[CODSUPERVISOR]": 99, "[NOME]": "OUTRO TIME",       "[TIPOSUPERVISOR]": "P"}
+          ]
+        }
+      ]
+    }
+  ]
+}

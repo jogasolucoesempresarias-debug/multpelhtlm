@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {"[CODCLI]": 1, "[CODEPTO]": 1, "[UltimaCompra]": "2024-12-01T00:00:00", "[LucroCat12m]": 5000.0},
+            {"[CODCLI]": 2, "[CODEPTO]": 2, "[UltimaCompra]": "2026-05-01T00:00:00", "[LucroCat12m]": 800.0},
+            {"[CODCLI]": 3, "[CODEPTO]": 1, "[UltimaCompra]": "2025-11-15T00:00:00", "[LucroCat12m]": 1500.0}
+          ]
+        }
+      ]
+    }
+  ]
+}

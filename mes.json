@@ -1,0 +1,144 @@
+{
+  "anomes": 202604,
+  "comparativo": {
+    "clientes_vs_ano_anterior_pct": -0.07453237410071943,
+    "clientes_vs_mes_anterior_pct": -0.07186147186147186,
+    "venda_ano_anterior": 6679652.860861001,
+    "venda_mes_anterior": 6808729.886135999,
+    "venda_vs_ano_anterior_pct": -0.002756196952221142,
+    "venda_vs_mes_anterior_pct": -0.021661523749431477
+  },
+  "nome_mes": "Abr/26",
+  "ok": true,
+  "resumo": {
+    "clientes_unicos": 3216,
+    "lucro_total": 1432085.3904890001,
+    "ticket_medio": 153.29,
+    "venda_total": 6661242.422004,
+    "vendedores_ativos": 81
+  },
+  "top_clientes": [
+    {
+      "cliente": "A & M EMBALAGENS LTDA",
+      "codcli": 5862,
+      "codusur": 272,
+      "lucro": 1273.3699999999953,
+      "uf": "ES",
+      "venda": 96558.29,
+      "vendedor": "RCA 272"
+    },
+    {
+      "cliente": "A C COMERCIO DE EMBALAGENS LTDA",
+      "codcli": 124870,
+      "codusur": 272,
+      "lucro": 347.7700000000041,
+      "uf": "ES",
+      "venda": 87285.36,
+      "vendedor": "RCA 272"
+    },
+    {
+      "cliente": "OSVALDO PERIM SUPERMERCADOS LTDA",
+      "codcli": 128855,
+      "codusur": 20,
+      "lucro": 11190.540000000008,
+      "uf": "ES",
+      "venda": 83736.74,
+      "vendedor": "VALTER PARIS"
+    },
+    {
+      "cliente": "TOP PANIFICADORA LTDA",
+      "codcli": 125485,
+      "codusur": 1209,
+      "lucro": 12040.624033999995,
+      "uf": "ES",
+      "venda": 51285.834007,
+      "vendedor": "FABIANA PEREIRA MOURA"
+    },
+    {
+      "cliente": "HORTO COMERCIAL CACHOEIRO LTDA",
+      "codcli": 1578,
+      "codusur": 29,
+      "lucro": 8859.409999999996,
+      "uf": "ES",
+      "venda": 48524.85,
+      "vendedor": "JULIANO PASTORE"
+    },
+    {
+      "cliente": "UNIMED SUL CAPIXABA - COOPERATIVA DE TRABALHO MEDICO",
+      "codcli": 120367,
+      "codusur": 899,
+      "lucro": 11128.809999999998,
+      "uf": "ES",
+      "venda": 43273.42,
+      "vendedor": "MARCIO JOSE MIRANDA DE OLIVEIRA"
+    },
+    {
+      "cliente": "L S NASCIMENTO DE ILHEUS",
+      "codcli": 121154,
+      "codusur": 1183,
+      "lucro": 12447.77,
+      "uf": "BA",
+      "venda": 41337.97,
+      "vendedor": "PAULA ALENCAR DE JESUS"
+    },
+    {
+      "cliente": "COMERCIAL BAHIANO DE ALIMENTOS LTDA.",
+      "codcli": 126209,
+      "codusur": 879,
+      "lucro": 11726.769999999997,
+      "uf": "BA",
+      "venda": 40483.6,
+      "vendedor": "JOSE JUNIOR BRITO PEDRA"
+    },
+    {
+      "cliente": "M. R. ALIMENTACAO INDUSTRIAL LTDA",
+      "codcli": 119167,
+      "codusur": 1499,
+      "lucro": 8308.259999999998,
+      "uf": "RJ",
+      "venda": 31897.3,
+      "vendedor": "CRISTINA SANTOS DA SILVA"
+    },
+    {
+      "cliente": "L S NASCIMENTO DE ILHEUS",
+      "codcli": 125205,
+      "codusur": 1183,
+      "lucro": 9126.96,
+      "uf": "BA",
+      "venda": 30297.87,
+      "vendedor": "PAULA ALENCAR DE JESUS"
+    }
+  ],
+  "top_deptos": [
+    {
+      "codepto": 2,
+      "nome": "MATERIAL DE LIMPEZA",
+      "share_pct": 0.1877790773128312,
+      "venda": 1250841.955761
+    },
+    {
+      "codepto": 50,
+      "nome": "DIVERSOS",
+      "share_pct": 0.13662711495616148,
+      "venda": 910106.3341420001
+    },
+    {
+      "codepto": 3,
+      "nome": "EMBALAGENS",
+      "share_pct": 0.10946370712937283,
+      "venda": 729164.2896
+    },
+    {
+      "codepto": 11,
+      "nome": "ISOPOR",
+      "share_pct": 0.07761839243803602,
+      "venda": 517034.928436
+    },
+    {
+      "codepto": 8,
+      "nome": "BOBINA PICOTADA",
+      "share_pct": 0.07744334459828944,
+      "venda": 515868.89234
+    }
+  ]
+}

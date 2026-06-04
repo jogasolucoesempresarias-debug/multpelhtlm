@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Multpel Analytics — Mix Abandonado</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2338bdf8'/%3E%3Cstop offset='1' stop-color='%23818cf8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='6' fill='url(%23g)'/%3E%3Ctext x='16' y='22' font-family='DM Sans,sans-serif' font-size='18' font-weight='700' text-anchor='middle' fill='%230a0e17'%3EM%3C/text%3E%3C/svg%3E">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="/static/fetch-resiliente.js"></script>
+<style>
+  :root {
+    --bg: #0a0e17; --surface: #111827; --surface2: #1a2235; --border: #1e293b;
+    --text: #e2e8f0; --text-dim: #94a3b8;
+    --accent: #38bdf8; --accent2: #818cf8;
+    --green: #34d399; --red: #f87171; --orange: #fb923c; --yellow: #fbbf24;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  .dashboard { padding: 24px; max-width: 1600px; margin: 0 auto; }
+  .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; flex-wrap: wrap; gap: 14px; }
+  .top-bar .brand { display: flex; align-items: center; gap: 12px; }
+  .top-bar .brand .mark { width: 36px; height: 36px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--bg); font-size: 1.05rem; }
+  .top-bar h1 { font-size: 1.3rem; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .meta { font-size: 0.74rem; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; }
+  .nav { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn-sm { padding: 7px 14px; background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-weight: 500; font-size: 0.78rem; border-radius: 7px; cursor: pointer; transition: all 0.15s; text-decoration: none; display: inline-block; }
+  .btn-sm:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm.active { border-color: var(--accent); color: var(--accent); background: rgba(56,189,248,0.08); }
+
+  .filtros-card { background: var(--surface); border: 1px solid var(--border); border-radius: 11px; padding: 12px 16px; margin-bottom: 12px; display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+  .ff label { display: block; font-size: 0.66rem; color: var(--text-dim); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+  .ff input, .ff select { padding: 7px 10px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.82rem; min-width: 140px; }
+  .ff input:focus, .ff select:focus { outline: none; border-color: var(--accent); }
+
+  .kpi-grid { display: grid; gap: 12px; grid-template-columns: repeat(3, 1fr); margin-bottom: 12px; }
+  @media (max-width: 900px) { .kpi-grid { grid-template-columns: 1fr; } }
+  .kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: 11px; padding: 16px 18px; }
+  .kpi-card .label { font-size: 0.66rem; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+  .kpi-card .value { font-size: 1.6rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+  .kpi-card .sub { font-size: 0.72rem; color: var(--text-dim); margin-top: 4px; }
+
+  .table-card { background: var(--surface); border: 1px solid var(--border); border-radius: 11px; overflow: hidden; }
+  .table-info { padding: 10px 14px; font-size: 0.78rem; color: var(--text-dim); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
+  .table-scroll { overflow-x: auto; max-height: 60vh; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.8rem; white-space: nowrap; }
+  thead th { position: sticky; top: 0; background: var(--surface2); padding: 9px 12px; text-align: left; font-weight: 600; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); border-bottom: 1px solid var(--border); z-index: 2; }
+  thead th.num, td.num { text-align: right; }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  tbody tr:hover { background: rgba(56,189,248,0.05); }
+  td.num { font-family: 'JetBrains Mono', monospace; }
+  .badge-dias { padding: 2px 7px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+  .b-30 { background: rgba(251,191,36,0.15); color: var(--yellow); }
+  .b-60 { background: rgba(251,146,60,0.15); color: var(--orange); }
+  .b-90 { background: rgba(248,113,113,0.15); color: var(--red); }
+  .b-180 { background: rgba(248,113,113,0.25); color: var(--red); font-weight: 700; }
+
+  .loading-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; gap: 14px; }
+  .spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="loading" class="loading-screen">
+  <div class="spinner"></div>
+  <div style="color: var(--text-dim); font-size: 0.85rem;">Carregando mix abandonado... (query pesada, ~10s)</div>
+</div>
+
+<div id="app" class="dashboard hidden">
+  <div class="top-bar">
+    <div class="brand">
+      <div class="mark">M</div>
+      <div>
+        <h1>Mix Abandonado</h1>
+        <div class="meta" id="userInfo"></div>
+      </div>
+    </div>
+    <div class="nav">
+      <a href="/" class="btn-sm">Dashboard</a>
+      <a href="/carteira" class="btn-sm">Carteira</a>
+      <a id="linkVendedores" href="/vendedores" class="btn-sm">Vendedores</a>
+      <a href="/categorias" class="btn-sm">Categorias</a>
+      <a href="/mix" class="btn-sm active">Mix</a>
+      <a href="/tendencias" class="btn-sm">Tendências</a>
+      <a href="/logout" class="btn-sm">Sair</a>
+    </div>
+  </div>
+
+  <div style="margin-bottom:10px;color:var(--text-dim);font-size:0.78rem;">
+    Clientes que compraram um <strong>departamento</strong> nos últimos 12 meses mas NÃO compraram nos últimos <strong id="dias_subt">60</strong> dias. Use pra cobrar oportunidades de cross-sell.
+  </div>
+
+  <div class="filtros-card">
+    <div class="ff">
+      <label>Período</label>
+      <select id="filt_dias" onchange="aplicar()">
+        <option value="30">30 dias</option>
+        <option value="60" selected>60 dias</option>
+        <option value="90">90 dias</option>
+        <option value="180">180 dias</option>
+      </select>
+    </div>
+    <div class="ff">
+      <label>Departamento</label>
+      <input list="lista_deptos" id="filt_depto" placeholder="Todos · digite pra filtrar" onchange="aplicar()">
+      <datalist id="lista_deptos"></datalist>
+    </div>
+    <div class="ff">
+      <label>Fornecedor</label>
+      <input list="lista_fornec" id="filt_fornec" placeholder="Todos · digite pra filtrar" onchange="aplicar()">
+      <datalist id="lista_fornec"></datalist>
+    </div>
+    <div class="ff">
+      <label>Time (supervisor)</label>
+      <input list="lista_times" id="filt_time" placeholder="Todos · digite pra filtrar" oninput="repopularVendedorCascata(); filtrarTabela()">
+      <datalist id="lista_times"></datalist>
+    </div>
+    <div class="ff">
+      <label>Vendedor (filtro local)</label>
+      <input list="lista_vendedores" id="filt_vend" placeholder="Todos · digite pra filtrar" oninput="filtrarTabela()">
+      <datalist id="lista_vendedores"></datalist>
+    </div>
+    <div class="ff" style="flex:1;">
+      <label>Busca cliente</label>
+      <input type="text" id="filt_busca" placeholder="ex: padaria, ilheus" oninput="filtrarTabela()">
+    </div>
+  </div>
+
+  <div class="kpi-grid" style="grid-template-columns: repeat(4, 1fr);">
+    <div class="kpi-card">
+      <div class="label">Clientes × Departamento parados</div>
+      <div class="value" id="k_total">—</div>
+      <div class="sub" id="k_clientes_distintos">—</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Receita 12m em risco</div>
+      <div class="value" id="k_venda">—</div>
+      <div class="sub">Soma da venda dos pares parados</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Lucro 12m em risco</div>
+      <div class="value" id="k_lucro">—</div>
+      <div class="sub">Soma do lucro dos pares parados</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Top 5 maiores perdas</div>
+      <div class="value" id="k_top5_total">—</div>
+      <div class="sub" id="k_top5_nomes">—</div>
+    </div>
+  </div>
+
+  <div class="table-card">
+    <div class="table-info"><span><strong id="tabela_total">0</strong> pares · mostrando primeiros 200</span></div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>CodCli</th>
+            <th>Cliente</th>
+            <th>Cidade/UF</th>
+            <th>Departamento</th>
+            <th>Última compra</th>
+            <th class="num">Dias parado</th>
+            <th class="num">Venda Cat 12m</th>
+            <th class="num">Lucro Cat 12m</th>
+            <th>Vendedor</th>
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
+const NUM = new Intl.NumberFormat('pt-BR');
+let _rows = [];
+
+// fetchJSON vem do /static/fetch-resiliente.js (retry + backoff + timeout)
+
+async function loadMe() {
+  try {
+    const j = await fetchJSON('/api/me');
+    document.getElementById('userInfo').textContent = `${j.nome} · ${j.role}`;
+    if (j.role === 'vendedor') document.getElementById('linkVendedores').style.display = 'none';
+  } catch (e) {}
+}
+
+// Maps globais pra datalist + cascata
+let _deptosArr = [];     // [{codepto, nome}]
+let _fornecArr = [];     // [{codfornec, nome}]
+let _vendedoresMap = {}; // {codusur: {nome, codsupervisor}}
+let _timesMap = {};      // {codsupervisor: {nome}}
+
+function extrairCodigo(valor) {
+  if (!valor) return '';
+  const m = String(valor).match(/\((\d+)\)\s*$/);
+  if (m) return m[1];
+  if (/^\d+$/.test(valor.trim())) return valor.trim();
+  return '';
+}
+
+async function loadDeptos() {
+  try {
+    const d = await fetchJSON('/api/categorias');
+    _deptosArr = (d.categorias || []).map(c => ({ codepto: c.codepto, nome: c.nome }));
+    const dl = document.getElementById('lista_deptos');
+    dl.innerHTML = _deptosArr.map(c => `<option value="${c.nome} (${c.codepto})">`).join('');
+  } catch (e) {}
+}
+
+async function loadFornecedores() {
+  try {
+    const d = await fetchJSON('/api/fornecedores?top=50');
+    _fornecArr = (d.fornecedores || []).map(f => ({ codfornec: f.codfornec, nome: f.nome }));
+    const dl = document.getElementById('lista_fornec');
+    dl.innerHTML = _fornecArr.map(f => `<option value="${f.nome} (${f.codfornec})">`).join('');
+  } catch (e) {}
+}
+
+async function loadVendedoresMap() {
+  try {
+    const j = await fetchJSON('/api/_internal/vendedores-map');
+    _vendedoresMap = j.vendedores || {};
+    repopularVendedorCascata();
+  } catch (e) {}
+}
+
+async function loadTimesMap() {
+  try {
+    const j = await fetchJSON('/api/_internal/supervisores-map');
+    _timesMap = j.supervisores || {};
+    const dl = document.getElementById('lista_times');
+    const lista = Object.entries(_timesMap).sort((a, b) => (a[1].nome || '').localeCompare(b[1].nome || ''));
+    dl.innerHTML = lista.map(([cs, v]) => `<option value="${v.nome} (${cs})">`).join('');
+  } catch (e) {}
+}
+
+function repopularVendedorCascata() {
+  // Filtra vendedores pelo time selecionado (se houver)
+  const timeSel = extrairCodigo(document.getElementById('filt_time').value);
+  const dl = document.getElementById('lista_vendedores');
+  const lista = Object.entries(_vendedoresMap)
+    .filter(([_, v]) => !timeSel || String(v.codsupervisor) === timeSel)
+    .sort((a, b) => (a[1].nome || '').localeCompare(b[1].nome || ''));
+  dl.innerHTML = lista.map(([cu, v]) => `<option value="${v.nome} (${cu})">`).join('');
+}
+
+async function loadMix() {
+  document.getElementById('loading').classList.remove('hidden');
+  document.getElementById('app').classList.add('hidden');
+  const dias = document.getElementById('filt_dias').value;
+  const depto = extrairCodigo(document.getElementById('filt_depto').value);
+  const fornec = extrairCodigo(document.getElementById('filt_fornec').value);
+  const params = new URLSearchParams({ dias, limit: 200 });
+  if (depto) params.set('codepto', depto);
+  if (fornec) params.set('fornecedor', fornec);
+
+  try {
+    const d = await fetchJSON('/api/mix/abandonado?' + params.toString());
+    _rows = d.rows || [];
+    document.getElementById('dias_subt').textContent = dias;
+    renderKpis(d);
+    renderTabela(_rows);
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+  } catch (e) {
+    document.getElementById('loading').innerHTML = '<div style="color:var(--red)">Erro: ' + e.message + '</div>';
+  }
+}
+
+function renderKpis(d) {
+  document.getElementById('k_total').textContent = NUM.format(d.total);
+  const clientes_distintos = new Set((d.rows || []).map(r => r.codcli)).size;
+  document.getElementById('k_clientes_distintos').textContent = `${NUM.format(clientes_distintos)} clientes distintos (no top 200)`;
+  const venda = (d.rows || []).reduce((s, r) => s + (r.venda_cat_12m || 0), 0);
+  const lucro = (d.rows || []).reduce((s, r) => s + (r.lucro_cat_12m || 0), 0);
+  document.getElementById('k_venda').textContent = BRL.format(venda);
+  document.getElementById('k_lucro').textContent = BRL.format(lucro);
+  // Top 5 por venda (sortbicker já vem do backend por lucro DESC, mas re-ordeno por venda DESC)
+  const top5 = [...(d.rows || [])].sort((a, b) => (b.venda_cat_12m || 0) - (a.venda_cat_12m || 0)).slice(0, 5);
+  document.getElementById('k_top5_total').textContent = BRL.format(top5.reduce((s, r) => s + (r.venda_cat_12m || 0), 0));
+  document.getElementById('k_top5_nomes').textContent = top5.map(r => r.cliente.slice(0, 18)).join(', ');
+}
+
+function badgeDias(d) {
+  if (d >= 180) return `<span class="badge-dias b-180">${d}d</span>`;
+  if (d >= 90)  return `<span class="badge-dias b-90">${d}d</span>`;
+  if (d >= 60)  return `<span class="badge-dias b-60">${d}d</span>`;
+  return `<span class="badge-dias b-30">${d}d</span>`;
+}
+
+function renderTabela(rows) {
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = rows.map(r => {
+    // Enriquece com time via lookup
+    const v = _vendedoresMap[String(r.codusur)];
+    const time = v && _timesMap[String(v.codsupervisor)] ? _timesMap[String(v.codsupervisor)].nome : '—';
+    return `
+    <tr>
+      <td class="num"><span style="font-size:0.72rem;color:var(--text-dim);">${r.codcli || '—'}</span></td>
+      <td><strong>${r.cliente}</strong></td>
+      <td>${r.cidade || '—'}/${r.uf || '—'}</td>
+      <td>${r.depto_nome}</td>
+      <td>${r.ultima_compra}</td>
+      <td class="num">${badgeDias(r.dias_sem_comprar_categoria)}</td>
+      <td class="num">${BRL.format(r.venda_cat_12m || 0)}</td>
+      <td class="num"><strong style="color:var(--red);">${BRL.format(r.lucro_cat_12m)}</strong></td>
+      <td>${r.vendedor || '—'}</td>
+      <td><span style="font-size:0.74rem;color:var(--text-dim);">${time}</span></td>
+    </tr>`;
+  }).join('');
+  document.getElementById('tabela_total').textContent = NUM.format(rows.length);
+}
+
+function filtrarTabela() {
+  const vRaw = document.getElementById('filt_vend').value;
+  const vCod = extrairCodigo(vRaw);
+  const vNome = vRaw.toLowerCase();
+  const tRaw = document.getElementById('filt_time').value;
+  const tCod = extrairCodigo(tRaw);
+  const b = document.getElementById('filt_busca').value.toLowerCase();
+
+  const filt = _rows.filter(r => {
+    // Vendedor: por código exato (se digitou cod) OU por substring no nome
+    let vendedor_ok = true;
+    if (vRaw) {
+      if (vCod) vendedor_ok = String(r.codusur) === vCod;
+      else vendedor_ok = (r.vendedor || '').toLowerCase().includes(vNome);
+    }
+    // Time: filtra via lookup
+    let time_ok = true;
+    if (tCod) {
+      const v = _vendedoresMap[String(r.codusur)];
+      time_ok = v && String(v.codsupervisor) === tCod;
+    }
+    const busca_ok = !b || (r.cliente || '').toLowerCase().includes(b)
+                          || (r.cidade || '').toLowerCase().includes(b)
+                          || String(r.codcli || '').includes(b);
+    return vendedor_ok && time_ok && busca_ok;
+  });
+  renderTabela(filt);
+}
+
+function aplicar() { loadMix(); }
+
+async function carregar() {
+  try {
+    await loadMe();
+    await Promise.all([loadDeptos(), loadFornecedores(), loadVendedoresMap(), loadTimesMap()]);
+    await loadMix();
+  } catch (e) {
+    document.getElementById('loading').innerHTML = '<div style="color:var(--red)">Erro: ' + e.message + '</div>';
+  }
+}
+carregar();
+</script>
+</body>
+</html>

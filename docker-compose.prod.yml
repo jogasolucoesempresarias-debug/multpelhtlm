@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  multpel-app:
+    image: ghcr.io/jogasolucoesempresarias-debug/multpelhtlm:latest
+    networks:
+      - proxy
+      - multpel-internal
+    environment:
+      FLASK_ENV: production
+      SECRET_KEY: ${SECRET_KEY}
+      DB_HOST: postgres_postgres
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-multpel_db}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: multpel-redis
+      REDIS_PORT: 6379
+      POWERBI_TENANT_ID: ${POWERBI_TENANT_ID}
+      POWERBI_CLIENT_ID: ${POWERBI_CLIENT_ID}
+      POWERBI_CLIENT_SECRET: ${POWERBI_CLIENT_SECRET}
+      POWERBI_GROUP_ID: ${POWERBI_GROUP_ID}
+      POWERBI_DATASET_ID: ${POWERBI_DATASET_ID}
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      RESEND_FROM: ${RESEND_FROM:-joga@jogasolucoes.com.br}
+      CRON_HABILITADO: ${CRON_HABILITADO:-true}
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=proxy"
+        - "traefik.http.routers.multpel.rule=Host(`multpel.jogasolucoes.com.br`)"
+        - "traefik.http.routers.multpel.entrypoints=websecure"
+        - "traefik.http.routers.multpel.tls.certresolver=le"
+        - "traefik.http.services.multpel.loadbalancer.server.port=5000"
+
+  multpel-redis:
+    image: redis:7-alpine
+    networks:
+      - multpel-internal
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+networks:
+  proxy:
+    external: true
+  multpel-internal:
+    driver: overlay

@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {"[CODUSUR]": 573, "[TicketMedio]": 178.5, "[TaxaPositivacao]": 0.62, "[ClientesUnicos]": 124},
+            {"[CODUSUR]": 100, "[TicketMedio]": 155.0, "[TaxaPositivacao]": 0.51, "[ClientesUnicos]": 89},
+            {"[CODUSUR]": 820, "[TicketMedio]": 142.0, "[TaxaPositivacao]": 0.45, "[ClientesUnicos]": 67}
+          ]
+        }
+      ]
+    }
+  ]
+}

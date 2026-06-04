@@ -1,0 +1,130 @@
+{
+  "ok": true,
+  "rows": [
+    {
+      "ANO": 2024,
+      "MES": 5,
+      "VendaLiquida": 1580581.3234249998
+    },
+    {
+      "ANO": 2024,
+      "MES": 6,
+      "VendaLiquida": 7280041.864839001
+    },
+    {
+      "ANO": 2024,
+      "MES": 7,
+      "VendaLiquida": 8652348.057387998
+    },
+    {
+      "ANO": 2024,
+      "MES": 8,
+      "VendaLiquida": 8084928.471198001
+    },
+    {
+      "ANO": 2024,
+      "MES": 9,
+      "VendaLiquida": 7559902.021992
+    },
+    {
+      "ANO": 2024,
+      "MES": 10,
+      "VendaLiquida": 8322710.899480001
+    },
+    {
+      "ANO": 2024,
+      "MES": 11,
+      "VendaLiquida": 7716363.153398
+    },
+    {
+      "ANO": 2024,
+      "MES": 12,
+      "VendaLiquida": 8459923.325873
+    },
+    {
+      "ANO": 2025,
+      "MES": 1,
+      "VendaLiquida": 7928240.3385459995
+    },
+    {
+      "ANO": 2025,
+      "MES": 2,
+      "VendaLiquida": 7538959.382431
+    },
+    {
+      "ANO": 2025,
+      "MES": 3,
+      "VendaLiquida": 6693160.946287
+    },
+    {
+      "ANO": 2025,
+      "MES": 4,
+      "VendaLiquida": 6679652.860861001
+    },
+    {
+      "ANO": 2025,
+      "MES": 5,
+      "VendaLiquida": 7627410.486234001
+    },
+    {
+      "ANO": 2025,
+      "MES": 6,
+      "VendaLiquida": 7204970.453664
+    },
+    {
+      "ANO": 2025,
+      "MES": 7,
+      "VendaLiquida": 7364045.175881
+    },
+    {
+      "ANO": 2025,
+      "MES": 8,
+      "VendaLiquida": 7150658.611279
+    },
+    {
+      "ANO": 2025,
+      "MES": 9,
+      "VendaLiquida": 7263721.29303
+    },
+    {
+      "ANO": 2025,
+      "MES": 10,
+      "VendaLiquida": 7777793.622911
+    },
+    {
+      "ANO": 2025,
+      "MES": 11,
+      "VendaLiquida": 6879172.537684999
+    },
+    {
+      "ANO": 2025,
+      "MES": 12,
+      "VendaLiquida": 7876918.081263
+    },
+    {
+      "ANO": 2026,
+      "MES": 1,
+      "VendaLiquida": 7299080.239588999
+    },
+    {
+      "ANO": 2026,
+      "MES": 2,
+      "VendaLiquida": 5801381.036517
+    },
+    {
+      "ANO": 2026,
+      "MES": 3,
+      "VendaLiquida": 6808729.886135999
+    },
+    {
+      "ANO": 2026,
+      "MES": 4,
+      "VendaLiquida": 6661242.422004
+    },
+    {
+      "ANO": 2026,
+      "MES": 5,
+      "VendaLiquida": 5545097.975667001
+    }
+  ]
+}
