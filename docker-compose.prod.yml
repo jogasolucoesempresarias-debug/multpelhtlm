@@ -8,6 +8,7 @@ services:
       - multpel-internal
     environment:
       FLASK_ENV: production
+      TZ: America/Sao_Paulo
       SECRET_KEY: ${SECRET_KEY}
       DB_HOST: postgres_postgres
       DB_PORT: ${DB_PORT:-5432}

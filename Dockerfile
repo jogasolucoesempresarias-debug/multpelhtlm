@@ -2,10 +2,13 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
-# Lib de runtime do psycopg2-binary
+# Lib de runtime do psycopg2-binary + timezone data pro ZoneInfo
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
+
+ENV TZ=America/Sao_Paulo
 
 # Dependências Python (camada cacheada se requirements não mudar)
 COPY requirements.txt .

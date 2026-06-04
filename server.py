@@ -3761,10 +3761,12 @@ _DIAS_SEMANA_MAP = {
 def _disparar_relatorios_agendados():
     """Job executado pelo APScheduler a cada 5min. Pega users elegíveis e dispara emails."""
     from datetime import datetime, time as dtime, timedelta
+    from zoneinfo import ZoneInfo
     if not CRON_HABILITADO:
         return  # safety net: desliga tudo se env var false
 
-    agora = datetime.now()
+    # Container pode rodar em UTC — usa TZ Brasil explícita pra bater com cron_horario cadastrado
+    agora = datetime.now(ZoneInfo('America/Sao_Paulo'))
     inicio_janela = (agora - timedelta(minutes=5)).time()
     fim_janela = agora.time()
     dia_semana = agora.weekday()
