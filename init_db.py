@@ -41,6 +41,9 @@ cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS cron_frequencia 
 # Patch J — destinatários extras (CC) pro envio de relatório
 cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS email_cc        JSONB DEFAULT '[]'::jsonb;")
 
+# Patch K — filtro de segmento RFM (comma-separated: 'champions,loyal,lost' ou '' = carteira completa)
+cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS segmentos_rfm   TEXT DEFAULT '';")
+
 cur.execute("""
     CREATE TABLE IF NOT EXISTS multpel_log (
         id            SERIAL PRIMARY KEY,

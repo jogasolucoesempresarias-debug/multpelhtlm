@@ -13,6 +13,7 @@
     --text: #e2e8f0; --text-dim: #94a3b8;
     --accent: #38bdf8; --accent2: #818cf8;
     --green: #34d399; --red: #f87171; --orange: #fb923c; --yellow: #fbbf24;
+    --purple: #a78bfa; --gray: #475569;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
@@ -68,6 +69,23 @@
     flex: 1; min-width: 180px; outline: none; font-size: 0.84rem;
     color: var(--text); font-family: inherit;
   }
+  /* Patch K — chips de segmento RFM (mesmo padrão visual da tela /carteira) */
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    padding: 5px 11px; border-radius: 14px; border: 1px solid var(--border);
+    cursor: pointer; font-size: 0.76rem; color: var(--text-dim);
+    user-select: none; transition: all 0.12s; background: transparent;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--text); }
+  .chip.active { background: var(--accent); color: var(--bg); font-weight: 600; border-color: var(--accent); }
+  .chip.g-champions.active          { background: var(--green);   border-color: var(--green); }
+  .chip.g-loyal.active              { background: var(--accent);  border-color: var(--accent); }
+  .chip.g-cant_lose.active          { background: var(--orange);  border-color: var(--orange); }
+  .chip.g-at_risk.active            { background: var(--yellow);  border-color: var(--yellow); color: #0a0e17; }
+  .chip.g-potential_loyalist.active { background: var(--accent2); border-color: var(--accent2); }
+  .chip.g-new.active                { background: var(--purple);  border-color: var(--purple); }
+  .chip.g-hibernating.active        { background: var(--gray);    border-color: var(--gray); }
+  .chip.g-lost.active               { background: var(--red);     border-color: var(--red); }
   .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
   .toolbar .grow { flex: 1; }
   .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
@@ -202,6 +220,22 @@
           <option value="semanal_sex">Semanal (sexta)</option>
         </select>
       </div>
+      <div class="ff full">
+        <label>Segmentos RFM (opcional)
+          <span style="color:var(--text-dim);font-size:0.72rem;font-weight:400;">— deixe vazio pra receber a carteira completa</span>
+        </label>
+        <div class="chips" id="modal_chips_segmento" style="padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;">
+          <span class="chip g-champions"          data-val="champions"          onclick="toggleModalChip('champions', this)">Campeões</span>
+          <span class="chip g-loyal"              data-val="loyal"              onclick="toggleModalChip('loyal', this)">Fiéis</span>
+          <span class="chip g-cant_lose"          data-val="cant_lose"          onclick="toggleModalChip('cant_lose', this)">Não Perder</span>
+          <span class="chip g-at_risk"            data-val="at_risk"            onclick="toggleModalChip('at_risk', this)">Em Risco</span>
+          <span class="chip g-potential_loyalist" data-val="potential_loyalist" onclick="toggleModalChip('potential_loyalist', this)">Promissores</span>
+          <span class="chip g-new"                data-val="new"                onclick="toggleModalChip('new', this)">Novos</span>
+          <span class="chip g-hibernating"        data-val="hibernating"        onclick="toggleModalChip('hibernating', this)">Inativos</span>
+          <span class="chip g-lost"               data-val="lost"               onclick="toggleModalChip('lost', this)">Perdidos</span>
+        </div>
+        <span id="seg_hint" style="color:var(--text-dim);font-size:0.72rem;margin-top:4px;display:block;">Nenhum selecionado — receberá a carteira completa</span>
+      </div>
     </div>
     <div class="modal-acoes">
       <button class="btn" onclick="fecharModal()">Cancelar</button>
@@ -273,6 +307,38 @@ function ccFlushInput() {
   if (inp && inp.value.trim()) { ccAdd(inp.value); inp.value = ''; }
 }
 
+// Patch K — chips de segmento RFM no modal
+let _modalSegmentosRfm = [];
+
+function toggleModalChip(segmento, el) {
+  el.classList.toggle('active');
+  const idx = _modalSegmentosRfm.indexOf(segmento);
+  if (idx >= 0) _modalSegmentosRfm.splice(idx, 1);
+  else _modalSegmentosRfm.push(segmento);
+  atualizarSegHint();
+}
+
+function atualizarSegHint() {
+  const hint = document.getElementById('seg_hint');
+  if (!hint) return;
+  if (_modalSegmentosRfm.length === 0) {
+    hint.textContent = 'Nenhum selecionado — receberá a carteira completa';
+    hint.style.color = 'var(--text-dim)';
+  } else {
+    hint.textContent = `${_modalSegmentosRfm.length} segmento(s) selecionado(s) — apenas esses serão enviados`;
+    hint.style.color = 'var(--accent)';
+  }
+}
+
+function carregarSegmentosNoModal(csv) {
+  const lista = (csv || '').split(',').map(s => s.trim()).filter(Boolean);
+  _modalSegmentosRfm = lista;
+  document.querySelectorAll('#modal_chips_segmento .chip').forEach(chip => {
+    chip.classList.toggle('active', lista.includes(chip.dataset.val));
+  });
+  atualizarSegHint();
+}
+
 function toast(msg, tipo) {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -339,10 +405,13 @@ function renderTabela() {
     const ccBadge = (u.email_cc && u.email_cc.length)
       ? `<br><span style="color:var(--text-dim);font-size:0.68rem;" title="${u.email_cc.join(', ')}">+${u.email_cc.length} CC</span>`
       : '';
+    const segBadge = (u.segmentos_rfm && u.segmentos_rfm.trim())
+      ? `<br><span style="color:var(--accent);font-size:0.66rem;" title="Filtrado por: ${u.segmentos_rfm}">▣ ${u.segmentos_rfm.split(',').length} segmento(s)</span>`
+      : '';
     return `
       <tr>
         <td>${u.nome}${inativoTag}</td>
-        <td class="mono">${u.email}${ccBadge}</td>
+        <td class="mono">${u.email}${ccBadge}${segBadge}</td>
         <td><span class="badge b-${u.role}">${u.role.toUpperCase()}</span></td>
         <td>${vendedorTime}</td>
         <td class="mono">${u.telefone || '—'}</td>
@@ -387,6 +456,7 @@ function abrirNovo() {
   _ccList = [];
   document.getElementById('cc_input').value = '';
   ccRender();
+  carregarSegmentosNoModal('');
   atualizarVisibilidadeRoleFields();
   document.getElementById('modal').classList.add('show');
 }
@@ -410,6 +480,7 @@ function abrirEdicao(id) {
   _ccList = Array.isArray(u.email_cc) ? [...u.email_cc] : [];
   document.getElementById('cc_input').value = '';
   ccRender();
+  carregarSegmentosNoModal(u.segmentos_rfm || '');
   atualizarVisibilidadeRoleFields();
   document.getElementById('modal').classList.add('show');
 }
@@ -442,6 +513,7 @@ async function salvar() {
       cron_horario: document.getElementById('f_cron_horario').value,
       cron_frequencia: document.getElementById('f_cron_frequencia').value,
       email_cc: _ccList,
+      segmentos_rfm: _modalSegmentosRfm.join(','),
     };
     const senha = document.getElementById('f_senha').value.trim();
     if (senha) body.senha = senha;

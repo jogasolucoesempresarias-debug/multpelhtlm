@@ -412,13 +412,34 @@ def _normalizar_emails_cc(lista, email_principal=None, limite=5):
     return saida
 
 
+SEGMENTOS_RFM_VALIDOS = {
+    'champions', 'loyal', 'cant_lose', 'at_risk',
+    'new', 'potential_loyalist', 'lost', 'hibernating',
+}
+
+
+def _normalizar_segmentos_rfm(entrada):
+    """Patch K: aceita string comma-separated ou lista. Retorna string canônica
+    (ex: 'champions,loyal') ou '' se vazio. Filtra valores fora de SEGMENTOS_RFM_VALIDOS."""
+    if not entrada:
+        return ''
+    if isinstance(entrada, str):
+        items = [s.strip() for s in entrada.split(',') if s.strip()]
+    elif isinstance(entrada, list):
+        items = [str(s).strip() for s in entrada if s]
+    else:
+        return ''
+    validos = [s for s in items if s in SEGMENTOS_RFM_VALIDOS]
+    return ','.join(sorted(set(validos)))
+
+
 def _ler_usuario(usuario_id):
     """Carrega 1 user do multpel_users por id. Retorna dict ou None."""
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
         "SELECT id, nome, email, role, codusur, codsupervisor, telefone, ativo, "
-        "cron_enabled, cron_horario, cron_frequencia, email_cc "
+        "cron_enabled, cron_horario, cron_frequencia, email_cc, segmentos_rfm "
         "FROM multpel_users WHERE id = %s",
         (usuario_id,)
     )
@@ -432,6 +453,7 @@ def _ler_usuario(usuario_id):
         'codusur': row[4], 'codsupervisor': row[5], 'telefone': row[6], 'ativo': row[7],
         'cron_enabled': row[8], 'cron_horario': row[9], 'cron_frequencia': row[10],
         'email_cc': row[11] if row[11] is not None else [],
+        'segmentos_rfm': row[12] or '',
     }
 
 
@@ -447,11 +469,24 @@ def _gerar_relatorio_para_usuario(usuario):
         args['vendedor'] = str(usuario['codusur'])
     elif usuario.get('role') == 'supervisor' and usuario.get('codsupervisor') is not None:
         args['time'] = str(usuario['codsupervisor'])
+    # Patch K: filtro de segmento RFM (vazio = carteira completa)
+    if usuario.get('segmentos_rfm'):
+        args['segmento'] = usuario['segmentos_rfm']
     resultado = _filtrar_carteira(clientes, args)
     filtrados = resultado['rows']
 
-    # PDF
-    pdf_bytes = _gerar_pdf_carteira(filtrados, filtros_resumo=f"Relatório de {usuario.get('nome')}")
+    # PDF — anexa segmentos selecionados no rodapé pra ficar visível
+    filtros_seg = ''
+    if usuario.get('segmentos_rfm'):
+        # NOME_SEG_PT é definido em _gerar_pdf_carteira / outras telas; usa mapa local pra não acoplar
+        _NOMES_SEG = {
+            'champions': 'Campeões', 'loyal': 'Fiéis', 'cant_lose': 'Não Perder',
+            'at_risk': 'Em Risco', 'potential_loyalist': 'Promissores',
+            'new': 'Novos', 'hibernating': 'Inativos', 'lost': 'Perdidos',
+        }
+        nomes = [_NOMES_SEG.get(s, s) for s in usuario['segmentos_rfm'].split(',') if s]
+        filtros_seg = f" · Segmentos: {', '.join(nomes)}"
+    pdf_bytes = _gerar_pdf_carteira(filtrados, filtros_resumo=f"Relatório de {usuario.get('nome')}{filtros_seg}")
 
     # CSV
     cabecalho = ['CodCli', 'Cliente', 'Cidade', 'UF', 'Vendedor', 'Telefone',
@@ -3615,7 +3650,7 @@ def api_admin_users_list():
     cur = conn.cursor()
     cur.execute(
         "SELECT id, nome, email, role, codusur, codsupervisor, telefone, ativo, "
-        "cron_enabled, cron_horario::text, cron_frequencia, criado_em, email_cc "
+        "cron_enabled, cron_horario::text, cron_frequencia, criado_em, email_cc, segmentos_rfm "
         "FROM multpel_users ORDER BY ativo DESC, nome"
     )
     users = []
@@ -3626,6 +3661,7 @@ def api_admin_users_list():
             'cron_enabled': r[8], 'cron_horario': r[9], 'cron_frequencia': r[10],
             'criado_em': str(r[11])[:10] if r[11] else None,
             'email_cc': r[12] if r[12] is not None else [],
+            'segmentos_rfm': r[13] or '',
         })
     cur.close()
     conn.close()
@@ -3657,6 +3693,9 @@ def api_admin_users_create():
     except ValueError as e:
         return jsonify({'ok': False, 'error': str(e)}), 400
 
+    # Patch K — filtro de segmento RFM (vazio = carteira completa)
+    segmentos_rfm = _normalizar_segmentos_rfm(data.get('segmentos_rfm'))
+
     if role == 'vendedor' and not codusur:
         return jsonify({'ok': False, 'error': 'Vendedor exige codusur'}), 400
     if role == 'supervisor' and not codsupervisor:
@@ -3670,14 +3709,15 @@ def api_admin_users_create():
         cur.execute(
             """INSERT INTO multpel_users
                (nome, email, password_hash, role, codusur, codsupervisor, telefone,
-                cron_enabled, cron_horario, cron_frequencia, email_cc, must_change_password)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, true)
+                cron_enabled, cron_horario, cron_frequencia, email_cc, segmentos_rfm,
+                must_change_password)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, true)
                RETURNING id""",
             (nome, email, generate_password_hash(senha), role,
              int(codusur) if codusur else None,
              int(codsupervisor) if codsupervisor else None,
              telefone, cron_enabled, cron_horario, cron_frequencia,
-             Json(emails_cc))
+             Json(emails_cc), segmentos_rfm)
         )
         novo_id = cur.fetchone()[0]
         conn.commit()
@@ -3696,7 +3736,8 @@ def api_admin_users_create():
 def api_admin_users_update(user_id):
     data = request.get_json() or {}
     campos_permitidos = ['nome', 'email', 'role', 'codusur', 'codsupervisor', 'telefone',
-                         'ativo', 'cron_enabled', 'cron_horario', 'cron_frequencia', 'email_cc']
+                         'ativo', 'cron_enabled', 'cron_horario', 'cron_frequencia',
+                         'email_cc', 'segmentos_rfm']
     # Pra normalizar email_cc precisa do email principal do user
     email_principal_atual = (data.get('email') or '').strip().lower() or None
     if 'email_cc' in data and not email_principal_atual:
@@ -3721,6 +3762,8 @@ def api_admin_users_update(user_id):
                     v = Json(_normalizar_emails_cc(v or [], email_principal=email_principal_atual))
                 except ValueError as e:
                     return jsonify({'ok': False, 'error': str(e)}), 400
+            elif k == 'segmentos_rfm':
+                v = _normalizar_segmentos_rfm(v)
             sets.append(f"{k} = %s")
             valores.append(v)
     if 'senha' in data and data['senha']:
