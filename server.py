@@ -5,6 +5,7 @@ Acesse: http://localhost:5000
 """
 
 import os
+import re
 import time
 import json
 import functools
@@ -12,6 +13,7 @@ import traceback
 import secrets
 import base64
 import psycopg2
+from psycopg2.extras import Json
 import redis
 import requests
 import resend
@@ -381,13 +383,42 @@ def _log_background(rota, duracao_ms=None, erro=None):
         pass
 
 
+_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+
+
+def _normalizar_emails_cc(lista, email_principal=None, limite=5):
+    """Normaliza lista de CC: strip, lowercase, dedup, remove principal, limita.
+    Levanta ValueError em formato inválido. Retorna lista de strings."""
+    if lista is None:
+        return []
+    if not isinstance(lista, list):
+        raise ValueError('email_cc deve ser lista')
+    saida = []
+    vistos = set()
+    if email_principal:
+        vistos.add(email_principal.strip().lower())
+    for item in lista:
+        e = (item or '').strip().lower() if isinstance(item, str) else ''
+        if not e:
+            continue
+        if not _EMAIL_RE.match(e):
+            raise ValueError(f'email inválido: {item}')
+        if e in vistos:
+            continue
+        vistos.add(e)
+        saida.append(e)
+        if len(saida) >= limite:
+            break
+    return saida
+
+
 def _ler_usuario(usuario_id):
     """Carrega 1 user do multpel_users por id. Retorna dict ou None."""
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
         "SELECT id, nome, email, role, codusur, codsupervisor, telefone, ativo, "
-        "cron_enabled, cron_horario, cron_frequencia "
+        "cron_enabled, cron_horario, cron_frequencia, email_cc "
         "FROM multpel_users WHERE id = %s",
         (usuario_id,)
     )
@@ -400,6 +431,7 @@ def _ler_usuario(usuario_id):
         'id': row[0], 'nome': row[1], 'email': row[2], 'role': row[3],
         'codusur': row[4], 'codsupervisor': row[5], 'telefone': row[6], 'ativo': row[7],
         'cron_enabled': row[8], 'cron_horario': row[9], 'cron_frequencia': row[10],
+        'email_cc': row[11] if row[11] is not None else [],
     }
 
 
@@ -481,21 +513,32 @@ def enviar_relatorio_email(usuario_id):
 <p style="color:#94a3b8;font-size:12px;">Email automatizado — Multpel Analytics</p>
 </body></html>"""
 
+    # Patch J — sanitiza lista de CC (remove principal duplicado, valida formato, limita)
     try:
-        resp = resend.Emails.send({
-            'from': RESEND_FROM,
-            'to': [user['email']],
-            'subject': f"Multpel — Carteira {_date.today().strftime('%d/%m/%Y')}",
-            'html': html,
-            'attachments': [
-                {'filename': base_nome + '.pdf', 'content': base64.b64encode(pdf_bytes).decode()},
-                {'filename': base_nome + '.csv', 'content': base64.b64encode(csv_bytes).decode()},
-            ],
-        })
+        emails_cc = _normalizar_emails_cc(user.get('email_cc') or [], user['email'])
+    except ValueError:
+        emails_cc = []  # CC inválido no banco não bloqueia o envio principal
+
+    payload = {
+        'from': RESEND_FROM,
+        'to': [user['email']],
+        'subject': f"Multpel — Carteira {_date.today().strftime('%d/%m/%Y')}",
+        'html': html,
+        'attachments': [
+            {'filename': base_nome + '.pdf', 'content': base64.b64encode(pdf_bytes).decode()},
+            {'filename': base_nome + '.csv', 'content': base64.b64encode(csv_bytes).decode()},
+        ],
+    }
+    if emails_cc:
+        payload['cc'] = emails_cc
+
+    try:
+        resp = resend.Emails.send(payload)
         message_id = resp.get('id') if isinstance(resp, dict) else getattr(resp, 'id', None)
         _log_background(f'email:enviado:user{usuario_id}', duracao_ms=None)
         return {'ok': True, 'message_id': message_id, 'clientes_no_anexo': count,
-                'anexos_kb': round((len(pdf_bytes) + len(csv_bytes)) / 1024, 1)}
+                'anexos_kb': round((len(pdf_bytes) + len(csv_bytes)) / 1024, 1),
+                'destinatarios_total': 1 + len(emails_cc)}
     except Exception as e:
         erro_str = str(e)[:500]
         _log_background(f'email:erro:user{usuario_id}', erro=erro_str)
@@ -3572,7 +3615,7 @@ def api_admin_users_list():
     cur = conn.cursor()
     cur.execute(
         "SELECT id, nome, email, role, codusur, codsupervisor, telefone, ativo, "
-        "cron_enabled, cron_horario::text, cron_frequencia, criado_em "
+        "cron_enabled, cron_horario::text, cron_frequencia, criado_em, email_cc "
         "FROM multpel_users ORDER BY ativo DESC, nome"
     )
     users = []
@@ -3582,6 +3625,7 @@ def api_admin_users_list():
             'codusur': r[4], 'codsupervisor': r[5], 'telefone': r[6], 'ativo': r[7],
             'cron_enabled': r[8], 'cron_horario': r[9], 'cron_frequencia': r[10],
             'criado_em': str(r[11])[:10] if r[11] else None,
+            'email_cc': r[12] if r[12] is not None else [],
         })
     cur.close()
     conn.close()
@@ -3607,6 +3651,12 @@ def api_admin_users_create():
     cron_horario = data.get('cron_horario') or '08:00'
     cron_frequencia = data.get('cron_frequencia') or 'diaria'
 
+    # Patch J — destinatários CC (lista de emails extras)
+    try:
+        emails_cc = _normalizar_emails_cc(data.get('email_cc') or [], email_principal=email)
+    except ValueError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+
     if role == 'vendedor' and not codusur:
         return jsonify({'ok': False, 'error': 'Vendedor exige codusur'}), 400
     if role == 'supervisor' and not codsupervisor:
@@ -3620,13 +3670,14 @@ def api_admin_users_create():
         cur.execute(
             """INSERT INTO multpel_users
                (nome, email, password_hash, role, codusur, codsupervisor, telefone,
-                cron_enabled, cron_horario, cron_frequencia, must_change_password)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, true)
+                cron_enabled, cron_horario, cron_frequencia, email_cc, must_change_password)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, true)
                RETURNING id""",
             (nome, email, generate_password_hash(senha), role,
              int(codusur) if codusur else None,
              int(codsupervisor) if codsupervisor else None,
-             telefone, cron_enabled, cron_horario, cron_frequencia)
+             telefone, cron_enabled, cron_horario, cron_frequencia,
+             Json(emails_cc))
         )
         novo_id = cur.fetchone()[0]
         conn.commit()
@@ -3645,7 +3696,16 @@ def api_admin_users_create():
 def api_admin_users_update(user_id):
     data = request.get_json() or {}
     campos_permitidos = ['nome', 'email', 'role', 'codusur', 'codsupervisor', 'telefone',
-                         'ativo', 'cron_enabled', 'cron_horario', 'cron_frequencia']
+                         'ativo', 'cron_enabled', 'cron_horario', 'cron_frequencia', 'email_cc']
+    # Pra normalizar email_cc precisa do email principal do user
+    email_principal_atual = (data.get('email') or '').strip().lower() or None
+    if 'email_cc' in data and not email_principal_atual:
+        conn0 = get_db(); c0 = conn0.cursor()
+        c0.execute("SELECT email FROM multpel_users WHERE id = %s", (user_id,))
+        r0 = c0.fetchone()
+        c0.close(); conn0.close()
+        if r0:
+            email_principal_atual = r0[0]
     sets, valores = [], []
     for k in campos_permitidos:
         if k in data:
@@ -3656,6 +3716,11 @@ def api_admin_users_update(user_id):
                 v = int(v)
             elif k == 'codusur' or k == 'codsupervisor':
                 v = None
+            elif k == 'email_cc':
+                try:
+                    v = Json(_normalizar_emails_cc(v or [], email_principal=email_principal_atual))
+                except ValueError as e:
+                    return jsonify({'ok': False, 'error': str(e)}), 400
             sets.append(f"{k} = %s")
             valores.append(v)
     if 'senha' in data and data['senha']:

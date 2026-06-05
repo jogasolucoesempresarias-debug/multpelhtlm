@@ -38,6 +38,9 @@ cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS cron_enabled    
 cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS cron_horario    TIME DEFAULT '08:00';")
 cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS cron_frequencia VARCHAR(15) DEFAULT 'diaria';")
 
+# Patch J — destinatários extras (CC) pro envio de relatório
+cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS email_cc        JSONB DEFAULT '[]'::jsonb;")
+
 cur.execute("""
     CREATE TABLE IF NOT EXISTS multpel_log (
         id            SERIAL PRIMARY KEY,

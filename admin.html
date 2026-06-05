@@ -48,6 +48,26 @@
   .ff input, .ff select { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 7px 10px; border-radius: 6px; font-size: 0.84rem; font-family: inherit; }
   .ff input:focus, .ff select:focus { outline: none; border-color: var(--accent); }
   .ff.full { grid-column: 1 / -1; }
+  /* Chips de destinatários adicionais (CC) */
+  .cc-chips {
+    display: flex; flex-wrap: wrap; gap: 6px; padding: 6px;
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+    min-height: 36px; align-items: center; cursor: text;
+  }
+  .cc-chips:focus-within { border-color: var(--accent); }
+  .cc-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: rgba(56,189,248,0.14); color: var(--accent);
+    padding: 3px 8px; border-radius: 12px; font-size: 0.76rem;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .cc-chip .x { cursor: pointer; color: var(--text-dim); font-weight: 700; padding: 0 2px; }
+  .cc-chip .x:hover { color: var(--red); }
+  .cc-chips input {
+    border: none; background: transparent; padding: 2px 4px;
+    flex: 1; min-width: 180px; outline: none; font-size: 0.84rem;
+    color: var(--text); font-family: inherit;
+  }
   .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
   .toolbar .grow { flex: 1; }
   .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
@@ -121,6 +141,16 @@
         <label>Email</label>
         <input type="email" id="f_email" placeholder="email@multpel.com.br">
       </div>
+      <div class="ff full">
+        <label>Destinatários adicionais (CC)
+          <span style="color:var(--text-dim);font-size:0.72rem;font-weight:400;">— máx 5, recebem cópia do relatório</span>
+        </label>
+        <div id="cc_container" class="cc-chips" onclick="document.getElementById('cc_input').focus()">
+          <input type="email" id="cc_input"
+                 placeholder="email@exemplo.com (Enter ou vírgula pra adicionar)"
+                 onkeydown="ccOnKeydown(event)" onblur="ccFlushInput()">
+        </div>
+      </div>
       <div class="ff">
         <label>Role</label>
         <select id="f_role" onchange="atualizarVisibilidadeRoleFields()">
@@ -187,6 +217,61 @@ let _users = [];
 let _vendedoresMap = {};
 let _supervisoresMap = {};
 let _editandoId = null;
+let _ccList = [];  // Patch J: destinatários adicionais (CC) do modal
+
+const _EMAIL_RE_JS = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+function ccRender() {
+  const cont = document.getElementById('cc_container');
+  if (!cont) return;
+  cont.querySelectorAll('.cc-chip').forEach(c => c.remove());
+  const input = document.getElementById('cc_input');
+  _ccList.forEach((email, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'cc-chip';
+    chip.innerHTML = `${email} <span class="x" onclick="ccRemove(${i})">×</span>`;
+    cont.insertBefore(chip, input);
+  });
+  input.style.display = _ccList.length >= 5 ? 'none' : '';
+  input.placeholder = _ccList.length === 0
+    ? 'email@exemplo.com (Enter ou vírgula pra adicionar)'
+    : 'adicionar mais...';
+}
+
+function ccAdd(email) {
+  const e = (email || '').trim().toLowerCase();
+  if (!e) return;
+  if (!_EMAIL_RE_JS.test(e)) {
+    toast('Email inválido: ' + email, 'err');
+    return;
+  }
+  if (_ccList.includes(e)) return;
+  if (_ccList.length >= 5) { toast('Máximo 5 destinatários adicionais', 'err'); return; }
+  const principal = (document.getElementById('f_email').value || '').trim().toLowerCase();
+  if (e === principal) { toast('Esse já é o email principal', 'err'); return; }
+  _ccList.push(e);
+  ccRender();
+}
+
+function ccRemove(i) {
+  _ccList.splice(i, 1);
+  ccRender();
+}
+
+function ccOnKeydown(ev) {
+  if (ev.key === 'Enter' || ev.key === ',' || ev.key === ';') {
+    ev.preventDefault();
+    ccAdd(ev.target.value);
+    ev.target.value = '';
+  } else if (ev.key === 'Backspace' && !ev.target.value && _ccList.length) {
+    ccRemove(_ccList.length - 1);
+  }
+}
+
+function ccFlushInput() {
+  const inp = document.getElementById('cc_input');
+  if (inp && inp.value.trim()) { ccAdd(inp.value); inp.value = ''; }
+}
 
 function toast(msg, tipo) {
   const t = document.getElementById('toast');
@@ -251,10 +336,13 @@ function renderTabela() {
       ? `<span class="cron-on">${u.cron_horario || ''} · ${u.cron_frequencia || ''}</span>`
       : `<span class="cron-off">desligado</span>`;
     const inativoTag = !u.ativo ? ' <span class="badge b-inativo">INATIVO</span>' : '';
+    const ccBadge = (u.email_cc && u.email_cc.length)
+      ? `<br><span style="color:var(--text-dim);font-size:0.68rem;" title="${u.email_cc.join(', ')}">+${u.email_cc.length} CC</span>`
+      : '';
     return `
       <tr>
         <td>${u.nome}${inativoTag}</td>
-        <td class="mono">${u.email}</td>
+        <td class="mono">${u.email}${ccBadge}</td>
         <td><span class="badge b-${u.role}">${u.role.toUpperCase()}</span></td>
         <td>${vendedorTime}</td>
         <td class="mono">${u.telefone || '—'}</td>
@@ -296,6 +384,9 @@ function abrirNovo() {
   document.getElementById('f_ativo').checked = true;
   document.getElementById('f_cron_horario').value = '08:00';
   document.getElementById('f_cron_frequencia').value = 'diaria';
+  _ccList = [];
+  document.getElementById('cc_input').value = '';
+  ccRender();
   atualizarVisibilidadeRoleFields();
   document.getElementById('modal').classList.add('show');
 }
@@ -316,6 +407,9 @@ function abrirEdicao(id) {
   document.getElementById('f_ativo').checked = !!u.ativo;
   document.getElementById('f_cron_horario').value = (u.cron_horario || '08:00').substring(0, 5);
   document.getElementById('f_cron_frequencia').value = u.cron_frequencia || 'diaria';
+  _ccList = Array.isArray(u.email_cc) ? [...u.email_cc] : [];
+  document.getElementById('cc_input').value = '';
+  ccRender();
   atualizarVisibilidadeRoleFields();
   document.getElementById('modal').classList.add('show');
 }
@@ -333,6 +427,9 @@ async function salvar() {
     const codusur = role === 'vendedor' ? extrairCodigo(document.getElementById('f_codusur').value) : '';
     const codsupervisor = role === 'supervisor' ? extrairCodigo(document.getElementById('f_codsupervisor').value) : '';
 
+    // Patch J — confirma email do CC que tá digitado mas não foi "enterado"
+    ccFlushInput();
+
     const body = {
       nome: document.getElementById('f_nome').value.trim(),
       email: document.getElementById('f_email').value.trim(),
@@ -344,6 +441,7 @@ async function salvar() {
       ativo: document.getElementById('f_ativo').checked,
       cron_horario: document.getElementById('f_cron_horario').value,
       cron_frequencia: document.getElementById('f_cron_frequencia').value,
+      email_cc: _ccList,
     };
     const senha = document.getElementById('f_senha').value.trim();
     if (senha) body.senha = senha;
