@@ -2824,15 +2824,23 @@ SUMMARIZECOLUMNS(
     FATURAMENTO_VENDAS[CODUSUR],
     FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12){rbac_frag}),
     "TicketMedio",     [TICKET MEDIO],
-    "TaxaPositivacao", [TAXA POSITIVACAO CLIENTE],
     "ClientesUnicos",  DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI])
 )""",
+        # Patch L: carteira OFICIAL via PCCLIENT[CODUSUR1] — denominador da taxa de positivação.
+        # A medida nativa [TAXA POSITIVACAO CLIENTE] do PBI está bugada (sempre retorna 0-3%).
+        # Esta query agrupa por CODUSUR1 da PCCLIENT pra contar quantos clientes cada vendedor tem oficialmente atribuídos.
+        'carteira_oficial': """EVALUATE
+SUMMARIZECOLUMNS(
+    PCCLIENT[CODUSUR1],
+    "CarteiraOficial", DISTINCTCOUNT(PCCLIENT[CODCLI])
+)""",
     }
-    resultados = _executar_dax_paralelo_n(queries, max_workers=3)
+    resultados = _executar_dax_paralelo_n(queries, max_workers=4)
 
     atual = clean_rows(_todas_linhas(resultados['vendas_atual']))
     anterior_idx = {r['CODUSUR']: r for r in clean_rows(_todas_linhas(resultados['vendas_anterior'])) if r.get('CODUSUR') is not None}
     metricas_idx = {r['CODUSUR']: r for r in clean_rows(_todas_linhas(resultados['metricas'])) if r.get('CODUSUR') is not None}
+    carteira_idx = {r['CODUSUR1']: r for r in clean_rows(_todas_linhas(resultados['carteira_oficial'])) if r.get('CODUSUR1') is not None}
     vmap = _carregar_vendedores_map()
 
     out = []
@@ -2851,6 +2859,11 @@ SUMMARIZECOLUMNS(
         if venda_ant > 0:
             yoy = (venda_atual - venda_ant) / venda_ant
         m = metricas_idx.get(cu, {})
+        clientes_12m = m.get('ClientesUnicos') or 0
+        carteira_oficial = (carteira_idx.get(cu, {}).get('CarteiraOficial')) or 0
+        # Patch L: taxa de positivação = clientes que compraram 12m / carteira oficial (PCCLIENT.CODUSUR1)
+        # Substitui a medida [TAXA POSITIVACAO CLIENTE] do PBI (que estava bugada retornando 0-3%)
+        taxa_positivacao = (clientes_12m / carteira_oficial) if carteira_oficial else 0
         out.append({
             'codusur':          cu,
             'nome':             v_meta.get('nome'),
@@ -2862,8 +2875,9 @@ SUMMARIZECOLUMNS(
             'lucro':            r.get('LucroTotal') or 0,
             'venda_anterior':   venda_ant,
             'ticket_medio':     m.get('TicketMedio') or 0,
-            'taxa_positivacao': m.get('TaxaPositivacao') or 0,
-            'clientes_unicos':  m.get('ClientesUnicos') or 0,
+            'taxa_positivacao': taxa_positivacao,
+            'clientes_unicos':  clientes_12m,
+            'carteira_oficial': carteira_oficial,
             'yoy_receita':      yoy,
         })
 

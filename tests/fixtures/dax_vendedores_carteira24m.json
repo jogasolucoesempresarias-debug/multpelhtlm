@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {"[CODUSUR1]": 573, "[CarteiraOficial]": 200},
+            {"[CODUSUR1]": 100, "[CarteiraOficial]": 178},
+            {"[CODUSUR1]": 820, "[CarteiraOficial]": 134}
+          ]
+        }
+      ]
+    }
+  ]
+}

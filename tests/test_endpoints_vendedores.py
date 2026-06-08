@@ -22,6 +22,7 @@ def test_ranking_estrutura(client, usuario_admin, mock_dax_capture, clean_redis)
         ('PCUSUARI[CODUSUR]', _load('dax_vendedores_map')),
         ('VendaLiqAnt',       _load('dax_vendedores_anterior')),
         ('TicketMedio',       _load('dax_vendedores_metricas')),
+        ('CarteiraOficial',   _load('dax_vendedores_carteira24m')),
         ('VendaLiq',          _load('dax_vendedores_ranking')),  # último (mais genérico)
     ])
     login_as(client, usuario_admin['email'], usuario_admin['senha'])
@@ -42,7 +43,9 @@ def test_ranking_estrutura(client, usuario_admin, mock_dax_capture, clean_redis)
     assert vendedores[0]['yoy_receita'] == pytest.approx(0.18, abs=0.01)
     # Métricas populadas
     assert vendedores[0]['ticket_medio'] == 178.5
-    assert vendedores[0]['taxa_positivacao'] == 0.62
+    # Patch L: taxa = clientes_unicos_12m (124) / carteira_oficial PCCLIENT (200) = 0.62
+    assert vendedores[0]['taxa_positivacao'] == pytest.approx(0.62, abs=0.01)
+    assert vendedores[0]['carteira_oficial'] == 200
 
 
 def test_ranking_filtro_supervisor(client, usuario_admin, mock_dax_capture, clean_redis):
