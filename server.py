@@ -2803,11 +2803,13 @@ def _carregar_ranking_vendedores(role=None, codusur=None, codsupervisor=None):
         rbac = ''
     rbac_frag = f" && {rbac}" if rbac else ""
 
+    # Patch L.2: usar janela de 365 dias EXATA (não EDATE) pra YoY bater com o BI do cliente.
+    # Cliente reportou YoY 8,85% pro JOSE JUNIOR; com EDATE(-12) dava 7,67%; com 365 dias dá ~8,72%.
     queries = {
         'vendas_atual': f"""EVALUATE
 SUMMARIZECOLUMNS(
     FATURAMENTO_VENDAS[CODUSUR],
-    FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12){rbac_frag}),
+    FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[DTSAIDA] >= TODAY() - 365{rbac_frag}),
     "VendaLiq",  [VENDA LIQUIDA],
     "LucroTotal",[LUCRO TOTAL]
 )""",
@@ -2815,14 +2817,14 @@ SUMMARIZECOLUMNS(
 SUMMARIZECOLUMNS(
     FATURAMENTO_VENDAS[CODUSUR],
     FILTER(FATURAMENTO_VENDAS,
-        FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -24)
-        && FATURAMENTO_VENDAS[DTSAIDA] < EDATE(TODAY(), -12){rbac_frag}),
+        FATURAMENTO_VENDAS[DTSAIDA] >= TODAY() - 730
+        && FATURAMENTO_VENDAS[DTSAIDA] < TODAY() - 365{rbac_frag}),
     "VendaLiqAnt", [VENDA LIQUIDA]
 )""",
         'metricas': f"""EVALUATE
 SUMMARIZECOLUMNS(
     FATURAMENTO_VENDAS[CODUSUR],
-    FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12){rbac_frag}),
+    FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[DTSAIDA] >= TODAY() - 365{rbac_frag}),
     "TicketMedio",     [TICKET MEDIO],
     "ClientesUnicos",  DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI])
 )""",
