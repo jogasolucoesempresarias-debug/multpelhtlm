@@ -101,9 +101,17 @@
         <option value="24">24 meses</option>
       </select>
     </div>
-    <div class="ff">
+    <div class="ff" id="ff_supervisor">
+      <label>Supervisor (time, opcional)</label>
+      <select id="filt_supervisor" onchange="onSupervisorChange()"><option value="">Todos</option></select>
+    </div>
+    <div class="ff" id="ff_vendedor">
       <label>Vendedor (opcional)</label>
       <select id="filt_vendedor" onchange="aplicar()"><option value="">Todos</option></select>
+    </div>
+    <div class="ff">
+      <label>&nbsp;</label>
+      <button class="btn-sm" onclick="limparFiltros()">Limpar filtro</button>
     </div>
   </div>
 
@@ -139,25 +147,82 @@ const PCT = v => v == null ? '—' : (v * 100).toFixed(0) + '%';
 let _cohorts = [];
 let _periodo = 12;
 let _vendedor = '';
+let _supervisor = '';
 
 // fetchJSON vem do /static/fetch-resiliente.js (retry + backoff + timeout)
 
+let _me = {};
+
 async function loadMe() {
   try {
-    const j = await fetchJSON('/api/me');
-    document.getElementById('userInfo').textContent = `${j.nome} · ${j.role}`;
-    if (j.role === 'vendedor') document.getElementById('linkVendedores').style.display = 'none';
+    _me = await fetchJSON('/api/me');
+    document.getElementById('userInfo').textContent = `${_me.nome} · ${_me.role}`;
+    if (_me.role === 'vendedor') document.getElementById('linkVendedores').style.display = 'none';
   } catch (e) {}
 }
 
+// Conjunto de áreas liberadas pro usuário logado (codsupervisores). null = tudo (admin/viewer).
+function _areasLiberadas() {
+  if (_me.role === 'admin' || _me.role === 'viewer') return null;
+  const arr = (_me.codsupervisores || []).map(Number);
+  return new Set(arr);
+}
+
+let _vendMap = {};  // {codusur: {nome, codsupervisor}}
+
 async function loadVendedores() {
   try {
+    // Vendedor logado: filtro de vendedor não faz sentido → esconde
+    if (_me.role === 'vendedor') {
+      document.getElementById('ff_vendedor').style.display = 'none';
+      return;
+    }
     const j = await fetchJSON('/api/_internal/vendedores-map');
-    const sel = document.getElementById('filt_vendedor');
-    const lista = Object.entries(j.vendedores || {})
+    _vendMap = j.vendedores || {};
+    popularVendedores();
+  } catch (e) {}
+}
+
+// Popula o dropdown de Vendedor. CASCATA: se um supervisor está selecionado, mostra só a
+// equipe dele; senão, mostra os vendedores liberados pro usuário (admin = todos).
+function popularVendedores() {
+  if (_me.role === 'vendedor') return;
+  const sel = document.getElementById('filt_vendedor');
+  const supSel = document.getElementById('filt_supervisor').value;  // código ou ''
+  let permitido;
+  if (supSel) permitido = new Set([Number(supSel)]);   // cascata: só a equipe do supervisor
+  else permitido = _areasLiberadas();                  // null (admin) = todos
+  const atual = sel.value;
+  const lista = Object.entries(_vendMap)
+    .filter(([cu, v]) => permitido === null || permitido.has(Number(v.codsupervisor)))
+    .sort((a, b) => (a[1].nome || '').localeCompare(b[1].nome || ''));
+  sel.innerHTML = '<option value="">Todos</option>' +
+    lista.map(([cu, v]) => `<option value="${cu}">${v.nome} (${cu})</option>`).join('');
+  // preserva a seleção atual se ainda válida; senão volta pra "Todos"
+  sel.value = [...sel.options].some(o => o.value === atual) ? atual : '';
+}
+
+// Supervisor mudou → recalcula a lista de vendedores (cascata) e recarrega
+function onSupervisorChange() {
+  document.getElementById('filt_vendedor').value = '';
+  popularVendedores();
+  aplicar();
+}
+
+async function loadSupervisores() {
+  try {
+    if (_me.role === 'vendedor') {
+      document.getElementById('ff_supervisor').style.display = 'none';
+      return;
+    }
+    const j = await fetchJSON('/api/_internal/supervisores-map');
+    const areas = _areasLiberadas();
+    const sel = document.getElementById('filt_supervisor');
+    const lista = Object.entries(j.supervisores || {})
+      .filter(([cs, s]) => areas === null || areas.has(Number(cs)))  // só áreas liberadas
       .sort((a, b) => (a[1].nome || '').localeCompare(b[1].nome || ''));
     sel.innerHTML = '<option value="">Todos</option>' +
-      lista.map(([cu, v]) => `<option value="${cu}">${v.nome} (${cu})</option>`).join('');
+      lista.map(([cs, s]) => `<option value="${cs}">${s.nome} (${cs})</option>`).join('');
   } catch (e) {}
 }
 
@@ -215,11 +280,13 @@ async function loadCohort() {
   document.getElementById('app').classList.add('hidden');
   const params = new URLSearchParams({ periodo: _periodo + 'm' });
   if (_vendedor) params.set('vendedor', _vendedor);
+  if (_supervisor) params.set('supervisor', _supervisor);
   try {
     const d = await fetchJSON('/api/tendencias/cohort?' + params.toString());
     _cohorts = d.cohorts || [];
+    const filtroTxt = _vendedor ? '— RCA ' + _vendedor : (_supervisor ? '— time ' + _supervisor : '');
     document.getElementById('heatmap_titulo').textContent =
-      `${_cohorts.length} cohorts (período ${d.periodo}) ${_vendedor ? '— filtrado por RCA ' + _vendedor : ''}`;
+      `${_cohorts.length} cohorts (período ${d.periodo}) ${filtroTxt}`;
     renderHeatmap();
     document.getElementById('loading').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
@@ -236,6 +303,7 @@ async function abrirDrill(aquisicao, mes_relativo) {
   document.getElementById('backdrop').classList.add('show');
   const params = new URLSearchParams({ periodo: _periodo + 'm' });
   if (_vendedor) params.set('vendedor', _vendedor);
+  if (_supervisor) params.set('supervisor', _supervisor);
   try {
     const d = await fetchJSON(`/api/tendencias/cohort/${aquisicao}/${mes_relativo}/clientes?` + params.toString());
     document.getElementById('drill_meta').textContent = `${d.total} clientes neste bucket · mostrando primeiros ${d.rows.length}`;
@@ -264,13 +332,22 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') fecharDrill(
 function aplicar() {
   _periodo = parseInt(document.getElementById('filt_periodo').value, 10);
   _vendedor = document.getElementById('filt_vendedor').value;
+  _supervisor = document.getElementById('filt_supervisor').value;
   loadCohort();
+}
+
+function limparFiltros() {
+  document.getElementById('filt_periodo').value = '12';
+  document.getElementById('filt_supervisor').value = '';
+  document.getElementById('filt_vendedor').value = '';
+  popularVendedores();   // sem supervisor → volta a lista liberada completa
+  aplicar();
 }
 
 async function carregar() {
   try {
     await loadMe();
-    await loadVendedores();
+    await Promise.all([loadVendedores(), loadSupervisores()]);
     await loadCohort();
   } catch (e) {
     document.getElementById('loading').innerHTML = '<div style="color:var(--red)">Erro: ' + e.message + '</div>';

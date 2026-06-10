@@ -49,7 +49,8 @@ def clean_redis():
     server._R.flushall()
 
 
-def _criar_usuario(email, senha, role='viewer', codusur=None, codsupervisor=None, must_change=False):
+def _criar_usuario(email, senha, role='viewer', codusur=None, codsupervisor=None, must_change=False,
+                   codsupervisores=None):
     """Cria/atualiza usuário no DB real. Retorna id."""
     import server
     conn = server.get_db()
@@ -57,9 +58,10 @@ def _criar_usuario(email, senha, role='viewer', codusur=None, codsupervisor=None
     cur.execute("DELETE FROM multpel_users WHERE email = %s", (email,))
     cur.execute(
         """INSERT INTO multpel_users
-           (nome, email, password_hash, role, ativo, codusur, codsupervisor, must_change_password)
-           VALUES (%s, %s, %s, %s, true, %s, %s, %s) RETURNING id""",
-        ('Teste ' + email, email, generate_password_hash(senha), role, codusur, codsupervisor, must_change)
+           (nome, email, password_hash, role, ativo, codusur, codsupervisor, codsupervisores, must_change_password)
+           VALUES (%s, %s, %s, %s, true, %s, %s, %s::jsonb, %s) RETURNING id""",
+        ('Teste ' + email, email, generate_password_hash(senha), role, codusur, codsupervisor,
+         json.dumps(codsupervisores or []), must_change)
     )
     uid = cur.fetchone()[0]
     conn.commit()
@@ -110,6 +112,17 @@ def usuario_supervisor():
     email = 'sup-test@multpel.com.br'
     uid = _criar_usuario(email, 'senha123', role='supervisor', codsupervisor=18, must_change=False)
     yield {'id': uid, 'email': email, 'senha': 'senha123', 'role': 'supervisor', 'codsupervisor': 18}
+    _remover_usuario(email)
+
+
+@pytest.fixture
+def usuario_supervisor_multi():
+    """Supervisor cuidando de 2 áreas (codsupervisores = [18, 19])."""
+    email = 'sup-multi-test@multpel.com.br'
+    uid = _criar_usuario(email, 'senha123', role='supervisor', codsupervisor=18,
+                         codsupervisores=[18, 19], must_change=False)
+    yield {'id': uid, 'email': email, 'senha': 'senha123', 'role': 'supervisor',
+           'codsupervisores': [18, 19]}
     _remover_usuario(email)
 
 

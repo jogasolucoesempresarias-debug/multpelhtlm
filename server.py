@@ -77,11 +77,12 @@ def _cache_set(key, data, ttl_tipo='dax_agregado'):
 
 
 def cache_key_for_user(endpoint, params=None):
+    sups = _session_supervisores()
     parts = [
         'multpel', endpoint,
         f"role={session.get('role', 'anon')}",
         f"usur={session.get('codusur', '-')}",
-        f"supv={session.get('codsupervisor', '-')}",
+        f"supv={','.join(str(s) for s in sups) if sups else '-'}",
     ]
     if params:
         parts.append(json.dumps(params, sort_keys=True))
@@ -215,15 +216,55 @@ def _csv_linha(valores):
 
 
 # ── RBAC ──
+def _session_supervisores():
+    """Lista de codsupervisores (int) do usuário logado. Suporta o novo
+    session['codsupervisores'] (lista, supervisor multi-área) e o legado
+    session['codsupervisor'] (único). Retorna [] se não houver."""
+    lista = session.get('codsupervisores')
+    if lista:
+        out = []
+        for s in lista:
+            try:
+                out.append(int(s))
+            except (TypeError, ValueError):
+                pass
+        if out:
+            return sorted(set(out))
+    single = session.get('codsupervisor')
+    if single:
+        try:
+            return [int(single)]
+        except (TypeError, ValueError):
+            return []
+    return []
+
+
+def _como_lista_supervisores(valor):
+    """Normaliza int único / lista / None → list[int] ordenada e sem duplicatas."""
+    if valor is None:
+        return []
+    if isinstance(valor, (list, tuple)):
+        out = []
+        for x in valor:
+            try:
+                out.append(int(x))
+            except (TypeError, ValueError):
+                pass
+        return sorted(set(out))
+    try:
+        return [int(valor)]
+    except (TypeError, ValueError):
+        return []
+
+
 def aplicar_rbac_dax():
-    """Fragmento DAX a concatenar via && em FILTER, conforme RBAC."""
+    """Fragmento DAX a concatenar via && em FILTER, conforme RBAC.
+    Supervisor multi-área → CODSUPERVISOR IN {a,b,c} (via _frag_supervisores)."""
     if session.get('role') == 'admin':
         return ""
     if session.get('codusur'):
         return f"FATURAMENTO_VENDAS[CODUSUR] = {int(session['codusur'])}"
-    if session.get('codsupervisor'):
-        return f"FATURAMENTO_VENDAS[CODSUPERVISOR] = {int(session['codsupervisor'])}"
-    return ""
+    return _frag_supervisores('FATURAMENTO_VENDAS', _session_supervisores())
 
 
 def rbac_devol_dax():
@@ -233,9 +274,7 @@ def rbac_devol_dax():
         return ""
     if session.get('codusur'):
         return f"FATURAMENTO_DEVOLUCAO[CODUSUR] = {int(session['codusur'])}"
-    if session.get('codsupervisor'):
-        return f"FATURAMENTO_DEVOLUCAO[CODSUPERVISOR] = {int(session['codsupervisor'])}"
-    return ""
+    return _frag_supervisores('FATURAMENTO_DEVOLUCAO', _session_supervisores())
 
 
 def rbac_devol_av_dax():
@@ -244,9 +283,7 @@ def rbac_devol_av_dax():
         return ""
     if session.get('codusur'):
         return f"FATURAMENTO_DEVOLUCAO_AVULSA[CODUSUR] = {int(session['codusur'])}"
-    if session.get('codsupervisor'):
-        return f"FATURAMENTO_DEVOLUCAO_AVULSA[CODSUPERVISOR] = {int(session['codsupervisor'])}"
-    return ""
+    return _frag_supervisores('FATURAMENTO_DEVOLUCAO_AVULSA', _session_supervisores())
 
 
 # ── Helper temporal ──
@@ -262,6 +299,8 @@ def filtro_periodo(tipo: str) -> str:
         return "YEAR(FATURAMENTO_VENDAS[DTSAIDA])=YEAR(TODAY())-1"
     if tipo == '12m':
         return "FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12)"
+    if tipo == '12m_anterior':
+        return "FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -24) && FATURAMENTO_VENDAS[DTSAIDA] < EDATE(TODAY(), -12)"
     if tipo == '24m':
         return "FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -24)"
     ano, mes = tipo.split('-')
@@ -281,6 +320,8 @@ def filtro_periodo_devol(tipo: str) -> str:
         return "YEAR(FATURAMENTO_DEVOLUCAO[DTENT])=YEAR(TODAY())-1"
     if tipo == '12m':
         return "FATURAMENTO_DEVOLUCAO[DTENT] >= EDATE(TODAY(), -12)"
+    if tipo == '12m_anterior':
+        return "FATURAMENTO_DEVOLUCAO[DTENT] >= EDATE(TODAY(), -24) && FATURAMENTO_DEVOLUCAO[DTENT] < EDATE(TODAY(), -12)"
     if tipo == '24m':
         return "FATURAMENTO_DEVOLUCAO[DTENT] >= EDATE(TODAY(), -24)"
     ano, mes = tipo.split('-')
@@ -300,15 +341,27 @@ def filtro_periodo_devol_av(tipo: str) -> str:
         return "YEAR(FATURAMENTO_DEVOLUCAO_AVULSA[DTENT])=YEAR(TODAY())-1"
     if tipo == '12m':
         return "FATURAMENTO_DEVOLUCAO_AVULSA[DTENT] >= EDATE(TODAY(), -12)"
+    if tipo == '12m_anterior':
+        return "FATURAMENTO_DEVOLUCAO_AVULSA[DTENT] >= EDATE(TODAY(), -24) && FATURAMENTO_DEVOLUCAO_AVULSA[DTENT] < EDATE(TODAY(), -12)"
     if tipo == '24m':
         return "FATURAMENTO_DEVOLUCAO_AVULSA[DTENT] >= EDATE(TODAY(), -24)"
     ano, mes = tipo.split('-')
     return f"YEAR(FATURAMENTO_DEVOLUCAO_AVULSA[DTENT])={int(ano)} && MONTH(FATURAMENTO_DEVOLUCAO_AVULSA[DTENT])={int(mes)}"
 
 
-def _construir_filtro_3tabelas(periodo='mes_atual'):
+def _frag_supervisores(tabela, supervisores):
+    """Fragmento DAX '<tabela>[CODSUPERVISOR] IN {a,b,c}' ou '' se lista vazia/None.
+    Usado como override de filtro de supervisor selecionado no Dashboard (admin/viewer)."""
+    if not supervisores:
+        return ""
+    ids = ", ".join(str(int(s)) for s in supervisores)
+    return f"{tabela}[CODSUPERVISOR] IN {{{ids}}}"
+
+
+def _construir_filtro_3tabelas(periodo='mes_atual', supervisores=None):
     """Retorna (f_vendas, f_devol, f_devol_av) com filtro temporal + RBAC pra cada tabela.
-    Pra usar em CALCULATE/FILTER quando a métrica envolve devoluções (VL/Lucro alinhado RCA)."""
+    Pra usar em CALCULATE/FILTER quando a métrica envolve devoluções (VL/Lucro alinhado RCA).
+    `supervisores` (lista) adiciona CODSUPERVISOR IN {...} em cada tabela (override admin)."""
     base_v = filtro_periodo(periodo)
     base_d = filtro_periodo_devol(periodo)
     base_da = filtro_periodo_devol_av(periodo)
@@ -318,13 +371,19 @@ def _construir_filtro_3tabelas(periodo='mes_atual'):
     f_v = f"{base_v} && {rbac_v}" if rbac_v else base_v
     f_d = f"{base_d} && {rbac_d}" if rbac_d else base_d
     f_da = f"{base_da} && {rbac_da}" if rbac_da else base_da
+    sup_v = _frag_supervisores('FATURAMENTO_VENDAS', supervisores)
+    sup_d = _frag_supervisores('FATURAMENTO_DEVOLUCAO', supervisores)
+    sup_da = _frag_supervisores('FATURAMENTO_DEVOLUCAO_AVULSA', supervisores)
+    if sup_v:  f_v = f"{f_v} && {sup_v}"
+    if sup_d:  f_d = f"{f_d} && {sup_d}"
+    if sup_da: f_da = f"{f_da} && {sup_da}"
     return (f_v, f_d, f_da)
 
 
-def expr_venda_liquida_rca(periodo):
+def expr_venda_liquida_rca(periodo, supervisores=None):
     """Expressão DAX escalar [VENDA LIQUIDA] alinhada com RCA (F.3) + RBAC nas 3 tabelas.
     VL = BRUTA(DTSAIDA) - DEVOL(DTENT) - DEVOL_AV(DTENT)."""
-    f_v, f_d, f_da = _construir_filtro_3tabelas(periodo)
+    f_v, f_d, f_da = _construir_filtro_3tabelas(periodo, supervisores)
     return (
         f"(CALCULATE([VENDA BRUTA], FILTER(FATURAMENTO_VENDAS, {f_v}))"
         f" - CALCULATE([TOTAL DEVOLUCAO], FILTER(FATURAMENTO_DEVOLUCAO, {f_d}))"
@@ -332,10 +391,10 @@ def expr_venda_liquida_rca(periodo):
     )
 
 
-def expr_lucro_rca(periodo):
+def expr_lucro_rca(periodo, supervisores=None):
     """Expressão DAX escalar [LUCRO TOTAL] alinhada com RCA (F.4) + RBAC nas 3 tabelas.
     LUCRO = VL - (CUSTO - CUSTO_DEVOL_DTENT - CUSTO_DEVOL_AV_DTENT)."""
-    f_v, f_d, f_da = _construir_filtro_3tabelas(periodo)
+    f_v, f_d, f_da = _construir_filtro_3tabelas(periodo, supervisores)
     vl = (
         f"(CALCULATE([VENDA BRUTA], FILTER(FATURAMENTO_VENDAS, {f_v}))"
         f" - CALCULATE([TOTAL DEVOLUCAO], FILTER(FATURAMENTO_DEVOLUCAO, {f_d}))"
@@ -433,13 +492,21 @@ def _normalizar_segmentos_rfm(entrada):
     return ','.join(sorted(set(validos)))
 
 
+def _normalizar_codsupervisores(entrada):
+    """Aceita lista, int único ou CSV string → list[int] ordenada e sem duplicatas.
+    Usado no CRUD de usuários (supervisor multi-área)."""
+    if isinstance(entrada, str):
+        entrada = [s.strip() for s in entrada.split(',') if s.strip()]
+    return _como_lista_supervisores(entrada)
+
+
 def _ler_usuario(usuario_id):
     """Carrega 1 user do multpel_users por id. Retorna dict ou None."""
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
         "SELECT id, nome, email, role, codusur, codsupervisor, telefone, ativo, "
-        "cron_enabled, cron_horario, cron_frequencia, email_cc, segmentos_rfm "
+        "cron_enabled, cron_horario, cron_frequencia, email_cc, segmentos_rfm, codsupervisores "
         "FROM multpel_users WHERE id = %s",
         (usuario_id,)
     )
@@ -448,51 +515,86 @@ def _ler_usuario(usuario_id):
     conn.close()
     if not row:
         return None
+    # Multi-área: lista normalizada (legado single → [single])
+    sups = _como_lista_supervisores(row[13]) or _como_lista_supervisores(row[5])
     return {
         'id': row[0], 'nome': row[1], 'email': row[2], 'role': row[3],
         'codusur': row[4], 'codsupervisor': row[5], 'telefone': row[6], 'ativo': row[7],
         'cron_enabled': row[8], 'cron_horario': row[9], 'cron_frequencia': row[10],
         'email_cc': row[11] if row[11] is not None else [],
         'segmentos_rfm': row[12] or '',
+        'codsupervisores': sups,
     }
 
 
 def _gerar_relatorio_para_usuario(usuario):
-    """Gera (csv_bytes, pdf_bytes) já filtrados pelo escopo do usuário.
-    - role='vendedor' → só clientes com codusur=usuario.codusur
-    - role='supervisor' → só clientes com codsupervisor=usuario.codsupervisor
-    - role='admin'/'viewer' → carteira inteira (raro mandar por email)."""
-    clientes = _carregar_carteira_full()
-    args = {'modo': 'personalizada', 'limit': 100000, 'offset': 0,
-            'sort': 'receita_perdida', 'dir': 'desc'}
-    if usuario.get('role') == 'vendedor' and usuario.get('codusur') is not None:
-        args['vendedor'] = str(usuario['codusur'])
-    elif usuario.get('role') == 'supervisor' and usuario.get('codsupervisor') is not None:
-        args['time'] = str(usuario['codsupervisor'])
-    # Patch K: filtro de segmento RFM (vazio = carteira completa)
-    if usuario.get('segmentos_rfm'):
-        args['segmento'] = usuario['segmentos_rfm']
-    resultado = _filtrar_carteira(clientes, args)
-    filtrados = resultado['rows']
+    """Gera (csv_bytes, [(filename_pdf, pdf_bytes), ...], total) filtrados pelo escopo do usuário.
+    - vendedor → 1 PDF ordenado por Lucro 12m desc.
+    - supervisor multi-área → 1 PDF por área (vendedores em ordem alfabética).
+    - admin/viewer → 1 PDF da carteira inteira.
+    O CSV é sempre 1 só (combinado, cobre todas as áreas)."""
+    import re
+    from datetime import date as _date
 
-    # PDF — anexa segmentos selecionados no rodapé pra ficar visível
+    # Escopo de CADASTRO do destinatário (a sessão é simulada em enviar_relatorio_email)
+    clientes = _carteira_no_escopo()
+    seg = usuario.get('segmentos_rfm') or None
+    role = usuario.get('role')
+    nome_user = usuario.get('nome') or 'user'
+    data_iso = _date.today().isoformat()
+
+    _NOMES_SEG = {
+        'champions': 'Campeões', 'loyal': 'Fiéis', 'cant_lose': 'Não Perder',
+        'at_risk': 'Em Risco', 'potential_loyalist': 'Promissores',
+        'new': 'Novos', 'hibernating': 'Inativos', 'lost': 'Perdidos',
+    }
     filtros_seg = ''
-    if usuario.get('segmentos_rfm'):
-        # NOME_SEG_PT é definido em _gerar_pdf_carteira / outras telas; usa mapa local pra não acoplar
-        _NOMES_SEG = {
-            'champions': 'Campeões', 'loyal': 'Fiéis', 'cant_lose': 'Não Perder',
-            'at_risk': 'Em Risco', 'potential_loyalist': 'Promissores',
-            'new': 'Novos', 'hibernating': 'Inativos', 'lost': 'Perdidos',
-        }
-        nomes = [_NOMES_SEG.get(s, s) for s in usuario['segmentos_rfm'].split(',') if s]
+    if seg:
+        nomes = [_NOMES_SEG.get(s, s) for s in seg.split(',') if s]
         filtros_seg = f" · Segmentos: {', '.join(nomes)}"
-    pdf_bytes = _gerar_pdf_carteira(filtrados, filtros_resumo=f"Relatório de {usuario.get('nome')}{filtros_seg}")
 
-    # CSV
+    def _slug(s):
+        return re.sub(r'[\\/:*?"<>|]+', '', str(s)).strip()[:40] or 'area'
+
+    def _args(extra):
+        a = {'modo': 'personalizada', 'limit': 100000, 'offset': 0, '_interno': True}
+        if seg:
+            a['segmento'] = seg
+        a.update(extra)
+        return a
+
+    pdfs = []  # [(filename, bytes)]
+
+    if role == 'vendedor' and usuario.get('codusur') is not None:
+        rows = _filtrar_carteira(clientes, _args({'vendedor': str(usuario['codusur']),
+                                                  'sort': 'lucro_12m', 'dir': 'desc'}))['rows']
+        pdf = _gerar_pdf_carteira(rows, filtros_resumo=f"Relatório de {nome_user}{filtros_seg}")
+        pdfs.append((f"carteira_{_slug(nome_user)}_{data_iso}.pdf", pdf))
+        csv_rows = rows
+
+    elif role == 'supervisor' and usuario.get('codsupervisores'):
+        sup_map = _carregar_supervisores_map()
+        for area in usuario['codsupervisores']:
+            rows = _filtrar_carteira(clientes, _args({'time': str(area),
+                                                      'sort': 'vendedor', 'dir': 'asc'}))['rows']
+            area_nome = (sup_map.get(str(area)) or {}).get('nome') or f'Time {area}'
+            pdf = _gerar_pdf_carteira(rows, filtros_resumo=f"Área: {area_nome} · {nome_user}{filtros_seg}")
+            pdfs.append((f"carteira_{_slug(area_nome)}_{data_iso}.pdf", pdf))
+        # CSV combinado: a carteira já é a união das áreas (RBAC), ordena por vendedor A→Z
+        csv_rows = _filtrar_carteira(clientes, _args({'sort': 'vendedor', 'dir': 'asc'}))['rows']
+
+    else:
+        # admin/viewer → carteira inteira (raro por email)
+        rows = _filtrar_carteira(clientes, _args({'sort': 'receita_perdida', 'dir': 'desc'}))['rows']
+        pdf = _gerar_pdf_carteira(rows, filtros_resumo=f"Relatório de {nome_user}{filtros_seg}")
+        pdfs.append((f"carteira_{_slug(nome_user)}_{data_iso}.pdf", pdf))
+        csv_rows = rows
+
+    # CSV (1 só, combinado)
     cabecalho = ['CodCli', 'Cliente', 'Cidade', 'UF', 'Vendedor', 'Telefone',
                  'R(dias)', 'Segmento', 'Venda12m', 'MediaVenda12m', 'ReceitaPerdidaProj']
     csv_lines = ['﻿' + _csv_linha(cabecalho).rstrip('\n')]
-    for c in filtrados:
+    for c in csv_rows:
         v = c.get('venda_12m') or 0
         csv_lines.append(_csv_linha([
             c.get('codcli'), c.get('cliente'), c.get('cidade'), c.get('uf'),
@@ -502,7 +604,7 @@ def _gerar_relatorio_para_usuario(usuario):
         ]).rstrip('\n'))
     csv_bytes = ('\n'.join(csv_lines) + '\n').encode('utf-8')
 
-    return csv_bytes, pdf_bytes, len(filtrados)
+    return csv_bytes, pdfs, len(csv_rows)
 
 
 def enviar_relatorio_email(usuario_id):
@@ -526,9 +628,10 @@ def enviar_relatorio_email(usuario_id):
         session['user_id'] = user['id']
         session['role'] = user.get('role')
         session['codusur'] = user.get('codusur')
+        session['codsupervisores'] = user.get('codsupervisores') or []   # multi-área → união no RBAC
         session['codsupervisor'] = user.get('codsupervisor')
         try:
-            csv_bytes, pdf_bytes, count = _gerar_relatorio_para_usuario(user)
+            csv_bytes, pdfs, count = _gerar_relatorio_para_usuario(user)
         except Exception as e:
             return {'ok': False, 'error': f'Falha ao gerar relatório: {e}'}
 
@@ -536,6 +639,8 @@ def enviar_relatorio_email(usuario_id):
     data_iso = _date.today().isoformat()
     base_nome = f"carteira_{user.get('nome','user').replace(' ','_').lower()}_{data_iso}"
 
+    n_pdfs = len(pdfs)
+    plural_pdf = f"{n_pdfs} PDFs (1 por área)" if n_pdfs > 1 else "1 PDF (visual)"
     html = f"""<html><body style="font-family:Arial,sans-serif;color:#0a0e17;">
 <h2 style="color:#38bdf8;">Multpel Analytics</h2>
 <p>Olá <strong>{user.get('nome')}</strong>,</p>
@@ -544,7 +649,7 @@ def enviar_relatorio_email(usuario_id):
   <li><strong>{count}</strong> clientes na sua carteira</li>
   <li>Modo de classificação: PERSONALIZADA (ciclo individual)</li>
 </ul>
-<p>Anexos: 1 PDF (visual) + 1 CSV (Excel-compatível).</p>
+<p>Anexos: {plural_pdf} + 1 CSV (Excel-compatível).</p>
 <p style="color:#94a3b8;font-size:12px;">Email automatizado — Multpel Analytics</p>
 </body></html>"""
 
@@ -554,15 +659,18 @@ def enviar_relatorio_email(usuario_id):
     except ValueError:
         emails_cc = []  # CC inválido no banco não bloqueia o envio principal
 
+    attachments = [
+        {'filename': fname, 'content': base64.b64encode(pdf_b).decode()}
+        for (fname, pdf_b) in pdfs
+    ]
+    attachments.append({'filename': base_nome + '.csv', 'content': base64.b64encode(csv_bytes).decode()})
+
     payload = {
         'from': RESEND_FROM,
         'to': [user['email']],
         'subject': f"Multpel — Carteira {_date.today().strftime('%d/%m/%Y')}",
         'html': html,
-        'attachments': [
-            {'filename': base_nome + '.pdf', 'content': base64.b64encode(pdf_bytes).decode()},
-            {'filename': base_nome + '.csv', 'content': base64.b64encode(csv_bytes).decode()},
-        ],
+        'attachments': attachments,
     }
     if emails_cc:
         payload['cc'] = emails_cc
@@ -571,8 +679,10 @@ def enviar_relatorio_email(usuario_id):
         resp = resend.Emails.send(payload)
         message_id = resp.get('id') if isinstance(resp, dict) else getattr(resp, 'id', None)
         _log_background(f'email:enviado:user{usuario_id}', duracao_ms=None)
+        total_bytes = sum(len(p) for _, p in pdfs) + len(csv_bytes)
         return {'ok': True, 'message_id': message_id, 'clientes_no_anexo': count,
-                'anexos_kb': round((len(pdf_bytes) + len(csv_bytes)) / 1024, 1),
+                'anexos_kb': round(total_bytes / 1024, 1),
+                'pdfs': n_pdfs,
                 'destinatarios_total': 1 + len(emails_cc)}
     except Exception as e:
         erro_str = str(e)[:500]
@@ -625,7 +735,7 @@ def login_post():
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        "SELECT id, nome, password_hash, role, ativo, codusur, codsupervisor, must_change_password "
+        "SELECT id, nome, password_hash, role, ativo, codusur, codsupervisor, must_change_password, codsupervisores "
         "FROM multpel_users WHERE email = %s", (email,)
     )
     user = cur.fetchone()
@@ -633,16 +743,20 @@ def login_post():
     conn.close()
     if not user:
         return jsonify({'ok': False, 'error': 'E-mail ou senha inválidos'}), 401
-    uid, nome, pw_hash, role, ativo, codusur, codsupervisor, mcp = user
+    uid, nome, pw_hash, role, ativo, codusur, codsupervisor, mcp, codsupervisores = user
     if not ativo:
         return jsonify({'ok': False, 'error': 'Conta desativada'}), 403
     if not check_password_hash(pw_hash, senha):
         return jsonify({'ok': False, 'error': 'E-mail ou senha inválidos'}), 401
+    # Supervisor multi-área: lista normalizada (legado single → [single]); session guarda
+    # a lista + o 1º elemento em codsupervisor (compatibilidade com qualquer caminho legado).
+    sups = _como_lista_supervisores(codsupervisores) or _como_lista_supervisores(codsupervisor)
     session['user_id']              = uid
     session['nome']                 = nome
     session['role']                 = role
     session['codusur']              = codusur
-    session['codsupervisor']        = codsupervisor
+    session['codsupervisores']      = sups
+    session['codsupervisor']        = sups[0] if sups else None
     session['must_change_password'] = bool(mcp)
     if mcp:
         return jsonify({'ok': True, 'redirect': '/trocar-senha'})
@@ -687,6 +801,7 @@ def me():
         'role': session.get('role'),
         'codusur': session.get('codusur'),
         'codsupervisor': session.get('codsupervisor'),
+        'codsupervisores': _session_supervisores(),
     })
 
 
@@ -715,11 +830,34 @@ def status():
 # ──────────────────────────────────────────────────────────────────────
 
 
-def _construir_filtro(periodo='mes_atual'):
-    """Combina filtro temporal + RBAC pra usar em CALCULATE/FILTER."""
+def _construir_filtro(periodo='mes_atual', supervisores=None):
+    """Combina filtro temporal + RBAC (+ override de supervisores) pra usar em CALCULATE/FILTER."""
     base = filtro_periodo(periodo)
     rbac = aplicar_rbac_dax()
-    return f"{base} && {rbac}" if rbac else base
+    f = f"{base} && {rbac}" if rbac else base
+    sup = _frag_supervisores('FATURAMENTO_VENDAS', supervisores)
+    return f"{f} && {sup}" if sup else f
+
+
+def _supervisores_filtro():
+    """Lê ?supervisor=CSV de códigos e retorna lista de ints — SÓ pra admin/viewer.
+    Pra outros roles retorna None (o param é ignorado; RBAC da sessão já trava o escopo).
+    Evita que vendedor/supervisor logado amplie acesso passando ?supervisor=X."""
+    if session.get('role') not in ('admin', 'viewer'):
+        return None
+    raw = request.args.get('supervisor', '').strip()
+    if not raw:
+        return None
+    ids = []
+    for parte in raw.split(','):
+        parte = parte.strip()
+        if not parte:
+            continue
+        try:
+            ids.append(int(parte))
+        except (TypeError, ValueError):
+            continue
+    return sorted(set(ids)) or None
 
 
 def _filtro_rbac_only():
@@ -743,19 +881,67 @@ def _todas_linhas(payload):
         return []
 
 
+def _sup_cache_key(supervisores):
+    """Componente de cache key pro filtro de supervisores (ordenado, '-' se vazio)."""
+    return ','.join(str(s) for s in supervisores) if supervisores else '-'
+
+
+def _yoy_query(supervisores=None):
+    """DAX do YoY — SEMPRE recalculado 12m vs 12m_anterior alinhado RCA (Patch F.3),
+    pra ser idêntico aos cards e à mesma conta global/por-supervisor (só muda o escopo).
+    Não usa as medidas nativas [Crescimento Ano a Ano ...] porque elas usam a venda
+    líquida antiga (devolução por DTSAIDA) que diverge ~1-2% do RCA do cliente, além de
+    não aceitarem filtro de supervisor. Retorna 8 valores (atual+anterior das 4 métricas).
+    `supervisores=None` → janela pura (+ RBAC da sessão); com lista → adiciona CODSUPERVISOR IN."""
+    vl_at = expr_venda_liquida_rca('12m', supervisores)
+    vl_an = expr_venda_liquida_rca('12m_anterior', supervisores)
+    lu_at = expr_lucro_rca('12m', supervisores)
+    lu_an = expr_lucro_rca('12m_anterior', supervisores)
+    f_at = _construir_filtro('12m', supervisores)
+    f_an = _construir_filtro('12m_anterior', supervisores)
+    return f"""EVALUATE {{(
+        {vl_at},
+        {vl_an},
+        {lu_at},
+        {lu_an},
+        CALCULATE(DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI]), FILTER(FATURAMENTO_VENDAS, {f_at})),
+        CALCULATE(DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI]), FILTER(FATURAMENTO_VENDAS, {f_an})),
+        CALCULATE([TOTAL MIX], FILTER(FATURAMENTO_VENDAS, {f_at})),
+        CALCULATE([TOTAL MIX], FILTER(FATURAMENTO_VENDAS, {f_an}))
+    )}}"""
+
+
+def _yoy_parse(row):
+    """Transforma a linha do _yoy_query (8 valores atual/anterior) no dict de 4 percentuais."""
+    def g(i):
+        v = row.get(f'[Value{i}]')
+        return v if v is not None else 0
+
+    def yoy(atual, ant):
+        return ((atual - ant) / ant) if ant else None
+
+    return {
+        'receita_liquida':     yoy(g(1), g(2)),
+        'lucro_bruto':         yoy(g(3), g(4)),
+        'positivacao_cliente': yoy(g(5), g(6)),
+        'positivacao_mix':     yoy(g(7), g(8)),
+    }
+
+
 @app.route('/api/dashboard/kpis')
 @login_required
 def api_dashboard_kpis():
-    key = cache_key_for_user('dashboard:kpis')
+    sup = _supervisores_filtro()
+    key = cache_key_for_user('dashboard:kpis', {'supervisor': _sup_cache_key(sup)})
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)
 
-    f_atual = _construir_filtro('mes_atual')
+    f_atual = _construir_filtro('mes_atual', sup)
     # Patch G.2: VL e LUCRO alinhados RCA c/ RBAC nas 3 tabelas (vendedor/supervisor logado).
     # MARGEM e TICKET MEDIO recalculados em Python a partir do VL alinhado.
-    vl_rca   = expr_venda_liquida_rca('mes_atual')
-    lucro_rca = expr_lucro_rca('mes_atual')
+    vl_rca   = expr_venda_liquida_rca('mes_atual', sup)
+    lucro_rca = expr_lucro_rca('mes_atual', sup)
 
     queries = {
         'primarios': f"""EVALUATE {{(
@@ -769,12 +955,7 @@ def api_dashboard_kpis():
             CALCULATE([VALOR MEDIO PESO], {f_atual}),
             CALCULATE(DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI]), {f_atual})
         )}}""",
-        'yoy': """EVALUATE {(
-            [Crescimento Ano a Ano Receita Liquida],
-            [Crescimento Ano a Ano Lucro Bruto],
-            [Crescimento Ano a Ano Positivacao Cliente],
-            [Crescimento Ano a Ano Positivacao Mix]
-        )}"""
+        'yoy': _yoy_query(sup),
     }
 
     resultados = executar_dax_paralelo(queries)
@@ -788,7 +969,6 @@ def api_dashboard_kpis():
 
     vp = _vals(p, 3)
     vs = _vals(s)
-    vy = _vals(y)
 
     vl_val   = vp[0] or 0
     lucro_val = vp[1] or 0
@@ -810,12 +990,7 @@ def api_dashboard_kpis():
             'valor_medio_peso':       vs[2],
             'clientes_positivados':   vs[3],
         },
-        'yoy': {
-            'receita_liquida':    vy[0],
-            'lucro_bruto':        vy[1],
-            'positivacao_cliente': vy[2],
-            'positivacao_mix':    vy[3],
-        }
+        'yoy': _yoy_parse(y),
     }
     _cache_set(key, resp, 'dax_agregado')
     return jsonify(resp)
@@ -825,14 +1000,15 @@ def api_dashboard_kpis():
 @login_required
 def api_dashboard_serie():
     periodo = request.args.get('periodo', '12m')
-    key = cache_key_for_user('dashboard:serie', {'periodo': periodo})
+    sup = _supervisores_filtro()
+    key = cache_key_for_user('dashboard:serie', {'periodo': periodo, 'supervisor': _sup_cache_key(sup)})
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)
 
     # Patch G.2: 3 queries paralelas (vendas + devolução + devolução avulsa)
     # com RBAC nas 3 tabelas, merge por AnoMes em Python. Alinha RCA.
-    f_v, f_d, f_da = _construir_filtro_3tabelas(periodo)
+    f_v, f_d, f_da = _construir_filtro_3tabelas(periodo, sup)
 
     queries = {
         'vendas': f"""EVALUATE
@@ -905,30 +1081,17 @@ SUMMARIZECOLUMNS(
 @app.route('/api/dashboard/yoy')
 @login_required
 def api_dashboard_yoy():
-    """YoY global (medidas pré-calculadas usam contexto temporal próprio)."""
-    key = cache_key_for_user('dashboard:yoy')
+    """YoY. Sem filtro: medidas nativas globais. Com supervisor(es): recalcula 12m vs 12m_anterior (RCA)."""
+    sup = _supervisores_filtro()
+    key = cache_key_for_user('dashboard:yoy', {'supervisor': _sup_cache_key(sup)})
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)
 
-    query = """EVALUATE {(
-        [Crescimento Ano a Ano Receita Liquida],
-        [Crescimento Ano a Ano Lucro Bruto],
-        [Crescimento Ano a Ano Positivacao Cliente],
-        [Crescimento Ano a Ano Positivacao Mix]
-    )}"""
     token = get_token_cached()
-    payload = retry_dax(execute_dax)(token, query)
+    payload = retry_dax(execute_dax)(token, _yoy_query(sup))
     row = _primeira_linha(payload)
-    resp = {
-        'ok': True,
-        'yoy': {
-            'receita_liquida':     row.get('[Value1]'),
-            'lucro_bruto':         row.get('[Value2]'),
-            'positivacao_cliente': row.get('[Value3]'),
-            'positivacao_mix':     row.get('[Value4]'),
-        }
-    }
+    resp = {'ok': True, 'yoy': _yoy_parse(row)}
     _cache_set(key, resp, 'dax_agregado')
     return jsonify(resp)
 
@@ -941,13 +1104,14 @@ def api_dashboard_pareto():
         top = max(5, min(int(request.args.get('top', 50)), 200))
     except (TypeError, ValueError):
         top = 50
-    key = cache_key_for_user('dashboard:pareto', {'top': top})
+    sup = _supervisores_filtro()
+    key = cache_key_for_user('dashboard:pareto', {'top': top, 'supervisor': _sup_cache_key(sup)})
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)
 
     # Patch G.2: 2 queries paralelas (bruta + devoluções por CODCLI), merge em Python.
-    f_v, f_d, f_da = _construir_filtro_3tabelas('12m')
+    f_v, f_d, f_da = _construir_filtro_3tabelas('12m', sup)
 
     queries = {
         'vendas': f"""EVALUATE
@@ -1003,14 +1167,19 @@ SUMMARIZECOLUMNS(
     return jsonify(resp)
 
 
-def _carregar_sazonalidade(role='admin', codusur=None, codsupervisor=None):
+def _carregar_sazonalidade(role='admin', codusur=None, codsupervisor=None, supervisores=None):
     """Carrega sazonalidade 24m. Aceita role/usur/supv explícitos pra permitir prewarm
-    sem request context. Cache key compatível com cache_key_for_user."""
+    sem request context. `supervisores` (lista) = override de filtro selecionado (admin/viewer).
+    Cache key compatível com cache_key_for_user."""
+    # RBAC supervisor como lista (multi-área). codsupervisor aceita int único OU lista.
+    rbac_sups = _como_lista_supervisores(codsupervisor)
+
     key = ':'.join([
         'multpel', 'dashboard:sazonalidade',
         f"role={role or 'anon'}",
         f"usur={codusur if codusur is not None else '-'}",
-        f"supv={codsupervisor if codsupervisor is not None else '-'}",
+        f"supv={','.join(str(s) for s in rbac_sups) if rbac_sups else '-'}",
+        f"supsel={_sup_cache_key(supervisores)}",
     ])
     cached = _cache_get(key)
     if cached:
@@ -1020,13 +1189,17 @@ def _carregar_sazonalidade(role='admin', codusur=None, codsupervisor=None):
     def _rbac_frag(tabela, col):
         if role == 'admin': return ''
         if codusur is not None:        return f" && {tabela}[{col}] = {int(codusur)}"
-        if codsupervisor is not None:
-            col_sup = 'CODSUPERVISOR'
-            return f" && {tabela}[{col_sup}] = {int(codsupervisor)}"
-        return ''
+        frag = _frag_supervisores(tabela, rbac_sups)
+        return f" && {frag}" if frag else ''
     rbac_v   = _rbac_frag('FATURAMENTO_VENDAS', 'CODUSUR')
     rbac_d   = _rbac_frag('FATURAMENTO_DEVOLUCAO', 'CODUSUR')
     rbac_da  = _rbac_frag('FATURAMENTO_DEVOLUCAO_AVULSA', 'CODUSUR')
+    sup_v  = _frag_supervisores('FATURAMENTO_VENDAS', supervisores)
+    sup_d  = _frag_supervisores('FATURAMENTO_DEVOLUCAO', supervisores)
+    sup_da = _frag_supervisores('FATURAMENTO_DEVOLUCAO_AVULSA', supervisores)
+    if sup_v:  rbac_v  = f"{rbac_v} && {sup_v}"
+    if sup_d:  rbac_d  = f"{rbac_d} && {sup_d}"
+    if sup_da: rbac_da = f"{rbac_da} && {sup_da}"
     f_v  = f"FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -24){rbac_v}"
     f_d  = f"FATURAMENTO_DEVOLUCAO[DTENT] >= EDATE(TODAY(), -24){rbac_d}"
     f_da = f"FATURAMENTO_DEVOLUCAO_AVULSA[DTENT] >= EDATE(TODAY(), -24){rbac_da}"
@@ -1096,7 +1269,8 @@ def api_dashboard_sazonalidade():
     return jsonify(_carregar_sazonalidade(
         role=session.get('role'),
         codusur=session.get('codusur'),
-        codsupervisor=session.get('codsupervisor'),
+        codsupervisor=_session_supervisores(),  # RBAC multi-área (lista)
+        supervisores=_supervisores_filtro(),
     ))
 
 
@@ -1113,13 +1287,14 @@ def api_dashboard_top_clientes():
     if metrica not in ('lucro', 'venda'):
         metrica = 'lucro'
 
-    key = cache_key_for_user('dashboard:top-clientes', {'metrica': metrica, 'limit': limit})
+    sup = _supervisores_filtro()
+    key = cache_key_for_user('dashboard:top-clientes', {'metrica': metrica, 'limit': limit, 'supervisor': _sup_cache_key(sup)})
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)
 
     # Patch G.2: 2 queries paralelas (vendas + devoluções por CODCLI), merge em Python.
-    f_v, f_d, f_da = _construir_filtro_3tabelas('12m')
+    f_v, f_d, f_da = _construir_filtro_3tabelas('12m', sup)
 
     queries = {
         'vendas': f"""EVALUATE
@@ -1289,15 +1464,15 @@ def pode_acessar_vendedor(codusur_alvo):
         except (TypeError, ValueError):
             return False
     if role == 'supervisor':
-        meu_sup = session.get('codsupervisor')
-        if not meu_sup:
+        meus_sups = _session_supervisores()
+        if not meus_sups:
             return False
         vmap = _carregar_vendedores_map()
         v = vmap.get(str(codusur_alvo))
         if not v:
             return False
         try:
-            return int(v.get('codsupervisor') or 0) == int(meu_sup)
+            return int(v.get('codsupervisor') or 0) in set(meus_sups)
         except (TypeError, ValueError):
             return False
     return False
@@ -1410,15 +1585,18 @@ def _normalizar_cidades(clientes):
 
 def _carregar_carteira_full():
     """Roda 6 queries DAX em paralelo, processa via rfm.calcular_clientes(),
-    retorna lista completa de clientes com TODOS os campos calculados.
-    Cache Redis 1h (chave inclui RBAC do user)."""
-    key = cache_key_for_user('carteira:full:v1')
+    retorna a carteira GLOBAL (todos os clientes, métricas TOTAIS — sem filtro de venda).
+
+    O recorte por usuário NÃO é feito aqui: use sempre _carteira_no_escopo(), que filtra
+    pelo CADASTRO (CODUSUR1 → vendedor → supervisor). Cache compartilhado entre todos os
+    usuários (1 entrada global). NÃO expor esta função direto nos endpoints."""
+    key = 'multpel:carteira:full:global:v2'
     cached = _cache_get(key)
     if cached:
         return cached
 
-    rbac = aplicar_rbac_dax()
-    rbac_frag = f" && {rbac}" if rbac else ""
+    # Carteira global: sem RBAC de venda. Isolamento é por cadastro em _carteira_no_escopo().
+    rbac_frag = ""
 
     # 7 queries em paralelo (snapshot quebrado em 2 pra evitar estourar 1.3GB):
     # - snapshot_rec: só recência (universo 24m)
@@ -1552,6 +1730,57 @@ SELECTCOLUMNS(
     return clientes
 
 
+def _carteira_no_escopo():
+    """Carteira GLOBAL recortada pelo escopo de CADASTRO do usuário logado (CODUSUR1).
+    É a ÚNICA porta que os endpoints devem usar — garante o isolamento em Python:
+    - admin/viewer  → tudo
+    - vendedor      → clientes cujo CODUSUR1 == seu codusur (registrados nele)
+    - supervisor    → clientes cujo CODUSUR1 pertence a uma de suas áreas
+    - supervisor sem área / role desconhecido → []
+    Métricas são as TOTAIS do cliente (a carteira full é global, sem filtro de venda)."""
+    clientes = _carregar_carteira_full()
+    role = session.get('role')
+    if role in ('admin', 'viewer'):
+        return clientes
+    codusur = session.get('codusur')
+    if codusur is not None:
+        try:
+            cu = int(codusur)
+        except (TypeError, ValueError):
+            return []
+        return [c for c in clientes if c.get('codusur') == cu]
+    sups = set(_session_supervisores())
+    if sups:
+        return [c for c in clientes if c.get('codsupervisor') in sups]
+    return []
+
+
+def _frag_codcli_cadastro():
+    """Fragmento DAX que restringe FATURAMENTO_VENDAS aos clientes do escopo de CADASTRO
+    do usuário (pra agregados que não dá pra filtrar em memória, ex.: Categorias).
+    Retorna (frag, ok):
+    - admin/viewer → ('', True): sem restrição (agrega tudo).
+    - escopo vazio → (' && FALSE()', True): nada (supervisor sem clientes de cadastro).
+    - escopo ≤2500 → ' && CODCLI IN {...}'.
+    - escopo >2500 mas complemento ≤2500 → ' && NOT(CODCLI IN {complemento})'.
+    - ambos >2500 (raríssimo) → ('', False): caller deve usar fallback (RBAC de venda)."""
+    role = session.get('role')
+    if role in ('admin', 'viewer'):
+        return ('', True)
+    escopo = {c['codcli'] for c in _carteira_no_escopo() if c.get('codcli') is not None}
+    if not escopo:
+        return (' && FALSE()', True)
+    if len(escopo) <= 2500:
+        lista = ', '.join(str(c) for c in sorted(escopo))
+        return (f' && FATURAMENTO_VENDAS[CODCLI] IN {{{lista}}}', True)
+    todos = {c['codcli'] for c in _carregar_carteira_full() if c.get('codcli') is not None}
+    complemento = todos - escopo
+    if len(complemento) <= 2500:
+        lista = ', '.join(str(c) for c in sorted(complemento))
+        return (f' && NOT(FATURAMENTO_VENDAS[CODCLI] IN {{{lista}}})', True)
+    return ('', False)
+
+
 def _executar_dax_paralelo_n(queries: dict, max_workers: int = 4) -> dict:
     """Versão de executar_dax_paralelo com max_workers configurável."""
     token = get_token_cached()
@@ -1572,7 +1801,7 @@ def api_carteira_rfm():
     if modo not in ('fixa', 'personalizada'):
         modo = 'personalizada'
 
-    clientes = _carregar_carteira_full()
+    clientes = _carteira_no_escopo()
     agg = rfm.agregar_distribuicoes(clientes, modo=modo)
     matriz = rfm.matriz_rf(clientes)
     histograma = rfm.histograma_recencia(clientes)
@@ -1614,37 +1843,18 @@ def api_carteira_rfm():
 
 
 def _carregar_venda_mensal_por_cliente(role=None, codusur=None, codsupervisor=None):
-    """Cache 1h: {codcli: {anomes: venda_bruta}} dos últimos 12 meses.
+    """Cache: {codcli: {anomes: venda_bruta}} dos últimos 24 meses, GLOBAL (todos os clientes,
+    sem filtro de venda). O recorte por usuário é feito pelos endpoints via os codclis do
+    escopo de cadastro (carteira). Params mantidos por compatibilidade, mas ignorados.
 
-    IMPORTANTE: retorna VENDA BRUTA (SUM(VLVENDA) por DTSAIDA), NÃO líquida.
-    A devolução é calculada separadamente em _carregar_devolucao_mensal_por_cliente
-    usando DTENT (data da devolução). Líquida final = bruta(DTSAIDA) - devolução(DTENT)
-    pra alinhar com o relatório RCA do ERP do cliente (visão caixa)."""
-    if role is None and codusur is None and codsupervisor is None:
-        role = session.get('role')
-        codusur = session.get('codusur')
-        codsupervisor = session.get('codsupervisor')
-
-    key = ':'.join([
-        'multpel', 'venda_mensal_por_cliente:v3',   # v3 = [VENDA BRUTA] em 24m
-        f"role={role or 'anon'}",
-        f"usur={codusur if codusur is not None else '-'}",
-        f"supv={codsupervisor if codsupervisor is not None else '-'}",
-    ])
+    IMPORTANTE: retorna VENDA BRUTA (por DTSAIDA), NÃO líquida — devolução em função irmã."""
+    key = 'multpel:venda_mensal_por_cliente:global:v4'
     cached = _cache_get(key)
     if cached:
         return {int(cc): {int(am): v for am, v in meses.items()}
                 for cc, meses in cached.items()}
 
-    if role == 'admin':
-        rbac = ''
-    elif codusur is not None:
-        rbac = f"FATURAMENTO_VENDAS[CODUSUR] = {int(codusur)}"
-    elif codsupervisor is not None:
-        rbac = f"FATURAMENTO_VENDAS[CODSUPERVISOR] = {int(codsupervisor)}"
-    else:
-        rbac = ''
-    rbac_frag = f" && {rbac}" if rbac else ""
+    rbac_frag = ""  # global: sem filtro de venda
 
     # Janela 24m (em vez de 12m) cobre comparativo YoY do drill mensal sem nova query.
     # Usa medida [VENDA BRUTA] do PBI (não SUM(VLVENDA) raw) pra alinhar com regras de
@@ -1677,35 +1887,16 @@ def _carregar_devolucao_mensal_por_cliente(role=None, codusur=None, codsuperviso
     Filtra por FATURAMENTO_DEVOLUCAO[DTENT] (data em que a devolução entrou no sistema)
     pra alinhar com o relatório RCA do ERP. Inclui DEVOLUCAO + DEVOLUCAO_AVULSA.
 
-    Usado junto com _carregar_venda_mensal_por_cliente: líquida = bruta - devolucao."""
-    if role is None and codusur is None and codsupervisor is None:
-        role = session.get('role')
-        codusur = session.get('codusur')
-        codsupervisor = session.get('codsupervisor')
-
-    key = ':'.join([
-        'multpel', 'devolucao_mensal_por_cliente:v1',
-        f"role={role or 'anon'}",
-        f"usur={codusur if codusur is not None else '-'}",
-        f"supv={codsupervisor if codsupervisor is not None else '-'}",
-    ])
+    Usado junto com _carregar_venda_mensal_por_cliente: líquida = bruta - devolucao.
+    GLOBAL (todos os clientes, sem filtro de venda); recorte por usuário é feito nos endpoints."""
+    key = 'multpel:devolucao_mensal_por_cliente:global:v2'
     cached = _cache_get(key)
     if cached:
         return {int(cc): {int(am): v for am, v in meses.items()}
                 for cc, meses in cached.items()}
 
-    if role == 'admin':
-        rbac_dev = ''
-        rbac_devav = ''
-    elif codusur is not None:
-        rbac_dev = f" && FATURAMENTO_DEVOLUCAO[CODUSUR] = {int(codusur)}"
-        rbac_devav = f" && FATURAMENTO_DEVOLUCAO_AVULSA[CODUSUR] = {int(codusur)}"
-    elif codsupervisor is not None:
-        rbac_dev = f" && FATURAMENTO_DEVOLUCAO[CODSUPERVISOR] = {int(codsupervisor)}"
-        rbac_devav = f" && FATURAMENTO_DEVOLUCAO_AVULSA[CODSUPERVISOR] = {int(codsupervisor)}"
-    else:
-        rbac_dev = ''
-        rbac_devav = ''
+    rbac_dev = ""    # global: sem filtro de venda
+    rbac_devav = ""
 
     # 2 queries em paralelo (devolução normal + avulsa). Janela 24m cobre YoY do drill.
     # AnoMes não pode ser expressão dentro de SUMMARIZECOLUMNS → agregamos por (CODCLI, DTENT)
@@ -1790,14 +1981,11 @@ def api_carteira_receita_positivacao_12m():
       Aceita ~1% de diferença vs RCA (mas explicada: histórico vs presente).
 
     LÍQUIDA = BRUTA(DTSAIDA) - DEVOLUÇÃO(DTENT) em ambos os caminhos."""
-    args = request.args
-    # Detecta tipo de filtros
-    filtros_complexos = any(args.get(k) for k in ('cidade', 'segmento', 'status', 'busca'))
-
-    if filtros_complexos:
-        return _chart_receita_via_in_memory(args)
-    else:
-        return _chart_receita_via_dax_direto(args)
+    # Carteira por CADASTRO: sempre via in-memory (soma os mapas mensais GLOBAIS pelos
+    # codclis do escopo de cadastro do usuário → números TOTAIS do cliente). O caminho
+    # DAX-direto (por transação/venda) deixou de ser usado pra manter coerência com a
+    # nova definição da carteira.
+    return _chart_receita_via_in_memory(request.args)
 
 
 def _chart_receita_via_dax_direto(args):
@@ -1916,9 +2104,8 @@ SUMMARIZECOLUMNS(
 
 
 def _chart_receita_via_in_memory(args):
-    """Caminho in-memory pra filtros que envolvem cidade/segmento/busca.
-    Aceita ~1% de diferença vs RCA por usar carteira_full atual (histórico vs presente)."""
-    clientes_full = _carregar_carteira_full()
+    """Soma os mapas mensais GLOBAIS pelos codclis do escopo de CADASTRO (números totais)."""
+    clientes_full = _carteira_no_escopo()
     args_filt = dict(args)
     args_filt['limit'] = 100000
     args_filt['offset'] = 0
@@ -1968,7 +2155,8 @@ def api_carteira_mes(anomes):
     # - complemento <= 2500 → NOT(CODCLI IN {lista_complemento}). Cobre UF=ES (7132
     #   codclis, complemento 1589) e casos similares onde filtro pega maioria da base.
     # - Ambos > 2500 → DAX sem filtro extra (raríssimo: filtro que pega 'meio' da base).
-    clientes_full = _carregar_carteira_full()
+    # Escopo de CADASTRO do usuário (rbac_frag abaixo segue como rede de segurança).
+    clientes_full = _carteira_no_escopo()
     args_filt = dict(request.args)
     args_filt['limit'] = 100000
     args_filt['offset'] = 0
@@ -2361,6 +2549,7 @@ def _filtrar_carteira(clientes, args, vendedor_forcado=None):
         'recencia':        'recencia_dias',
         'frequencia':      'frequencia_12m',
         'cliente':         'cliente',
+        'vendedor':        'vendedor',   # nome do vendedor (ordenação alfabética)
     }
     sort_attr = sort_map.get(sort, 'lucro_perdido_proj')
     reverse = (direction == 'desc')
@@ -2388,7 +2577,7 @@ def _filtrar_carteira(clientes, args, vendedor_forcado=None):
 @login_required
 def api_carteira_clientes():
     """Filtra/ordena/pagina a carteira já enriquecida (em memória sobre cache)."""
-    clientes = _carregar_carteira_full()
+    clientes = _carteira_no_escopo()
     return jsonify(_filtrar_carteira(clientes, request.args))
 
 
@@ -2401,19 +2590,18 @@ def api_carteira_cliente(codcli):
     if cached:
         return jsonify(cached)
 
-    # Cliente vem do cache da carteira full
-    clientes = _carregar_carteira_full()
+    # Cliente vem do escopo de CADASTRO do usuário — serve de guarda: se não está no
+    # escopo dele, retorna 404 (não revela/abre cliente de fora da carteira dele).
+    clientes = _carteira_no_escopo()
     cliente = next((c for c in clientes if c['codcli'] == codcli), None)
     if not cliente:
-        return jsonify({'ok': False, 'error': 'Cliente não encontrado na carteira'}), 404
+        return jsonify({'ok': False, 'error': 'Cliente não encontrado na sua carteira'}), 404
 
-    rbac = aplicar_rbac_dax()
-    rbac_frag = f" && {rbac}" if rbac else ""
-    # Patch G.2: RBAC nas 3 tabelas + cálculo VL/Lucro alinhado RCA
-    rbac_d = rbac_devol_dax()
-    rbac_d_frag = f" && {rbac_d}" if rbac_d else ""
-    rbac_da = rbac_devol_av_dax()
-    rbac_da_frag = f" && {rbac_da}" if rbac_da else ""
+    # Histórico do drill = TOTAL do cliente (sem filtro de venda) — coerente com a
+    # carteira por cadastro: o cliente é meu, mostro tudo dele.
+    rbac_frag = ""
+    rbac_d_frag = ""
+    rbac_da_frag = ""
 
     queries = {
         'hist_vendas': f"""EVALUATE
@@ -2526,6 +2714,57 @@ TOPN(5,
     return jsonify(resp)
 
 
+def _slug_export(texto):
+    """Limpa um pedaço de nome de arquivo: remove caracteres inválidos, colapsa espaços, corta em 40."""
+    import re
+    s = re.sub(r'[\\/:*?"<>|]+', '', str(texto))
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s[:40]
+
+
+def _nome_arquivo_export(ext):
+    """Monta o nome do arquivo de export a partir dos filtros ativos (vendedor, time, uf, cidade),
+    resolvidos pra nome legível + data. Ex: 'JOSE JUNIOR_TIME RJ_BA_ILHEUS_2026-06-09.pdf'.
+    Sem nenhum desses 4 filtros → 'carteira_todos_<data>.<ext>'."""
+    from datetime import date as _date
+
+    def _nomes_por_codigo(valor, mapa):
+        nomes = []
+        for cod in str(valor).split(','):
+            cod = cod.strip()
+            if not cod:
+                continue
+            item = mapa.get(cod)
+            nomes.append(item.get('nome') if item and item.get('nome') else cod)
+        return '+'.join(nomes)
+
+    def _valores(valor):
+        return '+'.join(v.strip() for v in str(valor).split(',') if v.strip())
+
+    partes = []
+    if request.args.get('vendedor'):
+        partes.append(_nomes_por_codigo(request.args['vendedor'], _carregar_vendedores_map()))
+    if request.args.get('time'):
+        partes.append(_nomes_por_codigo(request.args['time'], _carregar_supervisores_map()))
+    if request.args.get('uf'):
+        partes.append(_valores(request.args['uf']))
+    if request.args.get('cidade'):
+        partes.append(_valores(request.args['cidade']))
+
+    data = _date.today().isoformat()
+    partes_limpas = [_slug_export(p) for p in partes if _slug_export(p)]
+    base = '_'.join(partes_limpas) if partes_limpas else 'carteira_todos'
+    return f"{base}_{data}.{ext}"
+
+
+def _content_disposition(nome):
+    """Header Content-Disposition com filename ASCII (fallback) + filename* UTF-8 (RFC 5987),
+    pra acentos/espaços sobreviverem em qualquer navegador."""
+    from urllib.parse import quote
+    ascii_fallback = nome.encode('ascii', 'ignore').decode('ascii').strip() or 'carteira.bin'
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(nome)}"
+
+
 @app.route('/api/carteira/csv')
 @login_required
 def api_carteira_csv():
@@ -2534,7 +2773,7 @@ def api_carteira_csv():
     from datetime import date as _date
     modo = request.args.get('modo', 'personalizada')
 
-    clientes = _carregar_carteira_full()
+    clientes = _carteira_no_escopo()
     status_key = 'status_personalizada' if modo == 'personalizada' else 'status_fixa'
 
     # Usa _filtrar_carteira passando limit alto pra pegar TUDO (sem paginação)
@@ -2587,12 +2826,11 @@ def api_carteira_csv():
                 c.get('bloqueio'),
             ])
 
-    seg_arg = request.args.get('segmento', '').replace(',', '+') or 'todos'
-    nome = f"carteira_{seg_arg}_{_date.today().isoformat()}.csv"
+    nome = _nome_arquivo_export('csv')
     return Response(
         stream_with_context(gerar()),
         mimetype='text/csv; charset=utf-8',
-        headers={'Content-Disposition': f'attachment; filename="{nome}"'},
+        headers={'Content-Disposition': _content_disposition(nome)},
     )
 
 
@@ -2680,7 +2918,7 @@ def api_carteira_pdf():
     """Export PDF da carteira filtrada — colunas pedidas pelo diretor."""
     from datetime import date as _date
 
-    clientes = _carregar_carteira_full()
+    clientes = _carteira_no_escopo()
     args_pdf = dict(request.args)
     args_pdf['limit'] = 100000
     args_pdf['offset'] = 0
@@ -2702,12 +2940,11 @@ def api_carteira_pdf():
     filtros_resumo = ' · '.join(parts)
 
     pdf_bytes = _gerar_pdf_carteira(filtrados, filtros_resumo=filtros_resumo)
-    seg_arg = request.args.get('segmento', '').replace(',', '+') or 'todos'
-    nome = f"carteira_{seg_arg}_{_date.today().isoformat()}.pdf"
+    nome = _nome_arquivo_export('pdf')
     return Response(
         pdf_bytes,
         mimetype='application/pdf',
-        headers={'Content-Disposition': f'attachment; filename="{nome}"'},
+        headers={'Content-Disposition': _content_disposition(nome)},
     )
 
 
@@ -2781,13 +3018,15 @@ def _carregar_ranking_vendedores(role=None, codusur=None, codsupervisor=None):
     if role is None and codusur is None and codsupervisor is None:
         role = session.get('role')
         codusur = session.get('codusur')
-        codsupervisor = session.get('codsupervisor')
+        rbac_sups = _session_supervisores()
+    else:
+        rbac_sups = _como_lista_supervisores(codsupervisor)
 
     key = ':'.join([
         'multpel', 'vendedores:ranking:v1',
         f"role={role or 'anon'}",
         f"usur={codusur if codusur is not None else '-'}",
-        f"supv={codsupervisor if codsupervisor is not None else '-'}",
+        f"supv={','.join(str(s) for s in rbac_sups) if rbac_sups else '-'}",
     ])
     cached = _cache_get(key)
     if cached:
@@ -2797,8 +3036,8 @@ def _carregar_ranking_vendedores(role=None, codusur=None, codsupervisor=None):
         rbac = ''
     elif codusur is not None:
         rbac = f"FATURAMENTO_VENDAS[CODUSUR] = {int(codusur)}"
-    elif codsupervisor is not None:
-        rbac = f"FATURAMENTO_VENDAS[CODSUPERVISOR] = {int(codsupervisor)}"
+    elif rbac_sups:
+        rbac = _frag_supervisores('FATURAMENTO_VENDAS', rbac_sups)
     else:
         rbac = ''
     rbac_frag = f" && {rbac}" if rbac else ""
@@ -2912,11 +3151,17 @@ def api_vendedores():
         # Mostrar tipovend principal + 'I' (internos)
         filtrados = [v for v in filtrados if v.get('tipo') in (tipovend, 'I')]
     if supervisor:
-        try:
-            sup_id = int(supervisor)
-            filtrados = [v for v in filtrados if v.get('codsupervisor') == sup_id]
-        except ValueError:
-            pass
+        # Aceita 1 ou múltiplos supervisores (CSV: "18" ou "18,19")
+        sup_ids = set()
+        for parte in str(supervisor).split(','):
+            parte = parte.strip()
+            if parte:
+                try:
+                    sup_ids.add(int(parte))
+                except ValueError:
+                    pass
+        if sup_ids:
+            filtrados = [v for v in filtrados if v.get('codsupervisor') in sup_ids]
     if uf:
         filtrados = [v for v in filtrados if (v.get('estado') or '') == uf]
     if busca:
@@ -3241,13 +3486,26 @@ def api_categorias():
     """Ranking de DEPARTAMENTOS (CODEPTO) com nome textual.
     PIVOT: usa CODEPTO em vez de CODCATEGORIA (92% NULL).
     """
-    key = cache_key_for_user('categorias:ranking:v1')
+    sup = _supervisores_filtro()
+    key = cache_key_for_user('categorias:ranking:v1', {'supervisor': _sup_cache_key(sup)})
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)
 
-    rbac = aplicar_rbac_dax()
-    rbac_frag = f" && {rbac}" if rbac else ""
+    # Carteira por CADASTRO: admin agrega tudo (+ override ?supervisor= do dashboard);
+    # supervisor/vendedor restringem aos codclis do cadastro (sem RBAC de venda).
+    if session.get('role') in ('admin', 'viewer'):
+        rbac_frag = ''
+        sup_frag = _frag_supervisores('FATURAMENTO_VENDAS', sup)
+        if sup_frag:
+            rbac_frag = f" && {sup_frag}"
+    else:
+        frag, ok = _frag_codcli_cadastro()
+        if ok:
+            rbac_frag = frag
+        else:  # escopo enorme: fallback seguro mantendo RBAC de venda
+            r = aplicar_rbac_dax()
+            rbac_frag = f" && {r}" if r else ''
 
     query = f"""EVALUATE
 SUMMARIZECOLUMNS(
@@ -3301,13 +3559,25 @@ def api_categoria_clientes(codepto):
     except ValueError:
         limit = 50
 
-    key = cache_key_for_user(f'categoria:clientes:{codepto}', {'limit': limit})
+    sup = _supervisores_filtro()
+    key = cache_key_for_user(f'categoria:clientes:{codepto}', {'limit': limit, 'supervisor': _sup_cache_key(sup)})
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)
 
-    rbac = aplicar_rbac_dax()
-    rbac_frag = f" && {rbac}" if rbac else ""
+    # Cadastro: admin sem restrição (+ override dashboard); supervisor/vendedor por codcli.
+    if session.get('role') in ('admin', 'viewer'):
+        rbac_frag = ''
+        sup_frag = _frag_supervisores('FATURAMENTO_VENDAS', sup)
+        if sup_frag:
+            rbac_frag = f" && {sup_frag}"
+    else:
+        frag, ok = _frag_codcli_cadastro()
+        if ok:
+            rbac_frag = frag
+        else:
+            r = aplicar_rbac_dax()
+            rbac_frag = f" && {r}" if r else ''
 
     if codepto == 'null':
         filtro_dim = "ISBLANK(FATURAMENTO_VENDAS[CODEPTO])"
@@ -3426,26 +3696,9 @@ TOPN({top},
     return jsonify(resp)
 
 
-@app.route('/api/mix/abandonado')
-@login_required
-def api_mix_abandonado():
-    """Clientes que compraram um DEPARTAMENTO nos últimos 12m mas não nos últimos N dias.
-    Filtros: codepto (opcional), fornecedor (opcional), dias (default 60), limit."""
-    try:
-        dias = max(7, min(int(request.args.get('dias', 60)), 365))
-        limit = max(10, min(int(request.args.get('limit', 100)), 1000))
-    except ValueError:
-        dias, limit = 60, 100
-    codepto = request.args.get('codepto')
-    fornecedor = request.args.get('fornecedor')  # CODFORNECPRINC
-
-    key = cache_key_for_user('mix:abandonado', {'dias': dias, 'codepto': codepto or '', 'fornecedor': fornecedor or ''})
-    cached = _cache_get(key)
-    if cached:
-        return jsonify(cached)
-
-    rbac = aplicar_rbac_dax()
-    rbac_frag = f" && {rbac}" if rbac else ""
+def _mix_abandonado_rows(dias, codepto=None, fornecedor=None):
+    """Lista COMPLETA de pares (cliente × departamento) abandonados há >= dias, no escopo de
+    CADASTRO do usuário, ordenada por lucro do depto desc. Números totais do cliente."""
     filtros_extra = []
     if codepto:
         try:
@@ -3464,7 +3717,7 @@ SUMMARIZECOLUMNS(
     FATURAMENTO_VENDAS[CODCLI],
     FATURAMENTO_VENDAS[CODEPTO],
     FILTER(FATURAMENTO_VENDAS,
-        FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12){rbac_frag}{filtros_str}),
+        FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12){filtros_str}),
     "UltimaCompra", MAX(FATURAMENTO_VENDAS[DTSAIDA]),
     "VendaCat12m",  [VENDA LIQUIDA],
     "LucroCat12m",  [LUCRO TOTAL]
@@ -3475,17 +3728,15 @@ SUMMARIZECOLUMNS(
 
     from datetime import date as _date
     hoje = _date.today()
-    mapa = _carregar_deptos_map()
-    deptos_nomes = mapa['deptos']
-    carteira = _carregar_carteira_full()
-    carteira_idx = {c['codcli']: c for c in carteira}
+    deptos_nomes = _carregar_deptos_map()['deptos']
+    carteira_idx = {c['codcli']: c for c in _carteira_no_escopo()}
 
     out = []
     for r in rows:
         cc = r.get('CODCLI')
         cd = r.get('CODEPTO')
         ultima = r.get('UltimaCompra')
-        if not ultima or cc is None:
+        if not ultima or cc is None or cc not in carteira_idx:
             continue
         try:
             d_ultima = _date.fromisoformat(str(ultima)[:10])
@@ -3493,7 +3744,7 @@ SUMMARIZECOLUMNS(
             continue
         dias_sem = (hoje - d_ultima).days
         if dias_sem < dias:
-            continue  # ainda dentro da janela — não é abandonado
+            continue
         cli_meta = carteira_idx.get(cc, {})
         out.append({
             'codcli':                       cc,
@@ -3512,59 +3763,175 @@ SUMMARIZECOLUMNS(
             'codusur':                      cli_meta.get('codusur'),
         })
     out.sort(key=lambda x: x['lucro_cat_12m'], reverse=True)
-    resp = {
-        'ok': True,
-        'dias': dias,
-        'total': len(out),
-        'rows': out[:limit],
-    }
-    _cache_set(key, resp, 'dax_agregado')
-    return jsonify(resp)
+    return out
 
 
-def _carregar_cohort_full(periodo_meses=12, codusur=None):
-    """Carrega cohort data completo. Cache 24h por chave (RBAC + periodo + codusur).
+@app.route('/api/mix/abandonado')
+@login_required
+def api_mix_abandonado():
+    """Clientes que compraram um DEPARTAMENTO nos últimos 12m mas não nos últimos N dias.
+    Filtros: codepto (opcional), fornecedor (opcional), dias (default 60), limit."""
+    try:
+        dias = max(7, min(int(request.args.get('dias', 60)), 365))
+        limit = max(10, min(int(request.args.get('limit', 100)), 1000))
+    except ValueError:
+        dias, limit = 60, 100
+    codepto = request.args.get('codepto')
+    fornecedor = request.args.get('fornecedor')
 
-    Retorna dict {mes_aquisicao: {mes_relativo: set(codcli)}} pronto pra matriz_cohort.
-    """
-    key = cache_key_for_user('cohort:full', {'periodo': periodo_meses, 'codusur': codusur or ''})
+    key = cache_key_for_user('mix:abandonado', {'dias': dias, 'codepto': codepto or '', 'fornecedor': fornecedor or ''})
     cached = _cache_get(key)
     if cached:
-        # Reidratar sets (JSON não tem set)
-        return {aq: {int(rel): set(ids) for rel, ids in buckets.items()}
-                for aq, buckets in cached.items()}
+        resp = dict(cached)
+        resp['rows'] = resp['rows'][:limit]
+        return jsonify(resp)
 
-    rbac = aplicar_rbac_dax()
-    rbac_frag = f" && {rbac}" if rbac else ""
-    filtro_vend = f" && FATURAMENTO_VENDAS[CODUSUR] = {int(codusur)}" if codusur else ""
+    out = _mix_abandonado_rows(dias, codepto, fornecedor)
+    resp = {'ok': True, 'dias': dias, 'total': len(out), 'rows': out}
+    _cache_set(key, resp, 'dax_agregado')   # cacheia a lista completa
+    return jsonify({'ok': True, 'dias': dias, 'total': len(out), 'rows': out[:limit]})
 
-    # 1 query: todas as compras (codcli, anomes) no período
+
+@app.route('/api/mix/abandonado/<int:codcli>/deptos')
+@login_required
+def api_mix_cliente_deptos(codcli):
+    """Drill: top 5 departamentos que ESTE cliente abandonou (parou há >= dias). Números totais."""
+    try:
+        dias = max(7, min(int(request.args.get('dias', 60)), 365))
+    except ValueError:
+        dias = 60
+
+    # Guarda de escopo: cliente precisa estar no cadastro do usuário
+    carteira_idx = {c['codcli']: c for c in _carteira_no_escopo()}
+    cli_meta = carteira_idx.get(codcli)
+    if cli_meta is None:
+        return jsonify({'ok': False, 'error': 'Cliente fora da sua carteira'}), 404
+
+    query = f"""EVALUATE
+SUMMARIZECOLUMNS(
+    FATURAMENTO_VENDAS[CODEPTO],
+    FILTER(FATURAMENTO_VENDAS,
+        FATURAMENTO_VENDAS[CODCLI] = {codcli}
+        && FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12)),
+    "UltimaCompra", MAX(FATURAMENTO_VENDAS[DTSAIDA]),
+    "VendaCat12m",  [VENDA LIQUIDA],
+    "LucroCat12m",  [LUCRO TOTAL]
+)"""
+    token = get_token_cached()
+    payload = retry_dax(execute_dax)(token, query)
+    rows = clean_rows(_todas_linhas(payload))
+
+    from datetime import date as _date
+    hoje = _date.today()
+    deptos_nomes = _carregar_deptos_map()['deptos']
+    out = []
+    for r in rows:
+        cd = r.get('CODEPTO')
+        ultima = r.get('UltimaCompra')
+        if not ultima:
+            continue
+        try:
+            d_ultima = _date.fromisoformat(str(ultima)[:10])
+        except ValueError:
+            continue
+        dias_sem = (hoje - d_ultima).days
+        if dias_sem < dias:
+            continue  # esse depto ainda está ativo
+        out.append({
+            'codepto':       cd,
+            'depto_nome':    deptos_nomes.get(str(cd)) if cd is not None else '(sem depto)',
+            'ultima_compra': str(ultima)[:10],
+            'dias_parado':   dias_sem,
+            'venda_cat_12m': r.get('VendaCat12m') or 0,
+            'lucro_cat_12m': r.get('LucroCat12m') or 0,
+        })
+    out.sort(key=lambda x: x['lucro_cat_12m'], reverse=True)
+    return jsonify({
+        'ok': True,
+        'codcli': codcli,
+        'cliente': cli_meta.get('cliente') or f'Cliente #{codcli}',
+        'cidade': cli_meta.get('cidade'),
+        'uf': cli_meta.get('uf'),
+        'vendedor': cli_meta.get('vendedor'),
+        'dias': dias,
+        'total': len(out),
+        'rows': out[:5],   # top 5
+    })
+
+
+@app.route('/api/mix/abandonado/csv')
+@login_required
+def api_mix_abandonado_csv():
+    """Export CSV da lista COMPLETA de pares cliente×departamento abandonados (escopo de cadastro)."""
+    from datetime import date as _date
+    try:
+        dias = max(7, min(int(request.args.get('dias', 60)), 365))
+    except ValueError:
+        dias = 60
+    codepto = request.args.get('codepto')
+    fornecedor = request.args.get('fornecedor')
+
+    linhas = _mix_abandonado_rows(dias, codepto, fornecedor)
+    cabecalho = ['CodCli', 'Cliente', 'Cidade', 'UF', 'Departamento', 'UltimaCompra',
+                 'DiasParado', 'VendaCat12m', 'LucroCat12m', 'Vendedor']
+
+    def gerar():
+        yield '﻿'  # BOM UTF-8
+        yield _csv_linha(cabecalho)
+        for c in linhas:
+            yield _csv_linha([
+                c.get('codcli'), c.get('cliente'), c.get('cidade'), c.get('uf'),
+                c.get('depto_nome'), c.get('ultima_compra'),
+                c.get('dias_sem_comprar_categoria'),
+                c.get('venda_cat_12m'), c.get('lucro_cat_12m'), c.get('vendedor'),
+            ])
+
+    nome = f"mix_abandonado_{dias}dias_{_date.today().isoformat()}.csv"
+    return Response(
+        stream_with_context(gerar()),
+        mimetype='text/csv; charset=utf-8',
+        headers={'Content-Disposition': _content_disposition(nome)},
+    )
+
+
+def _carregar_cohort_compras_global(periodo_meses=12):
+    """Cache 24h GLOBAL: {codcli: [meses 'YYYY-MM']} das compras no período (todos os clientes,
+    sem filtro de venda). +12m de histórico pra identificar quem é 'novo'."""
+    key = f'multpel:cohort:compras_global:v2:{periodo_meses}'
+    cached = _cache_get(key)
+    if cached:
+        return {int(cc): meses for cc, meses in cached.items()}
+
     query = f"""EVALUATE
 SUMMARIZECOLUMNS(
     FATURAMENTO_VENDAS[CODCLI],
     CALENDARIO[AnoMes],
     FILTER(FATURAMENTO_VENDAS,
-        FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -{periodo_meses + 12}){rbac_frag}{filtro_vend})
+        FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -{periodo_meses + 12}))
 )"""
-    # Pegamos +12m a mais pra ter histórico antes do cohort começar (necessário pra
-    # identificar quem é "novo" no período vs quem já comprava antes).
-
     token = get_token_cached()
     payload = retry_dax(execute_dax)(token, query)
     rows = clean_rows(_todas_linhas(payload))
-
-    # Monta compras_por_cliente = {codcli: [meses 'YYYY-MM']}
-    compras_por_cliente = {}
+    compras = {}
     for r in rows:
         cc = r.get('CODCLI')
-        am = r.get('AnoMes')  # ex: 202504
+        am = r.get('AnoMes')
         if cc is None or am is None:
             continue
         am_str = str(am)
-        mes_iso = f'{am_str[:4]}-{am_str[4:6]}'
-        compras_por_cliente.setdefault(cc, []).append(mes_iso)
+        compras.setdefault(int(cc), []).append(f'{am_str[:4]}-{am_str[4:6]}')
+    _cache_set(key, compras, 'metadata')  # 24h
+    return compras
 
-    # Filtra clientes cujo cohort cai DENTRO do periodo (ignora cohorts > periodo_meses atrás)
+
+def _carregar_cohort_full(periodo_meses=12, scope_codclis=None):
+    """Cohort {mes_aquisicao: {mes_relativo: set(codcli)}}, recortado por CADASTRO.
+    scope_codclis None = todos (admin sem filtro). Usa as compras globais (cache compartilhado)
+    e a retenção é sobre as compras (totais) dos clientes em escopo."""
+    compras = _carregar_cohort_compras_global(periodo_meses)
+    if scope_codclis is not None:
+        compras = {cc: m for cc, m in compras.items() if cc in scope_codclis}
+
     from datetime import date as _date
     hoje = _date.today()
     corte_y = hoje.year - (periodo_meses // 12)
@@ -3574,34 +3941,38 @@ SUMMARIZECOLUMNS(
         corte_m += 12
     corte_str = f'{corte_y:04d}-{corte_m:02d}'
 
-    compras_no_periodo = {}
-    for cc, meses in compras_por_cliente.items():
-        primeiro = min(meses)
-        if primeiro >= corte_str:
-            compras_no_periodo[cc] = meses
+    compras_no_periodo = {cc: meses for cc, meses in compras.items() if min(meses) >= corte_str}
+    return cohort.cohort_de_compras(compras_no_periodo)
 
-    cohorts_data = cohort.cohort_de_compras(compras_no_periodo)
 
-    # Serializa pro cache (set → list)
-    serializable = {aq: {str(rel): sorted(ids) for rel, ids in buckets.items()}
-                    for aq, buckets in cohorts_data.items()}
-    _cache_set(key, serializable, 'metadata')  # 24h
-    return cohorts_data
+def _cohort_scope_codclis():
+    """Codclis do escopo de CADASTRO do usuário + filtros vendedor/supervisor da UI.
+    Retorna None quando admin/viewer sem nenhum filtro (= todos os clientes)."""
+    role = session.get('role')
+    vend = request.args.get('vendedor')
+    sup = request.args.get('supervisor')
+    if role in ('admin', 'viewer') and not vend and not sup:
+        return None
+    args = {'_interno': True, 'limit': 100000, 'offset': 0}
+    if vend:
+        args['vendedor'] = vend
+    if sup:
+        args['time'] = sup   # _filtrar_carteira: 'time' = codsupervisor (cadastro)
+    filtrados = _filtrar_carteira(_carteira_no_escopo(), args)['rows']
+    return {c['codcli'] for c in filtrados if c.get('codcli') is not None}
 
 
 @app.route('/api/tendencias/cohort')
 @login_required
 def api_tendencias_cohort():
-    """Cohort retention matriz. Filtros: periodo (12m/24m), vendedor.
-    Segmento RFM: TODO (Fase 2)."""
+    """Cohort retention matriz (por CADASTRO). Filtros: periodo, vendedor, supervisor."""
     try:
         periodo = int(request.args.get('periodo', '12m').rstrip('m'))
         periodo = max(3, min(periodo, 24))
     except (ValueError, TypeError):
         periodo = 12
-    codusur = request.args.get('vendedor')
 
-    cohorts_data = _carregar_cohort_full(periodo_meses=periodo, codusur=codusur)
+    cohorts_data = _carregar_cohort_full(periodo_meses=periodo, scope_codclis=_cohort_scope_codclis())
     matriz = cohort.matriz_cohort(cohorts_data, meses_max=periodo)
     return jsonify({
         'ok': True,
@@ -3613,18 +3984,17 @@ def api_tendencias_cohort():
 @app.route('/api/tendencias/cohort/<aquisicao>/<int:mes_relativo>/clientes')
 @login_required
 def api_cohort_drill(aquisicao, mes_relativo):
-    """Drill: lista clientes do bucket (aquisicao, M+mes_relativo)."""
+    """Drill: lista clientes do bucket (aquisicao, M+mes_relativo) — por cadastro."""
     try:
         periodo = int(request.args.get('periodo', '12m').rstrip('m'))
         periodo = max(3, min(periodo, 24))
     except (ValueError, TypeError):
         periodo = 12
-    codusur = request.args.get('vendedor')
 
-    cohorts_data = _carregar_cohort_full(periodo_meses=periodo, codusur=codusur)
+    cohorts_data = _carregar_cohort_full(periodo_meses=periodo, scope_codclis=_cohort_scope_codclis())
     codclis = cohort.clientes_no_bucket(cohorts_data, aquisicao, mes_relativo)
-    # Enriquece via carteira_full
-    carteira = _carregar_carteira_full()
+    # Enriquece via carteira no escopo de cadastro
+    carteira = _carteira_no_escopo()
     idx = {c['codcli']: c for c in carteira}
     rows = []
     for cc in codclis[:200]:  # limita a 200 pra resposta
@@ -3666,11 +4036,13 @@ def api_admin_users_list():
     cur = conn.cursor()
     cur.execute(
         "SELECT id, nome, email, role, codusur, codsupervisor, telefone, ativo, "
-        "cron_enabled, cron_horario::text, cron_frequencia, criado_em, email_cc, segmentos_rfm "
+        "cron_enabled, cron_horario::text, cron_frequencia, criado_em, email_cc, segmentos_rfm, codsupervisores "
         "FROM multpel_users ORDER BY ativo DESC, nome"
     )
     users = []
     for r in cur.fetchall():
+        # Multi-área: lista normalizada (legado single → [single])
+        sups = _como_lista_supervisores(r[14]) or _como_lista_supervisores(r[5])
         users.append({
             'id': r[0], 'nome': r[1], 'email': r[2], 'role': r[3],
             'codusur': r[4], 'codsupervisor': r[5], 'telefone': r[6], 'ativo': r[7],
@@ -3678,6 +4050,7 @@ def api_admin_users_list():
             'criado_em': str(r[11])[:10] if r[11] else None,
             'email_cc': r[12] if r[12] is not None else [],
             'segmentos_rfm': r[13] or '',
+            'codsupervisores': sups,
         })
     cur.close()
     conn.close()
@@ -3697,7 +4070,11 @@ def api_admin_users_create():
         return jsonify({'ok': False, 'error': 'Role inválida'}), 400
 
     codusur = data.get('codusur') or None
-    codsupervisor = data.get('codsupervisor') or None
+    # Supervisor multi-área: aceita codsupervisores (lista) ou codsupervisor (single legado)
+    codsupervisores = _normalizar_codsupervisores(
+        data.get('codsupervisores') if data.get('codsupervisores') is not None else data.get('codsupervisor')
+    )
+    codsupervisor = codsupervisores[0] if codsupervisores else None
     telefone = (data.get('telefone') or '').strip() or None
     cron_enabled = bool(data.get('cron_enabled', False))
     cron_horario = data.get('cron_horario') or '08:00'
@@ -3714,8 +4091,8 @@ def api_admin_users_create():
 
     if role == 'vendedor' and not codusur:
         return jsonify({'ok': False, 'error': 'Vendedor exige codusur'}), 400
-    if role == 'supervisor' and not codsupervisor:
-        return jsonify({'ok': False, 'error': 'Supervisor exige codsupervisor'}), 400
+    if role == 'supervisor' and not codsupervisores:
+        return jsonify({'ok': False, 'error': 'Supervisor exige ao menos uma área (codsupervisor)'}), 400
 
     senha = (data.get('senha') or '').strip() or secrets.token_urlsafe(10)
 
@@ -3724,14 +4101,14 @@ def api_admin_users_create():
     try:
         cur.execute(
             """INSERT INTO multpel_users
-               (nome, email, password_hash, role, codusur, codsupervisor, telefone,
+               (nome, email, password_hash, role, codusur, codsupervisor, codsupervisores, telefone,
                 cron_enabled, cron_horario, cron_frequencia, email_cc, segmentos_rfm,
                 must_change_password)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, true)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, true)
                RETURNING id""",
             (nome, email, generate_password_hash(senha), role,
              int(codusur) if codusur else None,
-             int(codsupervisor) if codsupervisor else None,
+             codsupervisor, Json(codsupervisores),
              telefone, cron_enabled, cron_horario, cron_frequencia,
              Json(emails_cc), segmentos_rfm)
         )
@@ -3766,6 +4143,10 @@ def api_admin_users_update(user_id):
     sets, valores = [], []
     for k in campos_permitidos:
         if k in data:
+            # codsupervisor é tratado em bloco separado (vira lista codsupervisores) quando
+            # o payload traz codsupervisores — evita atribuir a mesma coluna duas vezes.
+            if k == 'codsupervisor' and 'codsupervisores' in data:
+                continue
             v = data[k]
             if k == 'email' and v:
                 v = str(v).strip().lower()
@@ -3782,6 +4163,13 @@ def api_admin_users_update(user_id):
                 v = _normalizar_segmentos_rfm(v)
             sets.append(f"{k} = %s")
             valores.append(v)
+    # Supervisor multi-área: codsupervisores (lista) grava nas 2 colunas (lista + 1º elemento)
+    if 'codsupervisores' in data:
+        sups = _normalizar_codsupervisores(data.get('codsupervisores'))
+        if data.get('role') == 'supervisor' and not sups:
+            return jsonify({'ok': False, 'error': 'Supervisor exige ao menos uma área (codsupervisor)'}), 400
+        sets.append("codsupervisores = %s"); valores.append(Json(sups))
+        sets.append("codsupervisor = %s");   valores.append(sups[0] if sups else None)
     if 'senha' in data and data['senha']:
         sets.append("password_hash = %s")
         valores.append(generate_password_hash(data['senha']))

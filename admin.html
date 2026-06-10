@@ -134,7 +134,7 @@
         <tr>
           <th>Nome</th>
           <th>Email</th>
-          <th>Role</th>
+          <th>Função</th>
           <th>Vendedor/Time</th>
           <th>Telefone</th>
           <th>Cron envio</th>
@@ -170,7 +170,7 @@
         </div>
       </div>
       <div class="ff">
-        <label>Role</label>
+        <label>Função</label>
         <select id="f_role" onchange="atualizarVisibilidadeRoleFields()">
           <option value="vendedor">Vendedor</option>
           <option value="supervisor">Supervisor</option>
@@ -187,9 +187,15 @@
         <input list="dl_vendedores" id="f_codusur" placeholder="Digite nome ou código">
         <datalist id="dl_vendedores"></datalist>
       </div>
-      <div class="ff" id="ff_codsupervisor">
-        <label>Supervisor (codsupervisor)</label>
-        <input list="dl_supervisores" id="f_codsupervisor" placeholder="Digite nome ou código">
+      <div class="ff full" id="ff_codsupervisor">
+        <label>Supervisor / Áreas
+          <span style="color:var(--text-dim);font-size:0.72rem;font-weight:400;">— pode selecionar mais de uma área</span>
+        </label>
+        <div id="sup_container" class="cc-chips" onclick="document.getElementById('sup_input').focus()">
+          <input type="text" list="dl_supervisores" id="sup_input"
+                 placeholder="Digite nome ou código (Enter pra adicionar)"
+                 onkeydown="supOnKeydown(event)" onchange="supOnChange()" onblur="supOnChange()">
+        </div>
         <datalist id="dl_supervisores"></datalist>
       </div>
       <div class="ff full">
@@ -252,6 +258,44 @@ let _vendedoresMap = {};
 let _supervisoresMap = {};
 let _editandoId = null;
 let _ccList = [];  // Patch J: destinatários adicionais (CC) do modal
+let _supervisoresList = [];  // supervisor multi-área: lista de codsupervisores (int)
+
+// ── Chips de áreas do supervisor (multi-seleção) ──
+function supRender() {
+  const cont = document.getElementById('sup_container');
+  if (!cont) return;
+  cont.querySelectorAll('.cc-chip').forEach(c => c.remove());
+  const input = document.getElementById('sup_input');
+  _supervisoresList.forEach((cs, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'cc-chip';
+    chip.innerHTML = `${nomeSupervisor(cs)} <span class="x" onclick="supRemove(${i})">×</span>`;
+    cont.insertBefore(chip, input);
+  });
+  input.placeholder = _supervisoresList.length ? 'adicionar mais...' : 'Digite nome ou código (Enter pra adicionar)';
+}
+function supAdd(valor) {
+  const cod = extrairCodigo(valor);
+  if (!cod) return;
+  const c = parseInt(cod, 10);
+  if (_supervisoresList.includes(c)) return;
+  _supervisoresList.push(c);
+  supRender();
+}
+function supRemove(i) { _supervisoresList.splice(i, 1); supRender(); }
+function supOnKeydown(ev) {
+  if (ev.key === 'Enter' || ev.key === ',' || ev.key === ';') {
+    ev.preventDefault();
+    supAdd(ev.target.value);
+    ev.target.value = '';
+  } else if (ev.key === 'Backspace' && !ev.target.value && _supervisoresList.length) {
+    supRemove(_supervisoresList.length - 1);
+  }
+}
+function supOnChange() {
+  const inp = document.getElementById('sup_input');
+  if (inp && inp.value.trim()) { supAdd(inp.value); inp.value = ''; }
+}
 
 const _EMAIL_RE_JS = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
@@ -397,7 +441,11 @@ function renderTabela() {
   tbody.innerHTML = _users.map(u => {
     const vendedorTime = u.role === 'vendedor'
       ? nomeVendedor(u.codusur)
-      : (u.role === 'supervisor' ? nomeSupervisor(u.codsupervisor) : '—');
+      : (u.role === 'supervisor'
+          ? ((u.codsupervisores && u.codsupervisores.length)
+              ? u.codsupervisores.map(nomeSupervisor).join(', ')
+              : nomeSupervisor(u.codsupervisor))
+          : '—');
     const cron = u.cron_enabled
       ? `<span class="cron-on">${u.cron_horario || ''} · ${u.cron_frequencia || ''}</span>`
       : `<span class="cron-off">desligado</span>`;
@@ -447,7 +495,6 @@ function abrirNovo() {
   document.getElementById('f_role').value = 'vendedor';
   document.getElementById('f_telefone').value = '';
   document.getElementById('f_codusur').value = '';
-  document.getElementById('f_codsupervisor').value = '';
   document.getElementById('f_senha').value = '';
   document.getElementById('f_cron_enabled').checked = false;
   document.getElementById('f_ativo').checked = true;
@@ -456,6 +503,9 @@ function abrirNovo() {
   _ccList = [];
   document.getElementById('cc_input').value = '';
   ccRender();
+  _supervisoresList = [];
+  document.getElementById('sup_input').value = '';
+  supRender();
   carregarSegmentosNoModal('');
   atualizarVisibilidadeRoleFields();
   document.getElementById('modal').classList.add('show');
@@ -471,7 +521,6 @@ function abrirEdicao(id) {
   document.getElementById('f_role').value = u.role || 'viewer';
   document.getElementById('f_telefone').value = u.telefone || '';
   document.getElementById('f_codusur').value = u.codusur ? nomeVendedor(u.codusur) : '';
-  document.getElementById('f_codsupervisor').value = u.codsupervisor ? nomeSupervisor(u.codsupervisor) : '';
   document.getElementById('f_senha').value = '';
   document.getElementById('f_cron_enabled').checked = !!u.cron_enabled;
   document.getElementById('f_ativo').checked = !!u.ativo;
@@ -480,6 +529,11 @@ function abrirEdicao(id) {
   _ccList = Array.isArray(u.email_cc) ? [...u.email_cc] : [];
   document.getElementById('cc_input').value = '';
   ccRender();
+  _supervisoresList = (Array.isArray(u.codsupervisores) && u.codsupervisores.length)
+    ? u.codsupervisores.map(Number)
+    : (u.codsupervisor ? [Number(u.codsupervisor)] : []);
+  document.getElementById('sup_input').value = '';
+  supRender();
   carregarSegmentosNoModal(u.segmentos_rfm || '');
   atualizarVisibilidadeRoleFields();
   document.getElementById('modal').classList.add('show');
@@ -496,17 +550,19 @@ async function salvar() {
   try {
     const role = document.getElementById('f_role').value;
     const codusur = role === 'vendedor' ? extrairCodigo(document.getElementById('f_codusur').value) : '';
-    const codsupervisor = role === 'supervisor' ? extrairCodigo(document.getElementById('f_codsupervisor').value) : '';
 
     // Patch J — confirma email do CC que tá digitado mas não foi "enterado"
     ccFlushInput();
+    // Supervisor multi-área — confirma área digitada mas não "enterada"
+    supOnChange();
+    const codsupervisores = role === 'supervisor' ? _supervisoresList.slice() : [];
 
     const body = {
       nome: document.getElementById('f_nome').value.trim(),
       email: document.getElementById('f_email').value.trim(),
       role,
       codusur: codusur ? parseInt(codusur, 10) : null,
-      codsupervisor: codsupervisor ? parseInt(codsupervisor, 10) : null,
+      codsupervisores,
       telefone: document.getElementById('f_telefone').value.trim(),
       cron_enabled: document.getElementById('f_cron_enabled').checked,
       ativo: document.getElementById('f_ativo').checked,

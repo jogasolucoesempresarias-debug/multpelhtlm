@@ -66,12 +66,12 @@ def test_carteira_rfm_estrutura(client, usuario_admin, mock_dax_router, clean_re
     d = r.get_json()
     assert d['ok']
     assert d['modo'] == 'fixa'
-    # 3 clientes no snapshot_rec
-    assert d['total_clientes'] == 3
+    # 4 clientes no snapshot_rec (admin vê todos)
+    assert d['total_clientes'] == 4
     # Soma de régua == total
-    assert sum(d['regua'][k] for k in ('ok', 'normal', 'atencao', 'urgente')) == 3
+    assert sum(d['regua'][k] for k in ('ok', 'normal', 'atencao', 'urgente')) == 4
     # Soma de segmentos == total
-    assert sum(d['segmentos'].values()) == 3
+    assert sum(d['segmentos'].values()) == 4
     # Estrutura matriz/histograma
     assert 'matriz_rf' in d
     assert 'histograma_recencia' in d
@@ -96,7 +96,7 @@ def test_carteira_clientes_paginado_e_filtros(client, usuario_admin, mock_dax_ro
     r = client.get('/api/carteira/clientes?limit=2&offset=0')
     assert r.status_code == 200
     d = r.get_json()
-    assert d['total'] == 3
+    assert d['total'] == 4
     assert len(d['rows']) == 2
     assert d['offset'] == 0
 

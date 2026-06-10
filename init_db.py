@@ -44,6 +44,10 @@ cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS email_cc        
 # Patch K — filtro de segmento RFM (comma-separated: 'champions,loyal,lost' ou '' = carteira completa)
 cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS segmentos_rfm   TEXT DEFAULT '';")
 
+# Supervisor multi-área — lista de codsupervisores (JSONB array). Coluna legada codsupervisor
+# segue existindo e recebe o 1º elemento (compatibilidade com RBAC single).
+cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS codsupervisores JSONB DEFAULT '[]'::jsonb;")
+
 cur.execute("""
     CREATE TABLE IF NOT EXISTS multpel_log (
         id            SERIAL PRIMARY KEY,

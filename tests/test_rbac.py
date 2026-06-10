@@ -50,8 +50,9 @@ def test_admin_ve_tudo_sem_filtro_rbac(client, usuario_admin, mock_dax_capture, 
         assert 'CODSUPERVISOR =' not in q, f'Admin não devia ter CODSUPERVISOR no FILTER:\n{q}'
 
 
-def test_vendedor_filtro_aplicado_em_todas_queries(client, usuario_vendedor, mock_dax_capture, clean_redis):
-    """Vendedor (codusur=573): toda query DAX com FILTER deve conter `CODUSUR = 573`."""
+def test_vendedor_ve_so_sua_carteira_por_cadastro(client, usuario_vendedor, mock_dax_capture, clean_redis):
+    """Carteira por CADASTRO: vendedor 573 vê só clientes cujo CODUSUR1==573 (clientes 1 e 3),
+    não o cliente 2 (CODUSUR1=100). Isolamento é por resposta (Python), não por filtro DAX."""
     mock_dax_capture.set_routes([
         ('UltimaCompra', _load('dax_carteira_snapshot_rec')),
         ('Compras12m',   _load('dax_carteira_snapshot_freqmon')),
@@ -61,20 +62,20 @@ def test_vendedor_filtro_aplicado_em_todas_queries(client, usuario_vendedor, moc
         ('CodCli',       _load('dax_carteira_datas')),
     ])
     login_as(client, usuario_vendedor['email'], usuario_vendedor['senha'])
-    r = client.get('/api/carteira/rfm?modo=fixa')
-    assert r.status_code == 200
+    r = client.get('/api/carteira/clientes?limit=100')
+    assert r.status_code == 200, r.get_data(as_text=True)
+    d = r.get_json()
+    codclis = {row['codcli'] for row in d['rows']}
+    assert codclis == {1, 3}, f'vendedor 573 deveria ver só {{1,3}}, viu {codclis}'
+    for row in d['rows']:
+        assert row['codusur'] == 573
+    # A carteira global NÃO injeta RBAC de venda no DAX (isolamento é em Python)
+    assert not any('CODUSUR = 573' in q for q in mock_dax_capture.queries)
 
-    # As queries da carteira que usam FILTER (snapshot/datas) DEVEM ter CODUSUR = 573
-    queries_carteira = [q for q in mock_dax_capture.queries
-                        if 'FILTER' in q and 'FATURAMENTO_VENDAS' in q]
-    assert len(queries_carteira) > 0
-    for q in queries_carteira:
-        assert 'FATURAMENTO_VENDAS[CODUSUR] = 573' in q, \
-            f'Vendedor 573 deveria ter filtro CODUSUR=573 mas:\n{q[:300]}'
 
-
-def test_supervisor_filtro_aplicado_em_todas_queries(client, usuario_supervisor, mock_dax_capture, clean_redis):
-    """Supervisor (codsupervisor=18): toda query com FILTER deve conter `CODSUPERVISOR = 18`."""
+def test_supervisor_ve_so_suas_areas_por_cadastro(client, usuario_supervisor, mock_dax_capture, clean_redis):
+    """Supervisor (área 18) vê clientes cujo CODUSUR1 é da área 18 (clientes 1,2,3),
+    NUNCA o cliente 4 (CODUSUR1=820 → área 99). Isolamento por cadastro, na resposta."""
     mock_dax_capture.set_routes([
         ('UltimaCompra', _load('dax_carteira_snapshot_rec')),
         ('Compras12m',   _load('dax_carteira_snapshot_freqmon')),
@@ -84,15 +85,12 @@ def test_supervisor_filtro_aplicado_em_todas_queries(client, usuario_supervisor,
         ('CodCli',       _load('dax_carteira_datas')),
     ])
     login_as(client, usuario_supervisor['email'], usuario_supervisor['senha'])
-    r = client.get('/api/carteira/rfm?modo=fixa')
-    assert r.status_code == 200
-
-    queries_carteira = [q for q in mock_dax_capture.queries
-                        if 'FILTER' in q and 'FATURAMENTO_VENDAS' in q]
-    assert len(queries_carteira) > 0
-    for q in queries_carteira:
-        assert 'FATURAMENTO_VENDAS[CODSUPERVISOR] = 18' in q, \
-            f'Supervisor 18 deveria ter filtro CODSUPERVISOR=18 mas:\n{q[:300]}'
+    r = client.get('/api/carteira/clientes?limit=100')
+    assert r.status_code == 200, r.get_data(as_text=True)
+    d = r.get_json()
+    codclis = {row['codcli'] for row in d['rows']}
+    assert codclis == {1, 2, 3}, f'supervisor 18 deveria ver {{1,2,3}}, viu {codclis}'
+    assert 4 not in codclis, 'NÃO pode ver cliente da área 99'
 
 
 def test_vendedor_403_ao_acessar_outro_codusur(client, usuario_vendedor, mock_dax_capture, clean_redis):

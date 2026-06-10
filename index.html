@@ -117,6 +117,10 @@
     font-size: 0.82rem; font-weight: 600; color: var(--text-dim);
     text-transform: uppercase; letter-spacing: 0.05em;
   }
+  /* Duas tabelas Top 10 lado a lado */
+  .tables-2col { display: grid; gap: 14px; margin-top: 14px; grid-template-columns: repeat(2, 1fr); }
+  .tables-2col .table-card { margin-top: 0; }
+  @media (max-width: 1100px) { .tables-2col { grid-template-columns: 1fr; } }
   .table-scroll { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
   thead th {
@@ -145,6 +149,40 @@
     background: var(--yellow); color: var(--bg); border: none; padding: 5px 12px;
     border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.78rem;
   }
+  /* Barra de filtro */
+  .filter-bar {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px 16px; margin-bottom: 16px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .filter-bar .fb-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .filter-bar label { font-size: 0.66rem; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
+  .filter-bar input {
+    background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+    padding: 7px 12px; border-radius: 7px; font-family: 'DM Sans', sans-serif;
+    font-size: 0.82rem; min-width: 280px;
+  }
+  .filter-bar input:focus { outline: none; border-color: var(--accent); }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--surface2); border: 1px solid var(--accent); color: var(--accent);
+    padding: 4px 6px 4px 10px; border-radius: 16px; font-size: 0.76rem; font-weight: 500;
+  }
+  .chip button { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 2px; }
+  .chip button:hover { color: var(--red); }
+  .chips-empty { font-size: 0.78rem; color: var(--text-dim); font-style: italic; }
+
+  /* Painel lateral (drill departamento → clientes) */
+  .side-panel { position: fixed; top: 0; right: 0; bottom: 0; width: 480px; max-width: 90vw; background: var(--surface); border-left: 1px solid var(--border); transform: translateX(100%); transition: transform 0.25s; box-shadow: -10px 0 30px rgba(0,0,0,0.4); z-index: 1000; display: flex; flex-direction: column; }
+  .side-panel.open { transform: translateX(0); }
+  .side-head { padding: 16px 18px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .side-head h2 { font-size: 1rem; font-weight: 700; }
+  .side-head button { background: none; border: none; color: var(--text-dim); font-size: 1.3rem; cursor: pointer; }
+  .side-body { flex: 1; overflow-y: auto; padding: 18px; }
+  .backdrop { position: fixed; inset: 0; background: rgba(10,14,23,0.6); z-index: 999; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+  .backdrop.show { opacity: 1; pointer-events: auto; }
+
   .hidden { display: none !important; }
 </style>
 </head>
@@ -183,15 +221,26 @@
     <button onclick="carregarTudo(true)">Tentar agora</button>
   </div>
 
+  <!-- Filtro de supervisores (só admin/viewer) -->
+  <div id="filtroBar" class="filter-bar hidden">
+    <div class="fb-row">
+      <label for="inputSup">Supervisor (time)</label>
+      <input id="inputSup" list="dlSup" placeholder="Digite e selecione um supervisor…" autocomplete="off">
+      <datalist id="dlSup"></datalist>
+      <button id="btnLimparFiltro" class="btn-sm" style="display:none;">Limpar filtros</button>
+    </div>
+    <div id="chipsSup" class="chips"><span class="chips-empty">Sem filtro — visão geral (empresa toda)</span></div>
+  </div>
+
   <!-- KPIs primários -->
   <div class="kpi-grid row-prim">
     <div class="kpi-card">
-      <div class="label">Venda Líquida (mês)</div>
+      <div class="label">Venda Líquida (mês atual)</div>
       <div class="value" id="k_venda">—</div>
       <div class="yoy" id="k_venda_yoy">&nbsp;</div>
     </div>
     <div class="kpi-card">
-      <div class="label">Lucro Total (mês)</div>
+      <div class="label">Lucro Total (mês atual)</div>
       <div class="value" id="k_lucro">—</div>
       <div class="yoy" id="k_lucro_yoy">&nbsp;</div>
     </div>
@@ -237,13 +286,42 @@
       <h3>YoY — Métricas-chave</h3>
       <div class="chart-wrap"><canvas id="chartYoy"></canvas></div>
     </div>
-    <div class="chart-card">
-      <h3>Pareto — Concentração de receita por cliente</h3>
-      <div class="chart-wrap"><canvas id="chartPareto"></canvas></div>
+  </div>
+
+  <!-- Top 10 resumidos lado a lado -->
+  <div class="tables-2col">
+    <!-- Top 10 departamentos por lucro (clique → clientes) -->
+    <div class="table-card">
+      <h3>Top 10 departamentos por lucro (12m) — clique para ver os clientes</h3>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Departamento</th>
+              <th class="num">Lucro 12m</th>
+            </tr>
+          </thead>
+          <tbody id="tbodyDeptos"></tbody>
+        </table>
+      </div>
     </div>
-    <div class="chart-card">
-      <h3>Sazonalidade — Vendas por mês × ano</h3>
-      <div class="chart-wrap"><canvas id="chartSazon"></canvas></div>
+
+    <!-- Top 10 vendedores por lucro (escondido p/ vendedor) -->
+    <div class="table-card hidden" id="cardVendedores">
+      <h3>Top 10 vendedores por lucro (12m)</h3>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Vendedor</th>
+              <th class="num">Lucro 12m</th>
+            </tr>
+          </thead>
+          <tbody id="tbodyVendedores"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -267,6 +345,19 @@
     </div>
   </div>
 
+  <!-- Painel lateral: clientes do departamento -->
+  <div id="backdropDepto" class="backdrop" onclick="fecharDeptoPanel()"></div>
+  <aside id="deptoPanel" class="side-panel">
+    <div class="side-head">
+      <div>
+        <h2 id="depto_titulo">—</h2>
+        <div id="depto_meta" style="font-size:0.74rem;color:var(--text-dim);font-family:'JetBrains Mono',monospace;">—</div>
+      </div>
+      <button onclick="fecharDeptoPanel()">×</button>
+    </div>
+    <div class="side-body" id="depto_body"></div>
+  </aside>
+
 </div>
 
 <script>
@@ -274,10 +365,18 @@ const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL',
 const BRL2 = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const NUM = new Intl.NumberFormat('pt-BR');
 const PCT = (v) => (v == null ? '—' : (v * 100).toFixed(1).replace('.', ',') + '%');
+const PCT2 = (v) => (v == null ? '—' : (v * 100).toFixed(2).replace('.', ',') + '%');
 
 Chart.defaults.font.family = "'DM Sans', sans-serif";
 Chart.defaults.color = '#94a3b8';
 Chart.defaults.borderColor = '#1e293b';
+// Chart.js v4 exige registrar o plugin manualmente (carregar o <script> não basta).
+// Registramos e desligamos por padrão pra não rotular Série/Pareto/Sazonalidade;
+// ligamos só no gráfico YoY.
+if (window.ChartDataLabels) {
+  Chart.register(window.ChartDataLabels);
+  Chart.defaults.set('plugins.datalabels', { display: false });
+}
 
 const MESES = ['','Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
 // Globais consumidos por /static/drill-cliente.js
@@ -293,6 +392,66 @@ const NOME_SEG = {
 };
 window._modo = 'personalizada';
 
+// ── Filtro de supervisores (admin/viewer) ──
+let _supMap = {};            // {cod: {nome, tipo}}
+let _supSelecionados = [];   // ['18','19',...]
+
+async function loadSupervisoresMap() {
+  try {
+    const j = await fetchJSON('/api/_internal/supervisores-map');
+    _supMap = j.supervisores || {};
+    const dl = document.getElementById('dlSup');
+    dl.innerHTML = Object.entries(_supMap)
+      .sort((a, b) => (a[1].nome || '').localeCompare(b[1].nome || ''))
+      .map(([cod, v]) => `<option value="${(v.nome || ('Time ' + cod))} (${cod})">`).join('');
+  } catch (e) { console.warn('supervisores-map:', e); }
+}
+
+function _filtroParam() {
+  return _supSelecionados.length ? 'supervisor=' + _supSelecionados.join(',') : '';
+}
+function _comFiltro(url) {
+  const p = _filtroParam();
+  if (!p) return url;
+  return url + (url.includes('?') ? '&' : '?') + p;
+}
+
+function renderChips() {
+  const box = document.getElementById('chipsSup');
+  const btn = document.getElementById('btnLimparFiltro');
+  if (!_supSelecionados.length) {
+    box.innerHTML = '<span class="chips-empty">Sem filtro — visão geral (empresa toda)</span>';
+    btn.style.display = 'none';
+    return;
+  }
+  box.innerHTML = _supSelecionados.map(cod => {
+    const nome = (_supMap[cod] && _supMap[cod].nome) || ('Time ' + cod);
+    return `<span class="chip">${nome} (${cod}) <button onclick="removerSup('${cod}')" title="Remover">×</button></span>`;
+  }).join('');
+  btn.style.display = '';
+}
+
+function adicionarSup(cod) {
+  cod = String(cod);
+  if (!_supMap[cod]) return;                 // ignora código inválido
+  if (_supSelecionados.includes(cod)) return; // já está
+  _supSelecionados.push(cod);
+  renderChips();
+  recarregarDados();
+}
+function removerSup(cod) {
+  cod = String(cod);
+  _supSelecionados = _supSelecionados.filter(c => c !== cod);
+  renderChips();
+  recarregarDados();
+}
+function limparFiltros() {
+  if (!_supSelecionados.length) return;
+  _supSelecionados = [];
+  renderChips();
+  recarregarDados();
+}
+
 function setText(id, v) { document.getElementById(id).textContent = v; }
 
 function setYoyBadge(id, v) {
@@ -307,13 +466,13 @@ function setYoyBadge(id, v) {
 // fetchJSON vem do /static/fetch-resiliente.js (retry + backoff + timeout)
 
 async function loadKpis() {
-  const d = await fetchJSON('/api/dashboard/kpis');
+  const d = await fetchJSON(_comFiltro('/api/dashboard/kpis'));
   const p = d.primarios || {};
   const s = d.secundarios || {};
   const y = d.yoy || {};
   setText('k_venda',    p.venda_liquida != null ? BRL.format(p.venda_liquida) : '—');
   setText('k_lucro',    p.lucro_total   != null ? BRL.format(p.lucro_total)   : '—');
-  setText('k_margem',   PCT(p.margem));
+  setText('k_margem',   PCT2(p.margem));
   setText('k_clientes', s.clientes_positivados != null ? NUM.format(s.clientes_positivados) : '—');
   setText('k_ticket',   p.ticket_medio  != null ? BRL2.format(p.ticket_medio) : '—');
   setText('k_mix',      s.total_mix     != null ? NUM.format(s.total_mix)     : '—');
@@ -331,7 +490,7 @@ function drawChart(id, cfg) {
 }
 
 async function loadSerie() {
-  const d = await fetchJSON('/api/dashboard/serie?periodo=12m');
+  const d = await fetchJSON(_comFiltro('/api/dashboard/serie?periodo=12m'));
   const rows = (d.rows || []).slice().sort((a,b) => (a.AnoMes||0) - (b.AnoMes||0));
   const labels = rows.map(r => {
     const am = String(r.AnoMes || ''); // ex 202505
@@ -355,7 +514,7 @@ async function loadSerie() {
 }
 
 async function loadYoy() {
-  const d = await fetchJSON('/api/dashboard/yoy');
+  const d = await fetchJSON(_comFiltro('/api/dashboard/yoy'));
   const y = d.yoy || {};
   drawChart('chartYoy', {
     type: 'bar',
@@ -369,103 +528,97 @@ async function loadYoy() {
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => PCT(c.parsed.y) } } },
+      layout: { padding: { top: 24, bottom: 8 } },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => (c.parsed.y == null ? 'sem base no período anterior' : PCT(c.parsed.y)) } },
+        datalabels: {
+          display: true,
+          anchor: 'end',
+          align: 'end',
+          offset: 4,
+          clamp: true,
+          color: '#e2e8f0',
+          font: { weight: 700, size: 12 },
+          formatter: v => (v == null ? '—' : PCT(v)),
+        }
+      },
       scales: { y: { ticks: { callback: v => PCT(v) } } }
     }
   });
 }
 
-async function loadPareto() {
-  const d = await fetchJSON('/api/dashboard/pareto?top=30');
-  const rows = (d.rows || []).slice().sort((a,b) => (b.Venda12m||0) - (a.Venda12m||0));
-  const total = rows.reduce((s, r) => s + (r.Venda12m||0), 0);
-  let cum = 0;
-  const cumPct = rows.map(r => { cum += (r.Venda12m||0); return total ? cum/total*100 : 0; });
-  drawChart('chartPareto', {
-    type: 'bar',
-    data: {
-      labels: rows.map((_,i) => '#' + (i+1)),
-      datasets: [
-        { type: 'bar',  label: 'Venda 12m',       data: rows.map(r => r.Venda12m), backgroundColor: '#38bdf8', yAxisID: 'y' },
-        { type: 'line', label: '% acumulado',     data: cumPct,                    borderColor: '#fb923c', backgroundColor: 'rgba(251,146,60,0.1)', yAxisID: 'y1', tension: 0.2, pointRadius: 2 },
-      ]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      onClick: (evt, items) => {
-        // Click na barra ou ponto → drill cliente
-        if (items && items.length) {
-          const i = items[0].index;
-          const cli = rows[i];
-          if (cli && cli.CODCLI && window.abrirDrill) {
-            window.abrirDrill(cli.CODCLI);
-          }
-        }
-      },
-      onHover: (evt, items) => {
-        // Cursor pointer indica clicabilidade
-        evt.native.target.style.cursor = (items && items.length) ? 'pointer' : 'default';
-      },
-      plugins: {
-        legend: { position: 'bottom' },
-        tooltip: {
-          callbacks: {
-            title: (items) => {
-              if (!items.length) return '';
-              const i = items[0].dataIndex;
-              const cli = rows[i];
-              const nome = cli.CLIENTE || ('Cliente #' + cli.CODCLI);
-              const uf = cli.UF ? ` · ${cli.UF}` : '';
-              return `#${i+1} ${nome}${uf}`;
-            },
-            label: (c) => {
-              const i = c.dataIndex;
-              if (c.dataset.yAxisID === 'y1') {
-                return `Acumulado: ${PCT(c.parsed.y/100)}`;
-              }
-              return `Venda 12m: ${BRL.format(c.parsed.y)}`;
-            },
-            afterBody: (items) => {
-              if (items.length && items[0].dataset.yAxisID === 'y') {
-                return ['', '↗ Click pra ver drill 360°'];
-              }
-              return [];
-            }
-          }
-        }
-      },
-      scales: {
-        y:  { ticks: { callback: v => BRL.format(v) } },
-        y1: { position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false }, ticks: { callback: v => v + '%' } }
-      }
-    }
-  });
+let _topDeptos = [];  // cache local da última carga (usado pelo drill pra título/meta)
+
+async function loadTopDeptos() {
+  const d = await fetchJSON(_comFiltro('/api/categorias'));
+  const rows = (d.categorias || []).slice()
+    .sort((a, b) => (b.lucro || 0) - (a.lucro || 0))
+    .slice(0, 10);
+  _topDeptos = rows;
+  const tbody = document.getElementById('tbodyDeptos');
+  tbody.innerHTML = rows.map((r, i) => `
+    <tr onclick="abrirDeptoPanel('${r.codepto == null ? 'null' : r.codepto}')">
+      <td>${i+1}</td>
+      <td>${r.nome || ('Depto ' + r.codepto)}</td>
+      <td class="num">${BRL.format(r.lucro || 0)}</td>
+    </tr>
+  `).join('');
+  if (!rows.length) tbody.innerHTML = '<tr><td colspan="3" style="color:var(--text-dim)">Sem dados no escopo atual.</td></tr>';
 }
 
-async function loadSazon() {
-  const d = await fetchJSON('/api/dashboard/sazonalidade');
-  const rows = d.rows || [];
-  const anos = [...new Set(rows.map(r => r.ANO))].sort();
-  const cores = ['#38bdf8', '#818cf8', '#34d399'];
-  const datasets = anos.map((ano, i) => {
-    const dataMes = Array(12).fill(null);
-    rows.filter(r => r.ANO === ano).forEach(r => { dataMes[r.MES - 1] = r.VendaLiquida; });
-    return {
-      label: String(ano), data: dataMes,
-      borderColor: cores[i % cores.length],
-      backgroundColor: cores[i % cores.length] + '22',
-      tension: 0.3, fill: false
-    };
-  });
-  drawChart('chartSazon', {
-    type: 'line',
-    data: { labels: MESES.slice(1), datasets },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: c => c.dataset.label + ': ' + (c.parsed.y == null ? '—' : BRL.format(c.parsed.y)) } } },
-      scales: { y: { ticks: { callback: v => BRL.format(v) } } }
-    }
-  });
+async function abrirDeptoPanel(codepto) {
+  const depto = _topDeptos.find(d => String(d.codepto) === String(codepto)
+    || (codepto === 'null' && d.codepto == null));
+  document.getElementById('depto_titulo').textContent = depto ? (depto.nome || ('Depto ' + codepto)) : 'Departamento';
+  document.getElementById('depto_meta').textContent = depto
+    ? `Lucro ${BRL.format(depto.lucro || 0)} · Venda ${BRL.format(depto.venda || 0)}` : '';
+  document.getElementById('deptoPanel').classList.add('open');
+  document.getElementById('backdropDepto').classList.add('show');
+  const body = document.getElementById('depto_body');
+  body.innerHTML = '<div style="color:var(--text-dim);font-size:0.85rem">Carregando clientes…</div>';
+  try {
+    const d = await fetchJSON(_comFiltro(`/api/categorias/${codepto}/clientes?limit=30`));
+    const rows = d.rows || [];
+    if (!rows.length) { body.innerHTML = '<div style="color:var(--text-dim)">Nenhum cliente nesse departamento.</div>'; return; }
+    body.innerHTML = `
+      <table>
+        <thead><tr><th>#</th><th>Cliente</th><th>UF</th><th class="num">Venda 12m</th><th class="num">Lucro 12m</th></tr></thead>
+        <tbody>
+          ${rows.map((r, i) => `
+            <tr>
+              <td>${i+1}</td>
+              <td>${r.CLIENTE || ('Cliente #' + r.CODCLI)}</td>
+              <td><span class="badge">${r.UF || '—'}</span></td>
+              <td class="num">${BRL.format(r.VendaCat || 0)}</td>
+              <td class="num">${BRL.format(r.LucroCat || 0)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`;
+  } catch (e) {
+    body.innerHTML = '<div style="color:var(--red)">Erro ao carregar clientes do departamento.</div>';
+  }
+}
+
+function fecharDeptoPanel() {
+  document.getElementById('deptoPanel').classList.remove('open');
+  document.getElementById('backdropDepto').classList.remove('show');
+}
+
+async function loadTopVendedores() {
+  // Vendedor não tem acesso ao ranking (403) — tabela fica escondida pra ele (ver loadMe)
+  if (_role === 'vendedor') return;
+  const d = await fetchJSON(_comFiltro('/api/vendedores?tipovend=R'));
+  const rows = (d.vendedores || []).slice(0, 10);  // já vem ordenado por lucro
+  const tbody = document.getElementById('tbodyVendedores');
+  tbody.innerHTML = rows.map((r, i) => `
+    <tr>
+      <td>${i+1}</td>
+      <td>${r.nome || ('RCA ' + r.codusur)} ${r.codusur ? '(' + r.codusur + ')' : ''}</td>
+      <td class="num">${BRL.format(r.lucro || 0)}</td>
+    </tr>
+  `).join('');
+  if (!rows.length) tbody.innerHTML = '<tr><td colspan="3" style="color:var(--text-dim)">Sem vendedores no escopo atual.</td></tr>';
 }
 
 let _vendedoresMap = {};  // populado por loadVendedoresMap() — usado em loadTop e Pareto
@@ -485,7 +638,7 @@ function nomeVendedor(codusur) {
 }
 
 async function loadTop() {
-  const d = await fetchJSON('/api/dashboard/top-clientes?metrica=lucro&limit=10');
+  const d = await fetchJSON(_comFiltro('/api/dashboard/top-clientes?metrica=lucro&limit=10'));
   const tbody = document.getElementById('tbodyTop');
   tbody.innerHTML = (d.rows || []).map((r, i) => `
     <tr>
@@ -499,14 +652,46 @@ async function loadTop() {
   `).join('');
 }
 
+let _role = null;
+
 async function loadMe() {
   try {
     const j = await fetchJSON('/api/me');
+    _role = j.role;
     document.getElementById('userInfo').textContent = `${j.nome} · ${j.role}${j.codusur ? ' · RCA ' + j.codusur : ''}`;
     if (j.role === 'admin') document.getElementById('linkAdmin').classList.remove('hidden');
     if (j.role === 'vendedor') document.getElementById('linkVendedores').style.display = 'none';
+    // Filtro de supervisores só pra quem tem visão ampla
+    if (j.role === 'admin' || j.role === 'viewer') document.getElementById('filtroBar').classList.remove('hidden');
+    // Top 10 vendedores: vendedor não tem acesso ao ranking (403) → esconde a tabela
+    if (j.role !== 'vendedor') document.getElementById('cardVendedores').classList.remove('hidden');
   } catch (e) { /* /api/me retorna 401 → redirect já feito */ }
 }
+
+// Re-dispara só os 6 indicadores (sem refazer login/me/maps) — usado nas mudanças de filtro
+async function recarregarDados() {
+  document.getElementById('bannerErro').classList.add('hidden');
+  const resultados = await Promise.allSettled([
+    loadKpis(), loadSerie(), loadYoy(), loadTopDeptos(), loadTopVendedores(), loadTop()
+  ]);
+  const falhas = resultados.filter(r => r.status === 'rejected');
+  if (falhas.length > 0) {
+    console.error('Falhas ao recarregar:', falhas.map(f => f.reason));
+    const msg = document.getElementById('bannerErroMsg');
+    msg.textContent = `Não foi possível recarregar ${falhas.length} indicador(es). Tente novamente.`;
+    document.getElementById('bannerErro').classList.remove('hidden');
+  }
+}
+
+// Listeners do filtro (elementos existem no parse; #app só é revelado depois)
+(function initFiltroSupervisor() {
+  const inputSup = document.getElementById('inputSup');
+  inputSup.addEventListener('change', () => {
+    const m = inputSup.value.match(/\((\d+)\)\s*$/);
+    if (m) { adicionarSup(m[1]); inputSup.value = ''; }
+  });
+  document.getElementById('btnLimparFiltro').addEventListener('click', limparFiltros);
+})();
 
 let _erros = 0;
 async function carregarTudo(retry) {
@@ -518,9 +703,9 @@ async function carregarTudo(retry) {
   }, 5000);
   try {
     await loadMe();
-    await loadVendedoresMap();
+    await Promise.allSettled([loadVendedoresMap(), loadSupervisoresMap()]);
     const resultados = await Promise.allSettled([
-      loadKpis(), loadSerie(), loadYoy(), loadPareto(), loadSazon(), loadTop()
+      loadKpis(), loadSerie(), loadYoy(), loadTopDeptos(), loadTopVendedores(), loadTop()
     ]);
     clearTimeout(hintTimer);
     document.getElementById('loading').classList.add('hidden');
