@@ -641,13 +641,32 @@ def enviar_relatorio_email(usuario_id):
 
     n_pdfs = len(pdfs)
     plural_pdf = f"{n_pdfs} PDFs (1 por área)" if n_pdfs > 1 else "1 PDF (visual)"
+
+    # Descrição dos filtros aplicados (em vez do genérico "modo de classificação")
+    _NOMES_SEG = {
+        'champions': 'Campeões', 'loyal': 'Fiéis', 'cant_lose': 'Não Perder',
+        'at_risk': 'Em Risco', 'potential_loyalist': 'Promissores',
+        'new': 'Novos', 'hibernating': 'Inativos', 'lost': 'Perdidos',
+    }
+    seg = user.get('segmentos_rfm') or ''
+    if seg:
+        seg_txt = ', '.join(_NOMES_SEG.get(s, s) for s in seg.split(',') if s)
+    else:
+        seg_txt = 'Carteira completa (todos os segmentos)'
+    areas_li = ''
+    if user.get('role') == 'supervisor' and user.get('codsupervisores'):
+        sup_map = _carregar_supervisores_map()
+        nomes_areas = ', '.join((sup_map.get(str(a)) or {}).get('nome') or f'Time {a}'
+                                for a in user['codsupervisores'])
+        areas_li = f"  <li>Áreas: {nomes_areas}</li>\n"
+
     html = f"""<html><body style="font-family:Arial,sans-serif;color:#0a0e17;">
 <h2 style="color:#38bdf8;">Multpel Analytics</h2>
 <p>Olá <strong>{user.get('nome')}</strong>,</p>
 <p>Segue seu relatório de carteira atualizado em {_date.today().strftime('%d/%m/%Y')}.</p>
 <ul>
   <li><strong>{count}</strong> clientes na sua carteira</li>
-  <li>Modo de classificação: PERSONALIZADA (ciclo individual)</li>
+{areas_li}  <li>Segmentos: {seg_txt}</li>
 </ul>
 <p>Anexos: {plural_pdf} + 1 CSV (Excel-compatível).</p>
 <p style="color:#94a3b8;font-size:12px;">Email automatizado — Multpel Analytics</p>
@@ -2553,7 +2572,15 @@ def _filtrar_carteira(clientes, args, vendedor_forcado=None):
     }
     sort_attr = sort_map.get(sort, 'lucro_perdido_proj')
     reverse = (direction == 'desc')
-    filtrados = sorted(filtrados, key=lambda c: (c.get(sort_attr) is None, c.get(sort_attr) or 0), reverse=reverse)
+
+    def _sort_key(v):
+        # Texto: normaliza acento + minúscula → ordem alfabética "humana" (ÁLVARO ~ ALVARO).
+        if isinstance(v, str):
+            import unicodedata
+            return unicodedata.normalize('NFKD', v).encode('ascii', 'ignore').decode().casefold()
+        return v or 0
+
+    filtrados = sorted(filtrados, key=lambda c: (c.get(sort_attr) is None, _sort_key(c.get(sort_attr))), reverse=reverse)
 
     total = len(filtrados)
     # Conta segmentos do conjunto FILTRADO (antes de paginar) — alimenta cards + donut
