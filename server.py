@@ -1511,6 +1511,17 @@ def api_supervisores_map():
     return jsonify({'ok': True, 'supervisores': _carregar_supervisores_map()})
 
 
+@app.route('/api/_internal/supervisores-ativos')
+@login_required
+def api_supervisores_ativos():
+    """Códigos de supervisor que têm CLIENTE na carteira (mesma régua da tela /carteira:
+    `times_ativos`). Diferente do supervisores-map (PCSUPERV inteiro): exclui códigos
+    'fantasma' sem carteira por trás. Usado no Admin pra listar só áreas atribuíveis."""
+    ativos = sorted({c['codsupervisor'] for c in _carteira_no_escopo()
+                     if c.get('codsupervisor') is not None})
+    return jsonify({'ok': True, 'ativos': ativos})
+
+
 def _construir_filtro_carteira(extra_dax=None):
     """Concatena RBAC + filtro extra opcional (já com sintaxe DAX)."""
     rbac = aplicar_rbac_dax()
@@ -3917,6 +3928,110 @@ def api_mix_abandonado_csv():
     return Response(
         stream_with_context(gerar()),
         mimetype='text/csv; charset=utf-8',
+        headers={'Content-Disposition': _content_disposition(nome)},
+    )
+
+
+def _gerar_pdf_mix_abandonado(linhas, filtros_resumo='', dias=60):
+    """Gera PDF da lista COMPLETA de mix abandonado (par cliente×departamento). Retorna bytes.
+    Mesma estética do PDF da carteira (landscape A4, zebra)."""
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT
+    from io import BytesIO
+    from datetime import date as _date
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=landscape(A4),
+        leftMargin=1.2*cm, rightMargin=1.2*cm,
+        topMargin=1.2*cm, bottomMargin=1.5*cm,
+        title=f"Mix Abandonado Multpel {_date.today().isoformat()}",
+    )
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle('titulo', parent=styles['Heading1'], fontSize=14, alignment=TA_LEFT, textColor=colors.HexColor('#0a0e17'))
+    sub_style = ParagraphStyle('sub', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#475569'))
+
+    story = []
+    story.append(Paragraph('<b>Multpel Analytics</b> — Mix Abandonado', titulo_style))
+    sub = (f"Gerado em {_date.today().strftime('%d/%m/%Y')} · {len(linhas)} oportunidades · "
+           f"parados há ≥ {dias} dias" + (f" · {filtros_resumo}" if filtros_resumo else ''))
+    story.append(Paragraph(sub, sub_style))
+    story.append(Spacer(1, 0.3*cm))
+
+    header = ['CodCli', 'Cliente', 'Cidade/UF', 'Departamento', 'Última Compra',
+              'Dias Parado', 'Venda 12m', 'Lucro 12m', 'Vendedor']
+    data = [header]
+    for c in linhas:
+        venda = c.get('venda_cat_12m') or 0
+        lucro = c.get('lucro_cat_12m') or 0
+        cidade_uf = f"{(c.get('cidade') or '')[:18]}/{c.get('uf') or ''}"
+        data.append([
+            c.get('codcli') or '',
+            (c.get('cliente') or '')[:40],
+            cidade_uf,
+            (c.get('depto_nome') or '')[:22],
+            str(c.get('ultima_compra') or '')[:10],
+            c.get('dias_sem_comprar_categoria') or '',
+            f"R$ {venda:,.0f}".replace(',', '.'),
+            f"R$ {lucro:,.0f}".replace(',', '.'),
+            (c.get('vendedor') or '')[:22],
+        ])
+    tbl = Table(data, repeatRows=1,
+                colWidths=[1.5*cm, 6*cm, 3.4*cm, 3.4*cm, 2.3*cm, 1.8*cm, 2.3*cm, 2.3*cm, 3.4*cm])
+    tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e293b')),
+        ('TEXTCOLOR',  (0,0), (-1,0), colors.white),
+        ('FONTNAME',   (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE',   (0,0), (-1,-1), 7),
+        ('GRID',       (0,0), (-1,-1), 0.3, colors.HexColor('#cbd5e1')),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8fafc')]),
+        ('ALIGN',      (5,0), (5,-1), 'CENTER'),
+        ('ALIGN',      (6,0), (7,-1), 'RIGHT'),
+        ('VALIGN',     (0,0), (-1,-1), 'MIDDLE'),
+        ('LEFTPADDING',(0,0), (-1,-1), 4),
+        ('RIGHTPADDING',(0,0), (-1,-1), 4),
+    ]))
+    story.append(tbl)
+
+    def _rodape(canvas, doc):
+        canvas.saveState()
+        canvas.setFont('Helvetica', 7)
+        canvas.setFillColor(colors.HexColor('#94a3b8'))
+        canvas.drawRightString(doc.pagesize[0] - 1.2*cm, 0.8*cm, f"Página {doc.page}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_rodape, onLaterPages=_rodape)
+    return buf.getvalue()
+
+
+@app.route('/api/mix/abandonado/pdf')
+@login_required
+def api_mix_abandonado_pdf():
+    """Export PDF da lista COMPLETA de mix abandonado (mesmos filtros do CSV, escopo de cadastro)."""
+    from datetime import date as _date
+    try:
+        dias = max(7, min(int(request.args.get('dias', 60)), 365))
+    except ValueError:
+        dias = 60
+    codepto = request.args.get('codepto')
+    fornecedor = request.args.get('fornecedor')
+
+    linhas = _mix_abandonado_rows(dias, codepto, fornecedor)
+
+    parts = []
+    if codepto:    parts.append(f"Depto: {codepto}")
+    if fornecedor: parts.append(f"Fornecedor: {fornecedor}")
+    filtros_resumo = ' · '.join(parts)
+
+    pdf_bytes = _gerar_pdf_mix_abandonado(linhas, filtros_resumo=filtros_resumo, dias=dias)
+    nome = f"mix_abandonado_{dias}dias_{_date.today().isoformat()}.pdf"
+    return Response(
+        pdf_bytes,
+        mimetype='application/pdf',
         headers={'Content-Disposition': _content_disposition(nome)},
     )
 

@@ -336,8 +336,8 @@
             <th>Cliente</th>
             <th>UF</th>
             <th>Vendedor</th>
-            <th class="num">Lucro 12m</th>
-            <th class="num">Venda 12m</th>
+            <th class="num" onclick="sortTop('Lucro12m')" title="Ordenar por lucro">Lucro 12m<span id="setaTopLucro"></span></th>
+            <th class="num" onclick="sortTop('Venda12m')" title="Ordenar por venda">Venda 12m<span id="setaTopVenda"></span></th>
           </tr>
         </thead>
         <tbody id="tbodyTop"></tbody>
@@ -549,6 +549,8 @@ async function loadYoy() {
 }
 
 let _topDeptos = [];  // cache local da última carga (usado pelo drill pra título/meta)
+let _deptoRows = [];  // clientes do depto aberto no painel lateral (pra reordenar sem refazer fetch)
+let _deptoSort = { col: 'VendaCat', dir: 'desc' };  // ordenação ativa do painel (default: maior venda → menor)
 
 async function loadTopDeptos() {
   const d = await fetchJSON(_comFiltro('/api/categorias'));
@@ -579,25 +581,53 @@ async function abrirDeptoPanel(codepto) {
   body.innerHTML = '<div style="color:var(--text-dim);font-size:0.85rem">Carregando clientes…</div>';
   try {
     const d = await fetchJSON(_comFiltro(`/api/categorias/${codepto}/clientes?limit=30`));
-    const rows = d.rows || [];
-    if (!rows.length) { body.innerHTML = '<div style="color:var(--text-dim)">Nenhum cliente nesse departamento.</div>'; return; }
-    body.innerHTML = `
-      <table>
-        <thead><tr><th>#</th><th>Cliente</th><th>UF</th><th class="num">Venda 12m</th><th class="num">Lucro 12m</th></tr></thead>
-        <tbody>
-          ${rows.map((r, i) => `
-            <tr>
-              <td>${i+1}</td>
-              <td>${r.CLIENTE || ('Cliente #' + r.CODCLI)}</td>
-              <td><span class="badge">${r.UF || '—'}</span></td>
-              <td class="num">${BRL.format(r.VendaCat || 0)}</td>
-              <td class="num">${BRL.format(r.LucroCat || 0)}</td>
-            </tr>`).join('')}
-        </tbody>
-      </table>`;
+    _deptoRows = d.rows || [];
+    _deptoSort = { col: 'VendaCat', dir: 'desc' };   // sempre reabre na ordem padrão (maior venda → menor)
+    if (!_deptoRows.length) { body.innerHTML = '<div style="color:var(--text-dim)">Nenhum cliente nesse departamento.</div>'; return; }
+    renderDeptoTabela();
   } catch (e) {
     body.innerHTML = '<div style="color:var(--red)">Erro ao carregar clientes do departamento.</div>';
   }
+}
+
+// Ordenação clicável da tabela de clientes do depto. Só colunas numéricas (Venda / Lucro).
+// Reordena apenas as ~30 linhas já carregadas — "menores" = menores dentre o top 30 por venda.
+function sortDepto(col) {
+  if (_deptoSort.col === col) {
+    _deptoSort.dir = _deptoSort.dir === 'desc' ? 'asc' : 'desc';  // mesmo header → inverte
+  } else {
+    _deptoSort = { col, dir: 'desc' };                            // header novo → começa do maior
+  }
+  renderDeptoTabela();
+}
+
+function _setaDepto(col) {
+  if (_deptoSort.col !== col) return '';
+  return _deptoSort.dir === 'desc' ? ' ▼' : ' ▲';
+}
+
+function renderDeptoTabela() {
+  const { col, dir } = _deptoSort;
+  const mult = dir === 'desc' ? -1 : 1;
+  const rows = _deptoRows.slice().sort((a, b) => ((a[col] || 0) - (b[col] || 0)) * mult);
+  document.getElementById('depto_body').innerHTML = `
+    <table>
+      <thead><tr>
+        <th>#</th><th>Cliente</th><th>UF</th>
+        <th class="num" onclick="sortDepto('VendaCat')" title="Ordenar por venda">Venda 12m${_setaDepto('VendaCat')}</th>
+        <th class="num" onclick="sortDepto('LucroCat')" title="Ordenar por lucro">Lucro 12m${_setaDepto('LucroCat')}</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map((r, i) => `
+          <tr>
+            <td>${i+1}</td>
+            <td>${r.CLIENTE || ('Cliente #' + r.CODCLI)}</td>
+            <td><span class="badge">${r.UF || '—'}</span></td>
+            <td class="num">${BRL.format(r.VendaCat || 0)}</td>
+            <td class="num">${BRL.format(r.LucroCat || 0)}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
 }
 
 function fecharDeptoPanel() {
@@ -608,7 +638,9 @@ function fecharDeptoPanel() {
 async function loadTopVendedores() {
   // Vendedor não tem acesso ao ranking (403) — tabela fica escondida pra ele (ver loadMe)
   if (_role === 'vendedor') return;
-  const d = await fetchJSON(_comFiltro('/api/vendedores?tipovend=R'));
+  // tipovend vazio = todos os tipos (R/E/I). Supervisor vê a equipe inteira (ex: telemarketing
+  // é tipo 'E'); o Top 10 vira ranking real por lucro, sem travar em representantes.
+  const d = await fetchJSON(_comFiltro('/api/vendedores?tipovend='));
   const rows = (d.vendedores || []).slice(0, 10);  // já vem ordenado por lucro
   const tbody = document.getElementById('tbodyVendedores');
   tbody.innerHTML = rows.map((r, i) => `
@@ -637,10 +669,32 @@ function nomeVendedor(codusur) {
   return `RCA ${codusur}`;
 }
 
+let _topRows = [];  // clientes do Top 10 (pra reordenar sem refazer fetch)
+let _topSort = { col: 'Lucro12m', dir: 'desc' };  // ordenação ativa (default: maior lucro → menor)
+
 async function loadTop() {
   const d = await fetchJSON(_comFiltro('/api/dashboard/top-clientes?metrica=lucro&limit=10'));
-  const tbody = document.getElementById('tbodyTop');
-  tbody.innerHTML = (d.rows || []).map((r, i) => `
+  _topRows = d.rows || [];
+  _topSort = { col: 'Lucro12m', dir: 'desc' };   // recarga sempre volta pro padrão
+  renderTop();
+}
+
+// Ordenação clicável do Top 10 clientes. Só colunas numéricas (Lucro / Venda).
+// Reordena apenas as 10 linhas já carregadas (top 10 por lucro).
+function sortTop(col) {
+  if (_topSort.col === col) {
+    _topSort.dir = _topSort.dir === 'desc' ? 'asc' : 'desc';  // mesmo header → inverte
+  } else {
+    _topSort = { col, dir: 'desc' };                          // header novo → começa do maior
+  }
+  renderTop();
+}
+
+function renderTop() {
+  const { col, dir } = _topSort;
+  const mult = dir === 'desc' ? -1 : 1;
+  const rows = _topRows.slice().sort((a, b) => ((a[col] || 0) - (b[col] || 0)) * mult);
+  document.getElementById('tbodyTop').innerHTML = rows.map((r, i) => `
     <tr>
       <td>${i+1}</td>
       <td>${r.CLIENTE || ('Cliente #' + r.CODCLI)}</td>
@@ -650,6 +704,9 @@ async function loadTop() {
       <td class="num">${BRL.format(r.Venda12m || 0)}</td>
     </tr>
   `).join('');
+  const seta = () => (dir === 'desc' ? ' ▼' : ' ▲');
+  document.getElementById('setaTopLucro').textContent = col === 'Lucro12m' ? seta() : '';
+  document.getElementById('setaTopVenda').textContent = col === 'Venda12m' ? seta() : '';
 }
 
 let _role = null;

@@ -142,6 +142,7 @@
     <div class="ff">
       <label>&nbsp;</label>
       <button class="btn-export" onclick="exportarCSV()" title="Baixar lista completa (CSV)">⬇ CSV</button>
+      <button class="btn-export" onclick="exportarPDF()" title="Baixar lista completa (PDF)" style="margin-left:6px;">⬇ PDF</button>
     </div>
   </div>
 
@@ -250,13 +251,22 @@ function fecharDeptos() {
 }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') fecharDeptos(); });
 
-function exportarCSV() {
+// Monta os params dos exports (dias + filtros de depto/fornecedor ativos). Compartilhado CSV/PDF.
+function _paramsExportMix() {
   const params = new URLSearchParams({ dias: document.getElementById('filt_dias').value });
   const depto = extrairCodigo(document.getElementById('filt_depto').value);
   const fornec = extrairCodigo(document.getElementById('filt_fornec').value);
   if (depto) params.set('codepto', depto);
   if (fornec) params.set('fornecedor', fornec);
-  window.location.href = '/api/mix/abandonado/csv?' + params.toString();
+  return params;
+}
+
+function exportarCSV() {
+  window.location.href = '/api/mix/abandonado/csv?' + _paramsExportMix().toString();
+}
+
+function exportarPDF() {
+  window.location.href = '/api/mix/abandonado/pdf?' + _paramsExportMix().toString();
 }
 
 // fetchJSON vem do /static/fetch-resiliente.js (retry + backoff + timeout)

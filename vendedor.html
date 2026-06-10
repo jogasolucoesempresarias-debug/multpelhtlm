@@ -97,6 +97,8 @@
   table { width: 100%; border-collapse: collapse; font-size: 0.8rem; white-space: nowrap; }
   thead th { position: sticky; top: 0; background: var(--surface2); padding: 9px 12px; text-align: left; font-weight: 600; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); border-bottom: 1px solid var(--border); z-index: 2; }
   thead th.num, td.num { text-align: right; }
+  thead th.th-sort { cursor: pointer; user-select: none; }
+  thead th.th-sort:hover { color: var(--accent); }
   td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
   tbody tr { cursor: pointer; }
   tbody tr:hover { background: rgba(56,189,248,0.05); }
@@ -198,7 +200,7 @@
   <!-- Tabela carteira -->
   <div class="table-card">
     <div class="table-header">
-      <h3>Sua carteira (ordenada por receita perdida)</h3>
+      <h3 id="cartTitulo">Sua carteira (ordenada por receita perdida)</h3>
       <div class="controls">
         <button class="btn-export" onclick="exportarCSV()">⬇ CSV</button>
       </div>
@@ -223,12 +225,12 @@
         <thead>
           <tr>
             <th class="num">CodCli</th>
-            <th>Cliente</th>
+            <th id="th_cli"   class="th-sort" onclick="sortCarteira('cliente')">Cliente<span class="seta"></span></th>
             <th>Cidade/UF</th>
-            <th class="num">R (dias)</th>
-            <th class="num">F (12m)</th>
-            <th class="num">Venda 12m</th>
-            <th class="num">⚠ Receita Perdida</th>
+            <th id="th_rec"   class="num th-sort" onclick="sortCarteira('recencia')">R (dias)<span class="seta"></span></th>
+            <th id="th_freq"  class="num th-sort" onclick="sortCarteira('frequencia')">F (12m)<span class="seta"></span></th>
+            <th id="th_venda" class="num th-sort" onclick="sortCarteira('venda_12m')">Venda 12m<span class="seta"></span></th>
+            <th id="th_rp"    class="num th-sort" onclick="sortCarteira('receita_perdida')">⚠ Receita Perdida<span class="seta"></span></th>
             <th>Segmento</th>
             <th>Tel</th>
           </tr>
@@ -411,9 +413,42 @@ function toggleChip(grupo, el) {
   recarregarCarteira();
 }
 
+// Ordenação server-side (re-busca ordenando a carteira INTEIRA, não só os 100 visíveis).
+// Cada coluna mapeia pro id do <th>, label do título e direção padrão ao ativar.
+let _cartSort = { sort: 'receita_perdida', dir: 'desc' };
+const _CART_COLS = {
+  cliente:         { id: 'th_cli',   label: 'cliente',         defDir: 'asc'  },
+  recencia:        { id: 'th_rec',   label: 'recência',        defDir: 'desc' },
+  frequencia:      { id: 'th_freq',  label: 'frequência',      defDir: 'desc' },
+  venda_12m:       { id: 'th_venda', label: 'venda 12m',       defDir: 'desc' },
+  receita_perdida: { id: 'th_rp',    label: 'receita perdida', defDir: 'desc' },
+};
+
+function sortCarteira(col) {
+  if (!_CART_COLS[col]) return;
+  if (_cartSort.sort === col) {
+    _cartSort.dir = _cartSort.dir === 'desc' ? 'asc' : 'desc';  // mesmo header → inverte
+  } else {
+    _cartSort = { sort: col, dir: _CART_COLS[col].defDir };     // header novo → direção padrão
+  }
+  recarregarCarteira();
+}
+
+function atualizarCabecalhoCarteira() {
+  Object.entries(_CART_COLS).forEach(([col, cfg]) => {
+    const th = document.getElementById(cfg.id);
+    const seta = th && th.querySelector('.seta');
+    if (seta) seta.textContent = (_cartSort.sort === col)
+      ? (_cartSort.dir === 'desc' ? ' ▼' : ' ▲') : '';
+  });
+  const tit = document.getElementById('cartTitulo');
+  if (tit) tit.textContent = `Sua carteira (ordenada por ${_CART_COLS[_cartSort.sort].label})`;
+}
+
 async function recarregarCarteira() {
-  const params = new URLSearchParams({ limit: 100, offset: 0, sort: 'receita_perdida', dir: 'desc' });
+  const params = new URLSearchParams({ limit: 100, offset: 0, sort: _cartSort.sort, dir: _cartSort.dir });
   if (_fSeg.length) params.set('segmento', _fSeg.join(','));
+  atualizarCabecalhoCarteira();
   try {
     const d = await fetchJSON('/api/vendedor/' + CODUSUR + '/carteira?' + params.toString());
     renderCarteira(d);

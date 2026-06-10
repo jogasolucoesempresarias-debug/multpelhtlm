@@ -403,6 +403,14 @@ async function loadMaps() {
     _vendedoresMap = v.vendedores || {};
     const s = await fetchJSON('/api/_internal/supervisores-map');
     _supervisoresMap = s.supervisores || {};
+    // Mesma régua da tela /carteira: só supervisores que têm CLIENTE na carteira
+    // (times_ativos). Some códigos "fantasma" do PCSUPERV sem carteira por trás
+    // — ex.: TELEMARKETING 12, que tem vendedor mas nenhum cliente mapeado.
+    let _supsAtivos = null;  // null = falhou → não filtra (fallback seguro: mostra tudo)
+    try {
+      const a = await fetchJSON('/api/_internal/supervisores-ativos');
+      _supsAtivos = new Set((a.ativos || []).map(String));
+    } catch (e) { console.warn('supervisores-ativos:', e); }
     // Popula datalists
     const dlV = document.getElementById('dl_vendedores');
     dlV.innerHTML = Object.entries(_vendedoresMap)
@@ -410,6 +418,7 @@ async function loadMaps() {
       .map(([cu, v]) => `<option value="${v.nome} (${cu})">`).join('');
     const dlS = document.getElementById('dl_supervisores');
     dlS.innerHTML = Object.entries(_supervisoresMap)
+      .filter(([cs]) => !_supsAtivos || _supsAtivos.has(cs))
       .sort((a, b) => (a[1].nome || '').localeCompare(b[1].nome || ''))
       .map(([cs, s]) => `<option value="${s.nome} (${cs})">`).join('');
   } catch (e) { console.warn('maps:', e); }
