@@ -9,24 +9,26 @@ Construído como solução SaaS multi-tenant com RBAC (admin / supervisor / vend
 ## ✨ Features
 
 ### Dashboards
-- **Dashboard executivo** — KPIs do mês (venda líquida, lucro, margem, ticket médio, mix, clientes positivados, novos, valor/kg) + série temporal 12m + YoY + Pareto + sazonalidade + top 10 clientes por lucro
-- **Carteira RFM** — 8 segmentos canônicos (Campeões, Fiéis, Em Risco, Não Perder, Promissores, Novos, Inativos, Perdidos) com chart de receita+positivação 12m + drill mensal contextualizado
+- **Dashboard executivo** — KPIs do mês (venda líquida, lucro, margem c/ 2 casas, ticket médio, mix, clientes positivados, novos, valor/kg) + série temporal 12m + **YoY recalculado RCA com % nas barras** + **Top 10 departamentos** e **Top 10 vendedores** por lucro (tabelas, com drill) + top 10 clientes por lucro. **Filtro multi-supervisor** (admin/viewer)
+- **Carteira RFM** — 8 segmentos canônicos (Campeões, Fiéis, Em Risco, Não Perder, Promissores, Novos, Inativos, Perdidos) com chart de receita+positivação 12m + drill mensal contextualizado + drill 360° por cliente. Export CSV/PDF com nome pelos filtros ativos
 - **Vendedores** — ranking com YoY, taxa de positivação (vs carteira oficial), distribuição de produtividade, cockpit individual
-- **Categorias** — treemap de departamentos (tamanho=venda, cor=margem) + top fornecedores
-- **Mix** — análise de deptos abandonados (não comprados há X dias)
-- **Tendências** — cohort retention heatmap (M+0 a M+12)
-- **Admin** — CRUD de usuários, cron de email, multi-CC, filtro de segmento RFM
+- **Categorias** — treemap de departamentos (tamanho=venda, cor=margem) + top fornecedores + drill de clientes por depto
+- **Mix abandonado** — clientes que pararam de comprar um depto há X dias; **clique no cliente → top 5 departamentos perdidos** (painel lateral); **export CSV da lista completa**
+- **Tendências** — cohort retention heatmap (M+0 a M+12) com **filtros de vendedor e supervisor** (cascata supervisor→vendedor)
+- **Admin** — CRUD de usuários (**supervisor multi-área**), cron de email, multi-CC, filtro de segmento RFM (rótulo "Função")
 
 ### Relatórios automatizados
 - Cron de email (APScheduler) a cada 5min — dispara PDF + CSV filtrado por usuário
+- **Supervisor multi-área**: 1 PDF por área (vendedores em ordem alfabética) + 1 CSV combinado; vendedor: 1 PDF ordenado por lucro 12m desc
 - Múltiplos destinatários (email principal + até 5 CCs)
-- Filtro de segmentos RFM por usuário (vazio = carteira completa)
+- Filtro de segmentos RFM por usuário (vazio = carteira completa); o corpo do email lista os segmentos e as áreas
 - Disparo manual via botão Admin
 
-### Análises por usuário logado
-- **Vendedor** vê só sua carteira (filtrada via RBAC nas 3 tabelas: FAT_VENDAS, FAT_DEVOLUCAO, FAT_DEVOLUCAO_AVULSA)
-- **Supervisor** vê todo seu time
-- **Admin** vê tudo com filtros livres
+### Escopo por usuário logado (RBAC)
+- **Carteira, Categorias, Mix e Tendências** recortam por **CADASTRO** do cliente (`PCCLIENT.CODUSUR1` → vendedor → supervisor), com **números totais** do cliente. Resultado: admin filtrando uma área == supervisor daquela área (mesma régua)
+- **Dashboard e Vendedores** recortam por **venda** (`CODSUPERVISOR`/`CODUSUR` na própria transação)
+- **Supervisor multi-área** — um usuário pode cuidar de várias áreas (coluna `codsupervisores`); RBAC vira `CODSUPERVISOR IN {...}`
+- **Admin/viewer** veem tudo (com filtros livres)
 
 ---
 
@@ -52,7 +54,7 @@ Construído como solução SaaS multi-tenant com RBAC (admin / supervisor / vend
 
 ```
 Multpel HTML/
-├── server.py              # Backend Flask (~3900 linhas)
+├── server.py              # Backend Flask (~4300 linhas)
 ├── rfm.py                 # Módulo puro RFM (calcular_clientes, histograma_recencia)
 ├── cohort.py              # Lógica de cohort retention
 ├── init_db.py             # Migrations Postgres (idempotente)
@@ -77,7 +79,7 @@ Multpel HTML/
 ├── admin.html             # CRUD usuários
 ├── login.html             # Tela de login
 ├── trocar-senha.html      # Reset 1º acesso
-└── tests/                 # pytest suite (54 testes)
+└── tests/                 # pytest suite (~76 testes)
 ```
 
 ---
@@ -132,7 +134,7 @@ docker compose -f docker-compose.dev.yml up -d redis
 python -X utf8 init_db.py
 ```
 
-Cria tabelas `multpel_users`, `multpel_log` + admin default (`admin@multpel.com.br` / `admin123`).
+Cria/migra tabelas `multpel_users` (inclui colunas de cron, `email_cc`, `segmentos_rfm` e **`codsupervisores`** JSONB p/ supervisor multi-área) e `multpel_log` + admin default (`admin@multpel.com.br` / `admin123`). **Idempotente** — rode também após cada deploy que mexa no schema.
 
 ### 5. Subir servidor
 
@@ -148,7 +150,7 @@ Acessa `http://localhost:5000`.
 pytest -q
 ```
 
-54 testes cobrindo auth, RBAC, RFM, cohort, endpoints, dax, cache.
+~76 testes cobrindo auth, RBAC (venda + cadastro multi-área), RFM, cohort, endpoints, dax, cache, exports. _(1 teste de cohort falha por data fixa no fixture — não é regressão.)_
 
 ---
 
@@ -184,11 +186,15 @@ git push main  ─────►  Actions roda deploy.yml
 ### Updates futuros
 
 ```bash
-# No servidor:
-docker pull ghcr.io/<owner>/multpelhtlm:latest
-docker service update --image ghcr.io/<owner>/multpelhtlm:latest --force multpel_multpel-app
+# No servidor (ajuste os nomes de serviço/container ao seu Swarm — confira com `docker service ls`):
+docker pull ghcr.io/jogasolucoesempresarias-debug/multpelhtlm:latest
+docker service update --image ghcr.io/jogasolucoesempresarias-debug/multpelhtlm:latest --force multpel_multpel-app
 
-# Limpar caches se houver mudança em query DAX/cálculo
+# Migration (idempotente) — OBRIGATÓRIA se a release mexeu no schema (ex.: coluna codsupervisores).
+# Sem ela o login pode quebrar (o SELECT de login passou a incluir colunas novas).
+docker exec $(docker ps -q -f name=multpel_multpel-app) python -X utf8 init_db.py
+
+# Limpar caches se houver mudança em query DAX/cálculo ou bump de chave de cache
 docker exec $(docker ps -q -f name=multpel-redis) redis-cli FLUSHDB
 ```
 
@@ -196,16 +202,29 @@ docker exec $(docker ps -q -f name=multpel-redis) redis-cli FLUSHDB
 
 ## 🔒 Arquitetura RBAC
 
-A função [`aplicar_rbac_dax()`](server.py#L216) injeta fragmento DAX no FILTER conforme role do usuário logado:
+Existem **duas réguas** de isolamento, por natureza diferente:
+
+### 1. Por VENDA (Dashboard, Vendedores, Categorias/Mix agregados)
+A função `aplicar_rbac_dax()` (+ gêmeas `rbac_devol_dax()`/`rbac_devol_av_dax()` p/ devolução) injeta um fragmento DAX no FILTER conforme o role logado:
 
 | Role | Fragmento DAX |
 |---|---|
-| `admin` | (vazio) — vê tudo |
+| `admin` / `viewer` | (vazio) — vê tudo |
 | `vendedor` | `FATURAMENTO_VENDAS[CODUSUR] = X` |
-| `supervisor` | `FATURAMENTO_VENDAS[CODSUPERVISOR] = Y` |
-| `viewer` | (vazio) — read-only |
+| `supervisor` (multi-área) | `FATURAMENTO_VENDAS[CODSUPERVISOR] IN {a, b, c}` |
 
-Funções gêmeas `rbac_devol_dax()` e `rbac_devol_av_dax()` aplicam o mesmo filtro nas tabelas de devolução (Patch G).
+O supervisor pode ter **várias áreas** (`codsupervisores`, lido por `_session_supervisores()`). A sessão guarda a lista + o 1º elemento em `codsupervisor` (compatibilidade).
+
+### 2. Por CADASTRO (Carteira, Categorias, Mix, Tendências + email)
+A carteira é carregada **global** (sem filtro de venda → números totais) e recortada **em Python** pelo gateway **`_carteira_no_escopo()`**, que filtra pelo cliente registrado na área (`PCCLIENT.CODUSUR1` → vendedor → supervisor):
+
+| Role | Recorte |
+|---|---|
+| `admin` / `viewer` | tudo |
+| `vendedor` | clientes com `CODUSUR1 == seu codusur` |
+| `supervisor` | clientes cujo `CODUSUR1` pertence a uma de suas áreas |
+
+Assim, **admin filtrando uma área == supervisor daquela área**, cliente por cliente. Para agregados que não dá pra filtrar em memória (Categorias), usa-se `CODCLI IN {...}` com fallback IN/NOT-IN dinâmico. Drills têm guarda de escopo (404 fora do cadastro).
 
 ---
 
@@ -233,9 +252,10 @@ Lucro Total    = Receita Líquida − (CUSTO TOTAL − CUSTO TOTAL DEVOLUCAO −
 - `POST /api/trocar-senha`
 
 ### Dashboard
+_(aceitam `?supervisor=18,19` — multi-supervisor, admin/viewer)_
 - `GET /api/dashboard/kpis`
 - `GET /api/dashboard/serie?periodo=12m`
-- `GET /api/dashboard/yoy`
+- `GET /api/dashboard/yoy` (recalculado RCA 12m vs 12m anterior)
 - `GET /api/dashboard/pareto?top=50`
 - `GET /api/dashboard/sazonalidade`
 - `GET /api/dashboard/top-clientes?metrica=lucro&limit=10`
@@ -255,11 +275,16 @@ Lucro Total    = Receita Líquida − (CUSTO TOTAL − CUSTO TOTAL DEVOLUCAO −
 - `GET /api/vendedor/<codusur>/carteira`
 
 ### Categorias / Mix / Tendências
-- `GET /api/categorias`
-- `GET /api/categorias/<codepto>/clientes`
+- `GET /api/categorias` / `GET /api/categorias/<codepto>/clientes`
 - `GET /api/fornecedores?top=50`
-- `GET /api/mix/abandonado?dias=60`
-- `GET /api/tendencias/cohort?periodo=12m`
+- `GET /api/mix/abandonado?dias=60&codepto=&fornecedor=`
+- `GET /api/mix/abandonado/<codcli>/deptos?dias=60` (drill: top 5 deptos perdidos do cliente)
+- `GET /api/mix/abandonado/csv` (export da lista completa)
+- `GET /api/tendencias/cohort?periodo=12m&vendedor=&supervisor=`
+- `GET /api/tendencias/cohort/<aquisicao>/<mes_relativo>/clientes` (drill por bucket)
+
+### Internos (datalists)
+- `GET /api/_internal/vendedores-map` / `GET /api/_internal/supervisores-map`
 
 ### Admin
 - `GET /api/admin/users` / `POST` / `PUT /<id>` / `DELETE /<id>`
@@ -275,13 +300,14 @@ Lucro Total    = Receita Líquida − (CUSTO TOTAL − CUSTO TOTAL DEVOLUCAO −
 | Tipo de dado | Chave prefix | TTL |
 |---|---|---|
 | Metadata (vendedores/supervisores/deptos) | `multpel:*_map:*` | 24h |
-| Carteira full | `multpel:carteira:full:*` | 1h |
+| **Carteira full (GLOBAL, compartilhada)** | `multpel:carteira:full:global:v2` | 1h |
+| Mapas mensais (venda/devolução, GLOBAIS) | `multpel:*_mensal_por_cliente:global:*` | 1h |
 | Dashboard agregados | `multpel:dashboard:*` | 30min |
 | Drill mensal | `multpel:carteira:mes:*` | 30min |
 | Ranking vendedores | `multpel:vendedores:ranking:*` | 1h |
-| Cohort | `multpel:cohort:full:*` | 24h |
+| Cohort (compras GLOBAIS) | `multpel:cohort:compras_global:*` | 24h |
 
-Chaves incluem RBAC do usuário (role+codusur+codsupervisor) pra cache não vazar entre roles.
+A carteira/cohort/mapas mensais são **globais** (1 entrada p/ todos) — o recorte por usuário é feito em Python. As chaves dos endpoints agregados incluem o RBAC do usuário (role + codusur + **lista de codsupervisores**) pra não vazar entre escopos.
 
 ---
 
@@ -300,6 +326,15 @@ Chaves incluem RBAC do usuário (role+codusur+codsupervisor) pra cache não vaza
 | K | 04/06/26 | Filtro de segmento RFM no envio |
 | L | 07/06/26 | Fix taxa de positivação (medida nativa PBI estava bugada) |
 | L.2 | 07/06/26 | YoY com janela 365 dias exata |
+| M | 09/06/26 | Dashboard: filtro multi-supervisor + YoY recalculado RCA c/ % nas barras |
+| M | 09/06/26 | Dashboard: Pareto/Sazonalidade → Top 10 Departamentos/Vendedores (tabelas) |
+| M | 09/06/26 | Carteira: nome do PDF/CSV pelos filtros ativos (RFC 5987) |
+| M | 09/06/26 | **Supervisor multi-área** (coluna `codsupervisores`, RBAC `IN {...}`, N PDFs por área no email) |
+| M | 09/06/26 | Admin: rótulo "Role" → "Função" |
+| M | 09/06/26 | **Carteira/Categorias/Mix/Tendências por CADASTRO (CODUSUR1) + números totais** (`_carteira_no_escopo`) |
+| M | 09/06/26 | Tendências: filtro de supervisor + cascata; dropdowns só do liberado; limpar filtro |
+| M | 09/06/26 | Mix: drill top 5 deptos perdidos + export CSV completo + limpar filtro + busca por código |
+| M | 09/06/26 | Email: corpo mostra segmentos/áreas; ordenação de vendedor insensível a acento/maiúscula |
 
 Detalhes completos em `_PROGRESSO.md` (não versionado).
 
