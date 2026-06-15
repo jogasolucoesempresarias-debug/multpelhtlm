@@ -4036,6 +4036,579 @@ def api_mix_abandonado_pdf():
     )
 
 
+# ──────────────────────────────────────────────────────────────────────
+# Radar de Produtos — recompra por produto (cliente que parou de comprar X)
+# Funil de 2 níveis: board de produtos sangrando → detalhe (clientes que pararam).
+# Dados 100% na FATURAMENTO_VENDAS (CODPROD/DESCRICAO/QT/CODEPTO/CODFORNECPRINC).
+# RBAC por CADASTRO (igual Mix): admin/viewer veem tudo (+override ?supervisor=),
+# vendedor/supervisor restringem aos codclis do cadastro via _frag_codcli_cadastro().
+# ──────────────────────────────────────────────────────────────────────
+
+@app.route('/radar')
+@login_required
+def radar_page():
+    return send_from_directory('.', 'radar.html')
+
+
+def _carregar_produtos_map():
+    """Índice GLOBAL {codprod_str: {descricao, codepto, codfornec, venda_12m}} dos produtos
+    vendidos nos últimos 12m (~3.7 mil). Cache 24h. Usado pela busca type-ahead e pra
+    resolver nome/depto do produto. É catálogo (não tem dado sensível) → global, sem RBAC."""
+    key = 'multpel:produtos_map:v2'  # v2: incluiu fornec_nome (FORNECPRINC)
+    cached = _cache_get(key)
+    if cached:
+        return cached
+
+    query = """EVALUATE
+SUMMARIZECOLUMNS(
+    FATURAMENTO_VENDAS[CODPROD],
+    FATURAMENTO_VENDAS[DESCRICAO],
+    FATURAMENTO_VENDAS[CODEPTO],
+    FATURAMENTO_VENDAS[CODFORNECPRINC],
+    FATURAMENTO_VENDAS[FORNECPRINC],
+    FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12)),
+    "Venda", [VENDA LIQUIDA]
+)"""
+    token = get_token_cached()
+    payload = retry_dax(execute_dax)(token, query)
+    rows = clean_rows(_todas_linhas(payload))
+
+    idx = {}
+    best = {}  # codprod -> maior venda vista (pra escolher a DESCRICAO representativa)
+    for r in rows:
+        cp = r.get('CODPROD')
+        if cp is None:
+            continue
+        cps = str(cp)
+        venda = r.get('Venda') or 0
+        if cps not in idx:
+            idx[cps] = {'descricao': r.get('DESCRICAO'), 'codepto': r.get('CODEPTO'),
+                        'codfornec': r.get('CODFORNECPRINC'), 'fornec_nome': r.get('FORNECPRINC'),
+                        'venda_12m': 0.0}
+            best[cps] = -1
+        idx[cps]['venda_12m'] += venda
+        if venda > best[cps]:  # linha mais relevante define descrição/depto/fornec do produto
+            best[cps] = venda
+            idx[cps]['descricao'] = r.get('DESCRICAO') or idx[cps]['descricao']
+            if r.get('CODEPTO') is not None:        idx[cps]['codepto'] = r.get('CODEPTO')
+            if r.get('CODFORNECPRINC') is not None: idx[cps]['codfornec'] = r.get('CODFORNECPRINC')
+            if r.get('FORNECPRINC'):                idx[cps]['fornec_nome'] = r.get('FORNECPRINC')
+
+    _cache_set(key, idx, 'metadata')
+    return idx
+
+
+@app.route('/api/radar/produtos/busca')
+@login_required
+def api_radar_produtos_busca():
+    """Busca type-ahead de produto (em memória no índice cacheado). Casa por trecho da
+    descrição OU código. Filtros opcionais por depto/fornecedor. Ordena por venda 12m desc."""
+    q = (request.args.get('q') or '').strip().lower()
+    try:
+        limit = max(1, min(int(request.args.get('limit', 30)), 100))
+    except (TypeError, ValueError):
+        limit = 30
+
+    def _int_or_none(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+    f_depto = _int_or_none(request.args.get('codepto'))
+    f_fornec = _int_or_none(request.args.get('fornecedor'))
+
+    idx = _carregar_produtos_map()
+    deptos_nomes = _carregar_deptos_map()['deptos']
+
+    out = []
+    for cps, v in idx.items():
+        if f_depto is not None and v.get('codepto') != f_depto:
+            continue
+        if f_fornec is not None and v.get('codfornec') != f_fornec:
+            continue
+        if q and q not in (v.get('descricao') or '').lower() and q not in cps:
+            continue
+        out.append({
+            'codprod':     int(cps),
+            'descricao':   v.get('descricao') or f'Produto {cps}',
+            'codepto':     v.get('codepto'),
+            'depto_nome':  deptos_nomes.get(str(v.get('codepto'))) if v.get('codepto') is not None else None,
+            'codfornec':   v.get('codfornec'),
+            'fornec_nome': v.get('fornec_nome'),
+            'venda_12m':   round(v.get('venda_12m') or 0, 2),
+        })
+    out.sort(key=lambda x: x['venda_12m'], reverse=True)
+    return jsonify({'ok': True, 'total': len(out), 'produtos': out[:limit]})
+
+
+def _radar_vendedor_filtro():
+    """Lê ?vendedor=CODUSUR — SÓ admin/viewer (outros roles já travados pela sessão).
+    Retorna int ou None."""
+    if session.get('role') not in ('admin', 'viewer'):
+        return None
+    raw = (request.args.get('vendedor') or '').strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _radar_filtrar_carteira_idx(carteira_idx):
+    """Aplica o filtro de supervisor/vendedor escolhido (admin/viewer) sobre o índice de
+    clientes do cadastro. Vendedor tem precedência. Retorna o idx filtrado (ou o mesmo)."""
+    if session.get('role') not in ('admin', 'viewer'):
+        return carteira_idx
+    vend = _radar_vendedor_filtro()
+    if vend is not None:
+        return {k: v for k, v in carteira_idx.items() if v.get('codusur') == vend}
+    sup = _supervisores_filtro()
+    if sup:
+        sset = set(sup)
+        return {k: v for k, v in carteira_idx.items() if v.get('codsupervisor') in sset}
+    return carteira_idx
+
+
+def _radar_status(dias_parado, venda_rec, venda_ant, dias):
+    """Classifica o cliente em relação ao produto:
+    perdido (≥2×dias ou nunca) · parou (≥dias) · esfriando (comprou mas volume caiu >50%) · ativo."""
+    if dias_parado is None or dias_parado >= 2 * dias:
+        return 'perdido'
+    if dias_parado >= dias:
+        return 'parou'
+    if venda_ant > 0 and venda_rec < 0.5 * venda_ant:
+        return 'esfriando'
+    return 'ativo'
+
+
+def _radar_detalhe_rows(codprod, dias):
+    """Núcleo do detalhe: por cliente (no escopo de CADASTRO), métricas do produto +
+    janela recente vs anterior (queda de volume) + flag troca-vs-abandono. Retorna
+    (produto_info, linhas). Sem cache (o endpoint cacheia o payload final)."""
+    from datetime import date as _date
+
+    info = _carregar_produtos_map().get(str(codprod)) or {}
+    codepto = info.get('codepto')
+    d2 = 2 * dias
+    f_prod = f"FATURAMENTO_VENDAS[CODPROD] = {int(codprod)}"
+
+    queries = {
+        'cli': f"""EVALUATE
+SUMMARIZECOLUMNS(
+    FATURAMENTO_VENDAS[CODCLI],
+    FILTER(FATURAMENTO_VENDAS, {f_prod} && FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12)),
+    "Ultima",   MAX(FATURAMENTO_VENDAS[DTSAIDA]),
+    "Venda12m", [VENDA LIQUIDA],
+    "Qt12m",    SUM(FATURAMENTO_VENDAS[QT])
+)""",
+        'rec': f"""EVALUATE
+SUMMARIZECOLUMNS(
+    FATURAMENTO_VENDAS[CODCLI],
+    FILTER(FATURAMENTO_VENDAS, {f_prod} && FATURAMENTO_VENDAS[DTSAIDA] >= TODAY() - {dias}),
+    "VendaRec", [VENDA LIQUIDA],
+    "QtRec",    SUM(FATURAMENTO_VENDAS[QT])
+)""",
+        'ant': f"""EVALUATE
+SUMMARIZECOLUMNS(
+    FATURAMENTO_VENDAS[CODCLI],
+    FILTER(FATURAMENTO_VENDAS, {f_prod}
+        && FATURAMENTO_VENDAS[DTSAIDA] >= TODAY() - {d2}
+        && FATURAMENTO_VENDAS[DTSAIDA] < TODAY() - {dias}),
+    "VendaAnt", [VENDA LIQUIDA],
+    "QtAnt",    SUM(FATURAMENTO_VENDAS[QT])
+)""",
+    }
+    # Canibalização: clientes que compraram OUTRO produto do MESMO depto nos últimos `dias`.
+    if codepto is not None:
+        queries['canib'] = f"""EVALUATE
+SUMMARIZECOLUMNS(
+    FATURAMENTO_VENDAS[CODCLI],
+    FILTER(FATURAMENTO_VENDAS,
+        FATURAMENTO_VENDAS[CODEPTO] = {int(codepto)}
+        && FATURAMENTO_VENDAS[CODPROD] <> {int(codprod)}
+        && FATURAMENTO_VENDAS[DTSAIDA] >= TODAY() - {dias})
+)"""
+    resultados = _executar_dax_paralelo_n(queries, max_workers=4)
+
+    rec_idx = {r['CODCLI']: r for r in clean_rows(_todas_linhas(resultados['rec'])) if r.get('CODCLI') is not None}
+    ant_idx = {r['CODCLI']: r for r in clean_rows(_todas_linhas(resultados['ant'])) if r.get('CODCLI') is not None}
+    canib = set()
+    if 'canib' in resultados:
+        canib = {r['CODCLI'] for r in clean_rows(_todas_linhas(resultados['canib'])) if r.get('CODCLI') is not None}
+
+    hoje = _date.today()
+    carteira_idx = {c['codcli']: c for c in _carteira_no_escopo()}   # recorte por cadastro
+    carteira_idx = _radar_filtrar_carteira_idx(carteira_idx)         # +filtro supervisor/vendedor (admin)
+
+    linhas = []
+    for r in clean_rows(_todas_linhas(resultados['cli'])):
+        cc = r.get('CODCLI')
+        if cc is None or cc not in carteira_idx:   # fora do escopo do usuário
+            continue
+        ultima = r.get('Ultima')
+        dias_parado = None
+        if ultima:
+            try:
+                dias_parado = (hoje - _date.fromisoformat(str(ultima)[:10])).days
+            except ValueError:
+                dias_parado = None
+        venda_rec = (rec_idx.get(cc, {}).get('VendaRec')) or 0
+        qt_rec    = (rec_idx.get(cc, {}).get('QtRec')) or 0
+        venda_ant = (ant_idx.get(cc, {}).get('VendaAnt')) or 0
+        qt_ant    = (ant_idx.get(cc, {}).get('QtAnt')) or 0
+        status = _radar_status(dias_parado, venda_rec, venda_ant, dias)
+        parou = status in ('parou', 'perdido')
+        meta = carteira_idx.get(cc, {})
+        linhas.append({
+            'codcli':        cc,
+            'cliente':       meta.get('cliente') or f'Cliente #{cc}',
+            'cidade':        meta.get('cidade'),
+            'uf':            meta.get('uf'),
+            'vendedor':      meta.get('vendedor'),
+            'codusur':       meta.get('codusur'),
+            'telefone':      meta.get('telefone'),
+            'ultima_compra': str(ultima)[:10] if ultima else None,
+            'dias_parado':   dias_parado,
+            'venda_12m':     round(r.get('Venda12m') or 0, 2),
+            'qt_12m':        round(r.get('Qt12m') or 0, 2),
+            'venda_rec':     round(venda_rec, 2),
+            'qt_rec':        round(qt_rec, 2),
+            'venda_ant':     round(venda_ant, 2),
+            'qt_ant':        round(qt_ant, 2),
+            'status':        status,
+            # parou DESTE produto mas comprou OUTRO do mesmo depto → trocou (não é churn puro)
+            'trocou':        bool(parou and cc in canib),
+        })
+    linhas.sort(key=lambda x: x['venda_12m'], reverse=True)   # potencial de recuperação
+    return info, linhas
+
+
+@app.route('/api/radar/produto/<int:codprod>')
+@login_required
+def api_radar_produto(codprod):
+    """Detalhe: clientes que compram/compravam o produto, com status de recência,
+    queda de volume (recente vs anterior) e flag troca-vs-abandono. Escopo por cadastro."""
+    try:
+        dias = max(7, min(int(request.args.get('dias', 60)), 365))
+    except (TypeError, ValueError):
+        dias = 60
+
+    sup = _supervisores_filtro()
+    vend = _radar_vendedor_filtro()
+    key = cache_key_for_user(f'radar:produto:{codprod}',
+                             {'dias': dias, 'supervisor': _sup_cache_key(sup), 'vendedor': vend if vend is not None else '-'})
+    cached = _cache_get(key)
+    if cached:
+        return jsonify(cached)
+
+    info, linhas = _radar_detalhe_rows(codprod, dias)
+
+    deptos_nomes = _carregar_deptos_map()['deptos']
+    codepto = info.get('codepto')
+    parados = [c for c in linhas if c['status'] in ('parou', 'perdido')]
+    resp = {
+        'ok': True,
+        'codprod': codprod,
+        'dias': dias,
+        'produto': {
+            'codprod':     codprod,
+            'descricao':   info.get('descricao') or f'Produto {codprod}',
+            'codepto':     codepto,
+            'depto_nome':  deptos_nomes.get(str(codepto)) if codepto is not None else None,
+            'fornec_nome': info.get('fornec_nome'),
+        },
+        'kpis': {
+            'clientes':         len(linhas),
+            'parados':          len(parados),
+            'esfriou_ou_parou': sum(1 for c in linhas if c['status'] in ('esfriando', 'parou', 'perdido')),
+            'trocaram':         sum(1 for c in parados if c['trocou']),
+            'receita_em_risco': round(sum(c['venda_12m'] for c in parados), 2),
+        },
+        'rows': linhas,
+    }
+    _cache_set(key, resp, 'dax_agregado')
+    return jsonify(resp)
+
+
+@app.route('/api/radar/board')
+@login_required
+def api_radar_board():
+    """Board (Nível 1): produtos que mais perderam receita — janela recente vs anterior.
+    Métrica principal = queda de receita (venda anterior − venda recente). Escopo por cadastro.
+
+    Nota: 'receita em risco' aqui é o proxy barato 'queda de receita no período' (agrupa só por
+    produto). A receita em risco PRECISA por cliente sai no detalhe (/api/radar/produto/<x>)."""
+    try:
+        dias = max(7, min(int(request.args.get('dias', 60)), 365))
+        limit = max(10, min(int(request.args.get('limit', 200)), 1000))
+    except (TypeError, ValueError):
+        dias, limit = 60, 200
+    d2 = 2 * dias
+
+    sup = _supervisores_filtro()
+    vend = _radar_vendedor_filtro()
+    key = cache_key_for_user('radar:board',
+                             {'dias': dias, 'supervisor': _sup_cache_key(sup), 'vendedor': vend if vend is not None else '-'})
+    cached = _cache_get(key)
+    if cached:
+        resp = dict(cached)
+        resp['rows'] = resp['rows'][:limit]
+        return jsonify(resp)
+
+    # Escopo. Não-admin: por CADASTRO (mesmo padrão de api_categorias).
+    # Admin/viewer: filtro escolhido por venda (vendedor tem precedência sobre supervisor).
+    if session.get('role') in ('admin', 'viewer'):
+        if vend is not None:
+            rbac_frag = f" && FATURAMENTO_VENDAS[CODUSUR] = {vend}"
+        else:
+            sup_frag = _frag_supervisores('FATURAMENTO_VENDAS', sup)
+            rbac_frag = f" && {sup_frag}" if sup_frag else ''
+    else:
+        frag, ok = _frag_codcli_cadastro()
+        rbac_frag = frag if ok else ((f" && {aplicar_rbac_dax()}") if aplicar_rbac_dax() else '')
+
+    queries = {
+        'rec': f"""EVALUATE
+SUMMARIZECOLUMNS(
+    FATURAMENTO_VENDAS[CODPROD],
+    FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[DTSAIDA] >= TODAY() - {dias}{rbac_frag}),
+    "VendaRec", [VENDA LIQUIDA],
+    "CliRec",   DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI])
+)""",
+        'ant': f"""EVALUATE
+SUMMARIZECOLUMNS(
+    FATURAMENTO_VENDAS[CODPROD],
+    FILTER(FATURAMENTO_VENDAS,
+        FATURAMENTO_VENDAS[DTSAIDA] >= TODAY() - {d2}
+        && FATURAMENTO_VENDAS[DTSAIDA] < TODAY() - {dias}{rbac_frag}),
+    "VendaAnt", [VENDA LIQUIDA],
+    "CliAnt",   DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI])
+)""",
+    }
+    resultados = _executar_dax_paralelo_n(queries, max_workers=2)
+
+    rec = {r['CODPROD']: r for r in clean_rows(_todas_linhas(resultados['rec'])) if r.get('CODPROD') is not None}
+    ant = {r['CODPROD']: r for r in clean_rows(_todas_linhas(resultados['ant'])) if r.get('CODPROD') is not None}
+
+    prod_idx = _carregar_produtos_map()
+    deptos_nomes = _carregar_deptos_map()['deptos']
+
+    out = []
+    for cp in set(rec) | set(ant):
+        v_rec = (rec.get(cp, {}).get('VendaRec')) or 0
+        v_ant = (ant.get(cp, {}).get('VendaAnt')) or 0
+        c_rec = (rec.get(cp, {}).get('CliRec')) or 0
+        c_ant = (ant.get(cp, {}).get('CliAnt')) or 0
+        queda = round(v_ant - v_rec, 2)
+        if queda <= 0:
+            continue   # board só mostra quem está sangrando (perdeu receita)
+        info = prod_idx.get(str(cp)) or {}
+        codepto = info.get('codepto')
+        out.append({
+            'codprod':           cp,
+            'descricao':         info.get('descricao') or f'Produto {cp}',
+            'codepto':           codepto,
+            'depto_nome':        deptos_nomes.get(str(codepto)) if codepto is not None else None,
+            'fornec_nome':       info.get('fornec_nome'),
+            'venda_rec':         round(v_rec, 2),
+            'venda_ant':         round(v_ant, 2),
+            'queda_receita':     queda,
+            'pct_queda':         round((queda / v_ant), 4) if v_ant else None,
+            'clientes_perdidos': max(0, c_ant - c_rec),
+        })
+    out.sort(key=lambda x: x['queda_receita'], reverse=True)
+    resp = {'ok': True, 'dias': dias, 'total': len(out), 'rows': out}
+    _cache_set(key, resp, 'dax_agregado')
+    resp = dict(resp)
+    resp['rows'] = out[:limit]
+    return jsonify(resp)
+
+
+_RADAR_STATUS_PT = {'ativo': 'Comprando', 'esfriando': 'Esfriando', 'parou': 'Parou', 'perdido': 'Perdido'}
+
+
+def _radar_situacao(c):
+    """Rótulo troca-vs-abandono pra quem parou; vazio pra quem ainda compra."""
+    if c['status'] not in ('parou', 'perdido'):
+        return ''
+    return 'Trocou (outro do depto)' if c.get('trocou') else 'Abandonou'
+
+
+@app.route('/api/radar/produto/<int:codprod>/csv')
+@login_required
+def api_radar_produto_csv(codprod):
+    """CSV da lista COMPLETA de clientes do produto (escopo de cadastro)."""
+    from datetime import date as _date
+    try:
+        dias = max(7, min(int(request.args.get('dias', 60)), 365))
+    except (TypeError, ValueError):
+        dias = 60
+    info, linhas = _radar_detalhe_rows(codprod, dias)
+
+    cabecalho = ['CodCli', 'Cliente', 'Cidade', 'UF', 'UltimaCompra', 'DiasParado', 'Situacao',
+                 'Situacao_Troca', 'Venda12m', 'Qtd12m', 'VendaAnterior', 'VendaRecente', 'Vendedor', 'Telefone']
+
+    def gerar():
+        yield '﻿'  # BOM UTF-8
+        yield _csv_linha(cabecalho)
+        for c in linhas:
+            yield _csv_linha([
+                c.get('codcli'), c.get('cliente'), c.get('cidade'), c.get('uf'),
+                c.get('ultima_compra'), c.get('dias_parado'),
+                _RADAR_STATUS_PT.get(c.get('status'), c.get('status')), _radar_situacao(c),
+                c.get('venda_12m'), c.get('qt_12m'), c.get('venda_ant'), c.get('venda_rec'),
+                c.get('vendedor'), c.get('telefone'),
+            ])
+
+    nome = f"radar_produto_{codprod}_{dias}dias_{_date.today().isoformat()}.csv"
+    return Response(
+        stream_with_context(gerar()),
+        mimetype='text/csv; charset=utf-8',
+        headers={'Content-Disposition': _content_disposition(nome)},
+    )
+
+
+def _gerar_pdf_radar_produto(produto, linhas, dias=60):
+    """PDF da lista de clientes do produto. Mesma estética dos outros exports (landscape A4)."""
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT
+    from io import BytesIO
+    from datetime import date as _date
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=landscape(A4),
+        leftMargin=1.2*cm, rightMargin=1.2*cm, topMargin=1.2*cm, bottomMargin=1.5*cm,
+        title=f"Radar Produto {produto.get('codprod')} {_date.today().isoformat()}",
+    )
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle('titulo', parent=styles['Heading1'], fontSize=14, alignment=TA_LEFT, textColor=colors.HexColor('#0a0e17'))
+    sub_style = ParagraphStyle('sub', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#475569'))
+
+    story = []
+    story.append(Paragraph(f"<b>Multpel Analytics</b> — Radar · {produto.get('descricao') or ''}", titulo_style))
+    parados = [c for c in linhas if c['status'] in ('parou', 'perdido')]
+    sub = (f"Gerado em {_date.today().strftime('%d/%m/%Y')} · {produto.get('depto_nome') or ''}"
+           f" · {produto.get('fornec_nome') or ''} · {len(linhas)} clientes · {len(parados)} pararam (≥ {dias} dias)")
+    story.append(Paragraph(sub, sub_style))
+    story.append(Spacer(1, 0.3*cm))
+
+    header = ['Cliente', 'Cidade/UF', 'Última compra', 'Dias', 'Situação', 'Troca/Abandono',
+              'Comprava (R$)', 'Agora (R$)', 'Venda 12m', 'Vendedor', 'Telefone']
+    data = [header]
+    for c in linhas:
+        cidade_uf = f"{(c.get('cidade') or '')[:16]}/{c.get('uf') or ''}"
+        data.append([
+            (c.get('cliente') or '')[:34],
+            cidade_uf,
+            str(c.get('ultima_compra') or '')[:10],
+            c.get('dias_parado') if c.get('dias_parado') is not None else '',
+            _RADAR_STATUS_PT.get(c.get('status'), ''),
+            _radar_situacao(c),
+            f"R$ {(c.get('venda_ant') or 0):,.0f}".replace(',', '.'),
+            f"R$ {(c.get('venda_rec') or 0):,.0f}".replace(',', '.'),
+            f"R$ {(c.get('venda_12m') or 0):,.0f}".replace(',', '.'),
+            (c.get('vendedor') or '')[:18],
+            c.get('telefone') or '',
+        ])
+    tbl = Table(data, repeatRows=1,
+                colWidths=[5.2*cm, 3*cm, 2*cm, 1.1*cm, 1.8*cm, 3*cm, 2.1*cm, 2.1*cm, 2.1*cm, 3*cm, 2.3*cm])
+    tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e293b')),
+        ('TEXTCOLOR',  (0,0), (-1,0), colors.white),
+        ('FONTNAME',   (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE',   (0,0), (-1,-1), 6.5),
+        ('GRID',       (0,0), (-1,-1), 0.3, colors.HexColor('#cbd5e1')),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8fafc')]),
+        ('ALIGN',      (3,0), (3,-1), 'CENTER'),
+        ('ALIGN',      (6,0), (8,-1), 'RIGHT'),
+        ('VALIGN',     (0,0), (-1,-1), 'MIDDLE'),
+        ('LEFTPADDING',(0,0), (-1,-1), 3),
+        ('RIGHTPADDING',(0,0), (-1,-1), 3),
+    ]))
+    story.append(tbl)
+
+    def _rodape(canvas, doc):
+        canvas.saveState()
+        canvas.setFont('Helvetica', 7)
+        canvas.setFillColor(colors.HexColor('#94a3b8'))
+        canvas.drawRightString(doc.pagesize[0] - 1.2*cm, 0.8*cm, f"Página {doc.page}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_rodape, onLaterPages=_rodape)
+    return buf.getvalue()
+
+
+@app.route('/api/radar/produto/<int:codprod>/pdf')
+@login_required
+def api_radar_produto_pdf(codprod):
+    """PDF da lista COMPLETA de clientes do produto (escopo de cadastro)."""
+    from datetime import date as _date
+    try:
+        dias = max(7, min(int(request.args.get('dias', 60)), 365))
+    except (TypeError, ValueError):
+        dias = 60
+    info, linhas = _radar_detalhe_rows(codprod, dias)
+    deptos_nomes = _carregar_deptos_map()['deptos']
+    codepto = info.get('codepto')
+    produto = {
+        'codprod': codprod,
+        'descricao': info.get('descricao') or f'Produto {codprod}',
+        'depto_nome': deptos_nomes.get(str(codepto)) if codepto is not None else None,
+        'fornec_nome': info.get('fornec_nome'),
+    }
+    pdf_bytes = _gerar_pdf_radar_produto(produto, linhas, dias=dias)
+    nome = f"radar_produto_{codprod}_{dias}dias_{_date.today().isoformat()}.pdf"
+    return Response(
+        pdf_bytes,
+        mimetype='application/pdf',
+        headers={'Content-Disposition': _content_disposition(nome)},
+    )
+
+
+@app.route('/api/radar/produto/<int:codprod>/cliente/<int:codcli>/serie')
+@login_required
+def api_radar_produto_cliente_serie(codprod, codcli):
+    """Drill: série mensal (12m) das compras DESTE produto por ESTE cliente (sparkline).
+    Guarda de escopo: cliente precisa estar no cadastro do usuário (404 fora)."""
+    carteira_idx = {c['codcli']: c for c in _carteira_no_escopo()}
+    cli_meta = carteira_idx.get(codcli)
+    if cli_meta is None:
+        return jsonify({'ok': False, 'error': 'Cliente fora da sua carteira'}), 404
+
+    query = f"""EVALUATE
+SUMMARIZECOLUMNS(
+    CALENDARIO[AnoMes],
+    FILTER(FATURAMENTO_VENDAS,
+        FATURAMENTO_VENDAS[CODPROD] = {int(codprod)}
+        && FATURAMENTO_VENDAS[CODCLI] = {int(codcli)}
+        && FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12)),
+    "Venda", [VENDA LIQUIDA],
+    "Qt",    SUM(FATURAMENTO_VENDAS[QT])
+)"""
+    token = get_token_cached()
+    payload = retry_dax(execute_dax)(token, query)
+    rows = []
+    for r in clean_rows(_todas_linhas(payload)):
+        am = r.get('AnoMes')
+        if am is None:
+            continue
+        rows.append({'anomes': int(am), 'venda': round(r.get('Venda') or 0, 2), 'qt': round(r.get('Qt') or 0, 2)})
+    rows.sort(key=lambda x: x['anomes'])
+    return jsonify({
+        'ok': True,
+        'codprod': codprod,
+        'codcli': codcli,
+        'cliente': cli_meta.get('cliente') or f'Cliente #{codcli}',
+        'rows': rows,
+    })
+
+
 def _carregar_cohort_compras_global(periodo_meses=12):
     """Cache 24h GLOBAL: {codcli: [meses 'YYYY-MM']} das compras no período (todos os clientes,
     sem filtro de venda). +12m de histórico pra identificar quem é 'novo'."""

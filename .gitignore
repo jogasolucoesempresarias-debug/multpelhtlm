@@ -23,6 +23,11 @@ cookies.txt
 _PROGRESSO.md
 _rca_*.json
 
+# App interno de estoque — não vai pro cliente
+_estoque_app/
+estoque.md
+test_novas_tabelas.py
+
 # Exports gerados em dev
 *.xlsx
 *.pdf
