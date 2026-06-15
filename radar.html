@@ -574,19 +574,38 @@ function drillHTML(r, serie) {
 }
 
 function sparkline(serie) {
-  if (!serie.length) return '<div style="color:var(--text-dim);font-size:0.82rem">Sem compras nos últimos 12 meses.</div>';
-  const W = 400, H = 90, pad = 6;
-  const max = Math.max(...serie.map(s => s.venda), 1);
-  const n = serie.length;
-  const bw = (W - pad * 2) / n;
-  const bars = serie.map((s, i) => {
-    const h = Math.max(2, (s.venda / max) * (H - 24));
-    const x = pad + i * bw, y = H - 16 - h;
-    const lbl = (() => { const am = String(s.anomes); return MESES[parseInt(am.slice(4, 6), 10)]; })();
-    return `<rect x="${x + 2}" y="${y}" width="${bw - 4}" height="${h}" rx="2" fill="#38bdf8" opacity="0.85"><title>${s.anomes}: ${BRL.format(s.venda)}</title></rect>
-            <text x="${x + bw / 2}" y="${H - 4}" font-size="8" fill="#94a3b8" text-anchor="middle">${lbl}</text>`;
+  // Eixo FIXO de 12 meses terminando no mês atual — os meses sem compra ficam vazios,
+  // tornando visível o "buraco" da recência (o que justifica o status parou/perdido).
+  const W = 440, H = 100, padX = 8, padTop = 12, padBot = 20;
+  const now = new Date();
+  const slots = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    slots.push({ am: d.getFullYear() * 100 + (d.getMonth() + 1), mes: d.getMonth() + 1, ano: d.getFullYear(), venda: 0, qt: 0 });
+  }
+  const byAm = {};
+  (serie || []).forEach(s => { byAm[s.anomes] = s; });
+  slots.forEach(s => { const m = byAm[s.am]; if (m) { s.venda = m.venda || 0; s.qt = m.qt || 0; } });
+  if (!slots.some(s => s.venda > 0)) return '<div style="color:var(--text-dim);font-size:0.82rem">Sem compras nos últimos 12 meses.</div>';
+
+  const max = Math.max(...slots.map(s => s.venda), 1);
+  const bw = (W - padX * 2) / 12;
+  const baseY = H - padBot;
+  const bars = slots.map((s, i) => {
+    const x = padX + i * bw;
+    const cx = x + bw / 2;
+    let mark;
+    if (s.venda > 0) {
+      const h = Math.max(3, (s.venda / max) * (baseY - padTop));
+      mark = `<rect x="${x + 2.5}" y="${baseY - h}" width="${bw - 5}" height="${h}" rx="2" fill="#38bdf8" opacity="0.9"><title>${MESES[s.mes]}/${String(s.ano).slice(2)}: ${BRL.format(s.venda)} · ${NUM.format(s.qt)} un</title></rect>`;
+    } else {
+      mark = `<circle cx="${cx}" cy="${baseY - 1.5}" r="1.4" fill="#475569"><title>${MESES[s.mes]}/${String(s.ano).slice(2)}: sem compra</title></circle>`;
+    }
+    const lbl = `<text x="${cx}" y="${H - 7}" font-size="7.5" fill="${s.mes === 1 ? '#cbd5e1' : '#94a3b8'}" text-anchor="middle">${MESES[s.mes]}${s.mes === 1 ? '/' + String(s.ano).slice(2) : ''}</text>`;
+    return mark + lbl;
   }).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;">${bars}</svg>`;
+  const axis = `<line x1="${padX}" y1="${baseY}" x2="${W - padX}" y2="${baseY}" stroke="#1e293b" stroke-width="1"/>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;">${axis}${bars}</svg>`;
 }
 
 function fecharDrill() {
