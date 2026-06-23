@@ -123,7 +123,10 @@ def segmento_canonico(r, f, m):
     """8 segmentos. Ordem de prioridade (first match wins) evita overlap."""
     if r == 5 and f == 5 and m == 5:
         return 'champions'
-    if r >= 4 and f >= 4 and m >= 3:
+    # Patch M: removido requisito M>=3 — mercadinhos/padarias compram em alta
+    # frequência mas ticket pequeno (M baixo). Antes caíam em 'hibernating' (catch-all),
+    # o que era semanticamente errado. Alta R + alta F = Fiel, independente do volume.
+    if r >= 4 and f >= 4:
         return 'loyal'
     if 2 <= r <= 3 and f >= 4 and m >= 4:
         return 'cant_lose'

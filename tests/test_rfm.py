@@ -121,7 +121,13 @@ def test_segmento_canonico_principais():
     assert segmento_canonico(5, 1, 1) == 'new'
     assert segmento_canonico(4, 2, 2) == 'potential_loyalist'
     assert segmento_canonico(1, 1, 1) == 'lost'
+    # Patch M: cliente com R/F médios e M baixo continua em hibernating (não casa loyal pq R<4)
     assert segmento_canonico(1, 3, 3) == 'hibernating'
+    # Patch M: mercadinhos/padarias (alta R+F, baixo M) agora são loyal — antes eram hibernating
+    assert segmento_canonico(5, 5, 1) == 'loyal'   # mercadinho diário, ticket pequeno
+    assert segmento_canonico(4, 4, 1) == 'loyal'   # idem
+    assert segmento_canonico(4, 5, 2) == 'loyal'   # padaria
+    assert segmento_canonico(5, 4, 1) == 'loyal'   # alta R + F bom + M baixo
 
 
 def test_segmento_canonico_cobre_todas_combinacoes():
