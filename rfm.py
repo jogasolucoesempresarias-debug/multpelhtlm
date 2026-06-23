@@ -128,9 +128,12 @@ def segmento_canonico(r, f, m):
     # o que era semanticamente errado. Alta R + alta F = Fiel, independente do volume.
     if r >= 4 and f >= 4:
         return 'loyal'
-    if 2 <= r <= 3 and f >= 4 and m >= 4:
+    # Patch M.2: removido requisito M — clientes pequenos que compravam regularmente
+    # e sumiram (1-2 meses sem comprar) eram catch-all hibernating. Agora caem em
+    # cant_lose/at_risk pra virar alerta de resgate, independente do volume.
+    if 2 <= r <= 3 and f >= 4:
         return 'cant_lose'
-    if 2 <= r <= 3 and f >= 3 and m >= 3:
+    if 2 <= r <= 3 and f >= 3:
         return 'at_risk'
     if r == 5 and f == 1:
         return 'new'

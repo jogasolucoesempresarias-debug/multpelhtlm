@@ -117,7 +117,10 @@ def test_segmento_canonico_principais():
     assert segmento_canonico(5, 5, 5) == 'champions'
     assert segmento_canonico(4, 5, 4) == 'loyal'
     assert segmento_canonico(2, 5, 5) == 'cant_lose'
-    assert segmento_canonico(3, 4, 3) == 'at_risk'
+    # Patch M.2: (3, 4, 3) agora casa em cant_lose primeiro (f>=4 sem requisito M).
+    # Antes caía em at_risk porque cant_lose exigia M>=4.
+    assert segmento_canonico(3, 4, 3) == 'cant_lose'
+    assert segmento_canonico(3, 3, 4) == 'at_risk'  # F=3 cai em at_risk
     assert segmento_canonico(5, 1, 1) == 'new'
     assert segmento_canonico(4, 2, 2) == 'potential_loyalist'
     assert segmento_canonico(1, 1, 1) == 'lost'
@@ -128,6 +131,12 @@ def test_segmento_canonico_principais():
     assert segmento_canonico(4, 4, 1) == 'loyal'   # idem
     assert segmento_canonico(4, 5, 2) == 'loyal'   # padaria
     assert segmento_canonico(5, 4, 1) == 'loyal'   # alta R + F bom + M baixo
+    # Patch M.2: R médio (sumindo) + F alto + M baixo agora viram alerta de resgate
+    assert segmento_canonico(3, 5, 1) == 'cant_lose'  # alta freq sumindo, ticket pequeno
+    assert segmento_canonico(3, 4, 1) == 'cant_lose'
+    assert segmento_canonico(2, 4, 1) == 'cant_lose'
+    assert segmento_canonico(3, 3, 1) == 'at_risk'    # F médio sumindo
+    assert segmento_canonico(2, 3, 1) == 'at_risk'
 
 
 def test_segmento_canonico_cobre_todas_combinacoes():
