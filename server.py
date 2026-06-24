@@ -3924,6 +3924,31 @@ SUMMARIZECOLUMNS(
     })
 
 
+def _carregar_fornecedores_map():
+    """Retorna {codfornec_str: nome}. Cache 24h. Usa FORNECPRINC textual da FAT_VENDAS."""
+    key = 'multpel:fornecedores_map:v1'
+    cached = _cache_get(key)
+    if cached:
+        return cached
+    query = """EVALUATE
+SUMMARIZECOLUMNS(
+    FATURAMENTO_VENDAS[CODFORNECPRINC],
+    FATURAMENTO_VENDAS[FORNECPRINC]
+)"""
+    token = get_token_cached()
+    payload = retry_dax(execute_dax)(token, query)
+    rows = clean_rows(_todas_linhas(payload))
+    mapa = {}
+    for r in rows:
+        cf = r.get('CODFORNECPRINC')
+        nome = r.get('FORNECPRINC')
+        if cf is None:
+            continue
+        mapa[str(cf)] = nome or f'Fornec {cf}'
+    _cache_set(key, mapa, 'metadata')
+    return mapa
+
+
 def _mix_aplicar_filtros_locais(linhas, vendedor, time_filt, busca):
     """Aplica os filtros locais (vendedor/time/busca) que o frontend usa em filtrarTabela().
     Os 3 são opcionais — se vazios, retorna a lista intacta."""
@@ -4084,12 +4109,27 @@ def api_mix_abandonado_pdf():
     linhas = _mix_abandonado_rows(dias, codepto, fornecedor)
     linhas = _mix_aplicar_filtros_locais(linhas, vendedor, time_filt, busca)
 
+    # Resolve códigos → nomes pra mostrar no rodapé do PDF
+    deptos_nomes = _carregar_deptos_map().get('deptos', {})
+    fornecedores_map = _carregar_fornecedores_map()
+    vendedores_map = _carregar_vendedores_map()
+    supervisores_map = _carregar_supervisores_map()
+
     parts = []
-    if codepto:    parts.append(f"Depto: {codepto}")
-    if fornecedor: parts.append(f"Fornecedor: {fornecedor}")
-    if vendedor:   parts.append(f"Vendedor: {vendedor}")
-    if time_filt:  parts.append(f"Time: {time_filt}")
-    if busca:      parts.append(f"Busca: \"{busca}\"")
+    if codepto:
+        parts.append(f"Depto: {deptos_nomes.get(str(codepto), codepto)}")
+    if fornecedor:
+        parts.append(f"Fornecedor: {fornecedores_map.get(str(fornecedor), fornecedor)}")
+    if vendedor:
+        v = vendedores_map.get(str(vendedor))
+        nome_v = v.get('nome') if v else f'RCA {vendedor}'
+        parts.append(f"Vendedor: {nome_v}")
+    if time_filt:
+        s = supervisores_map.get(str(time_filt))
+        nome_s = s.get('nome') if s else f'Sup {time_filt}'
+        parts.append(f"Time: {nome_s}")
+    if busca:
+        parts.append(f"Busca: \"{busca}\"")
     filtros_resumo = ' · '.join(parts)
 
     pdf_bytes = _gerar_pdf_mix_abandonado(linhas, filtros_resumo=filtros_resumo, dias=dias)
