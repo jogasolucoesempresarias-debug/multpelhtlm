@@ -4045,7 +4045,7 @@ def _gerar_pdf_mix_abandonado(linhas, filtros_resumo='', dias=60):
     story.append(Spacer(1, 0.3*cm))
 
     header = ['CodCli', 'Cliente', 'Cidade/UF', 'Departamento', 'Última Compra',
-              'Dias Parado', 'Venda 12m', 'Lucro 12m', 'Vendedor']
+              'Dias Parado', 'Venda 12m', 'Lucro 12m', 'Telefone']
     data = [header]
     for c in linhas:
         venda = c.get('venda_cat_12m') or 0
@@ -4060,7 +4060,7 @@ def _gerar_pdf_mix_abandonado(linhas, filtros_resumo='', dias=60):
             c.get('dias_sem_comprar_categoria') or '',
             f"R$ {venda:,.0f}".replace(',', '.'),
             f"R$ {lucro:,.0f}".replace(',', '.'),
-            (c.get('vendedor') or '')[:22],
+            c.get('telefone') or '—',
         ])
     tbl = Table(data, repeatRows=1,
                 colWidths=[1.5*cm, 6*cm, 3.4*cm, 3.4*cm, 2.3*cm, 1.8*cm, 2.3*cm, 2.3*cm, 3.4*cm])

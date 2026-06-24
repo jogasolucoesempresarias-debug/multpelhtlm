@@ -186,6 +186,7 @@
             <th class="num">Lucro Cat 12m</th>
             <th>Vendedor</th>
             <th>Time</th>
+            <th>Telefone</th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
@@ -418,6 +419,7 @@ function renderTabela(rows) {
       <td class="num"><strong style="color:var(--red);">${BRL.format(r.lucro_cat_12m)}</strong></td>
       <td>${r.vendedor || '—'}</td>
       <td><span style="font-size:0.74rem;color:var(--text-dim);">${time}</span></td>
+      <td class="mono" style="font-size:0.78rem;">${r.telefone || '—'}</td>
     </tr>`;
   }).join('');
   document.getElementById('tabela_total').textContent = NUM.format(rows.length);
