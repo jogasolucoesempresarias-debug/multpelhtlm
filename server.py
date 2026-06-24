@@ -215,6 +215,30 @@ def _csv_linha(valores):
     return ';'.join(out) + '\n'
 
 
+def _csv_linha_br(valores):
+    """Versão BR de _csv_linha: separador ;, decimal vírgula (Excel pt-BR não
+    confunde ponto/vírgula). Para campos numéricos, troca '.' por ',' no decimal."""
+    out = []
+    for v in valores:
+        if v is None:
+            out.append('')
+        elif isinstance(v, bool):
+            out.append('1' if v else '0')
+        elif isinstance(v, (int, float)):
+            # Garante 2 casas decimais pra valores fracionários (lucro/venda)
+            if isinstance(v, float):
+                s = f'{v:.2f}'.replace('.', ',')
+            else:
+                s = str(v)
+            out.append(s)
+        else:
+            s = str(v).replace('"', '""')
+            if ';' in s or '"' in s or '\n' in s:
+                s = f'"{s}"'
+            out.append(s)
+    return ';'.join(out) + '\n'
+
+
 # ── RBAC ──
 def _session_supervisores():
     """Lista de codsupervisores (int) do usuário logado. Suporta o novo
@@ -3799,6 +3823,9 @@ SUMMARIZECOLUMNS(
             'venda_total_12m':              cli_meta.get('venda_12m') or 0,
             'vendedor':                     cli_meta.get('vendedor'),
             'codusur':                      cli_meta.get('codusur'),
+            'time':                         cli_meta.get('time'),
+            'codsupervisor':                cli_meta.get('codsupervisor'),
+            'telefone':                     cli_meta.get('telefone'),
         })
     out.sort(key=lambda x: x['lucro_cat_12m'], reverse=True)
     return out
@@ -3897,10 +3924,35 @@ SUMMARIZECOLUMNS(
     })
 
 
+def _mix_aplicar_filtros_locais(linhas, vendedor, time_filt, busca):
+    """Aplica os filtros locais (vendedor/time/busca) que o frontend usa em filtrarTabela().
+    Os 3 são opcionais — se vazios, retorna a lista intacta."""
+    if vendedor:
+        try:
+            v = int(vendedor)
+            linhas = [r for r in linhas if r.get('codusur') == v]
+        except (TypeError, ValueError):
+            pass
+    if time_filt:
+        try:
+            t = int(time_filt)
+            linhas = [r for r in linhas if r.get('codsupervisor') == t]
+        except (TypeError, ValueError):
+            pass
+    if busca:
+        b = busca.lower().strip()
+        linhas = [r for r in linhas
+                  if b in (r.get('cliente') or '').lower()
+                  or b in (r.get('cidade') or '').lower()
+                  or b in str(r.get('codcli') or '')]
+    return linhas
+
+
 @app.route('/api/mix/abandonado/csv')
 @login_required
 def api_mix_abandonado_csv():
-    """Export CSV da lista COMPLETA de pares cliente×departamento abandonados (escopo de cadastro)."""
+    """Export CSV da lista COMPLETA de pares cliente×departamento abandonados (escopo de cadastro).
+    Respeita filtros locais (vendedor/time/busca) — passados via query string."""
     from datetime import date as _date
     try:
         dias = max(7, min(int(request.args.get('dias', 60)), 365))
@@ -3910,18 +3962,23 @@ def api_mix_abandonado_csv():
     fornecedor = request.args.get('fornecedor')
 
     linhas = _mix_abandonado_rows(dias, codepto, fornecedor)
+    linhas = _mix_aplicar_filtros_locais(
+        linhas, request.args.get('vendedor'),
+        request.args.get('time'), request.args.get('busca'),
+    )
     cabecalho = ['CodCli', 'Cliente', 'Cidade', 'UF', 'Departamento', 'UltimaCompra',
-                 'DiasParado', 'VendaCat12m', 'LucroCat12m', 'Vendedor']
+                 'DiasParado', 'VendaCat12m', 'LucroCat12m', 'Vendedor', 'Time', 'Telefone']
 
     def gerar():
         yield '﻿'  # BOM UTF-8
-        yield _csv_linha(cabecalho)
+        yield _csv_linha_br(cabecalho)
         for c in linhas:
-            yield _csv_linha([
+            yield _csv_linha_br([
                 c.get('codcli'), c.get('cliente'), c.get('cidade'), c.get('uf'),
                 c.get('depto_nome'), c.get('ultima_compra'),
                 c.get('dias_sem_comprar_categoria'),
-                c.get('venda_cat_12m'), c.get('lucro_cat_12m'), c.get('vendedor'),
+                c.get('venda_cat_12m'), c.get('lucro_cat_12m'),
+                c.get('vendedor'), c.get('time'), c.get('telefone'),
             ])
 
     nome = f"mix_abandonado_{dias}dias_{_date.today().isoformat()}.csv"
@@ -4011,7 +4068,8 @@ def _gerar_pdf_mix_abandonado(linhas, filtros_resumo='', dias=60):
 @app.route('/api/mix/abandonado/pdf')
 @login_required
 def api_mix_abandonado_pdf():
-    """Export PDF da lista COMPLETA de mix abandonado (mesmos filtros do CSV, escopo de cadastro)."""
+    """Export PDF da lista COMPLETA de mix abandonado (mesmos filtros do CSV, escopo de cadastro).
+    Respeita filtros locais (vendedor/time/busca) — passados via query string."""
     from datetime import date as _date
     try:
         dias = max(7, min(int(request.args.get('dias', 60)), 365))
@@ -4019,12 +4077,19 @@ def api_mix_abandonado_pdf():
         dias = 60
     codepto = request.args.get('codepto')
     fornecedor = request.args.get('fornecedor')
+    vendedor = request.args.get('vendedor')
+    time_filt = request.args.get('time')
+    busca = request.args.get('busca')
 
     linhas = _mix_abandonado_rows(dias, codepto, fornecedor)
+    linhas = _mix_aplicar_filtros_locais(linhas, vendedor, time_filt, busca)
 
     parts = []
     if codepto:    parts.append(f"Depto: {codepto}")
     if fornecedor: parts.append(f"Fornecedor: {fornecedor}")
+    if vendedor:   parts.append(f"Vendedor: {vendedor}")
+    if time_filt:  parts.append(f"Time: {time_filt}")
+    if busca:      parts.append(f"Busca: \"{busca}\"")
     filtros_resumo = ' · '.join(parts)
 
     pdf_bytes = _gerar_pdf_mix_abandonado(linhas, filtros_resumo=filtros_resumo, dias=dias)

@@ -211,6 +211,7 @@
 const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
 const NUM = new Intl.NumberFormat('pt-BR');
 let _rows = [];
+let _totalBackend = 0;
 
 async function abrirDeptos(codcli) {
   document.getElementById('deptoPanel').classList.add('open');
@@ -259,6 +260,13 @@ function _paramsExportMix() {
   const fornec = extrairCodigo(document.getElementById('filt_fornec').value);
   if (depto) params.set('codepto', depto);
   if (fornec) params.set('fornecedor', fornec);
+  // Filtros locais — também passam pro backend pra CSV/PDF refletirem o que está na tela
+  const vendCod = extrairCodigo(document.getElementById('filt_vend').value);
+  if (vendCod) params.set('vendedor', vendCod);
+  const timeCod = extrairCodigo(document.getElementById('filt_time').value);
+  if (timeCod) params.set('time', timeCod);
+  const busca = (document.getElementById('filt_busca').value || '').trim();
+  if (busca) params.set('busca', busca);
   return params;
 }
 
@@ -353,8 +361,9 @@ async function loadMix() {
   try {
     const d = await fetchJSON('/api/mix/abandonado?' + params.toString());
     _rows = d.rows || [];
+    _totalBackend = d.total;
     document.getElementById('dias_subt').textContent = dias;
-    renderKpis(d);
+    renderKpis(_rows, _totalBackend);
     renderTabela(_rows);
     document.getElementById('loading').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
@@ -363,16 +372,23 @@ async function loadMix() {
   }
 }
 
-function renderKpis(d) {
-  document.getElementById('k_total').textContent = NUM.format(d.total);
-  const clientes_distintos = new Set((d.rows || []).map(r => r.codcli)).size;
-  document.getElementById('k_clientes_distintos').textContent = `${NUM.format(clientes_distintos)} clientes distintos (no top 200)`;
-  const venda = (d.rows || []).reduce((s, r) => s + (r.venda_cat_12m || 0), 0);
-  const lucro = (d.rows || []).reduce((s, r) => s + (r.lucro_cat_12m || 0), 0);
+function renderKpis(rows, totalBackend) {
+  // rows = lista (filtrada ou completa); totalBackend = total absoluto do backend (804)
+  // Quando filtros locais aplicados, mostra "X (de Y)"
+  const filtrado = totalBackend != null && rows.length !== totalBackend;
+  document.getElementById('k_total').textContent = filtrado
+    ? `${NUM.format(rows.length)} (de ${NUM.format(totalBackend)})`
+    : NUM.format(rows.length);
+  const clientes_distintos = new Set(rows.map(r => r.codcli)).size;
+  document.getElementById('k_clientes_distintos').textContent = filtrado
+    ? `${NUM.format(clientes_distintos)} clientes distintos (filtrados)`
+    : `${NUM.format(clientes_distintos)} clientes distintos (no top 200)`;
+  const venda = rows.reduce((s, r) => s + (r.venda_cat_12m || 0), 0);
+  const lucro = rows.reduce((s, r) => s + (r.lucro_cat_12m || 0), 0);
   document.getElementById('k_venda').textContent = BRL.format(venda);
   document.getElementById('k_lucro').textContent = BRL.format(lucro);
-  // Top 5 por venda (sortbicker já vem do backend por lucro DESC, mas re-ordeno por venda DESC)
-  const top5 = [...(d.rows || [])].sort((a, b) => (b.venda_cat_12m || 0) - (a.venda_cat_12m || 0)).slice(0, 5);
+  // Top 5 por venda
+  const top5 = [...rows].sort((a, b) => (b.venda_cat_12m || 0) - (a.venda_cat_12m || 0)).slice(0, 5);
   document.getElementById('k_top5_total').textContent = BRL.format(top5.reduce((s, r) => s + (r.venda_cat_12m || 0), 0));
   document.getElementById('k_top5_nomes').textContent = top5.map(r => r.cliente.slice(0, 18)).join(', ');
 }
@@ -433,6 +449,7 @@ function filtrarTabela() {
                           || String(r.codcli || '').includes(b);
     return vendedor_ok && time_ok && busca_ok;
   });
+  renderKpis(filt, _totalBackend);
   renderTabela(filt);
 }
 
