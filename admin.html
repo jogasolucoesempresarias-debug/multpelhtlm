@@ -257,6 +257,16 @@
 let _users = [];
 let _vendedoresMap = {};
 let _supervisoresMap = {};
+
+// Mapa de tradução pt-BR pros segmentos RFM (usado no tooltip da tabela)
+const NOME_SEG = {
+  champions: 'Campeões', loyal: 'Fiéis', cant_lose: 'Não Perder',
+  at_risk: 'Em Risco', potential_loyalist: 'Promissores',
+  new: 'Novos', hibernating: 'Inativos', lost: 'Perdidos',
+};
+function traduzirSegmentos(csv) {
+  return (csv || '').split(',').map(s => NOME_SEG[s.trim()] || s.trim()).filter(Boolean).join(', ');
+}
 let _editandoId = null;
 let _ccList = [];  // Patch J: destinatários adicionais (CC) do modal
 let _supervisoresList = [];  // supervisor multi-área: lista de codsupervisores (int)
@@ -464,7 +474,7 @@ function renderTabela() {
       ? `<br><span style="color:var(--text-dim);font-size:0.68rem;" title="${u.email_cc.join(', ')}">+${u.email_cc.length} CC</span>`
       : '';
     const segBadge = (u.segmentos_rfm && u.segmentos_rfm.trim())
-      ? `<br><span style="color:var(--accent);font-size:0.66rem;" title="Filtrado por: ${u.segmentos_rfm}">▣ ${u.segmentos_rfm.split(',').length} segmento(s)</span>`
+      ? `<br><span style="color:var(--accent);font-size:0.66rem;" title="Filtrado por: ${traduzirSegmentos(u.segmentos_rfm)}">▣ ${u.segmentos_rfm.split(',').length} segmento(s)</span>`
       : '';
     return `
       <tr>

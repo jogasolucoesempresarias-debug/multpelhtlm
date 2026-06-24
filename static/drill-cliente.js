@@ -7,6 +7,13 @@
 (function() {
   let _drillChart = null;
 
+  // Fallback de tradução pt-BR caso a página não tenha NOME_SEG no escopo global
+  const _NOME_SEG_PT = {
+    champions: 'Campeões', loyal: 'Fiéis', cant_lose: 'Não Perder',
+    at_risk: 'Em Risco', potential_loyalist: 'Promissores',
+    new: 'Novos', hibernating: 'Inativos', lost: 'Perdidos',
+  };
+
   function _injectMarkup() {
     if (document.getElementById('drillPanel')) return;
     const html = `
@@ -74,7 +81,7 @@
         <div class="k">Lucro 12m</div><div class="v">${BRL2.format(c.lucro_12m || 0)}</div>
         <div class="k">Lucro perdido proj.</div><div class="v" style="color:var(--red);">${BRL2.format(c.lucro_perdido_proj || 0)}</div>
         <div class="k">RFM</div><div class="v">R=${c.r} F=${c.f} M=${c.m}</div>
-        <div class="k">Segmento</div><div class="v"><span class="badge b-${c.segmento}">${(window.NOME_SEG && NOME_SEG[c.segmento]) || c.segmento}</span></div>
+        <div class="k">Segmento</div><div class="v"><span class="badge b-${c.segmento}">${(window.NOME_SEG && NOME_SEG[c.segmento]) || _NOME_SEG_PT[c.segmento] || c.segmento}</span></div>
       `;
 
       // Histórico
