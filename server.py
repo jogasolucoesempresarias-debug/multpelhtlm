@@ -3949,6 +3949,39 @@ SUMMARIZECOLUMNS(
     return mapa
 
 
+def _nome_arquivo_mix(ext, dias):
+    """Nome do arquivo Mix Abandonado baseado nos filtros aplicados (resolvidos pra nomes).
+    Ex: mix_60d_EMBALAGENS_GALVANOTEK_ARNALDO_AFONSO_ES_SUL_2026-06-24.pdf"""
+    from datetime import date as _date
+    partes = [f"{dias}d"]
+    codepto = request.args.get('codepto')
+    fornecedor = request.args.get('fornecedor')
+    vendedor = request.args.get('vendedor')
+    time_filt = request.args.get('time')
+    busca = request.args.get('busca')
+
+    if codepto:
+        nome = _carregar_deptos_map().get('deptos', {}).get(str(codepto), f'Depto{codepto}')
+        partes.append(_slug_export(nome))
+    if fornecedor:
+        nome = _carregar_fornecedores_map().get(str(fornecedor), f'Fornec{fornecedor}')
+        partes.append(_slug_export(nome))
+    if vendedor:
+        v = _carregar_vendedores_map().get(str(vendedor))
+        nome = v.get('nome') if v else f'RCA{vendedor}'
+        partes.append(_slug_export(nome))
+    if time_filt:
+        s = _carregar_supervisores_map().get(str(time_filt))
+        nome = s.get('nome') if s else f'Sup{time_filt}'
+        partes.append(_slug_export(nome))
+    if busca:
+        partes.append(_slug_export(f'busca-{busca}'))
+
+    partes_limpas = [p.replace(' ', '_') for p in partes if p]
+    base = '_'.join(['mix'] + partes_limpas) if partes_limpas else 'mix_todos'
+    return f"{base}_{_date.today().isoformat()}.{ext}"
+
+
 def _mix_aplicar_filtros_locais(linhas, vendedor, time_filt, busca):
     """Aplica os filtros locais (vendedor/time/busca) que o frontend usa em filtrarTabela().
     Os 3 são opcionais — se vazios, retorna a lista intacta."""
@@ -4006,7 +4039,7 @@ def api_mix_abandonado_csv():
                 c.get('vendedor'), c.get('time'), c.get('telefone'),
             ])
 
-    nome = f"mix_abandonado_{dias}dias_{_date.today().isoformat()}.csv"
+    nome = _nome_arquivo_mix('csv', dias)
     return Response(
         stream_with_context(gerar()),
         mimetype='text/csv; charset=utf-8',
@@ -4133,7 +4166,7 @@ def api_mix_abandonado_pdf():
     filtros_resumo = ' · '.join(parts)
 
     pdf_bytes = _gerar_pdf_mix_abandonado(linhas, filtros_resumo=filtros_resumo, dias=dias)
-    nome = f"mix_abandonado_{dias}dias_{_date.today().isoformat()}.pdf"
+    nome = _nome_arquivo_mix('pdf', dias)
     return Response(
         pdf_bytes,
         mimetype='application/pdf',

@@ -109,7 +109,9 @@ def test_mix_csv_export(client, usuario_admin, mock_dax_capture, clean_redis):
     r = client.get('/api/mix/abandonado/csv?dias=60')
     assert r.status_code == 200
     assert 'text/csv' in r.headers['Content-Type']
-    assert 'mix_abandonado' in r.headers['Content-Disposition']
+    # Nome dinâmico: mix_60d_<filtros>_<data>.csv (sem filtros = "mix_60d_2026-...csv")
+    assert 'mix_' in r.headers['Content-Disposition']
+    assert '60d' in r.headers['Content-Disposition']
     assert 'CodCli' in r.get_data(as_text=True)
 
 
