@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Multpel Analytics — Metas</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2338bdf8'/%3E%3Cstop offset='1' stop-color='%23818cf8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='6' fill='url(%23g)'/%3E%3Ctext x='16' y='22' font-family='DM Sans,sans-serif' font-size='18' font-weight='700' text-anchor='middle' fill='%230a0e17'%3EM%3C/text%3E%3C/svg%3E">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+<script src="/static/fetch-resiliente.js"></script>
+<style>
+  :root {
+    --bg: #0a0e17; --surface: #111827; --surface2: #1a2235; --border: #1e293b;
+    --text: #e2e8f0; --text-dim: #94a3b8; --accent: #38bdf8; --accent2: #818cf8;
+    --green: #34d399; --red: #f87171; --orange: #fb923c; --yellow: #fbbf24;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+  .dashboard { padding: 24px; max-width: 1600px; margin: 0 auto; animation: fadeUp 0.4s ease; }
+  .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }
+  .top-bar .brand { display: flex; align-items: center; gap: 12px; }
+  .top-bar .brand .mark { width: 36px; height: 36px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--bg); font-size: 1.05rem; }
+  .top-bar h1 { font-size: 1.3rem; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .meta { font-size: 0.74rem; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; }
+  .nav { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn-sm { padding: 7px 14px; background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-weight: 500; font-size: 0.78rem; border-radius: 7px; cursor: pointer; transition: all 0.15s; text-decoration: none; display: inline-block; }
+  .btn-sm:hover, .btn-sm.active { border-color: var(--accent); color: var(--accent); }
+  .hidden { display: none !important; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+  .filtros { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 18px; }
+  .ff { display: flex; flex-direction: column; gap: 5px; }
+  .ff label { font-size: 0.72rem; color: var(--text-dim); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+  .ff select, .ff input { padding: 8px 11px; background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 7px; font-family: inherit; font-size: 0.85rem; min-width: 130px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+  .tab { padding: 10px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; cursor: pointer; font-weight: 600; font-size: 0.9rem; transition: all .15s; }
+  .tab:hover { border-color: var(--accent); }
+  .tab.active { background: linear-gradient(135deg, rgba(56,189,248,.15), rgba(129,140,248,.15)); border-color: var(--accent); color: var(--accent); }
+
+  .topo { display: grid; grid-template-columns: 320px 1fr; gap: 16px; margin-bottom: 16px; }
+  @media (max-width: 900px){ .topo { grid-template-columns: 1fr; } }
+  .gauge-wrap { position: relative; height: 200px; display:flex; align-items:center; justify-content:center; }
+  .gauge-center { position: absolute; top: 58%; left: 50%; transform: translate(-50%,-50%); text-align: center; pointer-events: none; }
+  .gauge-center .pct { font-size: 2rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+  .gauge-center .lbl { font-size: .72rem; color: var(--text-dim); }
+  .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  @media (max-width: 600px){ .kpis { grid-template-columns: repeat(2,1fr);} }
+  .kpi { background: var(--surface2); border: 1px solid var(--border); border-radius: 9px; padding: 13px 15px; }
+  .kpi .k-lbl { font-size: .7rem; color: var(--text-dim); text-transform: uppercase; letter-spacing:.03em; margin-bottom: 5px; }
+  .kpi .k-val { font-size: 1.25rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+  .kpi .k-sub { font-size: .72rem; color: var(--text-dim); margin-top: 3px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+  th, td { padding: 9px 11px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { color: var(--text-dim); font-weight: 600; font-size: .72rem; text-transform: uppercase; letter-spacing:.03em; position: sticky; top: 0; background: var(--surface); }
+  tbody tr.sup { cursor: pointer; }
+  tbody tr.sup:hover { background: var(--surface2); }
+  tbody tr.total { font-weight: 700; background: rgba(56,189,248,.06); }
+  tbody tr.total td { border-top: 2px solid var(--border); }
+  tr.vend td { background: rgba(0,0,0,.18); font-size: .78rem; color: var(--text-dim); }
+  tr.vend td:first-child { padding-left: 28px; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .badge { padding: 2px 8px; border-radius: 6px; font-size: .74rem; font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+  .b-green { background: rgba(52,211,153,.15); color: var(--green); }
+  .b-yellow{ background: rgba(251,191,36,.15); color: var(--yellow); }
+  .b-orange{ background: rgba(251,146,60,.15); color: var(--orange); }
+  .b-red   { background: rgba(248,113,113,.15); color: var(--red); }
+  .caret { display:inline-block; width: 14px; color: var(--text-dim); }
+
+  .loading-screen { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; z-index: 1000; }
+  .spinner { width: 42px; height: 42px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .banner-aviso { background: rgba(251,191,36,.1); border: 1px solid var(--yellow); color: var(--yellow); padding: 11px 16px; border-radius: 9px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .banner-aviso button { background: var(--yellow); color: var(--bg); border: none; padding: 6px 13px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+  .secao-titulo { font-size: .9rem; font-weight: 600; margin-bottom: 12px; color: var(--text-dim); }
+</style>
+</head>
+<body>
+<div id="loading" class="loading-screen">
+  <div class="spinner"></div>
+  <div style="color: var(--text-dim); font-size: 0.85rem;">Carregando metas...</div>
+</div>
+
+<div class="dashboard">
+  <div class="top-bar">
+    <div class="brand">
+      <div class="mark">M</div>
+      <div>
+        <h1>Multpel Analytics</h1>
+        <div class="meta" id="userInfo"></div>
+      </div>
+    </div>
+    <div class="nav">
+      <a href="/" class="btn-sm">Dashboard</a>
+      <a href="/carteira" class="btn-sm">Carteira</a>
+      <a id="linkVendedores" href="/vendedores" class="btn-sm">Vendedores</a>
+      <a href="/categorias" class="btn-sm">Categorias</a>
+      <a href="/mix" class="btn-sm">Mix</a>
+      <a href="/radar" class="btn-sm">Radar</a>
+      <a href="/tendencias" class="btn-sm">Tendências</a>
+      <a href="/metas" class="btn-sm active">Metas</a>
+      <a id="linkAdmin" href="/admin" class="btn-sm hidden">Admin</a>
+      <a href="/logout" class="btn-sm">Sair</a>
+    </div>
+  </div>
+
+  <div id="bannerErro" class="banner-aviso hidden">
+    <span id="bannerErroMsg">Dados em atualização. Tente em alguns minutos.</span>
+    <button onclick="carregar(true)">Tentar agora</button>
+  </div>
+
+  <div class="filtros">
+    <div class="ff"><label>Ano</label><select id="fAno"></select></div>
+    <div class="ff"><label>Mês</label><select id="fMes"></select></div>
+    <div class="ff" id="ffSup"><label>Supervisor</label>
+      <input list="dlSup" id="fSup" placeholder="Todos"><datalist id="dlSup"></datalist>
+    </div>
+    <div class="ff"><label>&nbsp;</label><button class="btn-sm" onclick="carregar(true)">Atualizar</button></div>
+    <div class="ff hidden" id="adminBtns"><label>&nbsp;</label>
+      <span style="display:flex;gap:8px;">
+        <button class="btn-sm" style="border-color:var(--accent);color:var(--accent);" onclick="abrirEditor()">✏️ Editar metas</button>
+        <button class="btn-sm" onclick="importarBI()">⬇ Importar do BI</button>
+      </span>
+    </div>
+    <div class="meta" id="diasInfo" style="margin-left:auto;align-self:center;"></div>
+  </div>
+
+  <div class="tabs" id="tabs"></div>
+
+  <div class="topo">
+    <div class="card">
+      <div class="secao-titulo" id="gaugeTitulo">Realizado vs Meta</div>
+      <div class="gauge-wrap">
+        <canvas id="gauge"></canvas>
+        <div class="gauge-center"><div class="pct" id="gaugePct">—</div><div class="lbl">do alvo</div></div>
+      </div>
+      <div style="text-align:center;font-size:.8rem;color:var(--text-dim);margin-top:6px;" id="gaugeSub"></div>
+    </div>
+    <div class="card">
+      <div class="secao-titulo">Indicadores do mês</div>
+      <div class="kpis" id="kpis"></div>
+      <div style="height:150px;margin-top:14px;" id="serieBox"><canvas id="serie"></canvas></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="secao-titulo">Por supervisor <span style="font-weight:400;font-size:.78rem;">(clique pra ver os vendedores)</span></div>
+    <div style="overflow-x:auto;">
+      <table id="tabela">
+        <thead><tr>
+          <th>Supervisor</th><th>Meta</th><th>Realizado</th><th>%</th>
+          <th>Falta</th><th>Falta/dia</th><th>Projeção</th><th>% Proj.</th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Editor de metas (admin) -->
+<div id="editorBg" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:500;display:flex;align-items:center;justify-content:center;padding:20px;">
+  <div class="card" style="width:min(1000px,96vw);max-height:90vh;display:flex;flex-direction:column;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <div class="secao-titulo" id="editorTitulo" style="margin:0;">Editar metas</div>
+      <button class="btn-sm" onclick="fecharEditor()">Fechar</button>
+    </div>
+    <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;flex-wrap:wrap;">
+      <div class="ff"><label>Método de sugestão</label>
+        <select id="edMetodo">
+          <option value="media_3m">Média 3 meses</option>
+          <option value="ano_anterior">Mesmo mês ano anterior</option>
+        </select></div>
+      <div class="ff"><label>Crescimento %</label><input id="edCresc" type="number" value="0" step="5" style="min-width:90px;"></div>
+      <div class="ff"><label>&nbsp;</label><button class="btn-sm" onclick="sugerirTodos()">📊 Sugerir todos</button></div>
+      <div class="meta" id="edInfo" style="align-self:center;"></div>
+    </div>
+    <div style="overflow:auto;flex:1;">
+      <table>
+        <thead><tr><th>Vendedor</th><th>Venda (R$)</th><th>Rentab. (R$)</th><th>Clientes</th><th>Mix</th><th>Realiz. venda</th><th></th></tr></thead>
+        <tbody id="edBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<div id="toast" style="position:fixed;bottom:20px;right:20px;background:var(--surface);border:1px solid var(--accent);color:var(--text);padding:12px 18px;border-radius:8px;display:none;z-index:600;"></div>
+
+<script>
+const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
+const NUM = new Intl.NumberFormat('pt-BR');
+const PCT = (v) => (v == null ? '—' : (v * 100).toFixed(1).replace('.', ',') + '%');
+Chart.defaults.font.family = "'DM Sans', sans-serif";
+Chart.defaults.color = '#94a3b8';
+
+const METRICAS = [
+  { id: 'venda',         nome: 'Venda',         moeda: true },
+  { id: 'rentabilidade', nome: 'Rentabilidade', moeda: true },
+  { id: 'clientes',      nome: 'Clientes',      moeda: false },
+  { id: 'mix',           nome: 'Mix',           moeda: false },
+];
+let _metrica = 'venda';
+let _dados = null;       // resposta /api/metas
+let _serie = null;       // resposta /api/metas/serie
+let _charts = {};
+let _abertos = {};       // codsupervisor → vendedores carregados
+let _role = null;
+
+function fmt(metricaId, v) {
+  if (v == null) return '—';
+  const m = METRICAS.find(x => x.id === metricaId);
+  return m && m.moeda ? BRL.format(v) : NUM.format(Math.round(v));
+}
+function corPct(p) {
+  if (p == null) return 'b-red';
+  if (p >= 1) return 'b-green';
+  if (p >= 0.8) return 'b-yellow';
+  if (p >= 0.5) return 'b-orange';
+  return 'b-red';
+}
+function badge(p) { return `<span class="badge ${corPct(p)}">${PCT(p)}</span>`; }
+function drawChart(id, cfg) { if (_charts[id]) _charts[id].destroy(); _charts[id] = new Chart(document.getElementById(id), cfg); }
+
+function popularFiltros() {
+  const ano = new Date().getFullYear(), mes = new Date().getMonth() + 1;
+  const selAno = document.getElementById('fAno'), selMes = document.getElementById('fMes');
+  for (let a = ano - 2; a <= ano + 1; a++) selAno.add(new Option(a, a, a === ano, a === ano));
+  const nomesMes = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  nomesMes.forEach((n, i) => selMes.add(new Option(n, i + 1, i + 1 === mes, i + 1 === mes)));
+}
+function renderTabs() {
+  document.getElementById('tabs').innerHTML = METRICAS.map(m =>
+    `<div class="tab ${m.id === _metrica ? 'active' : ''}" onclick="trocarMetrica('${m.id}')">${m.nome}</div>`).join('');
+}
+function trocarMetrica(id) { _metrica = id; renderTabs(); renderTudo(); }
+
+function getParams() {
+  const p = new URLSearchParams();
+  p.set('ano', document.getElementById('fAno').value);
+  p.set('mes', document.getElementById('fMes').value);
+  const sup = document.getElementById('fSup').value.trim();
+  const cod = (sup.match(/\((\d+)\)\s*$/) || [])[1];
+  if (cod) p.set('supervisor', cod);
+  return p;
+}
+
+async function carregar(force) {
+  document.getElementById('bannerErro').classList.add('hidden');
+  const p = getParams();
+  try {
+    _dados = await fetchJSON('/api/metas?' + p.toString());
+    if (!_dados.ok) throw new Error(_dados.error || 'erro');
+    _abertos = {};
+    try { _serie = await fetchJSON('/api/metas/serie?' + p.toString()); } catch (e) { _serie = null; }
+    renderTudo();
+  } catch (e) {
+    document.getElementById('bannerErroMsg').textContent = 'Falha ao carregar metas: ' + (e.message || e);
+    document.getElementById('bannerErro').classList.remove('hidden');
+  } finally {
+    document.getElementById('loading').classList.add('hidden');
+  }
+}
+
+function renderTudo() {
+  if (!_dados) return;
+  const d = _dados, m = _metrica;
+  const dias = d.dias || {};
+  document.getElementById('diasInfo').textContent =
+    `Dias úteis: ${dias.decorridos || 0}/${dias.mes || 0} decorridos · ${dias.restantes || 0} restantes`;
+
+  const t = d.total[m];
+  document.getElementById('gaugeTitulo').textContent =
+    'Realizado vs Meta — ' + METRICAS.find(x => x.id === m).nome;
+  document.getElementById('gaugePct').textContent = PCT(t.pct_realizado);
+  document.getElementById('gaugeSub').innerHTML =
+    `${fmt(m, t.realizado)} <span style="color:var(--text-dim)">de</span> ${fmt(m, t.meta)}`;
+  renderGauge(t);
+  renderKpis(t);
+  renderSerie();
+  renderTabela();
+}
+
+function renderGauge(t) {
+  const real = t.realizado || 0, meta = t.meta || 0;
+  const falta = Math.max(0, meta - real), excedente = Math.max(0, real - meta);
+  const cor = t.pct_realizado >= 1 ? '#34d399' : t.pct_realizado >= 0.8 ? '#fbbf24' : t.pct_realizado >= 0.5 ? '#fb923c' : '#f87171';
+  drawChart('gauge', {
+    type: 'doughnut',
+    data: { datasets: [{ data: meta > 0 ? [Math.min(real, meta), falta] : [real, 0],
+      backgroundColor: [cor, '#1e293b'], borderWidth: 0 }] },
+    options: { cutout: '72%', rotation: -90, circumference: 180,
+      plugins: { legend: { display: false }, tooltip: { enabled: false }, datalabels: { display: false } },
+      animation: { duration: 400 } }
+  });
+}
+
+function renderKpis(t) {
+  const m = _metrica;
+  const kpis = [
+    ['Meta', fmt(m, t.meta), ''],
+    ['Realizado', fmt(m, t.realizado), PCT(t.pct_realizado) + ' do alvo'],
+    ['Falta', fmt(m, t.falta), ''],
+    ['Projeção', fmt(m, t.projecao), PCT(t.pct_projecao) + ' do alvo'],
+    ['Necessidade/dia', fmt(m, t.necessidade_dia), (_dados.dias.restantes || 0) + ' dias restantes'],
+    ['% Atingido', PCT(t.pct_realizado), ''],
+  ];
+  document.getElementById('kpis').innerHTML = kpis.map(k =>
+    `<div class="kpi"><div class="k-lbl">${k[0]}</div><div class="k-val">${k[1]}</div><div class="k-sub">${k[2]}</div></div>`).join('');
+}
+
+function renderSerie() {
+  const box = document.getElementById('serieBox');
+  if (_metrica !== 'venda' || !_serie || !_serie.ok || !_serie.serie.length) { box.style.display = 'none'; return; }
+  box.style.display = '';
+  const s = _serie.serie;
+  drawChart('serie', {
+    type: 'line',
+    data: { labels: s.map(x => x.data.slice(8) + '/' + x.data.slice(5, 7)),
+      datasets: [{ label: 'Venda/dia', data: s.map(x => x.venda), borderColor: '#38bdf8',
+        backgroundColor: 'rgba(56,189,248,.1)', fill: true, tension: .3, pointRadius: 2 }] },
+    options: { responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, datalabels: { display: false },
+        tooltip: { callbacks: { label: c => BRL.format(c.parsed.y) } } },
+      scales: { y: { ticks: { callback: v => BRL.format(v) } } } }
+  });
+}
+
+function linhaCols(metricaId, l) {
+  return `<td class="mono">${fmt(metricaId, l.meta)}</td>
+    <td class="mono">${fmt(metricaId, l.realizado)}</td>
+    <td>${badge(l.pct_realizado)}</td>
+    <td class="mono">${fmt(metricaId, l.falta)}</td>
+    <td class="mono">${fmt(metricaId, l.necessidade_dia)}</td>
+    <td class="mono">${fmt(metricaId, l.projecao)}</td>
+    <td>${badge(l.pct_projecao)}</td>`;
+}
+
+function renderTabela() {
+  const m = _metrica;
+  let html = '';
+  for (const s of _dados.supervisores) {
+    const l = s[m];
+    const aberto = _abertos[s.codsupervisor];
+    html += `<tr class="sup" onclick="toggleDrill(${s.codsupervisor})">
+      <td><span class="caret">${aberto ? '▾' : '▸'}</span>${s.nome}</td>${linhaCols(m, l)}</tr>`;
+    if (aberto) {
+      for (const v of aberto) {
+        html += `<tr class="vend"><td>${v.nome}</td>${linhaCols(m, v[m])}</tr>`;
+      }
+    }
+  }
+  const t = _dados.total[m];
+  html += `<tr class="total"><td>TOTAL</td>${linhaCols(m, t)}</tr>`;
+  document.getElementById('tbody').innerHTML = html;
+}
+
+async function toggleDrill(codsup) {
+  if (_abertos[codsup]) { delete _abertos[codsup]; renderTabela(); return; }
+  const p = getParams(); p.set('codsupervisor', codsup);
+  try {
+    const r = await fetchJSON('/api/metas/vendedores?' + p.toString());
+    _abertos[codsup] = r.vendedores || [];
+  } catch (e) { _abertos[codsup] = []; }
+  renderTabela();
+}
+
+// ── Editor de metas (admin) ──
+let _edVendedores = [];
+function toast(msg, tipo) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  t.style.borderColor = tipo === 'err' ? 'var(--red)' : tipo === 'ok' ? 'var(--green)' : 'var(--accent)';
+  clearTimeout(t._t); t._t = setTimeout(() => t.style.display = 'none', 4000);
+}
+async function abrirEditor() {
+  const ano = document.getElementById('fAno').value, mes = document.getElementById('fMes').value;
+  document.getElementById('editorTitulo').textContent =
+    `Editar metas — ${document.getElementById('fMes').selectedOptions[0].text}/${ano}`;
+  document.getElementById('editorBg').classList.remove('hidden');
+  document.getElementById('edBody').innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-dim);">Carregando...</td></tr>';
+  try {
+    const r = await fetchJSON(`/api/admin/metas?ano=${ano}&mes=${mes}`);
+    _edVendedores = r.vendedores || [];
+    renderEditor();
+  } catch (e) { toast('Erro ao carregar: ' + e.message, 'err'); }
+}
+function fecharEditor() { document.getElementById('editorBg').classList.add('hidden'); }
+function renderEditor() {
+  const inp = (id, v) => `<input id="${id}" type="number" value="${v || 0}" style="width:110px;padding:5px 7px;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;">`;
+  document.getElementById('edBody').innerHTML = _edVendedores.map(v => `
+    <tr data-cod="${v.codusur}">
+      <td style="text-align:left;">${v.nome}<div style="font-size:.68rem;color:var(--text-dim);">cod ${v.codusur}</div></td>
+      <td>${inp('v_valor_' + v.codusur, v.valor_meta)}</td>
+      <td>${inp('v_rent_' + v.codusur, v.rentabilidade_meta)}</td>
+      <td>${inp('v_cli_' + v.codusur, v.clientes_meta)}</td>
+      <td>${inp('v_mix_' + v.codusur, v.mix_meta)}</td>
+      <td class="mono" style="color:var(--text-dim);">${BRL.format(v.venda_real || 0)}</td>
+      <td style="white-space:nowrap;">
+        <button class="btn-sm" style="padding:4px 8px;" onclick="sugerirLinha(${v.codusur})">📊</button>
+        <button class="btn-sm" style="padding:4px 8px;border-color:var(--green);color:var(--green);" onclick="salvarLinha(${v.codusur})">Salvar</button>
+      </td>
+    </tr>`).join('');
+  document.getElementById('edInfo').textContent = `${_edVendedores.length} vendedores`;
+}
+function _setLinha(cod, s) {
+  if (s.valor_meta != null) document.getElementById('v_valor_' + cod).value = s.valor_meta;
+  if (s.rentabilidade_meta != null) document.getElementById('v_rent_' + cod).value = s.rentabilidade_meta;
+  if (s.clientes_meta != null) document.getElementById('v_cli_' + cod).value = s.clientes_meta;
+  if (s.mix_meta != null) document.getElementById('v_mix_' + cod).value = s.mix_meta;
+}
+function _sugParams(cod) {
+  const ano = document.getElementById('fAno').value, mes = document.getElementById('fMes').value;
+  const metodo = document.getElementById('edMetodo').value;
+  const cresc = (parseFloat(document.getElementById('edCresc').value) || 0) / 100;
+  return `codusur=${cod}&ano=${ano}&mes=${mes}&metodo=${metodo}&crescimento=${cresc}`;
+}
+async function sugerirLinha(cod) {
+  try {
+    const r = await fetchJSON('/api/admin/metas/sugestao?' + _sugParams(cod));
+    if (r.sugestao) _setLinha(cod, r.sugestao);
+  } catch (e) { toast('Sugestão falhou: ' + e.message, 'err'); }
+}
+async function sugerirTodos() {
+  toast('Sugerindo para todos...', 'info');
+  for (const v of _edVendedores) { await sugerirLinha(v.codusur); }
+  toast('Sugestões aplicadas (revise e salve)', 'ok');
+}
+async function salvarLinha(cod) {
+  const ano = +document.getElementById('fAno').value, mes = +document.getElementById('fMes').value;
+  const body = {
+    ano, mes, codusur: cod,
+    valor_meta: +document.getElementById('v_valor_' + cod).value || 0,
+    rentabilidade_meta: +document.getElementById('v_rent_' + cod).value || 0,
+    clientes_meta: +document.getElementById('v_cli_' + cod).value || 0,
+    mix_meta: +document.getElementById('v_mix_' + cod).value || 0,
+  };
+  try {
+    const r = await fetch('/api/admin/metas', { method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || 'erro');
+    toast('Meta salva: ' + (_edVendedores.find(x => x.codusur === cod) || {}).nome, 'ok');
+  } catch (e) { toast('Erro ao salvar: ' + e.message, 'err'); }
+}
+async function importarBI() {
+  const ano = document.getElementById('fAno').value, mes = document.getElementById('fMes').value;
+  if (!confirm(`Importar metas do BI para ${mes}/${ano}? Isso sobrescreve as metas digitadas deste mês.`)) return;
+  try {
+    const r = await fetch(`/api/admin/metas/importar?ano=${ano}&mes=${mes}`, { method: 'POST', credentials: 'same-origin' });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || 'erro');
+    toast(`${j.importados} metas importadas do BI`, 'ok');
+    carregar(true);
+  } catch (e) { toast('Erro: ' + e.message, 'err'); }
+}
+
+async function init() {
+  popularFiltros();
+  renderTabs();
+  // user + supervisores
+  try {
+    const me = await fetchJSON('/api/me');
+    _role = me.role;
+    document.getElementById('userInfo').textContent = (me.nome || me.email || '') + ' · ' + (me.role || '');
+    if (me.role === 'admin') {
+      document.getElementById('linkAdmin').classList.remove('hidden');
+      document.getElementById('adminBtns').classList.remove('hidden');
+    }
+    if (me.role === 'vendedor') { document.getElementById('linkVendedores').style.display = 'none'; }
+    if (me.role !== 'admin' && me.role !== 'viewer') document.getElementById('ffSup').classList.add('hidden');
+    else {
+      try {
+        const sm = await fetchJSON('/api/_internal/supervisores-map');
+        const dl = document.getElementById('dlSup');
+        const mapa = sm.supervisores || sm.map || sm;
+        Object.entries(mapa).forEach(([cod, info]) => {
+          const nome = (info && info.nome) ? info.nome : info;
+          dl.add ? dl.add(new Option(`${nome} (${cod})`)) : dl.insertAdjacentHTML('beforeend', `<option value="${nome} (${cod})">`);
+        });
+      } catch (e) {}
+    }
+  } catch (e) {}
+  await carregar();
+}
+init();
+</script>
+</body>
+</html>

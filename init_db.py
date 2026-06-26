@@ -48,6 +48,25 @@ cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS segmentos_rfm   
 # segue existindo e recebe o 1º elemento (compatibilidade com RBAC single).
 cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS codsupervisores JSONB DEFAULT '[]'::jsonb;")
 
+# Módulo Metas — meta (alvo) por vendedor/mês. Nosso app é dono da meta (input + sugestão).
+# Realizado/projeção vêm do dataset META; aqui só guardamos o alvo digitado.
+cur.execute("""
+    CREATE TABLE IF NOT EXISTS multpel_metas (
+        id                 SERIAL PRIMARY KEY,
+        ano                INTEGER NOT NULL,
+        mes                INTEGER NOT NULL,
+        codusur            INTEGER NOT NULL,
+        valor_meta         NUMERIC(14,2) DEFAULT 0,
+        clientes_meta      INTEGER       DEFAULT 0,
+        mix_meta           INTEGER       DEFAULT 0,
+        rentabilidade_meta NUMERIC(14,2) DEFAULT 0,
+        atualizado_em      TIMESTAMP     DEFAULT NOW(),
+        atualizado_por     INTEGER,
+        UNIQUE (ano, mes, codusur)
+    );
+""")
+cur.execute("CREATE INDEX IF NOT EXISTS ix_metas_anomes ON multpel_metas(ano, mes);")
+
 cur.execute("""
     CREATE TABLE IF NOT EXISTS multpel_log (
         id            SERIAL PRIMARY KEY,

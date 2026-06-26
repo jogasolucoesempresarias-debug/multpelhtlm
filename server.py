@@ -191,6 +191,32 @@ def executar_dax_paralelo(queries: dict) -> dict:
         return {nome: f.result() for nome, f in futures.items()}
 
 
+# ── Dataset META (telas de meta) ──
+# Dataset separado, no MESMO workspace/grupo que o RCA (mesmo Service Principal/token).
+# Contém PCPEDC/PCPEDI (pedidos), CALENDARIO (EhDiaMeta) e as medidas oficiais de realizado.
+# Ver memória multpel-metas-bi pra o racional. execute_dax já aceita dataset_id override.
+META_DATASET_ID = os.getenv('POWERBI_META_DATASET_ID', '801d7d87-292a-430a-b02a-946ff5fc8c58')
+
+
+def run_dax_meta(query):
+    """Executa 1 query DAX no dataset META (com retry). Token/grupo reusados do RCA."""
+    token = get_token_cached()
+    return retry_dax(execute_dax)(token, query, dataset_id=META_DATASET_ID)
+
+
+def run_dax_meta_paralelo(queries: dict) -> dict:
+    """Versão paralela de run_dax_meta (dict nome→query → dict nome→payload)."""
+    token = get_token_cached()
+
+    @retry_dax
+    def _run(q):
+        return execute_dax(token, q, dataset_id=META_DATASET_ID)
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futures = {nome: ex.submit(_run, q) for nome, q in queries.items()}
+        return {nome: f.result() for nome, f in futures.items()}
+
+
 def clean_rows(rows):
     result = []
     for row in rows:
@@ -5077,6 +5103,549 @@ def erro_500(e):
     return Response('Erro interno do servidor', status=500)
 
 
+# ══════════════════════════════════════════════════════════════════════
+# MÓDULO METAS — replica as 4 telas META do cliente (Venda/Rentab/Clientes/Mix).
+# Meta (alvo) é NOSSA (Postgres multpel_metas, por vendedor). Realizado vem do dataset
+# META (pedidos PCPEDC/PCPEDI) + calendário EhDiaMeta. Regras calibradas centavo-a-centavo
+# contra as medidas oficiais (ver memória multpel-metas-bi). Projeção/falta em metas.py.
+# ══════════════════════════════════════════════════════════════════════
+import metas  # módulo puro de metas (projeção, necessidade/dia, sugestão)
+
+META_METRICAS = ('venda', 'clientes', 'mix', 'rentabilidade')
+
+
+def _metas_escopo_codusur(supervisores):
+    """Resolve o escopo do usuário logado para um conjunto de CODUSUR (ou None = tudo).
+    - vendedor: só o próprio codusur
+    - supervisor (multi-área): vendedores das suas áreas (via vendedores_map)
+    - admin/viewer: None (tudo) ou, se ?supervisor=, os vendedores desses supervisores
+    Uniformizar em CODUSUR garante consistência entre medidas (por vendedor) e distinct."""
+    if session.get('codusur'):
+        return {int(session['codusur'])}
+    sups = _session_supervisores()
+    alvo = None
+    if sups:
+        alvo = set(sups)
+    elif supervisores:
+        alvo = set(int(s) for s in supervisores)
+    if alvo is None:
+        return None  # admin/viewer sem filtro → tudo
+    vmap = _carregar_vendedores_map()
+    return {int(cu) for cu, info in vmap.items() if info.get('codsupervisor') in alvo}
+
+
+def _metas_rbac_frag(tabela, escopo):
+    """Fragmento DAX RBAC por CODUSUR. escopo=None → '' (tudo); escopo vazio → impossível."""
+    if escopo is None:
+        return ""
+    if not escopo:
+        return f"{tabela}[CODUSUR] IN {{-1}}"
+    ids = ", ".join(str(c) for c in sorted(escopo))
+    return f"{tabela}[CODUSUR] IN {{{ids}}}"
+
+
+def _and_dax(*frags):
+    return " && ".join(f for f in frags if f)
+
+
+def _carregar_dias_uteis_meta(ano, mes):
+    """Dias de meta (úteis) do CALENDARIO do dataset META: total/decorridos/restantes.
+    EhDiaMeta=1 exclui fins de semana e feriados. Funciona pra qualquer mês."""
+    key = f'multpel:metas:dias:{ano}-{mes}'
+    cached = _cache_get(key)
+    if cached:
+        return cached
+    base = f"CALENDARIO[Ano]={int(ano)} && CALENDARIO[MES]={int(mes)} && CALENDARIO[EhDiaMeta]=1"
+    q = (f'EVALUATE ROW('
+         f'"mes", CALCULATE(COUNTROWS(CALENDARIO), FILTER(CALENDARIO, {base})), '
+         f'"decorridos", CALCULATE(COUNTROWS(CALENDARIO), FILTER(CALENDARIO, {base} && CALENDARIO[DATA]<=TODAY())), '
+         f'"restantes", CALCULATE(COUNTROWS(CALENDARIO), FILTER(CALENDARIO, {base} && CALENDARIO[DATA]>TODAY())))')
+    row = _primeira_linha(run_dax_meta(q))
+    dias = {
+        'mes':        int(row.get('[mes]') or 0),
+        'decorridos': int(row.get('[decorridos]') or 0),
+        'restantes':  int(row.get('[restantes]') or 0),
+    }
+    _cache_set(key, dias, 'dax_lista')
+    return dias
+
+
+def _carregar_metas_realizado(ano, mes, supervisores):
+    """Realizado das 4 métricas no dataset META, recortado pelo escopo do usuário.
+    Mês corrente → medidas oficiais (venda/rentab) + DISTINCTCOUNT (clientes/mix), tudo exato.
+    Mês fechado → reconstrução por PCPEDC/PCPEDI (o BI mostra 0 pra passado).
+    Retorna dict com mapas por vendedor (aditivo) e distinct por supervisor + total."""
+    from datetime import date as _date
+    ano, mes = int(ano), int(mes)
+    escopo = _metas_escopo_codusur(supervisores)
+    key = cache_key_for_user('metas:realizado', {'ano': ano, 'mes': mes, 'sup': _sup_cache_key(supervisores)})
+    cached = _cache_get(key)
+    if cached:
+        return cached
+
+    hoje = _date.today()
+    corrente = (ano == hoje.year and mes == hoje.month)
+
+    rb_pedc = _metas_rbac_frag('PCPEDC', escopo)   # 'PCPEDC[CODUSUR] IN {...}' ou ''
+    rb_pedi = _metas_rbac_frag('PCPEDI', escopo)
+    fp_pedc = f"MONTH(PCPEDC[DATA])={mes} && YEAR(PCPEDC[DATA])={ano}"
+    fp_pedi = f"MONTH(PCPEDI[DATA])={mes} && YEAR(PCPEDI[DATA])={ano}"
+    pos = 'PCPEDC[POSICAO] IN {"F","L","B"}'  # pedidos válidos (clientes)
+
+    f_cli = _and_dax(fp_pedc, pos, rb_pedc)   # clientes distinct
+    f_mix = _and_dax(fp_pedi, rb_pedi)        # mix distinct
+    # Filtro de escopo p/ as MEDIDAS oficiais (restringe os pedidos do usuário). Vazio = admin.
+    filtro_med = f"FILTER(PCPEDC, {rb_pedc}), " if rb_pedc else ""
+
+    # Expressões de venda/rentabilidade. Mês corrente → medidas oficiais (exato).
+    # Mês fechado → reconstrução por VLATEND(F,L) (o BI mostra 0 pra passado; é ganho).
+    if corrente:
+        venda_expr  = '[Realizado Sem Bonus]'
+        rentab_expr = '[MARGEM META(%)]'
+        proj_expr   = '[Projecao]'  # projeção oficial (bruta×dias) — bate com o BI
+        venda_tot  = (f'CALCULATE([Realizado Sem Bonus], FILTER(PCPEDC, {rb_pedc}))' if rb_pedc
+                      else '[Realizado Sem Bonus]')
+        rentab_tot = (f'CALCULATE([MARGEM META(%)], FILTER(PCPEDC, {rb_pedc}))' if rb_pedc
+                      else '[MARGEM META(%)]')
+        proj_tot   = (f'CALCULATE([Projecao], FILTER(PCPEDC, {rb_pedc}))' if rb_pedc else '[Projecao]')
+    else:
+        f_fl = _and_dax(fp_pedc, 'PCPEDC[POSICAO] IN {"F","L"}', rb_pedc)
+        venda_expr  = f'CALCULATE(SUM(PCPEDC[VLATEND]), FILTER(PCPEDC, {f_fl}))'
+        rentab_expr = f'CALCULATE(SUM(PCPEDC[VLATEND]) - SUM(PCPEDC[VLCUSTOFIN]), FILTER(PCPEDC, {f_fl}))'
+        proj_expr   = 'BLANK()'  # mês fechado → projeção recalculada em Python (run-rate)
+        venda_tot, rentab_tot, proj_tot = venda_expr, rentab_expr, 'BLANK()'
+
+    # cli/mix distinct: medidas dão DISTINCTCOUNT direto; rentab/venda via medidas/recon.
+    cli_expr = f'CALCULATE(DISTINCTCOUNT(PCPEDC[CODCLI]), FILTER(PCPEDC, {f_cli}))'
+    mix_expr = f'CALCULATE(DISTINCTCOUNT(PCPEDI[CODPROD]), FILTER(PCPEDI, {f_mix}))'
+
+    queries = {
+        # tudo por supervisor (transação), num só passe — bate com o BI
+        'por_sup': (f'EVALUATE SUMMARIZECOLUMNS(PCSUPERV[CODSUPERVISOR], PCSUPERV[NOME], {filtro_med}'
+                    f'"venda", {venda_expr}, "rentab", {rentab_expr}, "proj", {proj_expr}, '
+                    f'"cli", {cli_expr}, "mix", {mix_expr})'),
+        # totais escalares (distinct verdadeiro + medidas)
+        'totais': (f'EVALUATE ROW("venda", {venda_tot}, "rentab", {rentab_tot}, "proj", {proj_tot}, '
+                   f'"cli", {cli_expr}, "mix", {mix_expr})'),
+        # drill por vendedor
+        'vr_usur':  (f'EVALUATE SUMMARIZECOLUMNS(PCUSUARI[CODUSUR], {filtro_med}'
+                     f'"venda", {venda_expr}, "rentab", {rentab_expr}, "proj", {proj_expr})') if corrente else
+                    (f'EVALUATE SUMMARIZECOLUMNS(PCPEDC[CODUSUR], '
+                     f'"venda", {venda_expr}, "rentab", {rentab_expr})'),
+        'cli_usur': f'EVALUATE SUMMARIZECOLUMNS(PCPEDC[CODUSUR], "v", {cli_expr})',
+        'mix_usur': f'EVALUATE SUMMARIZECOLUMNS(PCPEDI[CODUSUR], "v", {mix_expr})',
+    }
+
+    res = run_dax_meta_paralelo(queries)
+
+    def _mapa(nome, chave_grupo):
+        out = {}
+        for r in clean_rows(_todas_linhas(res[nome])):
+            cod = r.get(chave_grupo)
+            if cod is None:
+                continue
+            out[str(int(cod))] = r
+        return out
+
+    # por supervisor (realizado das 4 métricas). 'proj_venda' = projeção oficial da venda (mês corrente).
+    por_supervisor = {}
+    for cod, r in _mapa('por_sup', 'CODSUPERVISOR').items():
+        por_supervisor[cod] = {
+            'nome': r.get('NOME') or f'Time {cod}',
+            'venda': r.get('venda') or 0, 'rentabilidade': r.get('rentab') or 0,
+            'clientes': r.get('cli') or 0, 'mix': r.get('mix') or 0,
+            'proj_venda': r.get('proj'),
+        }
+
+    # por vendedor (drill)
+    por_vendedor = {}
+    for cod, r in _mapa('vr_usur', 'CODUSUR').items():
+        por_vendedor[cod] = {'venda': r.get('venda') or 0, 'rentabilidade': r.get('rentab') or 0,
+                             'clientes': 0, 'mix': 0, 'proj_venda': r.get('proj')}
+    for cod, r in _mapa('cli_usur', 'CODUSUR').items():
+        por_vendedor.setdefault(cod, {'venda': 0, 'rentabilidade': 0, 'clientes': 0, 'mix': 0})
+        por_vendedor[cod]['clientes'] = r.get('v') or 0
+    for cod, r in _mapa('mix_usur', 'CODUSUR').items():
+        por_vendedor.setdefault(cod, {'venda': 0, 'rentabilidade': 0, 'clientes': 0, 'mix': 0})
+        por_vendedor[cod]['mix'] = r.get('v') or 0
+
+    tot = _primeira_linha(res['totais'])
+    out = {
+        'dias': _carregar_dias_uteis_meta(ano, mes),
+        'por_supervisor': por_supervisor,
+        'por_vendedor': por_vendedor,
+        'total': {
+            'venda': tot.get('[venda]') or 0, 'rentabilidade': tot.get('[rentab]') or 0,
+            'clientes': tot.get('[cli]') or 0, 'mix': tot.get('[mix]') or 0,
+            'proj_venda': tot.get('[proj]'),
+        },
+    }
+    _cache_set(key, out, 'dax_agregado')
+    return out
+
+
+# ── Persistência da meta (Postgres) ──
+def _metas_buscar(ano, mes):
+    """Retorna {codusur_str: {valor_meta, clientes_meta, mix_meta, rentabilidade_meta}} do mês."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT codusur, valor_meta, clientes_meta, mix_meta, rentabilidade_meta "
+        "FROM multpel_metas WHERE ano = %s AND mes = %s",
+        (int(ano), int(mes))
+    )
+    out = {}
+    for r in cur.fetchall():
+        out[str(int(r[0]))] = {
+            'valor_meta':         float(r[1] or 0),
+            'clientes_meta':      int(r[2] or 0),
+            'mix_meta':           int(r[3] or 0),
+            'rentabilidade_meta': float(r[4] or 0),
+        }
+    cur.close()
+    conn.close()
+    return out
+
+
+def _metas_upsert(ano, mes, codusur, valores, user_id=None):
+    """Insere/atualiza a meta de um vendedor no mês (ON CONFLICT)."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        """INSERT INTO multpel_metas
+             (ano, mes, codusur, valor_meta, clientes_meta, mix_meta, rentabilidade_meta, atualizado_em, atualizado_por)
+           VALUES (%s,%s,%s,%s,%s,%s,%s, NOW(), %s)
+           ON CONFLICT (ano, mes, codusur) DO UPDATE SET
+             valor_meta = EXCLUDED.valor_meta,
+             clientes_meta = EXCLUDED.clientes_meta,
+             mix_meta = EXCLUDED.mix_meta,
+             rentabilidade_meta = EXCLUDED.rentabilidade_meta,
+             atualizado_em = NOW(), atualizado_por = EXCLUDED.atualizado_por""",
+        (int(ano), int(mes), int(codusur),
+         float(valores.get('valor_meta') or 0), int(valores.get('clientes_meta') or 0),
+         int(valores.get('mix_meta') or 0), float(valores.get('rentabilidade_meta') or 0), user_id)
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def _montar_metas_resposta(ano, mes, supervisores):
+    """Costura meta (Postgres) + realizado (dataset) → linhas por supervisor + total, 4 métricas.
+    Realizado por supervisor vem medido por transação (DAX, bate com o BI). A meta (por vendedor)
+    rola ao supervisor pelo CADASTRO (vendedores_map). Total realizado = escalar distinto."""
+    escopo = _metas_escopo_codusur(supervisores)
+    realizado = _carregar_metas_realizado(ano, mes, supervisores)
+    metas_db = _metas_buscar(ano, mes)
+    vmap = _carregar_vendedores_map()
+    dias = realizado['dias']
+    dm, dd, dr = dias['mes'], dias['decorridos'], dias['restantes']
+
+    def _no_escopo(codusur):
+        return escopo is None or int(codusur) in escopo
+
+    # Meta somada por supervisor (cadastro do vendedor), só os no escopo
+    meta_sup = {}  # codsup_str → {'valor','rentab','cli','mix'}
+    for cu, info in vmap.items():
+        if not _no_escopo(cu) or info.get('codsupervisor') is None:
+            continue
+        cs = str(int(info['codsupervisor']))
+        m = metas_db.get(cu, {})
+        d = meta_sup.setdefault(cs, {'valor': 0, 'rentab': 0, 'cli': 0, 'mix': 0})
+        d['valor']  += m.get('valor_meta') or 0
+        d['rentab'] += m.get('rentabilidade_meta') or 0
+        d['cli']    += m.get('clientes_meta') or 0
+        d['mix']    += m.get('mix_meta') or 0
+
+    rsup = realizado['por_supervisor']
+    codsups = set(rsup) | set(meta_sup)
+    supervisores_out = []
+    for cs in codsups:
+        rz = rsup.get(cs, {'venda': 0, 'rentabilidade': 0, 'clientes': 0, 'mix': 0})
+        mt = meta_sup.get(cs, {'valor': 0, 'rentab': 0, 'cli': 0, 'mix': 0})
+        # esconde supervisor totalmente vazio (sem meta e sem realizado)
+        if (mt['valor'] == 0 and mt['cli'] == 0 and mt['mix'] == 0 and mt['rentab'] == 0
+                and rz['venda'] == 0 and rz['clientes'] == 0 and rz['mix'] == 0):
+            continue
+        nome = rz.get('nome') or (_carregar_supervisores_map().get(cs) or {}).get('nome') or f'Time {cs}'
+        supervisores_out.append({
+            'codsupervisor': int(cs), 'nome': nome,
+            'venda':         metas.linha_metrica(mt['valor'],  rz['venda'],         dm, dd, dr, rz.get('proj_venda')),
+            'rentabilidade': metas.linha_metrica(mt['rentab'], rz['rentabilidade'], dm, dd, dr),
+            'clientes':      metas.linha_metrica(mt['cli'],    rz['clientes'],      dm, dd, dr),
+            'mix':           metas.linha_metrica(mt['mix'],    rz['mix'],           dm, dd, dr),
+        })
+    supervisores_out.sort(key=lambda s: s['venda']['realizado'], reverse=True)
+
+    # Totais: realizado = escalar distinto/medida; meta = soma de todas as metas no escopo
+    rt = realizado['total']
+    meta_valor_t  = sum(d['valor']  for d in meta_sup.values())
+    meta_rentab_t = sum(d['rentab'] for d in meta_sup.values())
+    meta_cli_t    = sum(d['cli']    for d in meta_sup.values())
+    meta_mix_t    = sum(d['mix']    for d in meta_sup.values())
+    total = {
+        'venda':         metas.linha_metrica(meta_valor_t,  rt['venda'],         dm, dd, dr, rt.get('proj_venda')),
+        'rentabilidade': metas.linha_metrica(meta_rentab_t, rt['rentabilidade'], dm, dd, dr),
+        'clientes':      metas.linha_metrica(meta_cli_t,    rt['clientes'],      dm, dd, dr),
+        'mix':           metas.linha_metrica(meta_mix_t,    rt['mix'],           dm, dd, dr),
+    }
+    return {'ok': True, 'ano': int(ano), 'mes': int(mes), 'dias': dias,
+            'supervisores': supervisores_out, 'total': total}
+
+
+def _ano_mes_req():
+    """Lê ?ano=&mes= dos args; default = mês corrente."""
+    from datetime import date as _date
+    hoje = _date.today()
+    try:
+        ano = int(request.args.get('ano') or hoje.year)
+        mes = int(request.args.get('mes') or hoje.month)
+    except (TypeError, ValueError):
+        ano, mes = hoje.year, hoje.month
+    if not (1 <= mes <= 12):
+        mes = hoje.month
+    return ano, mes
+
+
+@app.route('/metas')
+@login_required
+def metas_page():
+    return send_from_directory('.', 'metas.html')
+
+
+@app.route('/api/metas')
+@login_required
+def api_metas():
+    ano, mes = _ano_mes_req()
+    sup = _supervisores_filtro()
+    try:
+        return jsonify(_montar_metas_resposta(ano, mes, sup))
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'ok': False, 'error': f'Falha ao carregar metas: {e}'}), 500
+
+
+@app.route('/api/metas/vendedores')
+@login_required
+def api_metas_vendedores():
+    """Drill: vendedores de um supervisor, com as 4 métricas (meta+realizado)."""
+    ano, mes = _ano_mes_req()
+    try:
+        codsup = int(request.args.get('codsupervisor'))
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'codsupervisor obrigatório'}), 400
+    sup = _supervisores_filtro()
+    # Segurança: supervisor logado só pode abrir suas áreas
+    sess_sups = _session_supervisores()
+    if sess_sups and codsup not in sess_sups:
+        return jsonify({'ok': False, 'error': 'Fora do escopo'}), 403
+
+    realizado = _carregar_metas_realizado(ano, mes, sup)
+    metas_db = _metas_buscar(ano, mes)
+    vmap = _carregar_vendedores_map()
+    dias = realizado['dias']
+    dm, dd, dr = dias['mes'], dias['decorridos'], dias['restantes']
+    escopo = _metas_escopo_codusur(sup)
+
+    linhas = []
+    for cu, info in vmap.items():
+        if info.get('codsupervisor') is None or int(info['codsupervisor']) != codsup:
+            continue
+        if escopo is not None and int(cu) not in escopo:
+            continue
+        m = metas_db.get(cu, {})
+        rz = realizado['por_vendedor'].get(cu, {})
+        linhas.append({
+            'codusur': int(cu), 'nome': info.get('nome') or f'RCA {cu}',
+            'venda':         metas.linha_metrica(m.get('valor_meta'),        rz.get('venda'),        dm, dd, dr, rz.get('proj_venda')),
+            'rentabilidade': metas.linha_metrica(m.get('rentabilidade_meta'),rz.get('rentabilidade'),dm, dd, dr),
+            'clientes':      metas.linha_metrica(m.get('clientes_meta'),     rz.get('clientes'),     dm, dd, dr),
+            'mix':           metas.linha_metrica(m.get('mix_meta'),          rz.get('mix'),          dm, dd, dr),
+        })
+    linhas.sort(key=lambda x: x['venda']['realizado'], reverse=True)
+    return jsonify({'ok': True, 'codsupervisor': codsup, 'dias': dias, 'vendedores': linhas})
+
+
+@app.route('/api/metas/serie')
+@login_required
+def api_metas_serie():
+    """Realizado diário (venda) do mês, pra gráfico de série. Só venda por simplicidade."""
+    ano, mes = _ano_mes_req()
+    sup = _supervisores_filtro()
+    escopo = _metas_escopo_codusur(sup)
+    rb = _metas_rbac_frag('PCPEDC', escopo)
+    f = _and_dax(f"MONTH(PCPEDC[DATA])={mes} && YEAR(PCPEDC[DATA])={ano}",
+                 'PCPEDC[POSICAO] IN {"F","L","B"}', rb)
+    key = cache_key_for_user('metas:serie', {'ano': ano, 'mes': mes, 'sup': _sup_cache_key(sup)})
+    cached = _cache_get(key)
+    if cached:
+        return jsonify(cached)
+    q = (f'EVALUATE SUMMARIZECOLUMNS(PCPEDC[DATA], '
+         f'"venda", CALCULATE(SUM(PCPEDC[VLATEND]), FILTER(PCPEDC, {f})))')
+    try:
+        rows = clean_rows(_todas_linhas(run_dax_meta(q)))
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'ok': False, 'error': str(e)}), 500
+    serie = []
+    for r in rows:
+        d = r.get('DATA')
+        if d:
+            serie.append({'data': str(d)[:10], 'venda': r.get('venda') or 0})
+    serie.sort(key=lambda x: x['data'])
+    resp = {'ok': True, 'ano': ano, 'mes': mes, 'serie': serie}
+    _cache_set(key, resp, 'dax_agregado')
+    return jsonify(resp)
+
+
+# ── Admin: edição de meta + sugestão + importação inicial ──
+@app.route('/api/admin/metas')
+@admin_required
+def api_admin_metas_list():
+    """Lista vendedores com meta (Postgres) + realizado do mês, pra tela de edição."""
+    ano, mes = _ano_mes_req()
+    incluir_todos = request.args.get('todos') == '1'
+    metas_db = _metas_buscar(ano, mes)
+    vmap = _carregar_vendedores_map()
+    realizado = _carregar_metas_realizado(ano, mes, None)
+    linhas = []
+    for cu, info in vmap.items():
+        m = metas_db.get(cu, {})
+        rz = realizado['por_vendedor'].get(cu, {})
+        tem_meta = any((m.get(k) or 0) for k in ('valor_meta', 'clientes_meta', 'mix_meta', 'rentabilidade_meta'))
+        venda_real = rz.get('venda') or 0
+        # por padrão só os relevantes (com meta OU com venda no mês); ?todos=1 traz a força toda
+        if not incluir_todos and not tem_meta and not venda_real:
+            continue
+        linhas.append({
+            'codusur': int(cu), 'nome': info.get('nome') or f'RCA {cu}',
+            'codsupervisor': info.get('codsupervisor'),
+            'valor_meta': m.get('valor_meta') or 0, 'clientes_meta': m.get('clientes_meta') or 0,
+            'mix_meta': m.get('mix_meta') or 0, 'rentabilidade_meta': m.get('rentabilidade_meta') or 0,
+            'venda_real': venda_real,
+        })
+    linhas.sort(key=lambda x: (-(x['venda_real'] or 0), x['nome']))
+    return jsonify({'ok': True, 'ano': ano, 'mes': mes, 'vendedores': linhas})
+
+
+@app.route('/api/admin/metas', methods=['POST'])
+@admin_required
+def api_admin_metas_save():
+    """Salva (upsert) a meta de 1 vendedor. Body: {ano,mes,codusur,valor_meta,clientes_meta,mix_meta,rentabilidade_meta}."""
+    data = request.get_json() or {}
+    try:
+        ano = int(data['ano']); mes = int(data['mes']); codusur = int(data['codusur'])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'ano, mes e codusur obrigatórios'}), 400
+    if not (1 <= mes <= 12):
+        return jsonify({'ok': False, 'error': 'mes inválido'}), 400
+    try:
+        _metas_upsert(ano, mes, codusur, data, user_id=session.get('user_id'))
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+    return jsonify({'ok': True})
+
+
+@app.route('/api/admin/metas/sugestao')
+@admin_required
+def api_admin_metas_sugestao():
+    """Sugere meta de um vendedor com base no histórico de pedidos (12 meses).
+    ?codusur=&ano=&mes=&metodo=ano_anterior|media_3m&crescimento=0.10"""
+    ano, mes = _ano_mes_req()
+    try:
+        codusur = int(request.args.get('codusur'))
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'codusur obrigatório'}), 400
+    metodo = request.args.get('metodo', 'media_3m')
+    try:
+        crescimento = float(request.args.get('crescimento') or 0)
+    except (TypeError, ValueError):
+        crescimento = 0.0
+
+    # Histórico vem do dataset RCA (faturamento) — o PCPEDC do dataset META só tem o mês corrente.
+    # A sugestão é um ponto de partida (faturamento ≈ proxy do alvo); o admin ajusta.
+    q = ('EVALUATE SUMMARIZECOLUMNS(CALENDARIO[AnoMes], '
+         f'FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[CODUSUR]={codusur}), '
+         '"venda", [VENDA LIQUIDA], "rentab", [LUCRO TOTAL], '
+         '"cli", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI]), '
+         '"mix", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODPROD]))')
+    try:
+        payload = retry_dax(execute_dax)(get_token_cached(), q)  # dataset RCA (default)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+    h_venda, h_rentab, h_cli, h_mix = {}, {}, {}, {}
+    for r in clean_rows(_todas_linhas(payload)):
+        am = r.get('AnoMes')
+        if am is None:
+            continue
+        am = int(am)
+        h_venda[am] = r.get('venda') or 0
+        h_rentab[am] = r.get('rentab') or 0
+        h_cli[am] = r.get('cli') or 0
+        h_mix[am] = r.get('mix') or 0
+
+    sug = {
+        'valor_meta':         metas.sugerir(h_venda,  ano, mes, metodo, crescimento),
+        'rentabilidade_meta': metas.sugerir(h_rentab, ano, mes, metodo, crescimento),
+        'clientes_meta':      metas.sugerir(h_cli,    ano, mes, metodo, crescimento),
+        'mix_meta':           metas.sugerir(h_mix,    ano, mes, metodo, crescimento),
+    }
+    # arredonda contagens
+    for k in ('clientes_meta', 'mix_meta'):
+        if sug[k] is not None:
+            sug[k] = int(round(sug[k]))
+    return jsonify({'ok': True, 'codusur': codusur, 'metodo': metodo, 'sugestao': sug})
+
+
+@app.route('/api/admin/metas/importar', methods=['POST'])
+@admin_required
+def api_admin_metas_importar():
+    """Semeia multpel_metas lendo a tabela META do dataset (pra o diretor não redigitar).
+    Padrão: importa o mês corrente. ?todos=1 importa TODOS os meses presentes na tabela META
+    (ideal no 1º deploy — traz tudo que o diretor já cadastrou, de uma vez)."""
+    if request.args.get('todos') == '1':
+        q = "EVALUATE 'META'"  # tabela inteira (todos os meses)
+    else:
+        ano, mes = _ano_mes_req()
+        q = f"EVALUATE FILTER('META', 'META'[Ano]={ano} && 'META'[MES]={mes})"
+    try:
+        rows = clean_rows(_todas_linhas(run_dax_meta(q)))
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+    n = 0
+    meses = set()
+    for r in rows:
+        cod = r.get('CODUSUR')
+        r_ano = r.get('ANO') if r.get('ANO') is not None else r.get('Ano')
+        r_mes = r.get('MES') if r.get('MES') is not None else r.get('Mes')
+        if cod is None or r_ano is None or r_mes is None:
+            continue
+        try:
+            codusur, r_ano, r_mes = int(cod), int(r_ano), int(r_mes)
+        except (TypeError, ValueError):
+            continue
+        _metas_upsert(r_ano, r_mes, codusur, {
+            'valor_meta':         r.get('VALOR_META') or 0,
+            'clientes_meta':      r.get('CLIENTES_META') or 0,
+            'mix_meta':           r.get('MIX_META') or 0,
+            'rentabilidade_meta': r.get('RENTABILIDADE') or 0,
+        }, user_id=session.get('user_id'))
+        n += 1
+        meses.add(f'{r_ano}-{r_mes:02d}')
+    return jsonify({'ok': True, 'importados': n, 'meses': sorted(meses)})
+
+
+def _prewarm_metas():
+    """Esquenta o realizado de metas do mês corrente (escopo admin). Sem request context →
+    simula sessão admin pra session.get() do RBAC/cache_key funcionar."""
+    from datetime import date as _date
+    hoje = _date.today()
+    with app.test_request_context():
+        session['role'] = 'admin'
+        _carregar_metas_realizado(hoje.year, hoje.month, None)
+
+
 def _prewarm_cache_admin():
     """Roda em thread separada após startup. Esquenta cache de admin pras 2 queries pesadas
     (sazonalidade 24m + ranking vendedores). Aguarda Redis estar UP antes (sem ele cache_set
@@ -5100,6 +5669,7 @@ def _prewarm_cache_admin():
             ('_prewarm:vendedores',           lambda: _carregar_ranking_vendedores(role='admin')),
             ('_prewarm:venda_mensal_cli',     lambda: _carregar_venda_mensal_por_cliente(role='admin')),
             ('_prewarm:devolucao_mensal_cli', lambda: _carregar_devolucao_mensal_por_cliente(role='admin')),
+            ('_prewarm:metas',                _prewarm_metas),
         ]
         for rota, fn in tarefas:
             t0 = time.time()
