@@ -116,7 +116,9 @@
     <div class="ff"><label>Ano</label><select id="fAno"></select></div>
     <div class="ff"><label>Mês</label><select id="fMes"></select></div>
     <div class="ff" id="ffSup"><label>Supervisor</label>
-      <input list="dlSup" id="fSup" placeholder="Todos"><datalist id="dlSup"></datalist>
+      <input list="dlSup" id="fSup" placeholder="Todos (clique p/ adicionar)" autocomplete="off">
+      <datalist id="dlSup"></datalist>
+      <div id="supChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;"></div>
     </div>
     <div class="ff"><label>&nbsp;</label><button class="btn-sm" onclick="carregar(true)">Atualizar</button></div>
     <div class="ff hidden" id="adminBtns"><label>&nbsp;</label>
@@ -150,7 +152,7 @@
     <div class="secao-titulo">Por supervisor <span style="font-weight:400;font-size:.78rem;">(clique pra ver os vendedores)</span></div>
     <div style="overflow-x:auto;">
       <table id="tabela">
-        <thead><tr>
+        <thead><tr id="theadRow">
           <th>Supervisor</th><th>Meta</th><th>Realizado</th><th>%</th>
           <th>Falta</th><th>Falta/dia</th><th>Projeção</th><th>% Proj.</th>
         </tr></thead>
@@ -235,13 +237,34 @@ function renderTabs() {
 }
 function trocarMetrica(id) { _metrica = id; renderTabs(); renderTudo(); }
 
+let _supsSel = [];  // multi-supervisor: [{cod, nome}]
+function renderSupChips() {
+  document.getElementById('supChips').innerHTML = _supsSel.map(s =>
+    `<span class="badge b-green" style="cursor:pointer;background:rgba(56,189,248,.15);color:var(--accent);"
+       title="Remover" onclick="removeSup('${s.cod}')">${s.nome} ✕</span>`).join('');
+}
+function removeSup(cod) {
+  _supsSel = _supsSel.filter(s => s.cod !== String(cod));
+  renderSupChips();
+  carregar(true);
+}
+function addSupFromInput() {
+  const inp = document.getElementById('fSup');
+  const mt = inp.value.trim().match(/^(.*)\((\d+)\)\s*$/);
+  inp.value = '';
+  if (!mt) return;
+  const cod = mt[2], nome = (mt[1] || '').trim() || ('Time ' + cod);
+  if (_supsSel.some(s => s.cod === cod)) return;
+  _supsSel.push({ cod, nome });
+  renderSupChips();
+  carregar(true);
+}
+
 function getParams() {
   const p = new URLSearchParams();
   p.set('ano', document.getElementById('fAno').value);
   p.set('mes', document.getElementById('fMes').value);
-  const sup = document.getElementById('fSup').value.trim();
-  const cod = (sup.match(/\((\d+)\)\s*$/) || [])[1];
-  if (cod) p.set('supervisor', cod);
+  if (_supsSel.length) p.set('supervisor', _supsSel.map(s => s.cod).join(','));
   return p;
 }
 
@@ -305,6 +328,9 @@ function renderKpis(t) {
     ['Necessidade/dia', fmt(m, t.necessidade_dia), (_dados.dias.restantes || 0) + ' dias restantes'],
     ['% Atingido', PCT(t.pct_realizado), ''],
   ];
+  if (m === 'rentabilidade') {
+    kpis.push(['% Margem', PCT(_dados.total.margem), 'lucro bruto ÷ receita']);
+  }
   document.getElementById('kpis').innerHTML = kpis.map(k =>
     `<div class="kpi"><div class="k-lbl">${k[0]}</div><div class="k-val">${k[1]}</div><div class="k-sub">${k[2]}</div></div>`).join('');
 }
@@ -338,20 +364,29 @@ function linhaCols(metricaId, l) {
 
 function renderTabela() {
   const m = _metrica;
+  const showMargem = (m === 'rentabilidade');
+  const mc = (v) => showMargem ? `<td class="mono">${PCT(v)}</td>` : '';
+  // cabeçalho (coluna % Margem só na aba Rentabilidade)
+  document.getElementById('theadRow').innerHTML =
+    `<th>Supervisor</th><th>Meta</th><th>Realizado</th><th>%</th>` +
+    `<th>Falta</th><th>Falta/dia</th><th>Projeção</th><th>% Proj.</th>` +
+    (showMargem ? `<th>% Margem</th>` : ``);
   let html = '';
   for (const s of _dados.supervisores) {
     const l = s[m];
     const aberto = _abertos[s.codsupervisor];
     html += `<tr class="sup" onclick="toggleDrill(${s.codsupervisor})">
-      <td><span class="caret">${aberto ? '▾' : '▸'}</span>${s.nome}</td>${linhaCols(m, l)}</tr>`;
+      <td><span class="caret">${aberto ? '▾' : '▸'}</span>${s.nome}</td>${linhaCols(m, l)}${mc(s.margem)}</tr>`;
     if (aberto) {
       for (const v of aberto) {
-        html += `<tr class="vend"><td>${v.nome}</td>${linhaCols(m, v[m])}</tr>`;
+        const lv = v[m] || {};
+        if (!(lv.meta || 0) && !(lv.realizado || 0)) continue;  // vendedor zerado → não traz
+        html += `<tr class="vend"><td>${v.nome}</td>${linhaCols(m, lv)}${mc(v.margem)}</tr>`;
       }
     }
   }
   const t = _dados.total[m];
-  html += `<tr class="total"><td>TOTAL</td>${linhaCols(m, t)}</tr>`;
+  html += `<tr class="total"><td>TOTAL</td>${linhaCols(m, t)}${mc(_dados.total.margem)}</tr>`;
   document.getElementById('tbody').innerHTML = html;
 }
 
@@ -471,6 +506,7 @@ async function init() {
     if (me.role === 'vendedor') { document.getElementById('linkVendedores').style.display = 'none'; }
     if (me.role !== 'admin' && me.role !== 'viewer') document.getElementById('ffSup').classList.add('hidden');
     else {
+      document.getElementById('fSup').addEventListener('change', addSupFromInput);
       try {
         const sm = await fetchJSON('/api/_internal/supervisores-map');
         const dl = document.getElementById('dlSup');

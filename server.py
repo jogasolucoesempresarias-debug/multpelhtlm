@@ -5334,10 +5334,30 @@ def _montar_metas_resposta(ano, mes, supervisores):
     """Costura meta (Postgres) + realizado (dataset) → linhas por supervisor + total, 4 métricas.
     Realizado por supervisor vem medido por transação (DAX, bate com o BI). A meta (por vendedor)
     rola ao supervisor pelo CADASTRO (vendedores_map). Total realizado = escalar distinto."""
-    escopo = _metas_escopo_codusur(supervisores)
-    realizado = _carregar_metas_realizado(ano, mes, supervisores)
     metas_db = _metas_buscar(ano, mes)
     vmap = _carregar_vendedores_map()
+
+    # Universo de meta: supervisores com >=1 vendedor com meta cadastrada. Alinha com o BI —
+    # times sem meta (ex.: DIRETORIA, E COMMERCE MARTINS) NÃO entram no painel nem no total.
+    # Sem nenhuma meta no mês → fallback mostra tudo (não esconde o realizado).
+    sups_com_meta = set()
+    for cu, info in vmap.items():
+        cs = info.get('codsupervisor')
+        if cs is None:
+            continue
+        m = metas_db.get(cu, {})
+        if any((m.get(k) or 0) for k in ('valor_meta', 'clientes_meta', 'mix_meta', 'rentabilidade_meta')):
+            sups_com_meta.add(int(cs))
+
+    # Escopa o realizado ao universo de meta (intersecta com ?supervisor do admin/viewer).
+    # Escopar via DAX faz per-supervisor, totais E os DISTINCT (clientes/mix) baterem com o BI.
+    if supervisores:
+        sups_efetivos = sorted(set(int(s) for s in supervisores) & sups_com_meta)
+    else:
+        sups_efetivos = sorted(sups_com_meta)
+    escopo_arg = sups_efetivos if sups_efetivos else supervisores
+    realizado = _carregar_metas_realizado(ano, mes, escopo_arg)
+    escopo = _metas_escopo_codusur(escopo_arg)
     dias = realizado['dias']
     dm, dd, dr = dias['mes'], dias['decorridos'], dias['restantes']
 
@@ -5359,6 +5379,8 @@ def _montar_metas_resposta(ano, mes, supervisores):
 
     rsup = realizado['por_supervisor']
     codsups = set(rsup) | set(meta_sup)
+    if sups_com_meta:  # restringe ao universo de meta (descarta times sem meta, alinha BI)
+        codsups = {cs for cs in codsups if int(cs) in sups_com_meta}
     supervisores_out = []
     for cs in codsups:
         rz = rsup.get(cs, {'venda': 0, 'rentabilidade': 0, 'clientes': 0, 'mix': 0})
@@ -5374,6 +5396,8 @@ def _montar_metas_resposta(ano, mes, supervisores):
             'rentabilidade': metas.linha_metrica(mt['rentab'], rz['rentabilidade'], dm, dd, dr),
             'clientes':      metas.linha_metrica(mt['cli'],    rz['clientes'],      dm, dd, dr),
             'mix':           metas.linha_metrica(mt['mix'],    rz['mix'],           dm, dd, dr),
+            # Margem de lucro bruto realizada = lucro realizado / receita realizada (pedido do diretor)
+            'margem':        metas.pct(rz['rentabilidade'], rz['venda']),
         })
     supervisores_out.sort(key=lambda s: s['venda']['realizado'], reverse=True)
 
@@ -5388,6 +5412,8 @@ def _montar_metas_resposta(ano, mes, supervisores):
         'rentabilidade': metas.linha_metrica(meta_rentab_t, rt['rentabilidade'], dm, dd, dr),
         'clientes':      metas.linha_metrica(meta_cli_t,    rt['clientes'],      dm, dd, dr),
         'mix':           metas.linha_metrica(meta_mix_t,    rt['mix'],           dm, dd, dr),
+        # Margem de lucro bruto realizada do total = lucro realizado / receita realizada
+        'margem':        metas.pct(rt['rentabilidade'], rt['venda']),
     }
     return {'ok': True, 'ano': int(ano), 'mes': int(mes), 'dias': dias,
             'supervisores': supervisores_out, 'total': total}
@@ -5455,12 +5481,18 @@ def api_metas_vendedores():
             continue
         m = metas_db.get(cu, {})
         rz = realizado['por_vendedor'].get(cu, {})
+        # Não trazer vendedor zerado: sem meta em nenhuma métrica E sem realizado em nenhuma.
+        tem_meta = any((m.get(k) or 0) for k in ('valor_meta', 'clientes_meta', 'mix_meta', 'rentabilidade_meta'))
+        tem_real = any((rz.get(k) or 0) for k in ('venda', 'rentabilidade', 'clientes', 'mix'))
+        if not tem_meta and not tem_real:
+            continue
         linhas.append({
             'codusur': int(cu), 'nome': info.get('nome') or f'RCA {cu}',
             'venda':         metas.linha_metrica(m.get('valor_meta'),        rz.get('venda'),        dm, dd, dr, rz.get('proj_venda')),
             'rentabilidade': metas.linha_metrica(m.get('rentabilidade_meta'),rz.get('rentabilidade'),dm, dd, dr),
             'clientes':      metas.linha_metrica(m.get('clientes_meta'),     rz.get('clientes'),     dm, dd, dr),
             'mix':           metas.linha_metrica(m.get('mix_meta'),          rz.get('mix'),          dm, dd, dr),
+            'margem':        metas.pct(rz.get('rentabilidade'), rz.get('venda')),
         })
     linhas.sort(key=lambda x: x['venda']['realizado'], reverse=True)
     return jsonify({'ok': True, 'codsupervisor': codsup, 'dias': dias, 'vendedores': linhas})
@@ -5643,7 +5675,8 @@ def _prewarm_metas():
     hoje = _date.today()
     with app.test_request_context():
         session['role'] = 'admin'
-        _carregar_metas_realizado(hoje.year, hoje.month, None)
+        # Aquece o cache JÁ escopado ao universo de meta (mesmo caminho do /api/metas)
+        _montar_metas_resposta(hoje.year, hoje.month, None)
 
 
 def _prewarm_cache_admin():
