@@ -211,6 +211,9 @@
   .pp-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 13px 15px; }
   .pp-card .l { font-size: 0.68rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
   .pp-card .v { font-size: 1.45rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+  .pp-card.pp-click { cursor: pointer; transition: border-color .15s, transform .08s; }
+  .pp-card.pp-click:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .pp-card.pp-active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
   .b-champions { background: rgba(52,211,153,0.15); color: var(--green); }
   .b-loyal     { background: rgba(56,189,248,0.15); color: var(--accent); }
   .b-at_risk   { background: rgba(251,191,36,0.15); color: var(--yellow); }
@@ -1106,23 +1109,36 @@ async function carregarProximo() {
   }
 }
 function renderPpCards(c) {
+  const jan = document.getElementById('ppJanela').value;
   const cards = [
-    { l: 'A contatar (vencidos)', v: NUM.format(c.vencidos || 0), cor: 'var(--accent)' },
-    { l: 'Vencem hoje', v: NUM.format(c.hoje || 0), cor: 'var(--orange)' },
-    { l: 'Atrasados', v: NUM.format(c.atrasados || 0), cor: 'var(--red)' },
+    { l: 'A contatar (vencidos)', v: NUM.format(c.vencidos || 0), cor: 'var(--accent)', jan: 'vencidos' },
+    { l: 'Vencem hoje', v: NUM.format(c.hoje || 0), cor: 'var(--orange)', jan: 'hoje' },
+    { l: 'Atrasados', v: NUM.format(c.atrasados || 0), cor: 'var(--red)', jan: 'atrasados' },
     { l: 'Receita em risco', v: BRL.format(c.receita_risco || 0), cor: 'var(--green)' },
   ];
-  let html = cards.map(k =>
-    `<div class="pp-card"><div class="l">${k.l}</div><div class="v" style="color:${k.cor};">${k.v}</div></div>`).join('');
+  let html = cards.map(k => {
+    const cls = k.jan ? ('pp-card pp-click' + (k.jan === jan ? ' pp-active' : '')) : 'pp-card';
+    const onclick = k.jan ? `onclick="filtrarCard('${k.jan}')"` : '';
+    return `<div class="${cls}" ${onclick}><div class="l">${k.l}</div><div class="v" style="color:${k.cor};">${k.v}</div></div>`;
+  }).join('');
   const op = c.maior_oportunidade;
   if (op) {
-    html += `<div class="pp-card" style="grid-column:span 2;">
+    html += `<div class="pp-card pp-click" style="grid-column:span 2;" title="Ver este cliente" onclick="irParaCliente(${op.codcli})">
       <div class="l">🎯 Maior oportunidade</div>
       <div class="v" style="font-size:1rem;line-height:1.2;">${op.cliente || ('#' + op.codcli)}</div>
       <div style="font-size:.78rem;color:var(--green);font-family:'JetBrains Mono',monospace;margin-top:2px;">${BRL.format(op.receita_risco || 0)} em risco</div>
     </div>`;
   }
   document.getElementById('ppCards').innerHTML = html;
+}
+function filtrarCard(janela) {
+  document.getElementById('ppJanela').value = janela;
+  carregarProximo();
+}
+function irParaCliente(codcli) {
+  document.getElementById('ppJanela').value = 'vencidos';  // garante que o cliente apareça
+  document.getElementById('ppBusca').value = String(codcli);
+  carregarProximo();
 }
 
 let _ppDeb;
