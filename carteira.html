@@ -214,6 +214,9 @@
   .pp-card.pp-click { cursor: pointer; transition: border-color .15s, transform .08s; }
   .pp-card.pp-click:hover { border-color: var(--accent); transform: translateY(-1px); }
   .pp-card.pp-active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .pp-st { padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.72rem; cursor: pointer; background: var(--surface2); color: var(--text-dim); user-select: none; }
+  .pp-st:hover { border-color: var(--accent); }
+  .pp-st.on { border-color: var(--accent); color: var(--accent); background: rgba(56,189,248,.12); }
   .b-champions { background: rgba(52,211,153,0.15); color: var(--green); }
   .b-loyal     { background: rgba(56,189,248,0.15); color: var(--accent); }
   .b-at_risk   { background: rgba(251,191,36,0.15); color: var(--yellow); }
@@ -484,6 +487,14 @@
         <div class="ff"><label>Buscar</label>
           <input id="ppBusca" placeholder="cliente, cidade, 12345" oninput="debouncedProximo()">
         </div>
+        <div class="ff"><label>Status</label>
+          <div id="ppStatusChips" style="display:flex;gap:5px;">
+            <span class="pp-st" data-s="ok"      onclick="toggleStatus('ok')">No prazo</span>
+            <span class="pp-st" data-s="normal"  onclick="toggleStatus('normal')">Normal</span>
+            <span class="pp-st" data-s="atencao" onclick="toggleStatus('atencao')">Atenção</span>
+            <span class="pp-st" data-s="urgente" onclick="toggleStatus('urgente')">Urgente</span>
+          </div>
+        </div>
         <button class="btn-sm" onclick="limparProximo()">Limpar</button>
         <button class="btn-export" onclick="exportarProximoCSV()" title="Baixar lista do dia (CSV)">⬇ CSV</button>
         <button class="btn-export" onclick="exportarProximoPDF()" title="Baixar lista do dia (PDF)" style="background:linear-gradient(135deg,#fb923c,#f87171);">📄 PDF</button>
@@ -494,8 +505,16 @@
         <div class="table-scroll">
           <table>
             <thead><tr>
-              <th></th><th>Cliente</th><th>Telefone</th><th>Últ. compra</th><th>Ciclo</th>
-              <th>Previsão</th><th>Atraso</th><th>Status</th><th>Venda 12m</th><th>Receita em risco</th>
+              <th></th>
+              <th class="sortable" data-sort="cliente"        onclick="ordenarProximo('cliente')">Cliente<span class="sort-ind">↕</span></th>
+              <th>Telefone</th>
+              <th class="sortable" data-sort="ultima_compra"  onclick="ordenarProximo('ultima_compra')">Últ. compra<span class="sort-ind">↕</span></th>
+              <th class="sortable" data-sort="ciclo"          onclick="ordenarProximo('ciclo')">Ciclo<span class="sort-ind">↕</span></th>
+              <th class="sortable" data-sort="proximo_pedido" onclick="ordenarProximo('proximo_pedido')">Previsão<span class="sort-ind">↕</span></th>
+              <th class="sortable" data-sort="atraso"         onclick="ordenarProximo('atraso')">Atraso<span class="sort-ind">↕</span></th>
+              <th class="sortable" data-sort="status"         onclick="ordenarProximo('status')">Status<span class="sort-ind">↕</span></th>
+              <th class="sortable" data-sort="venda_12m"      onclick="ordenarProximo('venda_12m')">Venda 12m<span class="sort-ind">↕</span></th>
+              <th class="sortable" data-sort="receita_perdida" onclick="ordenarProximo('receita_perdida')">Receita em risco<span class="sort-ind">↕</span></th>
             </tr></thead>
             <tbody id="ppBody"></tbody>
           </table>
@@ -1073,6 +1092,9 @@ function exportarPDF() { window.location.href = '/api/carteira/pdf?' + _paramsEx
 // ── Aba Próximo Pedido (lista do dia + produtos lazy) ───────────────
 let _ppCarregado = false;
 let _ppRows = [];
+let _ppSort = 'prioridade';
+let _ppDir = 'desc';
+let _ppStatus = new Set();
 function trocarAba(aba) {
   const geral = aba === 'geral';
   document.getElementById('abaGeral').classList.toggle('hidden', !geral);
@@ -1090,8 +1112,28 @@ function _ppParams() {
   if (t) p.set('time', t);
   if (v) p.set('vendedor', v);
   if (b) p.set('busca', b);
+  if (_ppStatus.size) p.set('status', [..._ppStatus].join(','));
+  p.set('sort', _ppSort);
+  p.set('dir', _ppDir);
   p.set('limit', '500');
   return p;
+}
+function ordenarProximo(k) {
+  if (_ppSort === k) _ppDir = (_ppDir === 'desc' ? 'asc' : 'desc');
+  else { _ppSort = k; _ppDir = 'desc'; }
+  carregarProximo();
+}
+function atualizarIndProximo() {
+  document.querySelectorAll('#abaProximo thead th.sortable').forEach(th => {
+    const ind = th.querySelector('.sort-ind');
+    if (!ind) return;
+    ind.textContent = (th.dataset.sort === _ppSort) ? (_ppDir === 'desc' ? '↓' : '↑') : '↕';
+  });
+}
+function toggleStatus(s) {
+  if (_ppStatus.has(s)) _ppStatus.delete(s); else _ppStatus.add(s);
+  document.querySelectorAll('#ppStatusChips .pp-st').forEach(el => el.classList.toggle('on', _ppStatus.has(el.dataset.s)));
+  carregarProximo();
 }
 async function carregarProximo() {
   const body = document.getElementById('ppBody');
@@ -1103,6 +1145,7 @@ async function carregarProximo() {
     document.getElementById('pp-resumo').textContent = '';
     document.getElementById('pp-total').textContent =
       `${r.total} cliente(s) na janela · mostrando ${_ppRows.length}`;
+    atualizarIndProximo();
     renderProximo();
   } catch (e) {
     body.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--red);padding:18px;">Erro: ${e.message || e}</td></tr>`;
@@ -1148,6 +1191,9 @@ function limparProximo() {
   document.getElementById('ppVend').value = '';
   document.getElementById('ppBusca').value = '';
   document.getElementById('ppJanela').value = 'vencidos';
+  _ppStatus.clear();
+  document.querySelectorAll('#ppStatusChips .pp-st').forEach(el => el.classList.remove('on'));
+  _ppSort = 'prioridade'; _ppDir = 'desc';
   carregarProximo();
 }
 function _statusBadge(s) {

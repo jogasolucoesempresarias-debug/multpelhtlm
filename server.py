@@ -2663,8 +2663,9 @@ def _filtrar_carteira(clientes, args, vendedor_forcado=None):
         'prioridade':      'prioridade_contato',  # aba Próximo Pedido (valor × atraso)
         'proximo_pedido':  'proximo_pedido_previsto',
         'atraso':          'dias_atraso',
+        'ciclo':           'ciclo_pessoal',
+        'ultima_compra':   'ultima_compra',
     }
-    sort_attr = sort_map.get(sort, 'lucro_perdido_proj')
     reverse = (direction == 'desc')
 
     def _sort_key(v):
@@ -2674,7 +2675,13 @@ def _filtrar_carteira(clientes, args, vendedor_forcado=None):
             return unicodedata.normalize('NFKD', v).encode('ascii', 'ignore').decode().casefold()
         return v or 0
 
-    filtrados = sorted(filtrados, key=lambda c: (c.get(sort_attr) is None, _sort_key(c.get(sort_attr))), reverse=reverse)
+    if sort == 'status':
+        # Severidade (não alfabético): ok < normal < atencao < urgente
+        _rank = {'ok': 0, 'normal': 1, 'atencao': 2, 'urgente': 3}
+        filtrados = sorted(filtrados, key=lambda c: _rank.get(c.get(status_key), -1), reverse=reverse)
+    else:
+        sort_attr = sort_map.get(sort, 'lucro_perdido_proj')
+        filtrados = sorted(filtrados, key=lambda c: (c.get(sort_attr) is None, _sort_key(c.get(sort_attr))), reverse=reverse)
 
     total = len(filtrados)
     # Conta segmentos do conjunto FILTRADO (antes de paginar) — alimenta cards + donut
