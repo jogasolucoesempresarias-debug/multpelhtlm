@@ -7,6 +7,7 @@ from rfm import (
     status_regua_fixa, status_regua_personalizada,
     lucro_perdido_projetado,
     receita_perdida_projetada,
+    proximo_pedido, prioridade_contato,
     quintis, quintil_de,
     segmento_canonico,
     calcular_clientes, agregar_distribuicoes, matriz_rf,
@@ -205,6 +206,60 @@ def test_agregar_distribuicoes_e_matriz():
     mat = matriz_rf(clientes)
     # Todas as células devem ter contagens consistentes
     assert sum(c['count'] for c in mat) == 10
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Tests da previsão de próximo pedido (aba Próximo Pedido)
+# ─────────────────────────────────────────────────────────────────────
+
+def test_proximo_pedido_soma_ciclo():
+    assert proximo_pedido('2026-06-01', 7) == '2026-06-08'
+    assert proximo_pedido('2026-06-25', 30) == '2026-07-25'
+
+
+def test_proximo_pedido_sem_ciclo_ou_data_none():
+    assert proximo_pedido('2026-06-01', None) is None   # sem ciclo → não prevê
+    assert proximo_pedido('2026-06-01', 0) is None
+    assert proximo_pedido(None, 7) is None
+    assert proximo_pedido('', 7) is None
+
+
+def test_prioridade_contato_vencido_vem_antes_de_dentro_do_ciclo():
+    # Dentro do ciclo (razão < 1) → 0; vencido → valor mensal × razão
+    assert prioridade_contato(12000, 5, 10) == 0.0            # razão 0.5 < 1
+    assert prioridade_contato(12000, 10, 10) == pytest.approx(1000.0)   # vence hoje: razão 1.0
+    assert prioridade_contato(12000, 20, 10) == pytest.approx(2000.0)   # 2× vencido
+
+
+def test_prioridade_contato_sem_ciclo_ou_sem_venda():
+    assert prioridade_contato(12000, 10, None) == 0.0
+    assert prioridade_contato(0, 10, 10) == 0.0
+    assert prioridade_contato(None, 10, 10) == 0.0
+
+
+def test_calcular_clientes_inclui_previsao_e_exclui_sem_ciclo():
+    snapshot = [
+        # cliente com ciclo (2 compras), vencido há 14d e ciclo 7 → previsão + atraso
+        {'CODCLI': 1, 'DiasSemComprar': 14, 'Compras12m': 6,
+         'Lucro12m': 1200, 'Venda12m': 6000, 'UltimaCompra': '2026-06-10'},
+        # cliente com 1 compra só → sem ciclo → previsão None, não previsível
+        {'CODCLI': 2, 'DiasSemComprar': 3, 'Compras12m': 1,
+         'Lucro12m': 100, 'Venda12m': 500, 'UltimaCompra': '2026-06-20'},
+    ]
+    datas = {1: ['2026-06-03', '2026-06-10'], 2: ['2026-06-20']}
+    meta = {i: {'cliente': f'C{i}', 'codusur1': 1} for i in (1, 2)}
+    out = {c['codcli']: c for c in calcular_clientes(snapshot, datas, meta)}
+    c1 = out[1]
+    assert c1['ciclo_pessoal'] == 7
+    assert c1['proximo_pedido_previsto'] == '2026-06-17'   # 2026-06-10 + 7
+    assert c1['dias_atraso'] == 7                           # 14 - 7
+    assert c1['vence_hoje'] is False
+    assert c1['prioridade_contato'] > 0                     # vencido → prioridade positiva
+    c2 = out[2]
+    assert c2['ciclo_pessoal'] is None
+    assert c2['proximo_pedido_previsto'] is None            # sem ciclo → fora da lista
+    assert c2['dias_atraso'] is None
+    assert c2['prioridade_contato'] == 0.0
 
 
 # ─────────────────────────────────────────────────────────────────────

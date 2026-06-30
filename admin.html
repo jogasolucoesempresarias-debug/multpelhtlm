@@ -212,6 +212,12 @@
       </div>
       <div class="ff">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" id="f_email_proximo_pedido" style="width:auto;">
+          Incluir "Lista do Dia" (Próximo Pedido) no email
+        </label>
+      </div>
+      <div class="ff">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
           <input type="checkbox" id="f_ativo" checked style="width:auto;">
           Usuário ativo (pode logar)
         </label>
@@ -518,6 +524,7 @@ function abrirNovo() {
   document.getElementById('f_codusur').value = '';
   document.getElementById('f_senha').value = '';
   document.getElementById('f_cron_enabled').checked = false;
+  document.getElementById('f_email_proximo_pedido').checked = false;
   document.getElementById('f_ativo').checked = true;
   document.getElementById('f_cron_horario').value = '08:00';
   document.getElementById('f_cron_frequencia').value = 'diaria';
@@ -544,6 +551,7 @@ function abrirEdicao(id) {
   document.getElementById('f_codusur').value = u.codusur ? nomeVendedor(u.codusur) : '';
   document.getElementById('f_senha').value = '';
   document.getElementById('f_cron_enabled').checked = !!u.cron_enabled;
+  document.getElementById('f_email_proximo_pedido').checked = !!u.email_proximo_pedido;
   document.getElementById('f_ativo').checked = !!u.ativo;
   document.getElementById('f_cron_horario').value = (u.cron_horario || '08:00').substring(0, 5);
   document.getElementById('f_cron_frequencia').value = u.cron_frequencia || 'diaria';
@@ -586,6 +594,7 @@ async function salvar() {
       codsupervisores,
       telefone: document.getElementById('f_telefone').value.trim(),
       cron_enabled: document.getElementById('f_cron_enabled').checked,
+      email_proximo_pedido: document.getElementById('f_email_proximo_pedido').checked,
       ativo: document.getElementById('f_ativo').checked,
       cron_horario: document.getElementById('f_cron_horario').value,
       cron_frequencia: document.getElementById('f_cron_frequencia').value,

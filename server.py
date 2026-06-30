@@ -556,7 +556,8 @@ def _ler_usuario(usuario_id):
     cur = conn.cursor()
     cur.execute(
         "SELECT id, nome, email, role, codusur, codsupervisor, telefone, ativo, "
-        "cron_enabled, cron_horario, cron_frequencia, email_cc, segmentos_rfm, codsupervisores "
+        "cron_enabled, cron_horario, cron_frequencia, email_cc, segmentos_rfm, codsupervisores, "
+        "email_proximo_pedido "
         "FROM multpel_users WHERE id = %s",
         (usuario_id,)
     )
@@ -574,6 +575,7 @@ def _ler_usuario(usuario_id):
         'email_cc': row[11] if row[11] is not None else [],
         'segmentos_rfm': row[12] or '',
         'codsupervisores': sups,
+        'email_proximo_pedido': bool(row[14]),
     }
 
 
@@ -653,6 +655,27 @@ def _gerar_relatorio_para_usuario(usuario):
             v, round(v / 12, 2), c.get('receita_perdida_proj'),
         ]).rstrip('\n'))
     csv_bytes = ('\n'.join(csv_lines) + '\n').encode('utf-8')
+
+    # Anexo extra opcional: "Lista do Dia" (Próximo Pedido) — clientes vencidos do escopo
+    # do usuário + top 5 produtos a oferecer. Escopado por vendedor/área = leve.
+    if usuario.get('email_proximo_pedido'):
+        due = _clientes_proximo_pedido(clientes, 'vencidos')
+        due.sort(key=lambda c: c.get('prioridade_contato') or 0, reverse=True)
+        due = due[:200]
+        prods = _top_produtos_varios([c['codcli'] for c in due], 5) if due else {}
+        pp_head = ['CodCli', 'Cliente', 'Cidade', 'UF', 'Vendedor', 'Telefone', 'UltimaCompra',
+                   'Ciclo', 'Previsao', 'DiasAtraso', 'Status', 'Venda12m', 'ReceitaEmRisco', 'Top5Produtos']
+        pp_lines = ['﻿' + _csv_linha(pp_head).rstrip('\n')]
+        for c in due:
+            tp = ' | '.join(p['descricao'] for p in prods.get(c['codcli'], []))
+            pp_lines.append(_csv_linha([
+                c.get('codcli'), c.get('cliente'), c.get('cidade'), c.get('uf'), c.get('vendedor'),
+                c.get('telefone'), c.get('ultima_compra'), c.get('ciclo_pessoal'),
+                c.get('proximo_pedido_previsto'), c.get('dias_atraso'), c.get('status_personalizada'),
+                c.get('venda_12m') or 0, c.get('receita_perdida_proj') or 0, tp,
+            ]).rstrip('\n'))
+        pp_bytes = ('\n'.join(pp_lines) + '\n').encode('utf-8')
+        pdfs.append((f"lista_do_dia_{_slug(nome_user)}_{data_iso}.csv", pp_bytes))
 
     return csv_bytes, pdfs, len(csv_rows)
 
@@ -1702,7 +1725,7 @@ SUMMARIZECOLUMNS(
 SUMMARIZECOLUMNS(
     PCCLIENT[CODCLI], PCCLIENT[CLIENTE], PCCLIENT[FANTASIA],
     PCCLIENT[MUNICENT], PCCLIENT[MUNICCOB], PCCLIENT[ESTENT],
-    PCCLIENT[TELCOB], PCCLIENT[TELENT],
+    PCCLIENT[TELCELENT], PCCLIENT[TELCOM], PCCLIENT[TELCOB], PCCLIENT[TELENT],
     PCCLIENT[CODUSUR1], PCCLIENT[BLOQUEIO]
 )""",
     }
@@ -1771,7 +1794,9 @@ SELECTCOLUMNS(
             'fantasia':  r.get('FANTASIA'),
             'cidade':    r.get('MUNICENT') or r.get('MUNICCOB'),
             'uf':        r.get('ESTENT'),
-            'telefone':  r.get('TELCOB') or r.get('TELENT'),
+            # Prefere celular (TELCELENT) p/ o vendedor ligar/WhatsApp; cai p/ comercial/
+            # cobrança/entrega. Cobertura ~97% via TELENT no fim da cadeia.
+            'telefone':  (r.get('TELCELENT') or r.get('TELCOM') or r.get('TELCOB') or r.get('TELENT') or '').strip() or None,
             'codusur1':  r.get('CODUSUR1'),
             'bloqueio':  r.get('BLOQUEIO'),
         }
@@ -1897,12 +1922,17 @@ def api_carteira_rfm():
 
     # Tuplas únicas (vendedor, time, UF, cidade) pra cross-filter dos 4 dropdowns no frontend.
     # Ex: usuário escolhe vendedor → outras 3 listas filtram pra mostrar só o que esse vendedor atende.
-    cross_tuples = sorted({(
-        c.get('codusur'),
-        c.get('codsupervisor'),
-        (c.get('uf') or '').upper() or None,
-        c.get('cidade') or None,
-    ) for c in clientes})
+    # Sort None-safe: clientes sem codusur/codsupervisor de cadastro geram None → não dá
+    # pra comparar None < int direto. Chave coage None p/ ordenar sem estourar TypeError.
+    cross_tuples = sorted(
+        {(
+            c.get('codusur'),
+            c.get('codsupervisor'),
+            (c.get('uf') or '').upper() or None,
+            c.get('cidade') or None,
+        ) for c in clientes},
+        key=lambda t: (t[0] is None, t[0] or 0, t[1] is None, t[1] or 0, t[2] or '', t[3] or ''),
+    )
     cross_filter_tuples = [
         {'codusur': t[0], 'codsupervisor': t[1], 'uf': t[2], 'cidade': t[3]}
         for t in cross_tuples
@@ -2630,6 +2660,9 @@ def _filtrar_carteira(clientes, args, vendedor_forcado=None):
         'frequencia':      'frequencia_12m',
         'cliente':         'cliente',
         'vendedor':        'vendedor',   # nome do vendedor (ordenação alfabética)
+        'prioridade':      'prioridade_contato',  # aba Próximo Pedido (valor × atraso)
+        'proximo_pedido':  'proximo_pedido_previsto',
+        'atraso':          'dias_atraso',
     }
     sort_attr = sort_map.get(sort, 'lucro_perdido_proj')
     reverse = (direction == 'desc')
@@ -2667,6 +2700,169 @@ def api_carteira_clientes():
     """Filtra/ordena/pagina a carteira já enriquecida (em memória sobre cache)."""
     clientes = _carteira_no_escopo()
     return jsonify(_filtrar_carteira(clientes, request.args))
+
+
+def _clientes_proximo_pedido(clientes, janela='vencidos', dias_janela=3):
+    """Filtra a carteira pra lista de Próximo Pedido: só clientes COM ciclo (previsíveis)
+    e dentro da janela de contato. Não pagina/ordena (isso fica no _filtrar_carteira).
+    - janela='hoje'     → vence exatamente hoje (dias_atraso == 0)
+    - janela='atrasados'→ já passou (dias_atraso > 0)
+    - janela='vencidos' → no ponto ou atrasado (dias_atraso >= 0) [default]
+    - janela='proximos' → vence dentro de `dias_janela` dias OU já vencido (dias_atraso >= -N)
+    """
+    out = []
+    for c in clientes:
+        if c.get('ciclo_pessoal') is None or c.get('proximo_pedido_previsto') is None:
+            continue  # sem ciclo (1 compra) → não previsível, fica de fora
+        da = c.get('dias_atraso')
+        if da is None:
+            continue
+        if janela == 'hoje' and da != 0:
+            continue
+        if janela == 'atrasados' and da <= 0:
+            continue
+        if janela == 'vencidos' and da < 0:
+            continue
+        if janela == 'proximos' and da < -abs(int(dias_janela)):
+            continue
+        out.append(c)
+    return out
+
+
+@app.route('/api/carteira/proximo-pedido')
+@login_required
+def api_carteira_proximo_pedido():
+    """Aba Próximo Pedido: lista diária priorizada de clientes a contatar (previsão pelo
+    ciclo de compra). Reusa a carteira cacheada + RBAC; sem DAX novo. Produtos vêm no
+    endpoint lazy /api/carteira/cliente/<id>/produtos ao expandir."""
+    clientes = _carteira_no_escopo()
+    janela = request.args.get('janela', 'vencidos')
+    try:
+        dias_janela = int(request.args.get('dias', 3))
+    except (TypeError, ValueError):
+        dias_janela = 3
+    elegiveis = _clientes_proximo_pedido(clientes, janela, dias_janela)
+
+    # Reusa filtros (time/vendedor/uf/busca) + paginação; ordena por prioridade desc por padrão.
+    args = dict(request.args)
+    args.setdefault('sort', 'prioridade')
+    args.setdefault('dir', 'desc')
+    resp = _filtrar_carteira(elegiveis, args)
+    resp['janela'] = janela
+
+    # Cards (acima da tabela): universo de VENCIDOS — independente da janela selecionada,
+    # mas respeitando filtros geo (time/vendedor/uf/cidade/busca). Reusa _filtrar_carteira
+    # só pros filtros geo (tudo em memória sobre a carteira já cacheada).
+    geo = {'limit': 100000, 'offset': 0, '_interno': True}
+    for k in ('time', 'vendedor', 'uf', 'cidade', 'busca'):
+        v = request.args.get(k)
+        if v:
+            geo[k] = v
+    vencidos = _filtrar_carteira(_clientes_proximo_pedido(clientes, 'vencidos'), geo)['rows']
+    top = max(vencidos, key=lambda c: c.get('prioridade_contato') or 0, default=None)
+    resp['cards'] = {
+        'vencidos':      len(vencidos),
+        'hoje':          sum(1 for c in vencidos if c.get('dias_atraso') == 0),
+        'atrasados':     sum(1 for c in vencidos if (c.get('dias_atraso') or 0) > 0),
+        'receita_risco': round(sum(c.get('receita_perdida_proj') or 0 for c in vencidos), 2),
+        'maior_oportunidade': ({
+            'codcli':        top['codcli'],
+            'cliente':       top.get('cliente'),
+            'receita_risco': top.get('receita_perdida_proj') or 0,
+        } if top else None),
+    }
+    return jsonify(resp)
+
+
+def _top_produtos_cliente(codcli, limit=10):
+    """Top N produtos (12m) de um cliente: descrição + qtd + venda. Padrão do drill.
+    Cacheado por cliente. NÃO checa escopo — caller deve validar via _carteira_no_escopo."""
+    limit = max(1, min(int(limit), 50))
+    key = cache_key_for_user(f'carteira:produtos:{codcli}:{limit}')
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+    q = f"""EVALUATE
+TOPN({limit},
+    SUMMARIZECOLUMNS(
+        FATURAMENTO_VENDAS[CODPROD],
+        PCPRODUT[DESCRICAO],
+        FILTER(FATURAMENTO_VENDAS,
+            FATURAMENTO_VENDAS[CODCLI] = {int(codcli)}
+            && FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12)),
+        "Venda", [VENDA LIQUIDA],
+        "Qt", SUM(FATURAMENTO_VENDAS[QT])
+    ),
+    [Venda], DESC
+)
+ORDER BY [Venda] DESC"""
+    token = get_token_cached()
+    rows = clean_rows(_todas_linhas(retry_dax(execute_dax)(token, q)))
+    out = []
+    for r in rows:
+        cp = r.get('CODPROD')
+        if cp is None:
+            continue
+        out.append({
+            'codprod':   cp,
+            'descricao': r.get('DESCRICAO') or f'Produto {cp}',
+            'qt_12m':    r.get('Qt') or 0,
+            'venda_12m': r.get('Venda') or 0,
+        })
+    _cache_set(key, out, 'dax_lista')
+    return out
+
+
+def _top_produtos_varios(codclis, limit_por_cliente=5):
+    """Top N produtos por cliente em UMA query (CODCLI IN). Pra email/lote — escopado por
+    vendedor/área é leve (teste: 628 clientes → 7.874 linhas/2s). Cap em 300 clientes pra
+    não estourar o teto de 100k linhas do Power BI. Retorna {codcli: [{descricao,venda_12m}]}."""
+    ids_int = [int(c) for c in codclis if c is not None][:300]
+    if not ids_int:
+        return {}
+    ids = ", ".join(str(c) for c in ids_int)
+    q = f"""EVALUATE
+SUMMARIZECOLUMNS(
+    FATURAMENTO_VENDAS[CODCLI],
+    FATURAMENTO_VENDAS[CODPROD],
+    PCPRODUT[DESCRICAO],
+    FILTER(FATURAMENTO_VENDAS,
+        FATURAMENTO_VENDAS[CODCLI] IN {{{ids}}}
+        && FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12)),
+    "Venda", [VENDA LIQUIDA]
+)"""
+    token = get_token_cached()
+    rows = clean_rows(_todas_linhas(retry_dax(execute_dax)(token, q)))
+    por_cli = {}
+    for r in rows:
+        cc = r.get('CODCLI')
+        cp = r.get('CODPROD')
+        if cc is None or cp is None:
+            continue
+        por_cli.setdefault(int(cc), []).append({
+            'descricao': r.get('DESCRICAO') or f'Produto {cp}',
+            'venda_12m': r.get('Venda') or 0,
+        })
+    out = {}
+    for cc, lst in por_cli.items():
+        lst.sort(key=lambda x: x['venda_12m'], reverse=True)
+        out[cc] = lst[:limit_por_cliente]
+    return out
+
+
+@app.route('/api/carteira/cliente/<int:codcli>/produtos')
+@login_required
+def api_carteira_cliente_produtos(codcli):
+    """Lazy: top N produtos do cliente pra aba Próximo Pedido (oferecer na ligação).
+    Guarda de escopo igual ao drill — não revela produto de cliente fora da carteira."""
+    try:
+        limit = int(request.args.get('limit', 10))
+    except (TypeError, ValueError):
+        limit = 10
+    clientes = _carteira_no_escopo()
+    if not any(c['codcli'] == codcli for c in clientes):
+        return jsonify({'ok': False, 'error': 'Cliente não encontrado na sua carteira'}), 404
+    return jsonify({'ok': True, 'codcli': codcli, 'produtos': _top_produtos_cliente(codcli, limit)})
 
 
 @app.route('/api/carteira/cliente/<int:codcli>')
@@ -2998,6 +3194,167 @@ def _gerar_pdf_carteira(filtrados, filtros_resumo=''):
 
     doc.build(story, onFirstPage=_rodape, onLaterPages=_rodape)
     return buf.getvalue()
+
+
+def _gerar_pdf_proximo_pedido(filtrados, filtros_resumo=''):
+    """PDF da Lista do Dia (Próximo Pedido). Colunas: Cliente · Cidade/UF · Telefone ·
+    Últ.compra · Ciclo · Previsão · Atraso · Status · Venda 12m · Receita em risco."""
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT
+    from io import BytesIO
+    from datetime import date as _date
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=landscape(A4),
+        leftMargin=1.2*cm, rightMargin=1.2*cm, topMargin=1.2*cm, bottomMargin=1.5*cm,
+        title=f"Proximo Pedido Multpel {_date.today().isoformat()}",
+    )
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle('titulo', parent=styles['Heading1'], fontSize=14, alignment=TA_LEFT, textColor=colors.HexColor('#0a0e17'))
+    sub_style = ParagraphStyle('sub', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#475569'))
+
+    story = []
+    story.append(Paragraph('<b>Multpel Analytics</b> — Lista do Dia (Próximo Pedido)', titulo_style))
+    story.append(Paragraph(f"Gerado em {_date.today().strftime('%d/%m/%Y')} · {len(filtrados)} clientes a contatar" + (f" · {filtros_resumo}" if filtros_resumo else ''), sub_style))
+    story.append(Spacer(1, 0.3*cm))
+
+    STATUS_PT = {'ok': 'No prazo', 'normal': 'Normal', 'atencao': 'Atenção', 'urgente': 'Urgente'}
+    header = ['Cliente', 'Cidade/UF', 'Telefone', 'Últ.compra', 'Ciclo', 'Previsão', 'Atraso', 'Status', 'Venda 12m', 'Rec. risco']
+    data = [header]
+    for c in filtrados:
+        venda = c.get('venda_12m') or 0
+        risco = c.get('receita_perdida_proj') or 0
+        da = c.get('dias_atraso')
+        atraso_txt = 'hoje' if da == 0 else (f"{da}d" if da is not None else '—')
+        data.append([
+            (c.get('cliente') or '')[:38],
+            f"{(c.get('cidade') or '')[:16]}/{c.get('uf') or ''}",
+            c.get('telefone') or '—',
+            c.get('ultima_compra') or '—',
+            f"{c.get('ciclo_pessoal') or ''}d",
+            c.get('proximo_pedido_previsto') or '—',
+            atraso_txt,
+            STATUS_PT.get(c.get('status_personalizada') or '', c.get('status_personalizada') or ''),
+            f"R$ {venda:,.0f}".replace(',', '.'),
+            f"R$ {risco:,.0f}".replace(',', '.'),
+        ])
+    tbl = Table(data, repeatRows=1, colWidths=[5.6*cm, 3*cm, 2.9*cm, 2*cm, 1.2*cm, 2*cm, 1.5*cm, 1.9*cm, 2.3*cm, 2.4*cm])
+    tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e293b')),
+        ('TEXTCOLOR',  (0,0), (-1,0), colors.white),
+        ('FONTNAME',   (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE',   (0,0), (-1,-1), 7),
+        ('GRID',       (0,0), (-1,-1), 0.3, colors.HexColor('#cbd5e1')),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8fafc')]),
+        ('ALIGN',      (4,0), (7,-1), 'CENTER'),
+        ('ALIGN',      (8,0), (9,-1), 'RIGHT'),
+        ('VALIGN',     (0,0), (-1,-1), 'MIDDLE'),
+        ('LEFTPADDING',(0,0), (-1,-1), 4),
+        ('RIGHTPADDING',(0,0), (-1,-1), 4),
+    ]))
+    story.append(tbl)
+
+    def _rodape(canvas, doc):
+        canvas.saveState()
+        canvas.setFont('Helvetica', 7)
+        canvas.setFillColor(colors.HexColor('#94a3b8'))
+        canvas.drawRightString(doc.pagesize[0] - 1.2*cm, 0.8*cm, f"Página {doc.page}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_rodape, onLaterPages=_rodape)
+    return buf.getvalue()
+
+
+@app.route('/api/carteira/proximo-pedido/pdf')
+@login_required
+def api_carteira_proximo_pedido_pdf():
+    """PDF da Lista do Dia — mesma janela/filtros da tabela, ordenado por prioridade."""
+    from datetime import date as _date
+    clientes = _carteira_no_escopo()
+    janela = request.args.get('janela', 'vencidos')
+    try:
+        dias_janela = int(request.args.get('dias', 3))
+    except (TypeError, ValueError):
+        dias_janela = 3
+    elegiveis = _clientes_proximo_pedido(clientes, janela, dias_janela)
+    args = dict(request.args)
+    args.update({'limit': 100000, 'offset': 0, '_interno': True})
+    args.setdefault('sort', 'prioridade')
+    args.setdefault('dir', 'desc')
+    filtrados = _filtrar_carteira(elegiveis, args)['rows']
+
+    parts = [f"Janela: {janela}"]
+    for k, lbl in (('time', 'Time'), ('vendedor', 'Vendedor'), ('uf', 'UF'), ('busca', 'Busca')):
+        if request.args.get(k):
+            parts.append(f"{lbl}: {request.args.get(k)}")
+    pdf = _gerar_pdf_proximo_pedido(filtrados, ' · '.join(parts))
+    from flask import Response
+    return Response(pdf, mimetype='application/pdf', headers={
+        'Content-Disposition': f'attachment; filename="{_nome_arquivo_proximo("pdf")}"'
+    })
+
+
+def _nome_arquivo_proximo(ext):
+    """Nome do arquivo da Lista do Dia conforme filtros aplicados (códigos → nomes).
+    Ex: proximo_hoje_AFONSO_ES_SUL_MANOEL_DE_SOUZA_2026-06-30.csv"""
+    from datetime import date as _date
+    partes = [_slug_export(request.args.get('janela') or 'vencidos')]
+    time_filt = request.args.get('time')
+    vendedor = request.args.get('vendedor')
+    uf = request.args.get('uf')
+    busca = request.args.get('busca')
+    if time_filt:
+        s = _carregar_supervisores_map().get(str(time_filt))
+        partes.append(_slug_export(s.get('nome') if s else f'Sup{time_filt}'))
+    if vendedor:
+        v = _carregar_vendedores_map().get(str(vendedor))
+        partes.append(_slug_export(v.get('nome') if v else f'RCA{vendedor}'))
+    if uf:
+        partes.append(_slug_export(uf))
+    if busca:
+        partes.append(_slug_export(f'busca-{busca}'))
+    partes_limpas = [p.replace(' ', '_') for p in partes if p]
+    base = '_'.join(['proximo'] + partes_limpas)
+    return f"{base}_{_date.today().isoformat()}.{ext}"
+
+
+@app.route('/api/carteira/proximo-pedido/csv')
+@login_required
+def api_carteira_proximo_pedido_csv():
+    """CSV da Lista do Dia — mesma janela/filtros da tabela, nome conforme filtros."""
+    clientes = _carteira_no_escopo()
+    janela = request.args.get('janela', 'vencidos')
+    try:
+        dias_janela = int(request.args.get('dias', 3))
+    except (TypeError, ValueError):
+        dias_janela = 3
+    elegiveis = _clientes_proximo_pedido(clientes, janela, dias_janela)
+    args = dict(request.args)
+    args.update({'limit': 100000, 'offset': 0, '_interno': True})
+    args.setdefault('sort', 'prioridade')
+    args.setdefault('dir', 'desc')
+    rows = _filtrar_carteira(elegiveis, args)['rows']
+
+    head = ['CodCli', 'Cliente', 'Cidade', 'UF', 'Telefone', 'UltimaCompra', 'Ciclo',
+            'Previsao', 'DiasAtraso', 'Status', 'Venda12m', 'ReceitaEmRisco']
+    linhas = ['﻿' + _csv_linha(head).rstrip('\n')]
+    for c in rows:
+        linhas.append(_csv_linha([
+            c.get('codcli'), c.get('cliente'), c.get('cidade'), c.get('uf'), c.get('telefone'),
+            c.get('ultima_compra'), c.get('ciclo_pessoal'), c.get('proximo_pedido_previsto'),
+            c.get('dias_atraso'), c.get('status_personalizada'),
+            c.get('venda_12m') or 0, c.get('receita_perdida_proj') or 0,
+        ]).rstrip('\n'))
+    csv_bytes = ('\n'.join(linhas) + '\n').encode('utf-8')
+    from flask import Response
+    return Response(csv_bytes, mimetype='text/csv; charset=utf-8', headers={
+        'Content-Disposition': f'attachment; filename="{_nome_arquivo_proximo("csv")}"'
+    })
 
 
 @app.route('/api/carteira/pdf')
@@ -4915,7 +5272,8 @@ def api_admin_users_list():
     cur = conn.cursor()
     cur.execute(
         "SELECT id, nome, email, role, codusur, codsupervisor, telefone, ativo, "
-        "cron_enabled, cron_horario::text, cron_frequencia, criado_em, email_cc, segmentos_rfm, codsupervisores "
+        "cron_enabled, cron_horario::text, cron_frequencia, criado_em, email_cc, segmentos_rfm, codsupervisores, "
+        "email_proximo_pedido "
         "FROM multpel_users ORDER BY ativo DESC, nome"
     )
     users = []
@@ -4930,6 +5288,7 @@ def api_admin_users_list():
             'email_cc': r[12] if r[12] is not None else [],
             'segmentos_rfm': r[13] or '',
             'codsupervisores': sups,
+            'email_proximo_pedido': bool(r[15]),
         })
     cur.close()
     conn.close()
@@ -4958,6 +5317,7 @@ def api_admin_users_create():
     cron_enabled = bool(data.get('cron_enabled', False))
     cron_horario = data.get('cron_horario') or '08:00'
     cron_frequencia = data.get('cron_frequencia') or 'diaria'
+    email_proximo_pedido = bool(data.get('email_proximo_pedido', False))
 
     # Patch J — destinatários CC (lista de emails extras)
     try:
@@ -4982,14 +5342,14 @@ def api_admin_users_create():
             """INSERT INTO multpel_users
                (nome, email, password_hash, role, codusur, codsupervisor, codsupervisores, telefone,
                 cron_enabled, cron_horario, cron_frequencia, email_cc, segmentos_rfm,
-                must_change_password)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, true)
+                email_proximo_pedido, must_change_password)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, true)
                RETURNING id""",
             (nome, email, generate_password_hash(senha), role,
              int(codusur) if codusur else None,
              codsupervisor, Json(codsupervisores),
              telefone, cron_enabled, cron_horario, cron_frequencia,
-             Json(emails_cc), segmentos_rfm)
+             Json(emails_cc), segmentos_rfm, email_proximo_pedido)
         )
         novo_id = cur.fetchone()[0]
         conn.commit()
@@ -5009,7 +5369,7 @@ def api_admin_users_update(user_id):
     data = request.get_json() or {}
     campos_permitidos = ['nome', 'email', 'role', 'codusur', 'codsupervisor', 'telefone',
                          'ativo', 'cron_enabled', 'cron_horario', 'cron_frequencia',
-                         'email_cc', 'segmentos_rfm']
+                         'email_cc', 'segmentos_rfm', 'email_proximo_pedido']
     # Pra normalizar email_cc precisa do email principal do user
     email_principal_atual = (data.get('email') or '').strip().lower() or None
     if 'email_cc' in data and not email_principal_atual:

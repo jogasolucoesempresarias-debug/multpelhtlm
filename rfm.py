@@ -94,6 +94,37 @@ def receita_perdida_projetada(venda_12m, dias_sem_comprar, ciclo):
     return (venda_12m / 12) * max(0.0, meses_atrasado)
 
 
+def proximo_pedido(ultima_compra, ciclo):
+    """Data prevista do próximo pedido = última compra + ciclo pessoal.
+    Aceita ultima_compra como str ISO ou date. Retorna ISO (YYYY-MM-DD) ou None
+    (sem ciclo = não dá pra prever, ou sem última compra)."""
+    if ciclo is None or ciclo <= 0 or not ultima_compra:
+        return None
+    if isinstance(ultima_compra, date):
+        d = ultima_compra
+    else:
+        try:
+            d = date.fromisoformat(str(ultima_compra)[:10])
+        except ValueError:
+            return None
+    from datetime import timedelta
+    return (d + timedelta(days=int(ciclo))).isoformat()
+
+
+def prioridade_contato(venda_12m, dias_sem_comprar, ciclo):
+    """Prioridade da lista de contato do dia: valor mensal × quão vencido está.
+    = (venda_12m / 12) × (dias_sem_comprar / ciclo). Cliente grande E vencido vem
+    primeiro. 0 se sem ciclo (não previsível) ou ainda dentro do ciclo (razão < 1 →
+    abaixo dos vencidos). NÃO usar receita_perdida_projetada como sort: ela zera no
+    'vence hoje' (dias == ciclo), afundando justamente quem deve ser contatado hoje."""
+    if ciclo is None or ciclo <= 0 or dias_sem_comprar is None or not venda_12m or venda_12m <= 0:
+        return 0.0
+    razao = dias_sem_comprar / ciclo
+    if razao < 1.0:
+        return 0.0
+    return (venda_12m / 12) * razao
+
+
 def quintis(valores):
     """Retorna 4 cutoffs Q1..Q4 (5o quintil é tudo acima de Q4).
     Ignora None. Usado pra mapear cada cliente em quintil 1-5 via quintil_de().
@@ -189,6 +220,11 @@ def calcular_clientes(snapshot, datas_por_cliente, meta_por_cliente):
         lp = lucro_perdido_projetado(lucro, dias, ciclo)
         rp = receita_perdida_projetada(venda, dias, ciclo)
 
+        ultima_iso = str(c.get('UltimaCompra', ''))[:10] or None
+        prox = proximo_pedido(ultima_iso, ciclo)
+        dias_atraso = (dias - ciclo) if ciclo is not None else None  # <0 dentro do ciclo
+        prioridade = prioridade_contato(venda, dias, ciclo)
+
         meta = meta_por_cliente.get(codcli, {})
         resultado.append({
             'codcli':                codcli,
@@ -211,7 +247,11 @@ def calcular_clientes(snapshot, datas_por_cliente, meta_por_cliente):
             'r':                     r,
             'f':                     f,
             'm':                     m,
-            'ultima_compra':         str(c.get('UltimaCompra', ''))[:10] or None,
+            'ultima_compra':         ultima_iso,
+            'proximo_pedido_previsto': prox,
+            'dias_atraso':           dias_atraso,
+            'vence_hoje':            (dias_atraso == 0) if dias_atraso is not None else False,
+            'prioridade_contato':    round(prioridade, 2),
         })
     return resultado
 

@@ -48,6 +48,9 @@ cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS segmentos_rfm   
 # segue existindo e recebe o 1º elemento (compatibilidade com RBAC single).
 cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS codsupervisores JSONB DEFAULT '[]'::jsonb;")
 
+# Aba Próximo Pedido — incluir a "Lista do Dia" (clientes a contatar + top produtos) no email
+cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS email_proximo_pedido BOOLEAN DEFAULT false;")
+
 # Módulo Metas — meta (alvo) por vendedor/mês. Nosso app é dono da meta (input + sugestão).
 # Realizado/projeção vêm do dataset META; aqui só guardamos o alvo digitado.
 cur.execute("""

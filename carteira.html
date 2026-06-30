@@ -201,7 +201,16 @@
   tbody tr:hover { background: rgba(56,189,248,0.05); }
   td.num { font-family: 'JetBrains Mono', monospace; }
   .badge { padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; display: inline-block; }
-  /* Badges b-ok/b-normal/b-atencao/b-urgente removidos — coluna Status excluída */
+  /* Badges b-ok/b-normal/b-atencao/b-urgente — reintroduzidos pra aba Próximo Pedido */
+  .badge.b-ok      { background: rgba(52,211,153,.15); color: #34d399; }
+  .badge.b-normal  { background: rgba(56,189,248,.15); color: #38bdf8; }
+  .badge.b-atencao { background: rgba(251,146,60,.15); color: #fb923c; }
+  .badge.b-urgente { background: rgba(248,113,113,.15); color: #f87171; }
+  .pp-row:hover { background: var(--surface2, rgba(255,255,255,.03)); }
+  .pp-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .pp-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 13px 15px; }
+  .pp-card .l { font-size: 0.68rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+  .pp-card .v { font-size: 1.45rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
   .b-champions { background: rgba(52,211,153,0.15); color: var(--green); }
   .b-loyal     { background: rgba(56,189,248,0.15); color: var(--accent); }
   .b-at_risk   { background: rgba(251,191,36,0.15); color: var(--yellow); }
@@ -262,6 +271,14 @@
     <span id="bannerErroMsg">Dados em atualização. Tente em alguns minutos.</span>
     <button onclick="carregarTudo(true)">Tentar agora</button>
   </div>
+
+  <!-- Abas: Visão Geral (RFM) | Próximo Pedido (lista do dia) -->
+  <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+    <button id="tabGeral" class="btn-sm active" onclick="trocarAba('geral')">Visão Geral</button>
+    <button id="tabProximo" class="btn-sm" onclick="trocarAba('proximo')">📞 Próximo Pedido</button>
+  </div>
+
+  <div id="abaGeral">
 
   <!-- BLOCO 1: Filtros + Visão geral RFM -->
   <div class="bloco">
@@ -429,6 +446,57 @@
           </thead>
           <tbody id="tbody"></tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  </div><!-- /abaGeral -->
+
+  <!-- ABA PRÓXIMO PEDIDO: lista diária priorizada de quem contatar -->
+  <div id="abaProximo" class="hidden">
+    <div class="bloco">
+      <div class="bloco-titulo">
+        Lista do dia — quem contatar
+        <span id="pp-resumo" style="color:var(--accent);font-size:0.72rem;text-transform:none;letter-spacing:0;"></span>
+      </div>
+      <p style="color:var(--text-dim);font-size:0.78rem;margin:-4px 0 14px;">
+        Previsão do próximo pedido = última compra + ciclo do cliente. Clientes sem ciclo (1 compra) ficam de fora.
+        Quando o cliente compra, ele sai da lista automaticamente. Clique na linha para ver os produtos a oferecer.
+      </p>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
+        <div class="ff"><label>Janela</label>
+          <select id="ppJanela" onchange="carregarProximo()">
+            <option value="vencidos">No ponto + atrasados</option>
+            <option value="hoje">Vence hoje</option>
+            <option value="atrasados">Atrasados</option>
+            <option value="proximos">Próximos 3 dias</option>
+          </select>
+        </div>
+        <div class="ff"><label>Time</label>
+          <input list="lista_times" id="ppTime" placeholder="Todos" oninput="debouncedProximo()">
+        </div>
+        <div class="ff"><label>Vendedor</label>
+          <input list="lista_vendedores" id="ppVend" placeholder="Todos" oninput="debouncedProximo()">
+        </div>
+        <div class="ff"><label>Buscar</label>
+          <input id="ppBusca" placeholder="cliente, cidade, 12345" oninput="debouncedProximo()">
+        </div>
+        <button class="btn-sm" onclick="limparProximo()">Limpar</button>
+        <button class="btn-export" onclick="exportarProximoCSV()" title="Baixar lista do dia (CSV)">⬇ CSV</button>
+        <button class="btn-export" onclick="exportarProximoPDF()" title="Baixar lista do dia (PDF)" style="background:linear-gradient(135deg,#fb923c,#f87171);">📄 PDF</button>
+      </div>
+      <div id="ppCards" class="pp-cards"></div>
+      <div class="table-card">
+        <div class="table-info"><span id="pp-total">—</span></div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr>
+              <th></th><th>Cliente</th><th>Telefone</th><th>Últ. compra</th><th>Ciclo</th>
+              <th>Previsão</th><th>Atraso</th><th>Status</th><th>Venda 12m</th><th>Receita em risco</th>
+            </tr></thead>
+            <tbody id="ppBody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
@@ -998,6 +1066,130 @@ function _paramsExport() {
 }
 function exportarCSV() { window.location.href = '/api/carteira/csv?' + _paramsExport().toString(); }
 function exportarPDF() { window.location.href = '/api/carteira/pdf?' + _paramsExport().toString(); }
+
+// ── Aba Próximo Pedido (lista do dia + produtos lazy) ───────────────
+let _ppCarregado = false;
+let _ppRows = [];
+function trocarAba(aba) {
+  const geral = aba === 'geral';
+  document.getElementById('abaGeral').classList.toggle('hidden', !geral);
+  document.getElementById('abaProximo').classList.toggle('hidden', geral);
+  document.getElementById('tabGeral').classList.toggle('active', geral);
+  document.getElementById('tabProximo').classList.toggle('active', !geral);
+  if (!geral && !_ppCarregado) { _ppCarregado = true; carregarProximo(); }
+}
+function _ppParams() {
+  const p = new URLSearchParams();
+  p.set('janela', document.getElementById('ppJanela').value);
+  const t = extrairCodigo(document.getElementById('ppTime').value);
+  const v = extrairCodigo(document.getElementById('ppVend').value);
+  const b = document.getElementById('ppBusca').value.trim();
+  if (t) p.set('time', t);
+  if (v) p.set('vendedor', v);
+  if (b) p.set('busca', b);
+  p.set('limit', '500');
+  return p;
+}
+async function carregarProximo() {
+  const body = document.getElementById('ppBody');
+  body.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-dim);padding:18px;">Carregando...</td></tr>';
+  try {
+    const r = await fetchJSON('/api/carteira/proximo-pedido?' + _ppParams().toString());
+    _ppRows = r.rows || [];
+    renderPpCards(r.cards || {});
+    document.getElementById('pp-resumo').textContent = '';
+    document.getElementById('pp-total').textContent =
+      `${r.total} cliente(s) na janela · mostrando ${_ppRows.length}`;
+    renderProximo();
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--red);padding:18px;">Erro: ${e.message || e}</td></tr>`;
+  }
+}
+function renderPpCards(c) {
+  const cards = [
+    { l: 'A contatar (vencidos)', v: NUM.format(c.vencidos || 0), cor: 'var(--accent)' },
+    { l: 'Vencem hoje', v: NUM.format(c.hoje || 0), cor: 'var(--orange)' },
+    { l: 'Atrasados', v: NUM.format(c.atrasados || 0), cor: 'var(--red)' },
+    { l: 'Receita em risco', v: BRL.format(c.receita_risco || 0), cor: 'var(--green)' },
+  ];
+  let html = cards.map(k =>
+    `<div class="pp-card"><div class="l">${k.l}</div><div class="v" style="color:${k.cor};">${k.v}</div></div>`).join('');
+  const op = c.maior_oportunidade;
+  if (op) {
+    html += `<div class="pp-card" style="grid-column:span 2;">
+      <div class="l">🎯 Maior oportunidade</div>
+      <div class="v" style="font-size:1rem;line-height:1.2;">${op.cliente || ('#' + op.codcli)}</div>
+      <div style="font-size:.78rem;color:var(--green);font-family:'JetBrains Mono',monospace;margin-top:2px;">${BRL.format(op.receita_risco || 0)} em risco</div>
+    </div>`;
+  }
+  document.getElementById('ppCards').innerHTML = html;
+}
+
+let _ppDeb;
+function debouncedProximo() { clearTimeout(_ppDeb); _ppDeb = setTimeout(carregarProximo, 400); }
+function limparProximo() {
+  document.getElementById('ppTime').value = '';
+  document.getElementById('ppVend').value = '';
+  document.getElementById('ppBusca').value = '';
+  document.getElementById('ppJanela').value = 'vencidos';
+  carregarProximo();
+}
+function _statusBadge(s) {
+  const cls = { ok: 'b-ok', normal: 'b-normal', atencao: 'b-atencao', urgente: 'b-urgente' };
+  const txt = { ok: 'No prazo', normal: 'Normal', atencao: 'Atenção', urgente: 'Urgente' };
+  return `<span class="badge ${cls[s] || ''}">${txt[s] || s || '—'}</span>`;
+}
+function renderProximo() {
+  const body = document.getElementById('ppBody');
+  if (!_ppRows.length) {
+    body.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-dim);padding:18px;">Nenhum cliente nessa janela 🎉</td></tr>';
+    return;
+  }
+  body.innerHTML = _ppRows.map(c => {
+    const a = c.dias_atraso;
+    const atrasoTxt = a === 0 ? 'hoje' : a > 0 ? `${a}d atrás` : `em ${-a}d`;
+    return `<tr class="pp-row" onclick="toggleProdutos(${c.codcli}, this)" style="cursor:pointer;">
+      <td><span class="caret" id="pp-caret-${c.codcli}">▸</span></td>
+      <td>${c.cliente || '#' + c.codcli}<div style="font-size:.68rem;color:var(--text-dim);">${c.cidade || ''} ${c.uf || ''} · cod ${c.codcli}</div></td>
+      <td>${c.telefone || '—'}</td>
+      <td>${c.ultima_compra || '—'}</td>
+      <td>${c.ciclo_pessoal}d</td>
+      <td><strong>${c.proximo_pedido_previsto || '—'}</strong></td>
+      <td>${atrasoTxt}</td>
+      <td>${_statusBadge(c.status_personalizada)}</td>
+      <td>${BRL.format(c.venda_12m || 0)}</td>
+      <td>${BRL.format(c.receita_perdida_proj || 0)}</td>
+    </tr>`;
+  }).join('');
+}
+async function toggleProdutos(codcli, tr) {
+  const existing = document.getElementById('pp-prod-' + codcli);
+  const caret = document.getElementById('pp-caret-' + codcli);
+  if (existing) { existing.remove(); if (caret) caret.textContent = '▸'; return; }
+  if (caret) caret.textContent = '▾';
+  const det = document.createElement('tr');
+  det.id = 'pp-prod-' + codcli;
+  det.innerHTML = '<td></td><td colspan="9" style="color:var(--text-dim);padding:8px 11px;">Carregando produtos...</td>';
+  tr.parentNode.insertBefore(det, tr.nextSibling);
+  try {
+    const r = await fetchJSON(`/api/carteira/cliente/${codcli}/produtos?limit=10`);
+    const ps = r.produtos || [];
+    const lis = ps.length ? ps.map(p =>
+      `<li>${p.descricao} <span style="color:var(--text-dim);">— ${NUM.format(Math.round(p.qt_12m))} un · ${BRL.format(p.venda_12m)}</span></li>`).join('')
+      : '<li style="color:var(--text-dim);">Sem produtos no período.</li>';
+    det.innerHTML = `<td></td><td colspan="9" style="padding:8px 11px 12px;">
+      <div style="font-size:.72rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">Top produtos a oferecer (12m)</div>
+      <ol style="margin:0;padding-left:20px;font-size:.8rem;line-height:1.7;">${lis}</ol></td>`;
+  } catch (e) {
+    det.innerHTML = `<td></td><td colspan="9" style="color:var(--red);padding:8px 11px;">Erro ao carregar produtos: ${e.message || e}</td>`;
+  }
+}
+function exportarProximoCSV() {
+  window.location.href = '/api/carteira/proximo-pedido/csv?' + _ppParams().toString();
+}
+function exportarProximoPDF() {
+  window.location.href = '/api/carteira/proximo-pedido/pdf?' + _ppParams().toString();
+}
 
 // Drill 360°: funções abrirDrill() e fecharDrill() expostas globalmente por /static/drill-cliente.js.
 // Estado _modo é lido por aquele script via window._modo. Sempre 'personalizada' agora.
