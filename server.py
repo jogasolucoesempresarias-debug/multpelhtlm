@@ -3291,7 +3291,8 @@ def _gerar_pdf_proximo_pedido(filtrados, filtros_resumo=''):
 @app.route('/api/carteira/proximo-pedido/pdf')
 @login_required
 def api_carteira_proximo_pedido_pdf():
-    """PDF da Lista do Dia — mesma janela/filtros da tabela, ordenado por prioridade."""
+    """PDF da Lista do Dia — mesma janela/filtros da tabela, SEMPRE ordenado por data de
+    previsão crescente (agenda cronológica de ligação), ignorando o sort da tela."""
     from datetime import date as _date
     clientes = _carteira_no_escopo()
     janela = request.args.get('janela', 'vencidos')
@@ -3301,9 +3302,8 @@ def api_carteira_proximo_pedido_pdf():
         dias_janela = 3
     elegiveis = _clientes_proximo_pedido(clientes, janela, dias_janela)
     args = dict(request.args)
-    args.update({'limit': 100000, 'offset': 0, '_interno': True})
-    args.setdefault('sort', 'prioridade')
-    args.setdefault('dir', 'desc')
+    args.update({'limit': 100000, 'offset': 0, '_interno': True,
+                 'sort': 'proximo_pedido', 'dir': 'asc'})
     filtrados = _filtrar_carteira(elegiveis, args)['rows']
 
     parts = [f"Janela: {janela}"]
@@ -5548,10 +5548,67 @@ def _carregar_dias_uteis_meta(ano, mes):
     return dias
 
 
+def _dias_uteis_mes_fechado(ano, mes):
+    """Dias úteis (seg-sex) de um mês já encerrado. O CALENDARIO/EhDiaMeta do dataset META
+    só existe pro mês corrente; pra mês fechado projeção=realizado, então dias é cosmético.
+    decorridos=total, restantes=0."""
+    import calendar
+    from datetime import date as _d
+    n = sum(1 for d in range(1, calendar.monthrange(ano, mes)[1] + 1) if _d(ano, mes, d).weekday() < 5)
+    return {'mes': n, 'decorridos': n, 'restantes': 0}
+
+
+def _realizado_rca_mes(ano, mes, escopo):
+    """Realizado de um mês FECHADO via dataset RCA (faturamento, histórico completo) — o
+    dataset META só guarda o mês corrente. Aproximação: faturamento ≈ pedidos faturados.
+    Mesma estrutura de _carregar_metas_realizado (por supervisor/vendedor/total)."""
+    fp = f"MONTH(FATURAMENTO_VENDAS[DTSAIDA])={int(mes)} && YEAR(FATURAMENTO_VENDAS[DTSAIDA])={int(ano)}"
+    rb = aplicar_rbac_dax()
+    frag = ""
+    if escopo is not None:
+        ids = ", ".join(str(int(c)) for c in sorted(escopo)) if escopo else "-1"
+        frag = f"FATURAMENTO_VENDAS[CODUSUR] IN {{{ids}}}"
+    filtro = f"FILTER(FATURAMENTO_VENDAS, {_and_dax(fp, rb, frag)})"
+    cols = ('"venda", [VENDA LIQUIDA], "rentab", [LUCRO TOTAL], '
+            '"cli", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI]), '
+            '"mix", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODPROD])')
+    queries = {
+        'por_sup':  f'EVALUATE SUMMARIZECOLUMNS(FATURAMENTO_VENDAS[CODSUPERVISOR], {filtro}, {cols})',
+        'por_usur': f'EVALUATE SUMMARIZECOLUMNS(FATURAMENTO_VENDAS[CODUSUR], {filtro}, {cols})',
+        'total':    (f'EVALUATE ROW("venda", CALCULATE([VENDA LIQUIDA], {filtro}), '
+                     f'"rentab", CALCULATE([LUCRO TOTAL], {filtro}), '
+                     f'"cli", CALCULATE(DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI]), {filtro}), '
+                     f'"mix", CALCULATE(DISTINCTCOUNT(FATURAMENTO_VENDAS[CODPROD]), {filtro}))'),
+    }
+    res = executar_dax_paralelo(queries)  # dataset RCA (default)
+
+    def _mapa(nome, chave):
+        out = {}
+        for r in clean_rows(_todas_linhas(res[nome])):
+            cod = r.get(chave)
+            if cod is None:
+                continue
+            v = r.get('venda') or 0
+            out[str(int(cod))] = {'venda': v, 'rentabilidade': r.get('rentab') or 0,
+                                  'clientes': r.get('cli') or 0, 'mix': r.get('mix') or 0,
+                                  'proj_venda': v}  # mês fechado: projeção = realizado
+        return out
+
+    tot = _primeira_linha(res['total'])
+    tv = tot.get('[venda]') or 0
+    return {
+        'dias': _dias_uteis_mes_fechado(int(ano), int(mes)),
+        'por_supervisor': _mapa('por_sup', 'CODSUPERVISOR'),
+        'por_vendedor':   _mapa('por_usur', 'CODUSUR'),
+        'total': {'venda': tv, 'rentabilidade': tot.get('[rentab]') or 0,
+                  'clientes': tot.get('[cli]') or 0, 'mix': tot.get('[mix]') or 0, 'proj_venda': tv},
+    }
+
+
 def _carregar_metas_realizado(ano, mes, supervisores):
-    """Realizado das 4 métricas no dataset META, recortado pelo escopo do usuário.
-    Mês corrente → medidas oficiais (venda/rentab) + DISTINCTCOUNT (clientes/mix), tudo exato.
-    Mês fechado → reconstrução por PCPEDC/PCPEDI (o BI mostra 0 pra passado).
+    """Realizado das 4 métricas, recortado pelo escopo do usuário.
+    Mês corrente → medidas oficiais do dataset META (pedidos) + DISTINCTCOUNT, exato.
+    Mês FECHADO → dataset RCA (faturamento), pois o META só guarda o mês corrente.
     Retorna dict com mapas por vendedor (aditivo) e distinct por supervisor + total."""
     from datetime import date as _date
     ano, mes = int(ano), int(mes)
@@ -5563,6 +5620,12 @@ def _carregar_metas_realizado(ano, mes, supervisores):
 
     hoje = _date.today()
     corrente = (ano == hoje.year and mes == hoje.month)
+
+    # Mês FECHADO: dataset META esvazia PCPEDC/CALENDARIO ao virar o mês → realizado vem do RCA.
+    if not corrente:
+        out = _realizado_rca_mes(ano, mes, escopo)
+        _cache_set(key, out, 'dax_agregado')
+        return out
 
     rb_pedc = _metas_rbac_frag('PCPEDC', escopo)   # 'PCPEDC[CODUSUR] IN {...}' ou ''
     rb_pedi = _metas_rbac_frag('PCPEDI', escopo)

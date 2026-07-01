@@ -1,7 +1,13 @@
 """Smoke + RBAC do módulo de Metas. DAX mockado por substring routing (mock_dax_capture)."""
+from datetime import date as _date
 import pytest
 import server
 from tests.conftest import login_as
+
+# Testes exercitam o caminho do MÊS CORRENTE (medidas oficiais do dataset META). Mês fechado
+# usa o dataset RCA (outro caminho), então usamos sempre o mês atual dinâmico.
+_HOJE = _date.today()
+_AM = f'ano={_HOJE.year}&mes={_HOJE.month}'
 
 
 def _pl(rows):
@@ -47,7 +53,7 @@ def test_api_metas_estrutura_e_totais(client, usuario_admin, mock_dax_capture, c
     mock_dax_capture.set_routes(_rotas_metas())
     login_as(client, usuario_admin['email'], usuario_admin['senha'])
 
-    r = client.get('/api/metas?ano=2026&mes=6')
+    r = client.get(f'/api/metas?{_AM}')
     assert r.status_code == 200
     d = r.get_json()
     assert d['ok']
@@ -76,7 +82,7 @@ def test_api_metas_estrutura_e_totais(client, usuario_admin, mock_dax_capture, c
 def test_api_metas_drill_vendedores(client, usuario_admin, mock_dax_capture, clean_redis):
     mock_dax_capture.set_routes(_rotas_metas())
     login_as(client, usuario_admin['email'], usuario_admin['senha'])
-    r = client.get('/api/metas/vendedores?ano=2026&mes=6&codsupervisor=17')
+    r = client.get(f'/api/metas/vendedores?{_AM}&codsupervisor=17')
     assert r.status_code == 200
     d = r.get_json()
     assert d['ok']
@@ -115,7 +121,7 @@ def test_api_metas_escopo_universo_de_meta(client, usuario_admin, mock_dax_captu
     monkeypatch.setattr(server, '_metas_buscar',
                         lambda a, m: {'879': {'valor_meta': 50.0, 'clientes_meta': 3, 'mix_meta': 4, 'rentabilidade_meta': 10.0}})
     login_as(client, usuario_admin['email'], usuario_admin['senha'])
-    d = client.get('/api/metas?ano=2026&mes=6').get_json()
+    d = client.get(f'/api/metas?{_AM}').get_json()
     assert d['ok']
     cods = [s['codsupervisor'] for s in d['supervisores']]
     assert 17 in cods
