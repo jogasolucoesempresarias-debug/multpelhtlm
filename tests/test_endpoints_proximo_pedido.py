@@ -54,11 +54,12 @@ def test_endpoint_proximo_pedido_ordena_por_prioridade(client, usuario_admin, cl
     assert d['total'] == 2
     # ordenado por prioridade desc → cliente 2 (200) antes do 1 (100)
     assert [r['codcli'] for r in d['rows']] == [2, 1]
-    # cards sobre o universo de vencidos (c1 hoje, c2 atrasado; c3 dentro do ciclo e c4 sem ciclo fora)
+    # cards: c1 (da=0) hoje; c3 (da=-3) próximos 7; c2 (da=5) vencido 1-7; c4 sem ciclo fora.
+    # Receita/oportunidade sobre os acionáveis (da 0-7): c1, c2.
     cards = d['cards']
-    assert cards['vencidos'] == 2
     assert cards['hoje'] == 1
-    assert cards['atrasados'] == 1
+    assert cards['proximos7'] == 1                 # c3, da=-3
+    assert cards['vencido7'] == 1                  # c2, da=5 (1..7)
     assert cards['receita_risco'] == 50.0          # c1=0 + c2=5*10
     assert cards['maior_oportunidade']['codcli'] == 2  # maior prioridade
 

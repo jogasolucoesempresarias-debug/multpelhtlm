@@ -472,10 +472,9 @@
       <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
         <div class="ff"><label>Janela</label>
           <select id="ppJanela" onchange="carregarProximo()">
-            <option value="vencidos">No ponto + atrasados</option>
-            <option value="hoje">Vence hoje</option>
-            <option value="atrasados">Atrasados</option>
-            <option value="proximos">Próximos 3 dias</option>
+            <option value="hoje">A ligar hoje</option>
+            <option value="proximos7">A ligar nos próximos 7 dias</option>
+            <option value="vencido7">Vencido há +7 dias</option>
           </select>
         </div>
         <div class="ff"><label>Time</label>
@@ -486,14 +485,6 @@
         </div>
         <div class="ff"><label>Buscar</label>
           <input id="ppBusca" placeholder="cliente, cidade, 12345" oninput="debouncedProximo()">
-        </div>
-        <div class="ff"><label>Status</label>
-          <div id="ppStatusChips" style="display:flex;gap:5px;">
-            <span class="pp-st" data-s="ok"      onclick="toggleStatus('ok')">No prazo</span>
-            <span class="pp-st" data-s="normal"  onclick="toggleStatus('normal')">Normal</span>
-            <span class="pp-st" data-s="atencao" onclick="toggleStatus('atencao')">Atenção</span>
-            <span class="pp-st" data-s="urgente" onclick="toggleStatus('urgente')">Urgente</span>
-          </div>
         </div>
         <button class="btn-sm" onclick="limparProximo()">Limpar</button>
         <button class="btn-export" onclick="exportarProximoCSV()" title="Baixar lista do dia (CSV)">⬇ CSV</button>
@@ -512,7 +503,6 @@
               <th class="sortable" data-sort="ciclo"          onclick="ordenarProximo('ciclo')">Ciclo<span class="sort-ind">↕</span></th>
               <th class="sortable" data-sort="proximo_pedido" onclick="ordenarProximo('proximo_pedido')">Previsão<span class="sort-ind">↕</span></th>
               <th class="sortable" data-sort="atraso"         onclick="ordenarProximo('atraso')">Atraso<span class="sort-ind">↕</span></th>
-              <th class="sortable" data-sort="status"         onclick="ordenarProximo('status')">Status<span class="sort-ind">↕</span></th>
               <th class="sortable" data-sort="venda_12m"      onclick="ordenarProximo('venda_12m')">Venda 12m<span class="sort-ind">↕</span></th>
               <th class="sortable" data-sort="receita_perdida" onclick="ordenarProximo('receita_perdida')">Receita em risco<span class="sort-ind">↕</span></th>
             </tr></thead>
@@ -1094,7 +1084,6 @@ let _ppCarregado = false;
 let _ppRows = [];
 let _ppSort = 'prioridade';
 let _ppDir = 'desc';
-let _ppStatus = new Set();
 function trocarAba(aba) {
   const geral = aba === 'geral';
   document.getElementById('abaGeral').classList.toggle('hidden', !geral);
@@ -1112,7 +1101,6 @@ function _ppParams() {
   if (t) p.set('time', t);
   if (v) p.set('vendedor', v);
   if (b) p.set('busca', b);
-  if (_ppStatus.size) p.set('status', [..._ppStatus].join(','));
   p.set('sort', _ppSort);
   p.set('dir', _ppDir);
   p.set('limit', '500');
@@ -1130,14 +1118,9 @@ function atualizarIndProximo() {
     ind.textContent = (th.dataset.sort === _ppSort) ? (_ppDir === 'desc' ? '↓' : '↑') : '↕';
   });
 }
-function toggleStatus(s) {
-  if (_ppStatus.has(s)) _ppStatus.delete(s); else _ppStatus.add(s);
-  document.querySelectorAll('#ppStatusChips .pp-st').forEach(el => el.classList.toggle('on', _ppStatus.has(el.dataset.s)));
-  carregarProximo();
-}
 async function carregarProximo() {
   const body = document.getElementById('ppBody');
-  body.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-dim);padding:18px;">Carregando...</td></tr>';
+  body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:18px;">Carregando...</td></tr>';
   try {
     const r = await fetchJSON('/api/carteira/proximo-pedido?' + _ppParams().toString());
     _ppRows = r.rows || [];
@@ -1148,15 +1131,15 @@ async function carregarProximo() {
     atualizarIndProximo();
     renderProximo();
   } catch (e) {
-    body.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--red);padding:18px;">Erro: ${e.message || e}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--red);padding:18px;">Erro: ${e.message || e}</td></tr>`;
   }
 }
 function renderPpCards(c) {
   const jan = document.getElementById('ppJanela').value;
   const cards = [
-    { l: 'A contatar (vencidos)', v: NUM.format(c.vencidos || 0), cor: 'var(--accent)', jan: 'vencidos' },
-    { l: 'Vencem hoje', v: NUM.format(c.hoje || 0), cor: 'var(--orange)', jan: 'hoje' },
-    { l: 'Atrasados', v: NUM.format(c.atrasados || 0), cor: 'var(--red)', jan: 'atrasados' },
+    { l: 'A ligar hoje', v: NUM.format(c.hoje || 0), cor: 'var(--orange)', jan: 'hoje' },
+    { l: 'Próximos 7 dias', v: NUM.format(c.proximos7 || 0), cor: 'var(--accent)', jan: 'proximos7' },
+    { l: 'Vencido +7 dias', v: NUM.format(c.vencido7 || 0), cor: 'var(--red)', jan: 'vencido7' },
     { l: 'Receita em risco', v: BRL.format(c.receita_risco || 0), cor: 'var(--green)' },
   ];
   let html = cards.map(k => {
@@ -1190,9 +1173,7 @@ function limparProximo() {
   document.getElementById('ppTime').value = '';
   document.getElementById('ppVend').value = '';
   document.getElementById('ppBusca').value = '';
-  document.getElementById('ppJanela').value = 'vencidos';
-  _ppStatus.clear();
-  document.querySelectorAll('#ppStatusChips .pp-st').forEach(el => el.classList.remove('on'));
+  document.getElementById('ppJanela').value = 'hoje';
   _ppSort = 'prioridade'; _ppDir = 'desc';
   carregarProximo();
 }
@@ -1204,7 +1185,7 @@ function _statusBadge(s) {
 function renderProximo() {
   const body = document.getElementById('ppBody');
   if (!_ppRows.length) {
-    body.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-dim);padding:18px;">Nenhum cliente nessa janela 🎉</td></tr>';
+    body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:18px;">Nenhum cliente nessa janela 🎉</td></tr>';
     return;
   }
   body.innerHTML = _ppRows.map(c => {
@@ -1218,7 +1199,6 @@ function renderProximo() {
       <td>${c.ciclo_pessoal}d</td>
       <td><strong>${c.proximo_pedido_previsto || '—'}</strong></td>
       <td>${atrasoTxt}</td>
-      <td>${_statusBadge(c.status_personalizada)}</td>
       <td>${BRL.format(c.venda_12m || 0)}</td>
       <td>${BRL.format(c.receita_perdida_proj || 0)}</td>
     </tr>`;
@@ -1231,7 +1211,7 @@ async function toggleProdutos(codcli, tr) {
   if (caret) caret.textContent = '▾';
   const det = document.createElement('tr');
   det.id = 'pp-prod-' + codcli;
-  det.innerHTML = '<td></td><td colspan="9" style="color:var(--text-dim);padding:8px 11px;">Carregando produtos...</td>';
+  det.innerHTML = '<td></td><td colspan="8" style="color:var(--text-dim);padding:8px 11px;">Carregando produtos...</td>';
   tr.parentNode.insertBefore(det, tr.nextSibling);
   try {
     const r = await fetchJSON(`/api/carteira/cliente/${codcli}/produtos?limit=10`);
@@ -1239,11 +1219,11 @@ async function toggleProdutos(codcli, tr) {
     const lis = ps.length ? ps.map(p =>
       `<li>${p.descricao} <span style="color:var(--text-dim);">— ${NUM.format(Math.round(p.qt_12m))} un · ${BRL.format(p.venda_12m)}</span></li>`).join('')
       : '<li style="color:var(--text-dim);">Sem produtos no período.</li>';
-    det.innerHTML = `<td></td><td colspan="9" style="padding:8px 11px 12px;">
+    det.innerHTML = `<td></td><td colspan="8" style="padding:8px 11px 12px;">
       <div style="font-size:.72rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">Top produtos a oferecer (12m)</div>
       <ol style="margin:0;padding-left:20px;font-size:.8rem;line-height:1.7;">${lis}</ol></td>`;
   } catch (e) {
-    det.innerHTML = `<td></td><td colspan="9" style="color:var(--red);padding:8px 11px;">Erro ao carregar produtos: ${e.message || e}</td>`;
+    det.innerHTML = `<td></td><td colspan="8" style="color:var(--red);padding:8px 11px;">Erro ao carregar produtos: ${e.message || e}</td>`;
   }
 }
 function exportarProximoCSV() {
