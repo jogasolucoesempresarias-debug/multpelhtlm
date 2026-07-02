@@ -1722,11 +1722,15 @@ SUMMARIZECOLUMNS(
     "Lucro12m",   [LUCRO TOTAL],
     "Venda12m",   [VENDA LIQUIDA]
 )""",
+        # ATENÇÃO: NÃO adicionar mais colunas aqui sem cuidado. O executeQueries trunca a
+        # resposta por tamanho (~41k clientes × colunas). Com 4 colunas de telefone caía pra
+        # ~40.735 linhas → ~260 clientes ativos vinham SEM cadastro (nome/cidade/vendedor em
+        # branco). Mantemos só 2 telefones (TELCELENT celular + TELENT ~97% cobertura).
         'meta': """EVALUATE
 SUMMARIZECOLUMNS(
     PCCLIENT[CODCLI], PCCLIENT[CLIENTE], PCCLIENT[FANTASIA],
     PCCLIENT[MUNICENT], PCCLIENT[MUNICCOB], PCCLIENT[ESTENT],
-    PCCLIENT[TELCELENT], PCCLIENT[TELCOM], PCCLIENT[TELCOB], PCCLIENT[TELENT],
+    PCCLIENT[TELCELENT], PCCLIENT[TELENT],
     PCCLIENT[CODUSUR1], PCCLIENT[BLOQUEIO]
 )""",
     }
@@ -1795,9 +1799,9 @@ SELECTCOLUMNS(
             'fantasia':  r.get('FANTASIA'),
             'cidade':    r.get('MUNICENT') or r.get('MUNICCOB'),
             'uf':        r.get('ESTENT'),
-            # Prefere celular (TELCELENT) p/ o vendedor ligar/WhatsApp; cai p/ comercial/
-            # cobrança/entrega. Cobertura ~97% via TELENT no fim da cadeia.
-            'telefone':  (r.get('TELCELENT') or r.get('TELCOM') or r.get('TELCOB') or r.get('TELENT') or '').strip() or None,
+            # Prefere celular (TELCELENT) p/ o vendedor ligar/WhatsApp; cai p/ entrega (TELENT,
+            # ~97% de cobertura). Só 2 colunas de telefone pra não truncar a resposta (ver acima).
+            'telefone':  (r.get('TELCELENT') or r.get('TELENT') or '').strip() or None,
             'codusur1':  r.get('CODUSUR1'),
             'bloqueio':  r.get('BLOQUEIO'),
         }
