@@ -68,6 +68,17 @@
   .backdrop { position: fixed; inset: 0; background: rgba(10,14,23,0.6); z-index: 999; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
   .backdrop.show { opacity: 1; pointer-events: auto; }
   .btn-export { padding: 7px 14px; background: linear-gradient(135deg, var(--accent), var(--accent2)); color: var(--bg); border: none; border-radius: 7px; cursor: pointer; font-weight: 700; font-size: 0.8rem; font-family: inherit; }
+  /* Type-ahead de cliente (busca por escopo) */
+  .busca-drop { position: absolute; top: 100%; left: 0; right: 0; margin-top: 3px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; max-height: 320px; overflow-y: auto; z-index: 60; display: none; box-shadow: 0 10px 30px rgba(0,0,0,0.4); }
+  .busca-drop.show { display: block; }
+  .busca-drop .item { padding: 8px 12px; cursor: pointer; font-size: 0.82rem; border-bottom: 1px solid var(--border); }
+  .busca-drop .item:last-child { border-bottom: none; }
+  .busca-drop .item:hover, .busca-drop .item.hl { background: rgba(56,189,248,0.12); }
+  .busca-drop .item .sub { font-size: 0.7rem; color: var(--text-dim); margin-top: 2px; }
+  /* Toggle Fornecedores | Departamentos no painel */
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+  .seg-btn { padding: 6px 13px; background: var(--surface2); border: none; color: var(--text-dim); font-size: 0.76rem; cursor: pointer; font-family: inherit; font-weight: 600; }
+  .seg-btn.active { background: rgba(56,189,248,0.12); color: var(--accent); }
 </style>
 </head>
 <body>
@@ -133,9 +144,10 @@
       <input list="lista_vendedores" id="filt_vend" placeholder="Todos · digite pra filtrar" oninput="filtrarTabela()">
       <datalist id="lista_vendedores"></datalist>
     </div>
-    <div class="ff" style="flex:1;">
+    <div class="ff" style="flex:1; position:relative;">
       <label>Busca cliente (nome ou código)</label>
-      <input type="text" id="filt_busca" placeholder="ex: padaria, ilheus, 128827" oninput="filtrarTabela()">
+      <input type="text" id="filt_busca" placeholder="ex: padaria, ilheus, 128827" autocomplete="off"
+             oninput="onBuscaClienteInput()">
     </div>
     <div class="ff">
       <label>&nbsp;</label>
@@ -172,10 +184,10 @@
   </div>
 
   <div class="table-card">
-    <div class="table-info"><span><strong id="tabela_total">0</strong> pares · mostrando primeiros 200</span></div>
+    <div class="table-info"><span id="tabela_info_txt"><strong id="tabela_total">0</strong> pares · mostrando primeiros 200</span></div>
     <div class="table-scroll">
       <table>
-        <thead>
+        <thead id="tabela_head">
           <tr>
             <th>CodCli</th>
             <th>Cliente</th>
@@ -196,7 +208,7 @@
   </div>
 </div>
 
-<!-- Painel lateral: top 5 departamentos perdidos do cliente -->
+<!-- Painel lateral por cliente: fornecedores (padrão) ou departamentos que ele parou de comprar -->
 <div id="deptoBackdrop" class="backdrop" onclick="fecharDeptos()"></div>
 <aside id="deptoPanel" class="side-panel">
   <div class="side-head">
@@ -205,6 +217,16 @@
       <div id="depto_meta" style="font-size:0.74rem;color:var(--text-dim);font-family:'JetBrains Mono',monospace;">—</div>
     </div>
     <button onclick="fecharDeptos()" aria-label="Fechar">×</button>
+  </div>
+  <div style="padding:12px 18px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <div class="seg">
+      <button id="tab_fornec" class="seg-btn active" onclick="setDrillTab('fornec')">Fornecedores</button>
+      <button id="tab_deptos" class="seg-btn" onclick="setDrillTab('deptos')">Departamentos</button>
+    </div>
+    <div id="drillExport" style="margin-left:auto;display:flex;gap:6px;">
+      <button class="btn-export" style="padding:5px 11px;font-size:0.72rem;" onclick="exportarDrill('csv')">⬇ CSV</button>
+      <button class="btn-export" style="padding:5px 11px;font-size:0.72rem;" onclick="exportarDrill('pdf')">⬇ PDF</button>
+    </div>
   </div>
   <div class="side-body" id="depto_body"></div>
 </aside>
@@ -215,45 +237,145 @@ const NUM = new Intl.NumberFormat('pt-BR');
 let _rows = [];
 let _totalBackend = 0;
 
-async function abrirDeptos(codcli) {
+// ── Painel por cliente: fornecedores (padrão) ou departamentos que ele parou de comprar ──
+let _drillCodcli = null;
+let _drillTab = 'fornec';
+
+// Ponto de entrada: clique na linha da tabela OU seleção no type-ahead de cliente.
+function abrirDeptos(codcli) { abrirClientePanel(codcli); }
+
+function abrirClientePanel(codcli, tab) {
+  _drillCodcli = codcli;
+  _drillTab = tab || 'fornec';
   document.getElementById('deptoPanel').classList.add('open');
   document.getElementById('deptoBackdrop').classList.add('show');
+  atualizarTabsDrill();
+  renderDrill();
+}
+
+function setDrillTab(tab) {
+  if (_drillTab === tab) return;
+  _drillTab = tab;
+  atualizarTabsDrill();
+  renderDrill();
+}
+
+function atualizarTabsDrill() {
+  document.getElementById('tab_fornec').classList.toggle('active', _drillTab === 'fornec');
+  document.getElementById('tab_deptos').classList.toggle('active', _drillTab === 'deptos');
+  // Export só existe para a visão de fornecedores (deptos é só top 5, sem endpoint de export)
+  document.getElementById('drillExport').style.display = _drillTab === 'fornec' ? 'flex' : 'none';
+}
+
+async function renderDrill() {
+  if (_drillCodcli == null) return;
+  const codcli = _drillCodcli;
+  const dias = document.getElementById('filt_dias').value;
+  const body = document.getElementById('depto_body');
   document.getElementById('depto_titulo').textContent = 'Carregando…';
   document.getElementById('depto_meta').textContent = '';
-  document.getElementById('depto_body').innerHTML = '<div style="color:var(--text-dim);font-size:0.85rem">Carregando top 5 departamentos…</div>';
-  const dias = document.getElementById('filt_dias').value;
+  body.innerHTML = '<div style="color:var(--text-dim);font-size:0.85rem">Carregando…</div>';
   try {
-    const d = await fetchJSON(`/api/mix/abandonado/${codcli}/deptos?dias=${dias}`);
-    document.getElementById('depto_titulo').textContent = d.cliente || ('Cliente #' + codcli);
-    document.getElementById('depto_meta').textContent =
-      `#${codcli} · ${d.cidade || '—'}/${d.uf || '—'} · ${d.vendedor || '—'} · ${d.total} depto(s) parado(s)`;
-    const rows = d.rows || [];
-    if (!rows.length) {
-      document.getElementById('depto_body').innerHTML = '<div style="color:var(--text-dim)">Nenhum departamento parado há ' + dias + ' dias.</div>';
-      return;
+    if (_drillTab === 'fornec') {
+      const d = await fetchJSON(`/api/mix/cliente/${codcli}/fornecedores?dias=${dias}`);
+      if (_drillCodcli !== codcli) return;  // usuário trocou de cliente no meio
+      document.getElementById('depto_titulo').textContent = d.cliente || ('Cliente #' + codcli);
+      document.getElementById('depto_meta').textContent =
+        `#${codcli} · ${d.cidade || '—'}/${d.uf || '—'} · ${d.vendedor || '—'} · ${d.total} fornecedor(es) parado(s)`;
+      const rows = d.rows || [];
+      if (!rows.length) {
+        body.innerHTML = `<div style="color:var(--text-dim)">Nenhum fornecedor parado há ${dias} dias para este cliente.</div>`;
+        return;
+      }
+      body.innerHTML = `
+        <div style="font-size:0.72rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;">${rows.length} fornecedores que o cliente parou de comprar (por lucro)</div>
+        ${rows.map((r, i) => `
+          <div style="display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">
+            <div>
+              <div style="font-weight:600;font-size:0.86rem;">${i+1}. ${r.fornec_nome}</div>
+              <div style="font-size:0.72rem;color:var(--text-dim);">última: ${r.ultima_compra} · ${r.dias_parado}d parado</div>
+            </div>
+            <div style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:0.8rem;">
+              <div style="color:var(--red);font-weight:700;">${BRL.format(r.lucro_cat_12m || 0)}</div>
+              <div style="color:var(--text-dim);font-size:0.72rem;">venda ${BRL.format(r.venda_cat_12m || 0)}</div>
+            </div>
+          </div>`).join('')}`;
+    } else {
+      const d = await fetchJSON(`/api/mix/abandonado/${codcli}/deptos?dias=${dias}`);
+      if (_drillCodcli !== codcli) return;
+      document.getElementById('depto_titulo').textContent = d.cliente || ('Cliente #' + codcli);
+      document.getElementById('depto_meta').textContent =
+        `#${codcli} · ${d.cidade || '—'}/${d.uf || '—'} · ${d.vendedor || '—'} · ${d.total} depto(s) parado(s)`;
+      const rows = d.rows || [];
+      if (!rows.length) {
+        body.innerHTML = `<div style="color:var(--text-dim)">Nenhum departamento parado há ${dias} dias.</div>`;
+        return;
+      }
+      body.innerHTML = `
+        <div style="font-size:0.72rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;">Top ${rows.length} departamentos perdidos (por lucro)</div>
+        ${rows.map((r, i) => `
+          <div style="display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">
+            <div>
+              <div style="font-weight:600;font-size:0.86rem;">${i+1}. ${r.depto_nome}</div>
+              <div style="font-size:0.72rem;color:var(--text-dim);">última: ${r.ultima_compra} · ${r.dias_parado}d parado</div>
+            </div>
+            <div style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:0.8rem;">
+              <div style="color:var(--red);font-weight:700;">${BRL.format(r.lucro_cat_12m || 0)}</div>
+              <div style="color:var(--text-dim);font-size:0.72rem;">venda ${BRL.format(r.venda_cat_12m || 0)}</div>
+            </div>
+          </div>`).join('')}`;
     }
-    document.getElementById('depto_body').innerHTML = `
-      <div style="font-size:0.72rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;">Top ${rows.length} departamentos perdidos (por lucro)</div>
-      ${rows.map((r, i) => `
-        <div style="display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">
-          <div>
-            <div style="font-weight:600;font-size:0.86rem;">${i+1}. ${r.depto_nome}</div>
-            <div style="font-size:0.72rem;color:var(--text-dim);">última: ${r.ultima_compra} · ${r.dias_parado}d parado</div>
-          </div>
-          <div style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:0.8rem;">
-            <div style="color:var(--red);font-weight:700;">${BRL.format(r.lucro_cat_12m || 0)}</div>
-            <div style="color:var(--text-dim);font-size:0.72rem;">venda ${BRL.format(r.venda_cat_12m || 0)}</div>
-          </div>
-        </div>`).join('')}`;
   } catch (e) {
-    document.getElementById('depto_body').innerHTML = '<div style="color:var(--red)">Erro: ' + (e.message || e) + '</div>';
+    body.innerHTML = '<div style="color:var(--red)">Erro: ' + (e.message || e) + '</div>';
   }
 }
+
+function exportarDrill(fmt) {
+  if (_drillCodcli == null) return;
+  const dias = document.getElementById('filt_dias').value;
+  window.open(`/api/mix/cliente/${_drillCodcli}/fornecedores/${fmt}?dias=${dias}`, '_blank');
+}
+
 function fecharDeptos() {
   document.getElementById('deptoPanel').classList.remove('open');
   document.getElementById('deptoBackdrop').classList.remove('show');
+  _drillCodcli = null;
 }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') fecharDeptos(); });
+
+// ── Type-ahead de cliente (busca por escopo, independente do board de 200) ──
+let _buscaTimer = null;
+
+function buscaAtiva() {
+  return (document.getElementById('filt_busca').value || '').trim().length >= 2;
+}
+
+// Busca de cliente = filtra a lista COMPLETA (não só os 200) no MESMO formato do board.
+function onBuscaClienteInput() {
+  clearTimeout(_buscaTimer);
+  const q = (document.getElementById('filt_busca').value || '').trim();
+  if (q.length < 2) { loadMix(); return; }   // limpou → volta ao board (top 200)
+  _buscaTimer = setTimeout(() => loadMixBusca(q), 250);
+}
+
+async function loadMixBusca(q) {
+  const dias = document.getElementById('filt_dias').value;
+  const depto = extrairCodigo(document.getElementById('filt_depto').value);
+  const fornec = extrairCodigo(document.getElementById('filt_fornec').value);
+  const params = new URLSearchParams({ dias, busca: q });
+  if (depto) params.set('codepto', depto);
+  if (fornec) params.set('fornecedor', fornec);
+  try {
+    const d = await fetchJSON('/api/mix/abandonado?' + params.toString());
+    _rows = d.rows || [];
+    _totalBackend = d.total;                      // total absoluto (27.832) → KPI "X (de Y)"
+    document.getElementById('dias_subt').textContent = dias;
+    renderKpis(_rows, _totalBackend);
+    renderTabela(_rows);                          // mesmo formato/colunas dos 200
+    document.getElementById('tabela_info_txt').innerHTML =
+      `<strong>${NUM.format(_rows.length)}</strong> pares de "${q}" · de ${NUM.format(_totalBackend)} no total`;
+  } catch (e) {}
+}
 
 // Monta os params dos exports (dias + filtros de depto/fornecedor ativos). Compartilhado CSV/PDF.
 function _paramsExportMix() {
@@ -365,6 +487,8 @@ async function loadMix() {
     _rows = d.rows || [];
     _totalBackend = d.total;
     document.getElementById('dias_subt').textContent = dias;
+    document.getElementById('tabela_info_txt').innerHTML =
+      '<strong id="tabela_total">0</strong> pares · mostrando primeiros 200';
     renderKpis(_rows, _totalBackend);
     renderTabela(_rows);
     document.getElementById('loading').classList.add('hidden');
@@ -427,12 +551,13 @@ function renderTabela(rows) {
 }
 
 function filtrarTabela() {
+  // Busca de cliente controla a tabela (server-side sobre a lista completa) — filtros locais não se aplicam.
+  if (buscaAtiva()) return;
   const vRaw = document.getElementById('filt_vend').value;
   const vCod = extrairCodigo(vRaw);
   const vNome = vRaw.toLowerCase();
   const tRaw = document.getElementById('filt_time').value;
   const tCod = extrairCodigo(tRaw);
-  const b = document.getElementById('filt_busca').value.toLowerCase();
 
   const filt = _rows.filter(r => {
     // Vendedor: por código exato (se digitou cod) OU por substring no nome
@@ -447,16 +572,16 @@ function filtrarTabela() {
       const v = _vendedoresMap[String(r.codusur)];
       time_ok = v && String(v.codsupervisor) === tCod;
     }
-    const busca_ok = !b || (r.cliente || '').toLowerCase().includes(b)
-                          || (r.cidade || '').toLowerCase().includes(b)
-                          || String(r.codcli || '').includes(b);
-    return vendedor_ok && time_ok && busca_ok;
+    return vendedor_ok && time_ok;
   });
   renderKpis(filt, _totalBackend);
   renderTabela(filt);
 }
 
-function aplicar() { loadMix(); }
+function aplicar() {
+  if (buscaAtiva()) loadMixBusca(document.getElementById('filt_busca').value.trim());
+  else loadMix();
+}
 
 function limparFiltros() {
   document.getElementById('filt_dias').value = '60';

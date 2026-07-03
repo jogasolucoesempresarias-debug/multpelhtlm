@@ -1596,6 +1596,42 @@ def api_supervisores_ativos():
     return jsonify({'ok': True, 'ativos': ativos})
 
 
+@app.route('/api/_internal/clientes-busca')
+@login_required
+def api_clientes_busca():
+    """Type-ahead de cliente DENTRO do escopo do usuário (usa _carteira_no_escopo → RBAC de
+    graça: cliente fora do cadastro simplesmente não aparece). Casa por trecho do nome/fantasia
+    OU código. Ordena por venda 12m desc. Compartilhado por Mix e Radar (busca por cliente)."""
+    q = (request.args.get('q') or '').strip().lower()
+    try:
+        limit = max(1, min(int(request.args.get('limit', 20)), 50))
+    except (TypeError, ValueError):
+        limit = 20
+
+    clientes = _carteira_no_escopo()
+    out = []
+    for c in clientes:
+        if q:
+            nome = (c.get('cliente') or '').lower()
+            fant = (c.get('fantasia') or '').lower()
+            cod = str(c.get('codcli') or '')
+            if q not in nome and q not in fant and q not in cod:
+                continue
+        out.append({
+            'codcli':    c.get('codcli'),
+            'cliente':   c.get('cliente') or f"Cliente #{c.get('codcli')}",
+            'cidade':    c.get('cidade'),
+            'uf':        c.get('uf'),
+            'vendedor':  c.get('vendedor'),
+            'codusur':   c.get('codusur'),
+            'time':      c.get('time'),
+            'telefone':  c.get('telefone'),
+            'venda_12m': c.get('venda_12m') or 0,
+        })
+    out.sort(key=lambda x: x['venda_12m'], reverse=True)
+    return jsonify({'ok': True, 'total': len(out), 'clientes': out[:limit]})
+
+
 def _construir_filtro_carteira(extra_dax=None):
     """Concatena RBAC + filtro extra opcional (já com sintaxe DAX)."""
     rbac = aplicar_rbac_dax()
@@ -4248,18 +4284,24 @@ def api_mix_abandonado():
         dias, limit = 60, 100
     codepto = request.args.get('codepto')
     fornecedor = request.args.get('fornecedor')
+    busca = (request.args.get('busca') or '').strip()
 
     key = cache_key_for_user('mix:abandonado', {'dias': dias, 'codepto': codepto or '', 'fornecedor': fornecedor or ''})
     cached = _cache_get(key)
     if cached:
-        resp = dict(cached)
-        resp['rows'] = resp['rows'][:limit]
-        return jsonify(resp)
+        full = cached['rows']
+    else:
+        full = _mix_abandonado_rows(dias, codepto, fornecedor)
+        _cache_set(key, {'ok': True, 'dias': dias, 'total': len(full), 'rows': full}, 'dax_agregado')
 
-    out = _mix_abandonado_rows(dias, codepto, fornecedor)
-    resp = {'ok': True, 'dias': dias, 'total': len(out), 'rows': out}
-    _cache_set(key, resp, 'dax_agregado')   # cacheia a lista completa
-    return jsonify({'ok': True, 'dias': dias, 'total': len(out), 'rows': out[:limit]})
+    total = len(full)
+    if busca:
+        # Filtra a lista COMPLETA (cacheada) por cliente/cidade/código → mesmos pares, mesmo
+        # formato dos 200, mas cobrindo TODOS os clientes (não só o top-200). Filtro em memória.
+        filtrados = _mix_aplicar_filtros_locais(full, None, None, busca)
+        return jsonify({'ok': True, 'dias': dias, 'total': total, 'filtrado': len(filtrados),
+                        'busca': busca, 'rows': filtrados})
+    return jsonify({'ok': True, 'dias': dias, 'total': total, 'rows': full[:limit]})
 
 
 @app.route('/api/mix/abandonado/<int:codcli>/deptos')
@@ -4327,6 +4369,210 @@ SUMMARIZECOLUMNS(
         'total': len(out),
         'rows': out[:5],   # top 5
     })
+
+
+def _mix_cliente_fornecedores_rows(codcli, dias):
+    """Fornecedores que ESTE cliente parou de comprar (última compra há >= dias), no escopo de
+    CADASTRO. Espelha _mix_cliente_deptos, mas agrupa por CODFORNECPRINC. Números totais do
+    cliente. Retorna (cli_meta | None, linhas). cli_meta None = fora do escopo (o caller faz 404)."""
+    from datetime import date as _date
+
+    carteira_idx = {c['codcli']: c for c in _carteira_no_escopo()}
+    cli_meta = carteira_idx.get(codcli)
+    if cli_meta is None:
+        return None, []
+
+    query = f"""EVALUATE
+SUMMARIZECOLUMNS(
+    FATURAMENTO_VENDAS[CODFORNECPRINC],
+    FATURAMENTO_VENDAS[FORNECPRINC],
+    FILTER(FATURAMENTO_VENDAS,
+        FATURAMENTO_VENDAS[CODCLI] = {int(codcli)}
+        && FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12)),
+    "UltimaCompra", MAX(FATURAMENTO_VENDAS[DTSAIDA]),
+    "VendaCat12m",  [VENDA LIQUIDA],
+    "LucroCat12m",  [LUCRO TOTAL]
+)"""
+    token = get_token_cached()
+    payload = retry_dax(execute_dax)(token, query)
+    rows = clean_rows(_todas_linhas(payload))
+
+    hoje = _date.today()
+    out = []
+    for r in rows:
+        cf = r.get('CODFORNECPRINC')
+        ultima = r.get('UltimaCompra')
+        if not ultima:
+            continue
+        try:
+            d_ultima = _date.fromisoformat(str(ultima)[:10])
+        except ValueError:
+            continue
+        dias_sem = (hoje - d_ultima).days
+        if dias_sem < dias:
+            continue  # esse fornecedor ainda está ativo
+        out.append({
+            'codfornec':     cf,
+            'fornec_nome':   r.get('FORNECPRINC') or (f'Fornec {cf}' if cf is not None else '(sem fornecedor)'),
+            'ultima_compra': str(ultima)[:10],
+            'dias_parado':   dias_sem,
+            'venda_cat_12m': r.get('VendaCat12m') or 0,
+            'lucro_cat_12m': r.get('LucroCat12m') or 0,
+        })
+    out.sort(key=lambda x: x['lucro_cat_12m'], reverse=True)
+    return cli_meta, out
+
+
+@app.route('/api/mix/cliente/<int:codcli>/fornecedores')
+@login_required
+def api_mix_cliente_fornecedores(codcli):
+    """Drill por CLIENTE: fornecedores que ELE parou de comprar (>= dias). Números totais.
+    Consulta enxuta (CODCLI fixo) → rápida e independente do board de 200."""
+    try:
+        dias = max(7, min(int(request.args.get('dias', 60)), 365))
+    except (TypeError, ValueError):
+        dias = 60
+
+    key = cache_key_for_user(f'mix:cliente:fornec:{codcli}', {'dias': dias})
+    cached = _cache_get(key)
+    if cached:
+        return jsonify(cached)
+
+    cli_meta, out = _mix_cliente_fornecedores_rows(codcli, dias)
+    if cli_meta is None:
+        return jsonify({'ok': False, 'error': 'Cliente fora da sua carteira'}), 404
+
+    resp = {
+        'ok': True,
+        'codcli': codcli,
+        'cliente': cli_meta.get('cliente') or f'Cliente #{codcli}',
+        'cidade': cli_meta.get('cidade'),
+        'uf': cli_meta.get('uf'),
+        'vendedor': cli_meta.get('vendedor'),
+        'telefone': cli_meta.get('telefone'),
+        'dias': dias,
+        'total': len(out),
+        'rows': out,
+    }
+    _cache_set(key, resp, 'dax_agregado')
+    return jsonify(resp)
+
+
+@app.route('/api/mix/cliente/<int:codcli>/fornecedores/csv')
+@login_required
+def api_mix_cliente_fornecedores_csv(codcli):
+    """CSV dos fornecedores que o cliente parou de comprar."""
+    from datetime import date as _date
+    try:
+        dias = max(7, min(int(request.args.get('dias', 60)), 365))
+    except (TypeError, ValueError):
+        dias = 60
+
+    cli_meta, out = _mix_cliente_fornecedores_rows(codcli, dias)
+    if cli_meta is None:
+        return jsonify({'ok': False, 'error': 'Cliente fora da sua carteira'}), 404
+
+    cabecalho = ['Fornecedor', 'CodFornec', 'UltimaCompra', 'DiasParado', 'VendaCat12m', 'LucroCat12m']
+
+    def gerar():
+        yield '﻿'  # BOM UTF-8
+        yield _csv_linha_br(cabecalho)
+        for c in out:
+            yield _csv_linha_br([
+                c.get('fornec_nome'), c.get('codfornec'), c.get('ultima_compra'),
+                c.get('dias_parado'), c.get('venda_cat_12m'), c.get('lucro_cat_12m'),
+            ])
+
+    nome_cli = _slug_export(cli_meta.get('cliente') or f'cliente-{codcli}')
+    nome = f"mix_fornec_{codcli}_{nome_cli}_{dias}d_{_date.today().isoformat()}.csv"
+    return Response(
+        stream_with_context(gerar()),
+        mimetype='text/csv; charset=utf-8',
+        headers={'Content-Disposition': _content_disposition(nome)},
+    )
+
+
+@app.route('/api/mix/cliente/<int:codcli>/fornecedores/pdf')
+@login_required
+def api_mix_cliente_fornecedores_pdf(codcli):
+    """PDF dos fornecedores que o cliente parou de comprar."""
+    from datetime import date as _date
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT
+    from io import BytesIO
+    try:
+        dias = max(7, min(int(request.args.get('dias', 60)), 365))
+    except (TypeError, ValueError):
+        dias = 60
+
+    cli_meta, out = _mix_cliente_fornecedores_rows(codcli, dias)
+    if cli_meta is None:
+        return jsonify({'ok': False, 'error': 'Cliente fora da sua carteira'}), 404
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=1.5*cm, rightMargin=1.5*cm, topMargin=1.5*cm, bottomMargin=1.5*cm,
+        title=f"Mix Fornecedores Cliente {codcli} {_date.today().isoformat()}",
+    )
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle('titulo', parent=styles['Heading1'], fontSize=14, alignment=TA_LEFT, textColor=colors.HexColor('#0a0e17'))
+    sub_style = ParagraphStyle('sub', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#475569'))
+
+    story = []
+    cliente = cli_meta.get('cliente') or f'Cliente #{codcli}'
+    story.append(Paragraph(f"<b>Multpel Analytics</b> — Fornecedores parados · {cliente}", titulo_style))
+    sub = (f"Gerado em {_date.today().strftime('%d/%m/%Y')} · #{codcli} · "
+           f"{(cli_meta.get('cidade') or '')}/{cli_meta.get('uf') or ''} · "
+           f"{cli_meta.get('vendedor') or '—'} · {len(out)} fornecedor(es) parado(s) há ≥ {dias} dias")
+    story.append(Paragraph(sub, sub_style))
+    story.append(Spacer(1, 0.3*cm))
+
+    header = ['Fornecedor', 'Última compra', 'Dias parado', 'Venda 12m', 'Lucro 12m']
+    data = [header]
+    for c in out:
+        data.append([
+            (c.get('fornec_nome') or '')[:44],
+            str(c.get('ultima_compra') or '')[:10],
+            c.get('dias_parado') or '',
+            f"R$ {(c.get('venda_cat_12m') or 0):,.0f}".replace(',', '.'),
+            f"R$ {(c.get('lucro_cat_12m') or 0):,.0f}".replace(',', '.'),
+        ])
+    tbl = Table(data, repeatRows=1, colWidths=[8*cm, 2.6*cm, 2.2*cm, 2.7*cm, 2.7*cm])
+    tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e293b')),
+        ('TEXTCOLOR',  (0,0), (-1,0), colors.white),
+        ('FONTNAME',   (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE',   (0,0), (-1,-1), 8),
+        ('GRID',       (0,0), (-1,-1), 0.3, colors.HexColor('#cbd5e1')),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8fafc')]),
+        ('ALIGN',      (2,0), (2,-1), 'CENTER'),
+        ('ALIGN',      (3,0), (4,-1), 'RIGHT'),
+        ('VALIGN',     (0,0), (-1,-1), 'MIDDLE'),
+        ('LEFTPADDING',(0,0), (-1,-1), 4),
+        ('RIGHTPADDING',(0,0), (-1,-1), 4),
+    ]))
+    story.append(tbl)
+
+    def _rodape(canvas, doc):
+        canvas.saveState()
+        canvas.setFont('Helvetica', 7)
+        canvas.setFillColor(colors.HexColor('#94a3b8'))
+        canvas.drawRightString(doc.pagesize[0] - 1.5*cm, 0.8*cm, f"Página {doc.page}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_rodape, onLaterPages=_rodape)
+    nome_cli = _slug_export(cliente)
+    nome = f"mix_fornec_{codcli}_{nome_cli}_{dias}d_{_date.today().isoformat()}.pdf"
+    return Response(
+        buf.getvalue(),
+        mimetype='application/pdf',
+        headers={'Content-Disposition': _content_disposition(nome)},
+    )
 
 
 def _carregar_fornecedores_map():
@@ -5150,6 +5396,264 @@ SUMMARIZECOLUMNS(
         'cliente': cli_meta.get('cliente') or f'Cliente #{codcli}',
         'rows': rows,
     })
+
+
+def _radar_cliente_rows(codcli, dias):
+    """Transposto de _radar_detalhe_rows: fixa CODCLI e agrupa por CODPROD → produtos que ESTE
+    cliente parou de comprar. Janela recente vs anterior (queda de volume), status via
+    _radar_status. Retorna (cli_meta | None, linhas). cli_meta None = fora do escopo (404).
+    Só produtos com status parou/perdido (o que ele 'não está comprando'), ordenados por
+    venda 12m desc (potencial de recuperação)."""
+    from datetime import date as _date
+
+    carteira_idx = {c['codcli']: c for c in _carteira_no_escopo()}
+    cli_meta = carteira_idx.get(codcli)
+    if cli_meta is None:
+        return None, []
+
+    d2 = 2 * dias
+    f_cli = f"FATURAMENTO_VENDAS[CODCLI] = {int(codcli)}"
+    queries = {
+        'prod': f"""EVALUATE
+SUMMARIZECOLUMNS(
+    FATURAMENTO_VENDAS[CODPROD],
+    FILTER(FATURAMENTO_VENDAS, {f_cli} && FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12)),
+    "Ultima",   MAX(FATURAMENTO_VENDAS[DTSAIDA]),
+    "Venda12m", [VENDA LIQUIDA],
+    "Qt12m",    SUM(FATURAMENTO_VENDAS[QT])
+)""",
+        'rec': f"""EVALUATE
+SUMMARIZECOLUMNS(
+    FATURAMENTO_VENDAS[CODPROD],
+    FILTER(FATURAMENTO_VENDAS, {f_cli} && FATURAMENTO_VENDAS[DTSAIDA] >= TODAY() - {dias}),
+    "VendaRec", [VENDA LIQUIDA],
+    "QtRec",    SUM(FATURAMENTO_VENDAS[QT])
+)""",
+        'ant': f"""EVALUATE
+SUMMARIZECOLUMNS(
+    FATURAMENTO_VENDAS[CODPROD],
+    FILTER(FATURAMENTO_VENDAS, {f_cli}
+        && FATURAMENTO_VENDAS[DTSAIDA] >= TODAY() - {d2}
+        && FATURAMENTO_VENDAS[DTSAIDA] < TODAY() - {dias}),
+    "VendaAnt", [VENDA LIQUIDA],
+    "QtAnt",    SUM(FATURAMENTO_VENDAS[QT])
+)""",
+    }
+    resultados = _executar_dax_paralelo_n(queries, max_workers=3)
+
+    rec_idx = {r['CODPROD']: r for r in clean_rows(_todas_linhas(resultados['rec'])) if r.get('CODPROD') is not None}
+    ant_idx = {r['CODPROD']: r for r in clean_rows(_todas_linhas(resultados['ant'])) if r.get('CODPROD') is not None}
+
+    prod_map = _carregar_produtos_map()
+    deptos_nomes = _carregar_deptos_map()['deptos']
+    hoje = _date.today()
+
+    linhas = []
+    for r in clean_rows(_todas_linhas(resultados['prod'])):
+        cp = r.get('CODPROD')
+        if cp is None:
+            continue
+        ultima = r.get('Ultima')
+        dias_parado = None
+        if ultima:
+            try:
+                dias_parado = (hoje - _date.fromisoformat(str(ultima)[:10])).days
+            except ValueError:
+                dias_parado = None
+        venda_rec = (rec_idx.get(cp, {}).get('VendaRec')) or 0
+        qt_rec    = (rec_idx.get(cp, {}).get('QtRec')) or 0
+        venda_ant = (ant_idx.get(cp, {}).get('VendaAnt')) or 0
+        qt_ant    = (ant_idx.get(cp, {}).get('QtAnt')) or 0
+        status = _radar_status(dias_parado, venda_rec, venda_ant, dias)
+        if status not in ('parou', 'perdido'):
+            continue  # só o que o cliente DEIXOU de comprar
+        info = prod_map.get(str(cp)) or {}
+        codepto = info.get('codepto')
+        linhas.append({
+            'codprod':       cp,
+            'descricao':     info.get('descricao') or f'Produto {cp}',
+            'codepto':       codepto,
+            'depto_nome':    deptos_nomes.get(str(codepto)) if codepto is not None else None,
+            'fornec_nome':   info.get('fornec_nome'),
+            'ultima_compra': str(ultima)[:10] if ultima else None,
+            'dias_parado':   dias_parado,
+            'venda_12m':     round(r.get('Venda12m') or 0, 2),
+            'qt_12m':        round(r.get('Qt12m') or 0, 2),
+            'venda_rec':     round(venda_rec, 2),
+            'qt_rec':        round(qt_rec, 2),
+            'venda_ant':     round(venda_ant, 2),
+            'qt_ant':        round(qt_ant, 2),
+            'status':        status,
+        })
+    linhas.sort(key=lambda x: x['venda_12m'], reverse=True)
+    return cli_meta, linhas
+
+
+@app.route('/api/radar/cliente/<int:codcli>')
+@login_required
+def api_radar_cliente(codcli):
+    """Radar invertido: produtos que ESTE cliente parou de comprar (status parou/perdido).
+    Consulta enxuta (CODCLI fixo), escopo por cadastro (404 fora)."""
+    try:
+        dias = max(7, min(int(request.args.get('dias', 60)), 365))
+    except (TypeError, ValueError):
+        dias = 60
+
+    key = cache_key_for_user(f'radar:cliente:{codcli}', {'dias': dias})
+    cached = _cache_get(key)
+    if cached:
+        return jsonify(cached)
+
+    cli_meta, linhas = _radar_cliente_rows(codcli, dias)
+    if cli_meta is None:
+        return jsonify({'ok': False, 'error': 'Cliente fora da sua carteira'}), 404
+
+    resp = {
+        'ok': True,
+        'codcli': codcli,
+        'dias': dias,
+        'cliente': {
+            'codcli':   codcli,
+            'nome':     cli_meta.get('cliente') or f'Cliente #{codcli}',
+            'cidade':   cli_meta.get('cidade'),
+            'uf':       cli_meta.get('uf'),
+            'vendedor': cli_meta.get('vendedor'),
+            'telefone': cli_meta.get('telefone'),
+        },
+        'kpis': {
+            'produtos_parados': len(linhas),
+            'receita_em_risco': round(sum(c['venda_12m'] for c in linhas), 2),
+        },
+        'rows': linhas,
+    }
+    _cache_set(key, resp, 'dax_agregado')
+    return jsonify(resp)
+
+
+@app.route('/api/radar/cliente/<int:codcli>/csv')
+@login_required
+def api_radar_cliente_csv(codcli):
+    """CSV dos produtos que o cliente parou de comprar."""
+    from datetime import date as _date
+    try:
+        dias = max(7, min(int(request.args.get('dias', 60)), 365))
+    except (TypeError, ValueError):
+        dias = 60
+
+    cli_meta, linhas = _radar_cliente_rows(codcli, dias)
+    if cli_meta is None:
+        return jsonify({'ok': False, 'error': 'Cliente fora da sua carteira'}), 404
+
+    cabecalho = ['CodProd', 'Produto', 'Departamento', 'Fornecedor', 'UltimaCompra', 'DiasParado',
+                 'Situacao', 'Venda12m', 'Qtd12m', 'VendaAnterior', 'VendaRecente']
+
+    def gerar():
+        yield '﻿'  # BOM UTF-8
+        yield _csv_linha(cabecalho)
+        for c in linhas:
+            yield _csv_linha([
+                c.get('codprod'), c.get('descricao'), c.get('depto_nome'), c.get('fornec_nome'),
+                c.get('ultima_compra'), c.get('dias_parado'),
+                _RADAR_STATUS_PT.get(c.get('status'), c.get('status')),
+                c.get('venda_12m'), c.get('qt_12m'), c.get('venda_ant'), c.get('venda_rec'),
+            ])
+
+    nome_cli = _slug_export(cli_meta.get('cliente') or f'cliente-{codcli}')
+    nome = f"radar_cliente_{codcli}_{nome_cli}_{dias}d_{_date.today().isoformat()}.csv"
+    return Response(
+        stream_with_context(gerar()),
+        mimetype='text/csv; charset=utf-8',
+        headers={'Content-Disposition': _content_disposition(nome)},
+    )
+
+
+@app.route('/api/radar/cliente/<int:codcli>/pdf')
+@login_required
+def api_radar_cliente_pdf(codcli):
+    """PDF dos produtos que o cliente parou de comprar."""
+    from datetime import date as _date
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT
+    from io import BytesIO
+    try:
+        dias = max(7, min(int(request.args.get('dias', 60)), 365))
+    except (TypeError, ValueError):
+        dias = 60
+
+    cli_meta, linhas = _radar_cliente_rows(codcli, dias)
+    if cli_meta is None:
+        return jsonify({'ok': False, 'error': 'Cliente fora da sua carteira'}), 404
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=landscape(A4),
+        leftMargin=1.2*cm, rightMargin=1.2*cm, topMargin=1.2*cm, bottomMargin=1.5*cm,
+        title=f"Radar Cliente {codcli} {_date.today().isoformat()}",
+    )
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle('titulo', parent=styles['Heading1'], fontSize=14, alignment=TA_LEFT, textColor=colors.HexColor('#0a0e17'))
+    sub_style = ParagraphStyle('sub', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#475569'))
+
+    story = []
+    cliente = cli_meta.get('cliente') or f'Cliente #{codcli}'
+    story.append(Paragraph(f"<b>Multpel Analytics</b> — Produtos parados · {cliente}", titulo_style))
+    sub = (f"Gerado em {_date.today().strftime('%d/%m/%Y')} · #{codcli} · "
+           f"{(cli_meta.get('cidade') or '')}/{cli_meta.get('uf') or ''} · "
+           f"{cli_meta.get('vendedor') or '—'} · {len(linhas)} produto(s) parado(s) há ≥ {dias} dias")
+    story.append(Paragraph(sub, sub_style))
+    story.append(Spacer(1, 0.3*cm))
+
+    header = ['Produto', 'Departamento', 'Fornecedor', 'Última compra', 'Dias', 'Situação',
+              'Comprava (R$)', 'Agora (R$)', 'Venda 12m']
+    data = [header]
+    for c in linhas:
+        data.append([
+            (c.get('descricao') or '')[:34],
+            (c.get('depto_nome') or '')[:16],
+            (c.get('fornec_nome') or '')[:20],
+            str(c.get('ultima_compra') or '')[:10],
+            c.get('dias_parado') if c.get('dias_parado') is not None else '',
+            _RADAR_STATUS_PT.get(c.get('status'), ''),
+            f"R$ {(c.get('venda_ant') or 0):,.0f}".replace(',', '.'),
+            f"R$ {(c.get('venda_rec') or 0):,.0f}".replace(',', '.'),
+            f"R$ {(c.get('venda_12m') or 0):,.0f}".replace(',', '.'),
+        ])
+    tbl = Table(data, repeatRows=1,
+                colWidths=[6*cm, 3*cm, 3.4*cm, 2.1*cm, 1.1*cm, 1.8*cm, 2.2*cm, 2.2*cm, 2.2*cm])
+    tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e293b')),
+        ('TEXTCOLOR',  (0,0), (-1,0), colors.white),
+        ('FONTNAME',   (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE',   (0,0), (-1,-1), 6.5),
+        ('GRID',       (0,0), (-1,-1), 0.3, colors.HexColor('#cbd5e1')),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8fafc')]),
+        ('ALIGN',      (4,0), (4,-1), 'CENTER'),
+        ('ALIGN',      (6,0), (8,-1), 'RIGHT'),
+        ('VALIGN',     (0,0), (-1,-1), 'MIDDLE'),
+        ('LEFTPADDING',(0,0), (-1,-1), 3),
+        ('RIGHTPADDING',(0,0), (-1,-1), 3),
+    ]))
+    story.append(tbl)
+
+    def _rodape(canvas, doc):
+        canvas.saveState()
+        canvas.setFont('Helvetica', 7)
+        canvas.setFillColor(colors.HexColor('#94a3b8'))
+        canvas.drawRightString(doc.pagesize[0] - 1.2*cm, 0.8*cm, f"Página {doc.page}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_rodape, onLaterPages=_rodape)
+    nome_cli = _slug_export(cliente)
+    nome = f"radar_cliente_{codcli}_{nome_cli}_{dias}d_{_date.today().isoformat()}.pdf"
+    return Response(
+        buf.getvalue(),
+        mimetype='application/pdf',
+        headers={'Content-Disposition': _content_disposition(nome)},
+    )
 
 
 def _carregar_cohort_compras_global(periodo_meses=12):

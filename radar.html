@@ -160,6 +160,12 @@
                oninput="onBuscaInput()" onkeydown="onBuscaKey(event)" onblur="setTimeout(fecharBusca,150)">
         <div id="buscaDrop" class="busca-drop"></div>
       </div>
+      <div class="busca-wrap" style="flex:1.1;min-width:260px;">
+        <label class="ff" style="margin-bottom:4px;display:block;">Buscar cliente (o que ELE parou de comprar)</label>
+        <input id="buscaCli" placeholder="nome ou código do cliente…" autocomplete="off"
+               oninput="onBuscaCliInput()" onkeydown="onBuscaCliKey(event)" onblur="setTimeout(fecharBuscaCli,150)">
+        <div id="buscaCliDrop" class="busca-drop"></div>
+      </div>
       <div class="ff">
         <label>Janela (dias)</label>
         <select id="filt_dias" onchange="recarregarTudo()">
@@ -262,6 +268,52 @@
             <th>Situação</th><th>Vendedor</th><th>Telefone</th>
           </tr></thead>
           <tbody id="detBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ───────── VIEW CLIENTE (Radar invertido: produtos que ELE parou de comprar) ───────── -->
+  <div id="viewCliente" class="hidden">
+    <div style="margin-bottom:10px;">
+      <button class="btn-sm" onclick="voltarBoard()">← Voltar ao radar</button>
+    </div>
+
+    <div class="prod-head">
+      <div>
+        <h2 id="c_nome">—</h2>
+        <div class="p-meta" id="c_meta">—</div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-export" onclick="exportarCliente('csv')">⬇ CSV</button>
+        <button class="btn-export" onclick="exportarCliente('pdf')">⬇ PDF</button>
+      </div>
+    </div>
+
+    <div class="kpi-grid" style="grid-template-columns:repeat(2,1fr);">
+      <div class="kpi-card"><div class="label">Produtos que parou de comprar</div><div class="value" id="kc_parados" style="color:var(--orange);">—</div><div class="sub">parou ou perdido (≥ janela)</div></div>
+      <div class="kpi-card"><div class="label">Receita em risco (12m)</div><div class="value" id="kc_risco" style="color:var(--red);">—</div><div class="sub">venda 12m dos produtos parados</div></div>
+    </div>
+
+    <div class="filtros-card">
+      <div class="ff" style="flex:1;min-width:220px;">
+        <label>Buscar produto na lista</label>
+        <input id="filt_prod_cli" placeholder="nome, código, departamento ou fornecedor" oninput="renderCliente()">
+      </div>
+    </div>
+
+    <div class="table-card">
+      <div class="table-info"><span id="detc_info">—</span></div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr>
+            <th>Produto</th><th>Departamento</th><th>Fornecedor</th>
+            <th class="num th-sort" onclick="sortCli('dias_parado')">Dias parado<span class="setac" data-c="dias_parado"></span></th>
+            <th class="num th-sort" onclick="sortCli('venda_ant')">Comprava→Agora<span class="setac" data-c="venda_ant"></span></th>
+            <th class="num th-sort" onclick="sortCli('venda_12m')">Venda 12m<span class="setac" data-c="venda_12m"></span></th>
+            <th>Situação</th>
+          </tr></thead>
+          <tbody id="detcBody"></tbody>
         </table>
       </div>
     </div>
@@ -531,6 +583,7 @@ function renderDetalhe() {
 
 function voltarBoard() {
   document.getElementById('viewProduto').classList.add('hidden');
+  document.getElementById('viewCliente').classList.add('hidden');
   document.getElementById('viewBoard').classList.remove('hidden');
 }
 
@@ -538,11 +591,122 @@ function recarregarTudo() {
   loadBoard();
   if (!document.getElementById('viewProduto').classList.contains('hidden') && window._codprodAtual)
     abrirProduto(window._codprodAtual);
+  if (!document.getElementById('viewCliente').classList.contains('hidden') && window._codcliAtual)
+    abrirCliente(window._codcliAtual);
 }
 
 function exportar(fmt) {
   if (!window._codprodAtual) return;
   window.location.href = `/api/radar/produto/${window._codprodAtual}/${fmt}?dias=${dias()}${_scopeQS()}`;
+}
+
+// ─────────── BUSCA DE CLIENTE + VIEW CLIENTE (radar invertido) ───────────
+let _buscaCliTimer = null, _buscaCliItems = [], _buscaCliHl = -1;
+let _cliente = null, _detcSort = { col: 'venda_12m', dir: 'desc' };
+
+function onBuscaCliInput() {
+  clearTimeout(_buscaCliTimer);
+  const q = document.getElementById('buscaCli').value.trim();
+  if (q.length < 2) { fecharBuscaCli(); return; }
+  _buscaCliTimer = setTimeout(() => buscarCli(q), 220);
+}
+
+async function buscarCli(q) {
+  try {
+    const d = await fetchJSON(`/api/_internal/clientes-busca?limit=15&q=${encodeURIComponent(q)}`);
+    _buscaCliItems = d.clientes || [];
+    _buscaCliHl = -1;
+    const drop = document.getElementById('buscaCliDrop');
+    if (!_buscaCliItems.length) {
+      drop.innerHTML = '<div class="busca-empty">Nenhum cliente no seu escopo.</div>';
+    } else {
+      drop.innerHTML = _buscaCliItems.map((c, i) => `
+        <div class="busca-item" data-i="${i}" onmousedown="abrirCliente(${c.codcli})">
+          <div class="b-desc">${c.cliente}</div>
+          <div class="b-meta">#${c.codcli} · ${c.cidade || '—'}/${c.uf || '—'} · ${c.vendedor || '—'}</div>
+        </div>`).join('');
+    }
+    drop.classList.add('show');
+  } catch (e) { fecharBuscaCli(); }
+}
+
+function onBuscaCliKey(ev) {
+  const drop = document.getElementById('buscaCliDrop');
+  if (!drop.classList.contains('show')) return;
+  if (ev.key === 'ArrowDown') { ev.preventDefault(); _buscaCliHl = Math.min(_buscaCliHl + 1, _buscaCliItems.length - 1); hlBuscaCli(); }
+  else if (ev.key === 'ArrowUp') { ev.preventDefault(); _buscaCliHl = Math.max(_buscaCliHl - 1, 0); hlBuscaCli(); }
+  else if (ev.key === 'Enter' && _buscaCliHl >= 0) { ev.preventDefault(); abrirCliente(_buscaCliItems[_buscaCliHl].codcli); }
+  else if (ev.key === 'Escape') { fecharBuscaCli(); }
+}
+function hlBuscaCli() {
+  document.querySelectorAll('#buscaCliDrop .busca-item').forEach(el =>
+    el.classList.toggle('hl', Number(el.dataset.i) === _buscaCliHl));
+}
+function fecharBuscaCli() { document.getElementById('buscaCliDrop').classList.remove('show'); }
+
+async function abrirCliente(codcli) {
+  fecharBuscaCli();
+  document.getElementById('buscaCli').value = '';
+  document.getElementById('viewBoard').classList.add('hidden');
+  document.getElementById('viewProduto').classList.add('hidden');
+  document.getElementById('viewCliente').classList.remove('hidden');
+  document.getElementById('c_nome').textContent = 'Carregando…';
+  document.getElementById('c_meta').textContent = '';
+  document.getElementById('detcBody').innerHTML = '';
+  document.getElementById('filt_prod_cli').value = '';
+  window.scrollTo(0, 0);
+  window._codcliAtual = codcli;
+  try {
+    const d = await fetchJSON(`/api/radar/cliente/${codcli}?dias=${dias()}`);
+    _cliente = d;
+    const c = d.cliente, k = d.kpis;
+    document.getElementById('c_nome').textContent = c.nome;
+    document.getElementById('c_meta').textContent =
+      `#${c.codcli} · ${c.cidade || '—'}/${c.uf || '—'} · ${c.vendedor || '—'} · ${c.telefone || 's/ tel'} · janela ${d.dias}d`;
+    document.getElementById('kc_parados').textContent = NUM.format(k.produtos_parados);
+    document.getElementById('kc_risco').textContent = BRL.format(k.receita_em_risco || 0);
+    renderCliente();
+  } catch (e) {
+    document.getElementById('c_nome').textContent = 'Erro ao carregar o cliente.';
+  }
+}
+
+function sortCli(col) {
+  if (_detcSort.col === col) _detcSort.dir = _detcSort.dir === 'desc' ? 'asc' : 'desc';
+  else _detcSort = { col, dir: 'desc' };
+  renderCliente();
+}
+
+function renderCliente() {
+  if (!_cliente) return;
+  const busca = document.getElementById('filt_prod_cli').value.trim().toLowerCase();
+  let rows = (_cliente.rows || []).slice();
+  if (busca) rows = rows.filter(r =>
+    (r.descricao || '').toLowerCase().includes(busca) || String(r.codprod).includes(busca)
+    || (r.depto_nome || '').toLowerCase().includes(busca) || (r.fornec_nome || '').toLowerCase().includes(busca));
+  const { col, dir } = _detcSort, mult = dir === 'desc' ? -1 : 1;
+  rows.sort((a, b) => (((a[col] ?? -1) - (b[col] ?? -1)) * mult));
+  document.querySelectorAll('#viewCliente .setac').forEach(s =>
+    s.textContent = (s.dataset.c === col) ? (dir === 'desc' ? ' ▼' : ' ▲') : '');
+  const tb = document.getElementById('detcBody');
+  tb.innerHTML = rows.map(r => `
+    <tr>
+      <td><strong>${r.descricao}</strong> <span style="font-size:0.7rem;color:var(--text-dim)">#${r.codprod}</span></td>
+      <td>${r.depto_nome || '—'}</td>
+      <td>${r.fornec_nome || '—'}</td>
+      <td class="num">${r.dias_parado == null ? '—' : r.dias_parado}</td>
+      <td class="num">${comprava(r)}</td>
+      <td class="num">${BRL.format(r.venda_12m || 0)}</td>
+      <td><span class="badge st-${r.status}">${ST_LABEL[r.status] || r.status}</span></td>
+    </tr>`).join('');
+  if (!rows.length) tb.innerHTML = '<tr><td colspan="7" style="color:var(--text-dim)">Nenhum produto parado nessa janela para este cliente.</td></tr>';
+  document.getElementById('detc_info').textContent =
+    `${NUM.format(rows.length)} produtos exibidos (de ${NUM.format(_cliente.rows.length)} que o cliente parou de comprar)`;
+}
+
+function exportarCliente(fmt) {
+  if (!window._codcliAtual) return;
+  window.location.href = `/api/radar/cliente/${window._codcliAtual}/${fmt}?dias=${dias()}`;
 }
 
 // ─────────── DRILL: série mensal do cliente (sparkline SVG) ───────────
