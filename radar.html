@@ -183,6 +183,11 @@
           <option value="pct_queda">% de queda</option>
         </select>
       </div>
+      <div class="ff">
+        <label>Fornecedor</label>
+        <input list="dl_fornec" id="filt_fornec" placeholder="Todos · digite" autocomplete="off" onchange="onFornecChange()">
+        <datalist id="dl_fornec"></datalist>
+      </div>
       <div class="ff scope-filtro hidden">
         <label>Supervisor (time)</label>
         <input list="dl_sup" id="filt_sup" placeholder="Todos · digite" autocomplete="off" onchange="onSupChange()">
@@ -347,6 +352,8 @@ function dias() { return document.getElementById('filt_dias').value; }
 
 // ── Filtro de escopo (supervisor / vendedor) — só admin/viewer ──
 let _supMap = {}, _vendMap = {}, _supSel = '', _vendSel = '';
+// ── Filtro de fornecedor (board) — todos os perfis ──
+let _fornecMap = {}, _fornecSel = '';
 
 function extrairCodigo(v) {
   if (!v) return '';
@@ -401,19 +408,36 @@ function onVendChange() {
   atualizarEscopo();
 }
 function limparEscopo() {
-  _supSel = ''; _vendSel = '';
+  _supSel = ''; _vendSel = ''; _fornecSel = '';
   document.getElementById('filt_sup').value = '';
   document.getElementById('filt_vend').value = '';
+  document.getElementById('filt_fornec').value = '';
   repopularVendDatalist();
+  atualizarEscopo();
+}
+
+// Fornecedor: filtro do board (todos os perfis). Datalist vem do catálogo (produtos_map).
+async function loadFornecedores() {
+  try {
+    const d = await fetchJSON('/api/radar/fornecedores');
+    _fornecMap = {};
+    (d.fornecedores || []).forEach(f => { _fornecMap[String(f.codfornec)] = f.nome; });
+    document.getElementById('dl_fornec').innerHTML = (d.fornecedores || [])
+      .map(f => `<option value="${f.nome} (${f.codfornec})">`).join('');
+  } catch (e) { console.warn('fornecedores:', e); }
+}
+function onFornecChange() {
+  _fornecSel = extrairCodigo(document.getElementById('filt_fornec').value);
   atualizarEscopo();
 }
 function atualizarEscopo() {
   const info = document.getElementById('escopoInfo');
   const btn = document.getElementById('btnLimparEscopo');
-  let txt = '';
-  if (_vendSel) txt = 'Vendedor: ' + ((_vendMap[_vendSel] && _vendMap[_vendSel].nome) || _vendSel);
-  else if (_supSel) txt = 'Time: ' + ((_supMap[_supSel] && _supMap[_supSel].nome) || _supSel);
-  if (txt) { info.textContent = '▣ ' + txt; info.classList.remove('hidden'); btn.style.display = ''; }
+  const partes = [];
+  if (_vendSel) partes.push('Vendedor: ' + ((_vendMap[_vendSel] && _vendMap[_vendSel].nome) || _vendSel));
+  else if (_supSel) partes.push('Time: ' + ((_supMap[_supSel] && _supMap[_supSel].nome) || _supSel));
+  if (_fornecSel) partes.push('Fornecedor: ' + (_fornecMap[_fornecSel] || _fornecSel));
+  if (partes.length) { info.textContent = '▣ ' + partes.join(' · '); info.classList.remove('hidden'); btn.style.display = ''; }
   else { info.classList.add('hidden'); btn.style.display = 'none'; }
   recarregarTudo();
 }
@@ -432,7 +456,8 @@ async function loadMe() {
 async function loadBoard() {
   document.getElementById('board_info').textContent = 'Carregando…';
   try {
-    const d = await fetchJSON(`/api/radar/board?dias=${dias()}&limit=200${_scopeQS()}`);
+    const fq = _fornecSel ? `&fornecedor=${_fornecSel}` : '';
+    const d = await fetchJSON(`/api/radar/board?dias=${dias()}&limit=200${_scopeQS()}${fq}`);
     _board = d.rows || [];
     document.getElementById('board_info').textContent =
       `${NUM.format(d.total || _board.length)} produtos perdendo receita · mostrando top ${_board.length}`;
@@ -781,7 +806,7 @@ function fecharDrill() {
 // ─────────── boot ───────────
 (async () => {
   await loadMe();
-  await loadScopeMaps();
+  await Promise.all([loadScopeMaps(), loadFornecedores()]);
   await loadBoard();
   document.getElementById('loading').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');

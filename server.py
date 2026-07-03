@@ -5121,6 +5121,40 @@ def api_radar_produto(codprod):
     return jsonify(resp)
 
 
+def _radar_filtrar_fornec(rows, fornecedor):
+    """Filtra as linhas do board pelo fornecedor (codfornec do produto). Sem fornecedor → intacto.
+    Em memória sobre a lista já cacheada — combina em E com o escopo supervisor/vendedor."""
+    if not fornecedor:
+        return rows
+    try:
+        cf = int(fornecedor)
+    except (TypeError, ValueError):
+        return rows
+    return [r for r in rows if r.get('codfornec') == cf]
+
+
+@app.route('/api/radar/fornecedores')
+@login_required
+def api_radar_fornecedores():
+    """Fornecedores presentes no catálogo do Radar (produtos vendidos nos últimos 12m), pro
+    autocomplete do filtro. Derivado do produtos_map cacheado → sem query nova. Lista completa
+    (não é top-N), ordenada por nome."""
+    idx = _carregar_produtos_map()
+    vistos = {}
+    for v in idx.values():
+        cf = v.get('codfornec')
+        if cf is None:
+            continue
+        try:
+            cf = int(cf)   # DAX manda float (113.0) → int limpo pro autocomplete/URL
+        except (TypeError, ValueError):
+            continue
+        vistos.setdefault(cf, v.get('fornec_nome') or f'Fornec {cf}')
+    fornecedores = [{'codfornec': cf, 'nome': nome} for cf, nome in vistos.items()]
+    fornecedores.sort(key=lambda x: (x['nome'] or '').lower())
+    return jsonify({'ok': True, 'total': len(fornecedores), 'fornecedores': fornecedores})
+
+
 @app.route('/api/radar/board')
 @login_required
 def api_radar_board():
@@ -5138,13 +5172,15 @@ def api_radar_board():
 
     sup = _supervisores_filtro()
     vend = _radar_vendedor_filtro()
+    fornecedor = request.args.get('fornecedor')
     key = cache_key_for_user('radar:board',
                              {'dias': dias, 'supervisor': _sup_cache_key(sup), 'vendedor': vend if vend is not None else '-'})
     cached = _cache_get(key)
     if cached:
-        resp = dict(cached)
-        resp['rows'] = resp['rows'][:limit]
-        return jsonify(resp)
+        # Filtro por fornecedor é atributo do produto → aplicado em memória sobre a lista
+        # completa cacheada (não entra na chave; combina em E com supervisor/vendedor).
+        full = _radar_filtrar_fornec(cached['rows'], fornecedor)
+        return jsonify({'ok': True, 'dias': dias, 'total': len(full), 'rows': full[:limit]})
 
     # Escopo. Não-admin: por CADASTRO (mesmo padrão de api_categorias).
     # Admin/viewer: filtro escolhido por venda (vendedor tem precedência sobre supervisor).
@@ -5200,6 +5236,7 @@ SUMMARIZECOLUMNS(
             'descricao':         info.get('descricao') or f'Produto {cp}',
             'codepto':           codepto,
             'depto_nome':        deptos_nomes.get(str(codepto)) if codepto is not None else None,
+            'codfornec':         info.get('codfornec'),
             'fornec_nome':       info.get('fornec_nome'),
             'venda_rec':         round(v_rec, 2),
             'venda_ant':         round(v_ant, 2),
@@ -5208,11 +5245,9 @@ SUMMARIZECOLUMNS(
             'clientes_perdidos': max(0, c_ant - c_rec),
         })
     out.sort(key=lambda x: x['queda_receita'], reverse=True)
-    resp = {'ok': True, 'dias': dias, 'total': len(out), 'rows': out}
-    _cache_set(key, resp, 'dax_agregado')
-    resp = dict(resp)
-    resp['rows'] = out[:limit]
-    return jsonify(resp)
+    _cache_set(key, {'ok': True, 'dias': dias, 'total': len(out), 'rows': out}, 'dax_agregado')
+    full = _radar_filtrar_fornec(out, fornecedor)
+    return jsonify({'ok': True, 'dias': dias, 'total': len(full), 'rows': full[:limit]})
 
 
 _RADAR_STATUS_PT = {'ativo': 'Comprando', 'esfriando': 'Esfriando', 'parou': 'Parou', 'perdido': 'Perdido'}

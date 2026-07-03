@@ -196,3 +196,47 @@ def test_radar_cliente_404_fora_escopo(client, usuario_vendedor, mock_dax_captur
 
     r = client.get('/api/radar/cliente/4?dias=60')
     assert r.status_code == 404
+
+
+# ───────────────────────── radar: filtro por fornecedor (board) ─────────────────────────
+
+def _radar_board_routes():
+    prod_map = [
+        {'[CODPROD]': 100, '[DESCRICAO]': 'DETERGENTE', '[CODEPTO]': 1, '[CODFORNECPRINC]': 113, '[FORNECPRINC]': 'BOMBRIL SA', '[Venda]': 5000.0},
+        {'[CODPROD]': 200, '[DESCRICAO]': 'SACOLA',     '[CODEPTO]': 2, '[CODFORNECPRINC]': 999, '[FORNECPRINC]': 'OUTRO LTDA', '[Venda]': 3000.0},
+    ]
+    rec = [{'[CODPROD]': 100, '[VendaRec]': 100.0, '[CliRec]': 2}, {'[CODPROD]': 200, '[VendaRec]': 100.0, '[CliRec]': 2}]
+    ant = [{'[CODPROD]': 100, '[VendaAnt]': 500.0, '[CliAnt]': 5}, {'[CODPROD]': 200, '[VendaAnt]': 300.0, '[CliAnt]': 4}]
+    return [
+        ('DESCRICAO',    _payload(prod_map)),
+        ('VendaRec',     _payload(rec)),
+        ('VendaAnt',     _payload(ant)),
+        ('DEPARTAMENTO', _load('dax_deptos_nomes')),
+    ]
+
+
+def test_radar_fornecedores_lista_int(client, usuario_admin, mock_dax_capture, clean_redis):
+    """/api/radar/fornecedores deriva do catálogo, ordena por nome e devolve codfornec INT."""
+    mock_dax_capture.set_routes(_radar_board_routes())
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+
+    r = client.get('/api/radar/fornecedores')
+    assert r.status_code == 200, r.get_data(as_text=True)
+    d = r.get_json()
+    nomes = [f['nome'] for f in d['fornecedores']]
+    assert nomes == ['BOMBRIL SA', 'OUTRO LTDA']          # ordenado por nome
+    assert all(isinstance(f['codfornec'], int) for f in d['fornecedores'])  # não float
+
+
+def test_radar_board_filtra_por_fornecedor(client, usuario_admin, mock_dax_capture, clean_redis):
+    """Board sem filtro traz os 2 produtos sangrando; com fornecedor=113 sobra só o da BOMBRIL."""
+    mock_dax_capture.set_routes(_radar_board_routes())
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+
+    full = client.get('/api/radar/board?dias=60').get_json()
+    assert full['total'] == 2                              # 100 e 200 (ambos com queda)
+
+    filt = client.get('/api/radar/board?dias=60&fornecedor=113').get_json()
+    assert filt['total'] == 1
+    assert filt['rows'][0]['codprod'] == 100
+    assert filt['rows'][0]['fornec_nome'] == 'BOMBRIL SA'
