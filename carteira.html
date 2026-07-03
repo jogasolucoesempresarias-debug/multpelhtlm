@@ -471,10 +471,10 @@
       </p>
       <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
         <div class="ff"><label>Janela</label>
-          <select id="ppJanela" onchange="carregarProximo()">
+          <select id="ppJanela" onchange="onJanelaChange()">
             <option value="hoje">A ligar hoje</option>
             <option value="proximos7">A ligar nos próximos 7 dias</option>
-            <option value="vencido7">Vencido há +7 dias</option>
+            <option value="vencido15">Vencido há +15 dias</option>
           </select>
         </div>
         <div class="ff"><label>Time</label>
@@ -1139,7 +1139,7 @@ function renderPpCards(c) {
   const cards = [
     { l: 'A ligar hoje', v: NUM.format(c.hoje || 0), cor: 'var(--orange)', jan: 'hoje' },
     { l: 'Próximos 7 dias', v: NUM.format(c.proximos7 || 0), cor: 'var(--accent)', jan: 'proximos7' },
-    { l: 'Vencido +7 dias', v: NUM.format(c.vencido7 || 0), cor: 'var(--red)', jan: 'vencido7' },
+    { l: 'Vencido +15 dias', v: NUM.format(c.vencido15 || 0), cor: 'var(--red)', jan: 'vencido15' },
     { l: 'Receita em risco', v: BRL.format(c.receita_risco || 0), cor: 'var(--green)' },
   ];
   let html = cards.map(k => {
@@ -1157,8 +1157,19 @@ function renderPpCards(c) {
   }
   document.getElementById('ppCards').innerHTML = html;
 }
+// Sort padrão por janela: na +15 o diretor quer de hoje pra frente (atraso crescente);
+// nas demais mantém prioridade desc.
+function aplicarSortPadraoJanela() {
+  if (document.getElementById('ppJanela').value === 'vencido15') { _ppSort = 'atraso'; _ppDir = 'asc'; }
+  else { _ppSort = 'prioridade'; _ppDir = 'desc'; }
+}
+function onJanelaChange() {
+  aplicarSortPadraoJanela();
+  carregarProximo();
+}
 function filtrarCard(janela) {
   document.getElementById('ppJanela').value = janela;
+  aplicarSortPadraoJanela();
   carregarProximo();
 }
 function irParaCliente(codcli) {

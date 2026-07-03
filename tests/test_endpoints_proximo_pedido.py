@@ -43,6 +43,8 @@ def test_clientes_proximo_pedido_janelas():
     assert {c['codcli'] for c in server._clientes_proximo_pedido(cart, 'hoje')} == {1}
     assert {c['codcli'] for c in server._clientes_proximo_pedido(cart, 'atrasados')} == {2}
     assert {c['codcli'] for c in server._clientes_proximo_pedido(cart, 'proximos', 3)} == {1, 2, 3}
+    # vencido15 = hoje (da=0) + vencidos 1..15 → inclui c1 (da=0) e c2 (da=5); c3 (da=-3) fora
+    assert {c['codcli'] for c in server._clientes_proximo_pedido(cart, 'vencido15')} == {1, 2}
 
 
 # ── endpoint /api/carteira/proximo-pedido ──
@@ -54,12 +56,12 @@ def test_endpoint_proximo_pedido_ordena_por_prioridade(client, usuario_admin, cl
     assert d['total'] == 2
     # ordenado por prioridade desc → cliente 2 (200) antes do 1 (100)
     assert [r['codcli'] for r in d['rows']] == [2, 1]
-    # cards: c1 (da=0) hoje; c3 (da=-3) próximos 7; c2 (da=5) vencido 1-7; c4 sem ciclo fora.
-    # Receita/oportunidade sobre os acionáveis (da 0-7): c1, c2.
+    # cards: c1 (da=0) hoje; c3 (da=-3) próximos 7; c2 (da=5) vencido 1-15; c4 sem ciclo fora.
+    # Receita/oportunidade sobre os acionáveis (da 0-15): c1, c2.
     cards = d['cards']
     assert cards['hoje'] == 1
     assert cards['proximos7'] == 1                 # c3, da=-3
-    assert cards['vencido7'] == 1                  # c2, da=5 (1..7)
+    assert cards['vencido15'] == 1                 # c2, da=5 (1..15)
     assert cards['receita_risco'] == 50.0          # c1=0 + c2=5*10
     assert cards['maior_oportunidade']['codcli'] == 2  # maior prioridade
 

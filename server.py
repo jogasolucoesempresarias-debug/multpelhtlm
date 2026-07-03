@@ -659,9 +659,10 @@ def _gerar_relatorio_para_usuario(usuario):
     # Anexo extra opcional: "Lista do Dia" (Próximo Pedido) — clientes vencidos do escopo
     # do usuário + top 5 produtos a oferecer. Escopado por vendedor/área = leve.
     if usuario.get('email_proximo_pedido'):
-        # Hoje + vencidos 1-7 dias (8+ dias o diretor não quer — mesma regra da tela)
-        due = [c for c in _clientes_proximo_pedido(clientes, 'vencidos') if (c.get('dias_atraso') or 0) <= 7]
-        due.sort(key=lambda c: c.get('prioridade_contato') or 0, reverse=True)
+        # Hoje + vencidos 1-15 dias (16+ o diretor não quer — mesma regra da tela). Relatório
+        # único ordenado de hoje pra frente (atraso crescente): hoje (0), 1d, 2d... 15d.
+        due = [c for c in _clientes_proximo_pedido(clientes, 'vencidos') if (c.get('dias_atraso') or 0) <= 15]
+        due.sort(key=lambda c: c.get('dias_atraso') or 0)
         due = due[:200]
         prods = _top_produtos_varios([c['codcli'] for c in due], 5) if due else {}
         pp_head = ['CodCli', 'Cliente', 'Cidade', 'UF', 'Vendedor', 'Telefone', 'UltimaCompra',
@@ -2776,8 +2777,8 @@ def _clientes_proximo_pedido(clientes, janela='vencidos', dias_janela=3):
         # UI (novas): a ligar nos próximos 7 dias (vence de amanhã até +7, ainda não venceu)
         if janela == 'proximos7' and not (-7 <= da <= -1):
             continue
-        # UI (novas): vencido de 1 a 7 dias (8+ dias o diretor NÃO quer)
-        if janela == 'vencido7' and not (1 <= da <= 7):
+        # UI: janela acionável = hoje + vencido de 1 a 15 dias (relatório único; 16+ fica de fora)
+        if janela == 'vencido15' and not (0 <= da <= 15):
             continue
         out.append(c)
     return out
@@ -2812,16 +2813,16 @@ def api_carteira_proximo_pedido():
         v = request.args.get(k)
         if v:
             geo[k] = v
-    # 8+ dias vencido o diretor NÃO quer → fora dos cards também (janela acionável = -7 a +7)
+    # 16+ dias vencido o diretor NÃO quer → fora dos cards também (janela acionável = -7 a +15)
     base_all = [c for c in clientes if c.get('ciclo_pessoal') is not None
-                and c.get('dias_atraso') is not None and c['dias_atraso'] <= 7]
+                and c.get('dias_atraso') is not None and c['dias_atraso'] <= 15]
     base = _filtrar_carteira(base_all, geo)['rows']
-    acionaveis = [c for c in base if c['dias_atraso'] >= 0]  # hoje + vencidos 1-7
+    acionaveis = [c for c in base if c['dias_atraso'] >= 0]  # hoje + vencidos 1-15
     top = max(acionaveis, key=lambda c: c.get('prioridade_contato') or 0, default=None)
     resp['cards'] = {
         'hoje':          sum(1 for c in base if c['dias_atraso'] == 0),
         'proximos7':     sum(1 for c in base if -7 <= c['dias_atraso'] <= -1),
-        'vencido7':      sum(1 for c in base if 1 <= c['dias_atraso'] <= 7),
+        'vencido15':     sum(1 for c in base if 1 <= c['dias_atraso'] <= 15),
         'receita_risco': round(sum(c.get('receita_perdida_proj') or 0 for c in acionaveis), 2),
         'maior_oportunidade': ({
             'codcli':        top['codcli'],
