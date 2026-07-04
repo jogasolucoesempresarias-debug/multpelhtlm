@@ -77,6 +77,23 @@ def test_clientes_busca_vendedor_so_seu_cadastro(client, usuario_vendedor, mock_
     assert codclis == {1, 3}
 
 
+def test_clientes_busca_codigo_prefixo_nao_substring(client, usuario_admin, clean_redis, monkeypatch):
+    """Número → código por PREFIXO, exato primeiro. '222' casa 222/2226, NÃO 12227 (222 no meio)."""
+    import server
+    monkeypatch.setattr(server, '_carteira_no_escopo', lambda: [
+        {'codcli': 222,   'cliente': 'CLIENTE A', 'venda_12m': 100},
+        {'codcli': 2226,  'cliente': 'CLIENTE B', 'venda_12m': 500},
+        {'codcli': 12227, 'cliente': 'CLIENTE C', 'venda_12m': 900},  # 222 no MEIO → não casa
+    ])
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+
+    d = client.get('/api/_internal/clientes-busca?q=222').get_json()
+    codclis = [c['codcli'] for c in d['clientes']]
+    assert 12227 not in codclis           # não casa código "no meio"
+    assert set(codclis) == {222, 2226}
+    assert codclis[0] == 222              # código exato vem primeiro
+
+
 # ───────────────────────── mix/cliente/<id>/fornecedores ─────────────────────────
 
 def test_mix_cliente_fornecedores_agrupa_e_filtra_dias(client, usuario_admin, mock_dax_capture, clean_redis):
@@ -125,6 +142,26 @@ def test_mix_board_busca_filtra_por_cliente(client, usuario_admin, mock_dax_capt
     assert 'depto_nome' in d['rows'][0]
     assert 'dias_sem_comprar_categoria' in d['rows'][0]
     assert 'lucro_cat_12m' in d['rows'][0]
+
+
+def test_mix_board_codcli_exato(client, usuario_admin, mock_dax_capture, clean_redis):
+    """Seleção no autocomplete → ?codcli= filtra a lista completa pelo cliente EXATO, no formato do board."""
+    mock_dax_capture.set_routes([
+        ('UltimaCompra', _load('dax_mix_abandonado')),
+        ('DEPARTAMENTO', _load('dax_deptos_nomes')),
+        ('Compras12m',   _load('dax_carteira_snapshot_freqmon')),
+        ('MUNICENT',     _load('dax_carteira_meta')),
+        ('CodCli',       _load('dax_carteira_datas')),
+        ('PCUSUARI',     _load('dax_vendedores_map')),
+        ('PCSUPERV',     _load('dax_supervisores_map')),
+    ])
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+
+    d = client.get('/api/mix/abandonado?dias=60&codcli=1').get_json()
+    assert d['ok']
+    assert d['total'] == 4                         # total do board inteiro
+    assert all(row['codcli'] == 1 for row in d['rows'])   # só o cliente exato
+    assert d['filtrado'] == len(d['rows'])
 
 
 def test_mix_cliente_fornecedores_404_fora_escopo(client, usuario_vendedor, mock_dax_capture, clean_redis):

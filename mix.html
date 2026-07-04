@@ -146,8 +146,9 @@
     </div>
     <div class="ff" style="flex:1; position:relative;">
       <label>Busca cliente (nome ou código)</label>
-      <input type="text" id="filt_busca" placeholder="ex: padaria, ilheus, 128827" autocomplete="off"
-             oninput="onBuscaClienteInput()">
+      <input type="text" id="filt_busca" placeholder="nome ou código do cliente…" autocomplete="off"
+             oninput="onBuscaClienteInput()" onkeydown="onBuscaClienteKey(event)">
+      <div id="cliDrop" class="busca-drop"></div>
     </div>
     <div class="ff">
       <label>&nbsp;</label>
@@ -343,41 +344,88 @@ function fecharDeptos() {
 }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') fecharDeptos(); });
 
-// ── Type-ahead de cliente (busca por escopo, independente do board de 200) ──
-let _buscaTimer = null;
+// ── Autocomplete de cliente: dígito=código(prefixo), texto=nome. Só carrega o board ao ESCOLHER. ──
+let _buscaTimer = null, _cliResultados = [], _cliHl = -1, _clienteSel = null;
 
-function buscaAtiva() {
-  return (document.getElementById('filt_busca').value || '').trim().length >= 2;
-}
+function buscaAtiva() { return _clienteSel != null; }
 
-// Busca de cliente = filtra a lista COMPLETA (não só os 200) no MESMO formato do board.
 function onBuscaClienteInput() {
   clearTimeout(_buscaTimer);
   const q = (document.getElementById('filt_busca').value || '').trim();
-  if (q.length < 2) { loadMix(); return; }   // limpou → volta ao board (top 200)
-  _buscaTimer = setTimeout(() => loadMixBusca(q), 250);
+  // Editou o texto → some a seleção; se esvaziou, volta ao board.
+  if (_clienteSel != null) { _clienteSel = null; }
+  if (q.length < 2) { fecharCliDrop(); loadMix(); return; }
+  _buscaTimer = setTimeout(() => buscarClientes(q), 250);
 }
 
-async function loadMixBusca(q) {
+async function buscarClientes(q) {
+  try {
+    const d = await fetchJSON('/api/_internal/clientes-busca?limit=15&q=' + encodeURIComponent(q));
+    _cliResultados = d.clientes || [];
+    _cliHl = -1;
+    const drop = document.getElementById('cliDrop');
+    if (!_cliResultados.length) {
+      drop.innerHTML = '<div class="item" style="cursor:default;color:var(--text-dim);">Nenhum cliente no seu escopo.</div>';
+    } else {
+      drop.innerHTML = _cliResultados.map((c, i) => `
+        <div class="item" data-i="${i}" onclick="selecionarCliente(${c.codcli})">
+          <div style="font-weight:600;">${c.cliente}</div>
+          <div class="sub">#${c.codcli} · ${c.cidade || '—'}/${c.uf || '—'} · ${c.vendedor || '—'}</div>
+        </div>`).join('');
+    }
+    drop.classList.add('show');
+  } catch (e) { fecharCliDrop(); }
+}
+
+function selecionarCliente(codcli) {
+  const c = _cliResultados.find(x => x.codcli === codcli) || {};
+  _clienteSel = codcli;
+  document.getElementById('filt_busca').value = `${c.cliente || 'Cliente'} (${codcli})`;
+  fecharCliDrop();
+  carregarClienteNoBoard(codcli);
+}
+
+// Carrega os pares do cliente escolhido NO FORMATO DO BOARD (mesmas colunas dos 200).
+async function carregarClienteNoBoard(codcli) {
   const dias = document.getElementById('filt_dias').value;
   const depto = extrairCodigo(document.getElementById('filt_depto').value);
   const fornec = extrairCodigo(document.getElementById('filt_fornec').value);
-  const params = new URLSearchParams({ dias, busca: q });
+  const params = new URLSearchParams({ dias, codcli });
   if (depto) params.set('codepto', depto);
   if (fornec) params.set('fornecedor', fornec);
   try {
     const d = await fetchJSON('/api/mix/abandonado?' + params.toString());
     _rows = d.rows || [];
-    _totalBackend = d.total;                      // total absoluto (27.832) → KPI "X (de Y)"
+    _totalBackend = d.total;
     document.getElementById('dias_subt').textContent = dias;
     renderKpis(_rows, _totalBackend);
-    renderTabela(_rows);                          // mesmo formato/colunas dos 200
+    renderTabela(_rows);
+    const nome = _rows.length ? _rows[0].cliente : ('cliente #' + codcli);
     document.getElementById('tabela_info_txt').innerHTML =
-      `<strong>${NUM.format(_rows.length)}</strong> pares de "${q}" · de ${NUM.format(_totalBackend)} no total`;
+      `<strong>${NUM.format(_rows.length)}</strong> departamento(s) parado(s) de <strong>${nome}</strong> (#${codcli})`;
   } catch (e) {}
 }
 
-// Monta os params dos exports (dias + filtros de depto/fornecedor ativos). Compartilhado CSV/PDF.
+function onBuscaClienteKey(ev) {
+  const drop = document.getElementById('cliDrop');
+  if (!drop.classList.contains('show')) return;
+  if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+    ev.preventDefault();
+    _cliHl += (ev.key === 'ArrowDown' ? 1 : -1);
+    if (_cliHl < 0) _cliHl = _cliResultados.length - 1;
+    if (_cliHl >= _cliResultados.length) _cliHl = 0;
+    [...drop.querySelectorAll('.item')].forEach((el, i) => el.classList.toggle('hl', i === _cliHl));
+  } else if (ev.key === 'Enter') {
+    if (_cliHl >= 0 && _cliResultados[_cliHl]) { ev.preventDefault(); selecionarCliente(_cliResultados[_cliHl].codcli); }
+  } else if (ev.key === 'Escape') { fecharCliDrop(); }
+}
+
+function fecharCliDrop() { document.getElementById('cliDrop').classList.remove('show'); }
+document.addEventListener('click', e => {
+  if (!e.target.closest('#filt_busca') && !e.target.closest('#cliDrop')) fecharCliDrop();
+});
+
+// Monta os params dos exports (dias + filtros de depto/fornecedor + cliente selecionado). CSV/PDF.
 function _paramsExportMix() {
   const params = new URLSearchParams({ dias: document.getElementById('filt_dias').value });
   const depto = extrairCodigo(document.getElementById('filt_depto').value);
@@ -389,8 +437,7 @@ function _paramsExportMix() {
   if (vendCod) params.set('vendedor', vendCod);
   const timeCod = extrairCodigo(document.getElementById('filt_time').value);
   if (timeCod) params.set('time', timeCod);
-  const busca = (document.getElementById('filt_busca').value || '').trim();
-  if (busca) params.set('busca', busca);
+  if (_clienteSel != null) params.set('codcli', _clienteSel);   // cliente escolhido no autocomplete
   return params;
 }
 
@@ -579,7 +626,7 @@ function filtrarTabela() {
 }
 
 function aplicar() {
-  if (buscaAtiva()) loadMixBusca(document.getElementById('filt_busca').value.trim());
+  if (_clienteSel != null) carregarClienteNoBoard(_clienteSel);  // mantém o cliente escolhido
   else loadMix();
 }
 
@@ -590,6 +637,8 @@ function limparFiltros() {
   document.getElementById('filt_time').value = '';
   document.getElementById('filt_vend').value = '';
   document.getElementById('filt_busca').value = '';
+  _clienteSel = null;
+  fecharCliDrop();
   repopularVendedorCascata();   // volta a lista de vendedores pra completa
   loadMix();                    // recarrega server-side (dias/depto/fornec)
 }

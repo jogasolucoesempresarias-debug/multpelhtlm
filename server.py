@@ -1604,6 +1604,7 @@ def api_clientes_busca():
     graça: cliente fora do cadastro simplesmente não aparece). Casa por trecho do nome/fantasia
     OU código. Ordena por venda 12m desc. Compartilhado por Mix e Radar (busca por cliente)."""
     q = (request.args.get('q') or '').strip().lower()
+    so_digitos = q.isdigit()   # número → busca por CÓDIGO; texto → busca por NOME
     try:
         limit = max(1, min(int(request.args.get('limit', 20)), 50))
     except (TypeError, ValueError):
@@ -1613,11 +1614,16 @@ def api_clientes_busca():
     out = []
     for c in clientes:
         if q:
-            nome = (c.get('cliente') or '').lower()
-            fant = (c.get('fantasia') or '').lower()
             cod = str(c.get('codcli') or '')
-            if q not in nome and q not in fant and q not in cod:
-                continue
+            if so_digitos:
+                # Código: PREFIXO (não "no meio") → "222" acha 222/2225, não 12227.
+                if not cod.startswith(q):
+                    continue
+            else:
+                nome = (c.get('cliente') or '').lower()
+                fant = (c.get('fantasia') or '').lower()
+                if q not in nome and q not in fant:
+                    continue
         out.append({
             'codcli':    c.get('codcli'),
             'cliente':   c.get('cliente') or f"Cliente #{c.get('codcli')}",
@@ -1629,7 +1635,11 @@ def api_clientes_busca():
             'telefone':  c.get('telefone'),
             'venda_12m': c.get('venda_12m') or 0,
         })
-    out.sort(key=lambda x: x['venda_12m'], reverse=True)
+    if so_digitos and q:
+        # Código exato primeiro, depois prefixos por venda desc.
+        out.sort(key=lambda x: (str(x['codcli']) != q, -(x['venda_12m'] or 0)))
+    else:
+        out.sort(key=lambda x: x['venda_12m'], reverse=True)
     return jsonify({'ok': True, 'total': len(out), 'clientes': out[:limit]})
 
 
@@ -4286,6 +4296,7 @@ def api_mix_abandonado():
     codepto = request.args.get('codepto')
     fornecedor = request.args.get('fornecedor')
     busca = (request.args.get('busca') or '').strip()
+    codcli = request.args.get('codcli')
 
     key = cache_key_for_user('mix:abandonado', {'dias': dias, 'codepto': codepto or '', 'fornecedor': fornecedor or ''})
     cached = _cache_get(key)
@@ -4296,12 +4307,13 @@ def api_mix_abandonado():
         _cache_set(key, {'ok': True, 'dias': dias, 'total': len(full), 'rows': full}, 'dax_agregado')
 
     total = len(full)
-    if busca:
-        # Filtra a lista COMPLETA (cacheada) por cliente/cidade/código → mesmos pares, mesmo
-        # formato dos 200, mas cobrindo TODOS os clientes (não só o top-200). Filtro em memória.
-        filtrados = _mix_aplicar_filtros_locais(full, None, None, busca)
+    if codcli or busca:
+        # Filtra a lista COMPLETA (cacheada) por cliente exato (seleção no autocomplete) OU
+        # busca (nome/prefixo de código) → mesmos pares, mesmo formato dos 200, cobrindo TODOS
+        # os clientes (não só o top-200). Filtro em memória.
+        filtrados = _mix_aplicar_filtros_locais(full, None, None, busca, codcli)
         return jsonify({'ok': True, 'dias': dias, 'total': total, 'filtrado': len(filtrados),
-                        'busca': busca, 'rows': filtrados})
+                        'busca': busca, 'codcli': codcli, 'rows': filtrados})
     return jsonify({'ok': True, 'dias': dias, 'total': total, 'rows': full[:limit]})
 
 
@@ -4634,9 +4646,18 @@ def _nome_arquivo_mix(ext, dias):
     return f"{base}_{_date.today().isoformat()}.{ext}"
 
 
-def _mix_aplicar_filtros_locais(linhas, vendedor, time_filt, busca):
-    """Aplica os filtros locais (vendedor/time/busca) que o frontend usa em filtrarTabela().
-    Os 3 são opcionais — se vazios, retorna a lista intacta."""
+def _mix_aplicar_filtros_locais(linhas, vendedor, time_filt, busca, codcli=None):
+    """Aplica os filtros locais (vendedor/time/busca/codcli) que o frontend usa.
+    Todos opcionais — se vazios, retorna a lista intacta.
+    - codcli: casa o cliente EXATO (usado quando o usuário escolhe no autocomplete).
+    - busca : número → PREFIXO de código; texto → trecho do nome/cidade. (Evita "222" casar
+      no meio de qualquer código.)"""
+    if codcli is not None:
+        try:
+            cc = int(codcli)
+            linhas = [r for r in linhas if r.get('codcli') == cc]
+        except (TypeError, ValueError):
+            pass
     if vendedor:
         try:
             v = int(vendedor)
@@ -4651,10 +4672,12 @@ def _mix_aplicar_filtros_locais(linhas, vendedor, time_filt, busca):
             pass
     if busca:
         b = busca.lower().strip()
-        linhas = [r for r in linhas
-                  if b in (r.get('cliente') or '').lower()
-                  or b in (r.get('cidade') or '').lower()
-                  or b in str(r.get('codcli') or '')]
+        if b.isdigit():
+            linhas = [r for r in linhas if str(r.get('codcli') or '').startswith(b)]
+        else:
+            linhas = [r for r in linhas
+                      if b in (r.get('cliente') or '').lower()
+                      or b in (r.get('cidade') or '').lower()]
     return linhas
 
 
@@ -4675,6 +4698,7 @@ def api_mix_abandonado_csv():
     linhas = _mix_aplicar_filtros_locais(
         linhas, request.args.get('vendedor'),
         request.args.get('time'), request.args.get('busca'),
+        request.args.get('codcli'),
     )
     cabecalho = ['CodCli', 'Cliente', 'Cidade', 'UF', 'Departamento', 'UltimaCompra',
                  'DiasParado', 'VendaCat12m', 'LucroCat12m', 'Vendedor', 'Time', 'Telefone']
@@ -4790,9 +4814,10 @@ def api_mix_abandonado_pdf():
     vendedor = request.args.get('vendedor')
     time_filt = request.args.get('time')
     busca = request.args.get('busca')
+    codcli = request.args.get('codcli')
 
     linhas = _mix_abandonado_rows(dias, codepto, fornecedor)
-    linhas = _mix_aplicar_filtros_locais(linhas, vendedor, time_filt, busca)
+    linhas = _mix_aplicar_filtros_locais(linhas, vendedor, time_filt, busca, codcli)
 
     # Resolve códigos → nomes pra mostrar no rodapé do PDF
     deptos_nomes = _carregar_deptos_map().get('deptos', {})
