@@ -136,12 +136,12 @@
     </div>
     <div class="ff">
       <label>Time (supervisor)</label>
-      <input list="lista_times" id="filt_time" placeholder="Todos · digite pra filtrar" oninput="repopularVendedorCascata(); filtrarTabela()">
+      <input list="lista_times" id="filt_time" placeholder="Todos · digite pra filtrar" oninput="repopularVendedorCascata(); filtrarTabelaDeb()" onchange="filtrarTabela()">
       <datalist id="lista_times"></datalist>
     </div>
     <div class="ff">
       <label>Vendedor (filtro local)</label>
-      <input list="lista_vendedores" id="filt_vend" placeholder="Todos · digite pra filtrar" oninput="filtrarTabela()">
+      <input list="lista_vendedores" id="filt_vend" placeholder="Todos · digite pra filtrar" oninput="filtrarTabelaDeb()" onchange="filtrarTabela()">
       <datalist id="lista_vendedores"></datalist>
     </div>
     <div class="ff" style="flex:1; position:relative;">
@@ -352,9 +352,15 @@ function buscaAtiva() { return _clienteSel != null; }
 function onBuscaClienteInput() {
   clearTimeout(_buscaTimer);
   const q = (document.getElementById('filt_busca').value || '').trim();
-  // Editou o texto → some a seleção; se esvaziou, volta ao board.
-  if (_clienteSel != null) { _clienteSel = null; }
-  if (q.length < 2) { fecharCliDrop(); loadMix(); return; }
+  if (q.length === 0) {
+    // Esvaziou o campo → volta ao board (só recarrega se havia cliente selecionado).
+    fecharCliDrop();
+    if (_clienteSel != null) { _clienteSel = null; loadMix(); }
+    return;
+  }
+  // Editou o texto → desfaz a seleção SEM recarregar (não esconde a página / não perde o foco).
+  if (_clienteSel != null) _clienteSel = null;
+  if (q.length < 2) { fecharCliDrop(); return; }   // 1 caractere: espera o 2º, sem buscar ainda
   _buscaTimer = setTimeout(() => buscarClientes(q), 250);
 }
 
@@ -596,6 +602,11 @@ function renderTabela(rows) {
   }).join('');
   document.getElementById('tabela_total').textContent = NUM.format(rows.length);
 }
+
+// Debounce dos filtros locais: NÃO repinta a tabela a cada tecla (isso fechava o dropdown do
+// datalist e dava a sensação de "resetou / clica de novo"). Só refiltra quando para de digitar.
+let _filtroDeb = null;
+function filtrarTabelaDeb() { clearTimeout(_filtroDeb); _filtroDeb = setTimeout(filtrarTabela, 300); }
 
 function filtrarTabela() {
   // Busca de cliente controla a tabela (server-side sobre a lista completa) — filtros locais não se aplicam.
