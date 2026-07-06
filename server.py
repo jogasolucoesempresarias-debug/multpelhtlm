@@ -805,6 +805,15 @@ def health():
     return jsonify({'ok': True, 'service': 'multpel-analytics'}), 200
 
 
+@app.route('/multpel-logo.png')
+def multpel_logo():
+    """Logo Multpel (círculo com setas) usada como loader animado. Pública (aparece na tela de
+    carregamento antes/depois do login). Cache no navegador via max-age."""
+    resp = send_from_directory('.', 'Trofeu Multpel 2023.png')
+    resp.headers['Cache-Control'] = 'public, max-age=86400'
+    return resp
+
+
 @app.route('/trocar-senha', methods=['GET'])
 def trocar_senha_page():
     if 'user_id' not in session:
@@ -5158,54 +5167,18 @@ def _radar_filtrar_fornec(rows, fornecedor):
     return [r for r in rows if r.get('codfornec') == cf]
 
 
-@app.route('/api/radar/fornecedores')
-@login_required
-def api_radar_fornecedores():
-    """Fornecedores presentes no catálogo do Radar (produtos vendidos nos últimos 12m), pro
-    autocomplete do filtro. Derivado do produtos_map cacheado → sem query nova. Lista completa
-    (não é top-N), ordenada por nome."""
-    idx = _carregar_produtos_map()
-    vistos = {}
-    for v in idx.values():
-        cf = v.get('codfornec')
-        if cf is None:
-            continue
-        try:
-            cf = int(cf)   # DAX manda float (113.0) → int limpo pro autocomplete/URL
-        except (TypeError, ValueError):
-            continue
-        vistos.setdefault(cf, v.get('fornec_nome') or f'Fornec {cf}')
-    fornecedores = [{'codfornec': cf, 'nome': nome} for cf, nome in vistos.items()]
-    fornecedores.sort(key=lambda x: (x['nome'] or '').lower())
-    return jsonify({'ok': True, 'total': len(fornecedores), 'fornecedores': fornecedores})
-
-
-@app.route('/api/radar/board')
-@login_required
-def api_radar_board():
-    """Board (Nível 1): produtos que mais perderam receita — janela recente vs anterior.
-    Métrica principal = queda de receita (venda anterior − venda recente). Escopo por cadastro.
-
-    Nota: 'receita em risco' aqui é o proxy barato 'queda de receita no período' (agrupa só por
-    produto). A receita em risco PRECISA por cliente sai no detalhe (/api/radar/produto/<x>)."""
-    try:
-        dias = max(7, min(int(request.args.get('dias', 60)), 365))
-        limit = max(10, min(int(request.args.get('limit', 200)), 1000))
-    except (TypeError, ValueError):
-        dias, limit = 60, 200
+def _radar_board_full(dias):
+    """Lista COMPLETA de produtos sangrando (janela recente vs anterior), ordenada por queda de
+    receita desc, no escopo da SESSÃO (supervisor/vendedor/cadastro). Cacheada por (dias, escopo).
+    SEM filtro de fornecedor (esse é aplicado depois, em memória). Reusada pelo board e exports."""
     d2 = 2 * dias
-
     sup = _supervisores_filtro()
     vend = _radar_vendedor_filtro()
-    fornecedor = request.args.get('fornecedor')
     key = cache_key_for_user('radar:board',
                              {'dias': dias, 'supervisor': _sup_cache_key(sup), 'vendedor': vend if vend is not None else '-'})
     cached = _cache_get(key)
     if cached:
-        # Filtro por fornecedor é atributo do produto → aplicado em memória sobre a lista
-        # completa cacheada (não entra na chave; combina em E com supervisor/vendedor).
-        full = _radar_filtrar_fornec(cached['rows'], fornecedor)
-        return jsonify({'ok': True, 'dias': dias, 'total': len(full), 'rows': full[:limit]})
+        return cached['rows']
 
     # Escopo. Não-admin: por CADASTRO (mesmo padrão de api_categorias).
     # Admin/viewer: filtro escolhido por venda (vendedor tem precedência sobre supervisor).
@@ -5271,7 +5244,244 @@ SUMMARIZECOLUMNS(
         })
     out.sort(key=lambda x: x['queda_receita'], reverse=True)
     _cache_set(key, {'ok': True, 'dias': dias, 'total': len(out), 'rows': out}, 'dax_agregado')
-    full = _radar_filtrar_fornec(out, fornecedor)
+    return out
+
+
+# Métricas de ordenação do board (mesmas do select "Ordenar board por" do front).
+_RADAR_BOARD_METRICAS = {
+    'queda_receita':     'Receita em risco',
+    'clientes_perdidos': 'Clientes perdidos',
+    'pct_queda':         '% de queda',
+}
+
+
+def _radar_board_ordenar(rows, metrica):
+    """Ordena as linhas do board pela métrica escolhida (desc). Default = queda de receita."""
+    if metrica not in _RADAR_BOARD_METRICAS:
+        metrica = 'queda_receita'
+    return sorted(rows, key=lambda r: (r.get(metrica) or 0), reverse=True), metrica
+
+
+def _radar_fornec_nome(codfornec):
+    """Nome do fornecedor a partir do catálogo de produtos (codfornec int). None se não achar.
+    Usa produtos_map (codfornec já normalizado) — evita o mismatch de chave float do
+    fornecedores_map ('113.0' vs '113')."""
+    try:
+        cf = int(codfornec)
+    except (TypeError, ValueError):
+        return None
+    for v in _carregar_produtos_map().values():
+        c = v.get('codfornec')
+        if c is not None:
+            try:
+                if int(c) == cf:
+                    return v.get('fornec_nome')
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
+def _nome_arquivo_radar_board(ext, dias, metrica):
+    """Nome do arquivo do board do Radar, baseado nos filtros ativos (resolvidos pra nomes).
+    Ex: radar_board_60d_receita-risco_AFONSO_ES-SUL_BOMBRIL_2026-07-06.csv"""
+    from datetime import date as _date
+    slug_metrica = {'queda_receita': 'receita-risco', 'clientes_perdidos': 'clientes-perdidos',
+                    'pct_queda': 'pct-queda'}.get(metrica, 'receita-risco')
+    partes = [f"{dias}d", slug_metrica]
+
+    vend = _radar_vendedor_filtro()
+    if vend is not None:
+        v = _carregar_vendedores_map().get(str(vend))
+        partes.append(_slug_export(v.get('nome') if v else f'RCA{vend}'))
+    else:
+        for cs in (_supervisores_filtro() or []):
+            s = _carregar_supervisores_map().get(str(cs))
+            partes.append(_slug_export(s.get('nome') if s else f'Sup{cs}'))
+    fornecedor = request.args.get('fornecedor')
+    if fornecedor:
+        nome = _radar_fornec_nome(fornecedor) or f'Fornec{fornecedor}'
+        partes.append(_slug_export(nome))
+
+    partes_limpas = [p.replace(' ', '_') for p in partes if p]
+    base = '_'.join(['radar_board'] + partes_limpas)
+    return f"{base}_{_date.today().isoformat()}.{ext}"
+
+
+@app.route('/api/radar/board/csv')
+@login_required
+def api_radar_board_csv():
+    """CSV do board (produtos perdendo receita) — respeita janela/escopo/fornecedor + ordenação."""
+    try:
+        dias = max(7, min(int(request.args.get('dias', 60)), 365))
+    except (TypeError, ValueError):
+        dias = 60
+    fornecedor = request.args.get('fornecedor')
+    rows = _radar_filtrar_fornec(_radar_board_full(dias), fornecedor)
+    rows, metrica = _radar_board_ordenar(rows, request.args.get('sort'))
+
+    cabecalho = ['#', 'CodProd', 'Produto', 'Departamento', 'Fornecedor', 'ReceitaEmRisco',
+                 'PctQueda', 'ClientesPerdidos', 'VendaAnterior', 'VendaRecente']
+
+    def gerar():
+        yield '﻿'  # BOM UTF-8
+        yield _csv_linha(cabecalho)
+        for i, r in enumerate(rows, 1):
+            pct = r.get('pct_queda')
+            yield _csv_linha([
+                i, r.get('codprod'), r.get('descricao'), r.get('depto_nome'), r.get('fornec_nome'),
+                r.get('queda_receita'), (round(pct * 100, 1) if pct is not None else ''),
+                r.get('clientes_perdidos'), r.get('venda_ant'), r.get('venda_rec'),
+            ])
+
+    nome = _nome_arquivo_radar_board('csv', dias, metrica)
+    return Response(
+        stream_with_context(gerar()),
+        mimetype='text/csv; charset=utf-8',
+        headers={'Content-Disposition': _content_disposition(nome)},
+    )
+
+
+def _gerar_pdf_radar_board(rows, dias, metrica, resumo=''):
+    """PDF do board do Radar (produtos perdendo receita). Landscape A4, zebra — igual aos outros."""
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT
+    from io import BytesIO
+    from datetime import date as _date
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=landscape(A4),
+        leftMargin=1.2*cm, rightMargin=1.2*cm, topMargin=1.2*cm, bottomMargin=1.5*cm,
+        title=f"Radar Board Multpel {_date.today().isoformat()}",
+    )
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle('titulo', parent=styles['Heading1'], fontSize=14, alignment=TA_LEFT, textColor=colors.HexColor('#0a0e17'))
+    sub_style = ParagraphStyle('sub', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#475569'))
+
+    story = []
+    story.append(Paragraph('<b>Multpel Analytics</b> — Radar · Produtos perdendo receita', titulo_style))
+    sub = (f"Gerado em {_date.today().strftime('%d/%m/%Y')} · janela {dias}d · "
+           f"ordenado por {_RADAR_BOARD_METRICAS.get(metrica, '')} · {len(rows)} produtos"
+           + (f" · {resumo}" if resumo else ''))
+    story.append(Paragraph(sub, sub_style))
+    story.append(Spacer(1, 0.3*cm))
+
+    header = ['#', 'Produto', 'Departamento', 'Fornecedor', 'Receita em risco', '% queda', 'Clientes perdidos']
+    data = [header]
+    for i, r in enumerate(rows, 1):
+        pct = r.get('pct_queda')
+        data.append([
+            i,
+            (r.get('descricao') or '')[:40],
+            (r.get('depto_nome') or '')[:20],
+            (r.get('fornec_nome') or '')[:26],
+            f"R$ {(r.get('queda_receita') or 0):,.0f}".replace(',', '.'),
+            (f"{pct*100:.0f}%" if pct is not None else '—'),
+            r.get('clientes_perdidos') or 0,
+        ])
+    tbl = Table(data, repeatRows=1,
+                colWidths=[1*cm, 7.5*cm, 3.6*cm, 5.2*cm, 3*cm, 1.8*cm, 2.4*cm])
+    tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e293b')),
+        ('TEXTCOLOR',  (0,0), (-1,0), colors.white),
+        ('FONTNAME',   (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE',   (0,0), (-1,-1), 7),
+        ('GRID',       (0,0), (-1,-1), 0.3, colors.HexColor('#cbd5e1')),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8fafc')]),
+        ('ALIGN',      (4,0), (4,-1), 'RIGHT'),
+        ('ALIGN',      (5,0), (6,-1), 'CENTER'),
+        ('VALIGN',     (0,0), (-1,-1), 'MIDDLE'),
+        ('LEFTPADDING',(0,0), (-1,-1), 3),
+        ('RIGHTPADDING',(0,0), (-1,-1), 3),
+    ]))
+    story.append(tbl)
+
+    def _rodape(canvas, doc):
+        canvas.saveState()
+        canvas.setFont('Helvetica', 7)
+        canvas.setFillColor(colors.HexColor('#94a3b8'))
+        canvas.drawRightString(doc.pagesize[0] - 1.2*cm, 0.8*cm, f"Página {doc.page}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_rodape, onLaterPages=_rodape)
+    return buf.getvalue()
+
+
+@app.route('/api/radar/board/pdf')
+@login_required
+def api_radar_board_pdf():
+    """PDF do board (produtos perdendo receita) — respeita janela/escopo/fornecedor + ordenação."""
+    try:
+        dias = max(7, min(int(request.args.get('dias', 60)), 365))
+    except (TypeError, ValueError):
+        dias = 60
+    fornecedor = request.args.get('fornecedor')
+    rows = _radar_filtrar_fornec(_radar_board_full(dias), fornecedor)
+    rows, metrica = _radar_board_ordenar(rows, request.args.get('sort'))
+
+    # Resumo (fornecedor/escopo) pro subtítulo do PDF
+    parts = []
+    vend = _radar_vendedor_filtro()
+    if vend is not None:
+        v = _carregar_vendedores_map().get(str(vend))
+        parts.append(f"Vendedor: {v.get('nome') if v else vend}")
+    else:
+        for cs in (_supervisores_filtro() or []):
+            s = _carregar_supervisores_map().get(str(cs))
+            parts.append(f"Time: {s.get('nome') if s else cs}")
+    if fornecedor:
+        parts.append(f"Fornecedor: {_radar_fornec_nome(fornecedor) or fornecedor}")
+
+    pdf_bytes = _gerar_pdf_radar_board(rows, dias, metrica, resumo=' · '.join(parts))
+    nome = _nome_arquivo_radar_board('pdf', dias, metrica)
+    return Response(
+        pdf_bytes,
+        mimetype='application/pdf',
+        headers={'Content-Disposition': _content_disposition(nome)},
+    )
+
+
+@app.route('/api/radar/fornecedores')
+@login_required
+def api_radar_fornecedores():
+    """Fornecedores presentes no catálogo do Radar (produtos vendidos nos últimos 12m), pro
+    autocomplete do filtro. Derivado do produtos_map cacheado → sem query nova. Lista completa
+    (não é top-N), ordenada por nome."""
+    idx = _carregar_produtos_map()
+    vistos = {}
+    for v in idx.values():
+        cf = v.get('codfornec')
+        if cf is None:
+            continue
+        try:
+            cf = int(cf)   # DAX manda float (113.0) → int limpo pro autocomplete/URL
+        except (TypeError, ValueError):
+            continue
+        vistos.setdefault(cf, v.get('fornec_nome') or f'Fornec {cf}')
+    fornecedores = [{'codfornec': cf, 'nome': nome} for cf, nome in vistos.items()]
+    fornecedores.sort(key=lambda x: (x['nome'] or '').lower())
+    return jsonify({'ok': True, 'total': len(fornecedores), 'fornecedores': fornecedores})
+
+
+@app.route('/api/radar/board')
+@login_required
+def api_radar_board():
+    """Board (Nível 1): produtos que mais perderam receita — janela recente vs anterior.
+    Métrica principal = queda de receita (venda anterior − venda recente). Escopo por cadastro.
+
+    Nota: 'receita em risco' aqui é o proxy barato 'queda de receita no período' (agrupa só por
+    produto). A receita em risco PRECISA por cliente sai no detalhe (/api/radar/produto/<x>)."""
+    try:
+        dias = max(7, min(int(request.args.get('dias', 60)), 365))
+        limit = max(10, min(int(request.args.get('limit', 200)), 1000))
+    except (TypeError, ValueError):
+        dias, limit = 60, 200
+    fornecedor = request.args.get('fornecedor')
+    full = _radar_filtrar_fornec(_radar_board_full(dias), fornecedor)
     return jsonify({'ok': True, 'dias': dias, 'total': len(full), 'rows': full[:limit]})
 
 

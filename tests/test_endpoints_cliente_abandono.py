@@ -277,3 +277,23 @@ def test_radar_board_filtra_por_fornecedor(client, usuario_admin, mock_dax_captu
     assert filt['total'] == 1
     assert filt['rows'][0]['codprod'] == 100
     assert filt['rows'][0]['fornec_nome'] == 'BOMBRIL SA'
+
+
+def test_radar_board_export_csv_ordena_e_nomeia(client, usuario_admin, mock_dax_capture, clean_redis):
+    """Export CSV do board: 200 OK, ordena pela métrica e nomeia o arquivo pelo filtro."""
+    mock_dax_capture.set_routes(_radar_board_routes())
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+
+    r = client.get('/api/radar/board/csv?dias=60&sort=queda_receita')
+    assert r.status_code == 200
+    assert 'text/csv' in r.headers['Content-Type']
+    body = r.get_data(as_text=True)
+    linhas = [l for l in body.splitlines() if l.strip()]
+    # cabeçalho + 2 produtos; ordenado por queda desc → prod 100 (queda 400) antes do 200 (queda 200)
+    assert linhas[1].split(';')[1] == '100'
+    assert linhas[2].split(';')[1] == '200'
+
+    # nome do arquivo com fornecedor resolvido (BOMBRIL) e a métrica
+    r2 = client.get('/api/radar/board/csv?dias=60&sort=clientes_perdidos&fornecedor=113')
+    cd = r2.headers['Content-Disposition']
+    assert 'clientes-perdidos' in cd and 'BOMBRIL' in cd
