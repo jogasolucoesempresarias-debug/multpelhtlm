@@ -809,7 +809,7 @@ def health():
 def multpel_logo():
     """Logo Multpel (círculo com setas) usada como loader animado. Pública (aparece na tela de
     carregamento antes/depois do login). Cache no navegador via max-age."""
-    resp = send_from_directory('.', 'Trofeu Multpel 2023.png')
+    resp = send_from_directory('.', 'logo multpel alta resolução (1).png')
     resp.headers['Cache-Control'] = 'public, max-age=86400'
     return resp
 
