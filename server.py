@@ -6550,6 +6550,40 @@ def _metas_upsert(ano, mes, codusur, valores, user_id=None):
     conn.close()
 
 
+def _metas_upsert_lote(ano, mes, itens, user_id=None):
+    """Upsert de várias metas numa única transação (botão 'Salvar metas' do editor).
+    itens: lista de dicts {codusur, valor_meta, clientes_meta, mix_meta, rentabilidade_meta}.
+    Retorna a quantidade gravada. Ou tudo, ou nada (rollback em erro)."""
+    n = 0
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        for it in itens:
+            cur.execute(
+                """INSERT INTO multpel_metas
+                     (ano, mes, codusur, valor_meta, clientes_meta, mix_meta, rentabilidade_meta, atualizado_em, atualizado_por)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s, NOW(), %s)
+                   ON CONFLICT (ano, mes, codusur) DO UPDATE SET
+                     valor_meta = EXCLUDED.valor_meta,
+                     clientes_meta = EXCLUDED.clientes_meta,
+                     mix_meta = EXCLUDED.mix_meta,
+                     rentabilidade_meta = EXCLUDED.rentabilidade_meta,
+                     atualizado_em = NOW(), atualizado_por = EXCLUDED.atualizado_por""",
+                (int(ano), int(mes), int(it['codusur']),
+                 float(it.get('valor_meta') or 0), int(it.get('clientes_meta') or 0),
+                 int(it.get('mix_meta') or 0), float(it.get('rentabilidade_meta') or 0), user_id)
+            )
+            n += 1
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+    return n
+
+
 def _montar_metas_resposta(ano, mes, supervisores):
     """Costura meta (Postgres) + realizado (dataset) → linhas por supervisor + total, 4 métricas.
     Realizado por supervisor vem medido por transação (DAX, bate com o BI). A meta (por vendedor)
@@ -6754,14 +6788,22 @@ def api_metas_serie():
 @app.route('/api/admin/metas')
 @admin_required
 def api_admin_metas_list():
-    """Lista vendedores com meta (Postgres) + realizado do mês, pra tela de edição."""
+    """Lista vendedores com meta (Postgres) + realizado do mês, pra tela de edição.
+    ?supervisor=CSV recorta pelo(s) time(s) selecionado(s) na tela (herda o chip);
+    sem supervisor = empresa toda (decisão do diretor)."""
     ano, mes = _ano_mes_req()
     incluir_todos = request.args.get('todos') == '1'
+    sup = _supervisores_filtro()
+    sup_set = set(sup) if sup else None
     metas_db = _metas_buscar(ano, mes)
     vmap = _carregar_vendedores_map()
-    realizado = _carregar_metas_realizado(ano, mes, None)
+    realizado = _carregar_metas_realizado(ano, mes, sup)
     linhas = []
     for cu, info in vmap.items():
+        cs = info.get('codsupervisor')
+        # recorte por time: se filtrou, só vendedores do(s) supervisor(es) selecionado(s)
+        if sup_set is not None and (cs is None or int(cs) not in sup_set):
+            continue
         m = metas_db.get(cu, {})
         rz = realizado['por_vendedor'].get(cu, {})
         tem_meta = any((m.get(k) or 0) for k in ('valor_meta', 'clientes_meta', 'mix_meta', 'rentabilidade_meta'))
@@ -6796,6 +6838,35 @@ def api_admin_metas_save():
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
     return jsonify({'ok': True})
+
+
+@app.route('/api/admin/metas/bulk', methods=['POST'])
+@admin_required
+def api_admin_metas_bulk():
+    """Salva várias metas de uma vez (botão único do editor). Body: {ano,mes,metas:[{codusur,...}]}.
+    Atômico: ou grava todas, ou nenhuma."""
+    data = request.get_json() or {}
+    try:
+        ano = int(data['ano']); mes = int(data['mes'])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'ano e mes obrigatórios'}), 400
+    if not (1 <= mes <= 12):
+        return jsonify({'ok': False, 'error': 'mes inválido'}), 400
+    itens = data.get('metas') or []
+    if not isinstance(itens, list) or not itens:
+        return jsonify({'ok': False, 'error': 'lista de metas vazia'}), 400
+    limpos = []
+    for it in itens:
+        try:
+            it = dict(it); it['codusur'] = int(it['codusur'])
+        except (KeyError, TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'codusur inválido em um dos itens'}), 400
+        limpos.append(it)
+    try:
+        n = _metas_upsert_lote(ano, mes, limpos, user_id=session.get('user_id'))
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+    return jsonify({'ok': True, 'salvos': n})
 
 
 @app.route('/api/admin/metas/sugestao')

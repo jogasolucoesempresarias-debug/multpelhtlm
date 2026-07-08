@@ -144,3 +144,76 @@ def test_admin_metas_save_exige_admin(client, usuario_vendedor, clean_redis):
     login_as(client, usuario_vendedor['email'], usuario_vendedor['senha'])
     r = client.post('/api/admin/metas', json={'ano': 2026, 'mes': 6, 'codusur': 1, 'valor_meta': 1000})
     assert r.status_code == 403
+
+
+def _rotas_editor_2sup():
+    """Dois vendedores em supervisores diferentes (17 e 99), ambos COM realizado — pra provar
+    que ?supervisor= recorta o editor por time (pedido do diretor)."""
+    sup_map = _pl([{'PCSUPERV[CODSUPERVISOR]': 17, 'PCSUPERV[NOME]': 'AFONSO ES-SUL', 'PCSUPERV[TIPOSUPERVISOR]': 'P'},
+                   {'PCSUPERV[CODSUPERVISOR]': 99, 'PCSUPERV[NOME]': 'OUTRO TIME', 'PCSUPERV[TIPOSUPERVISOR]': 'P'}])
+    vend_map = _pl([{'PCUSUARI[CODUSUR]': 879, 'PCUSUARI[NOME]': 'JOSE', 'PCUSUARI[CODSUPERVISOR]': 17,
+                     'PCUSUARI[TIPOVEND]': 'R', 'PCUSUARI[CIDADE]': 'V', 'PCUSUARI[ESTADO]': 'ES', 'PCUSUARI[BLOQUEIO]': 'N'},
+                    {'PCUSUARI[CODUSUR]': 700, 'PCUSUARI[NOME]': 'MARIA', 'PCUSUARI[CODSUPERVISOR]': 99,
+                     'PCUSUARI[TIPOVEND]': 'R', 'PCUSUARI[CIDADE]': 'V', 'PCUSUARI[ESTADO]': 'ES', 'PCUSUARI[BLOQUEIO]': 'N'}])
+    dias = _pl([{'[mes]': 21, '[decorridos]': 19, '[restantes]': 2}])
+    por_sup = _pl([{'PCSUPERV[CODSUPERVISOR]': 17, '[venda]': 100.0, '[rentab]': 20.0, '[proj]': 110.0, '[cli]': 5, '[mix]': 9}])
+    totais = _pl([{'[venda]': 100.0, '[rentab]': 20.0, '[proj]': 110.0, '[cli]': 5, '[mix]': 9}])
+    vr_usur = _pl([{'PCUSUARI[CODUSUR]': 879, '[venda]': 400000.0, '[rentab]': 96000.0, '[proj]': 442105.0},
+                   {'PCUSUARI[CODUSUR]': 700, '[venda]': 250000.0, '[rentab]': 50000.0, '[proj]': 276315.0}])
+    cli_usur = _pl([{'PCPEDC[CODUSUR]': 879, '[v]': 55}, {'PCPEDC[CODUSUR]': 700, '[v]': 40}])
+    mix_usur = _pl([{'PCPEDI[CODUSUR]': 879, '[v]': 200}, {'PCPEDI[CODUSUR]': 700, '[v]': 150}])
+    return [
+        ('TIPOSUPERVISOR', sup_map), ('TIPOVEND', vend_map), ('CALENDARIO', dias),
+        ('PCSUPERV[CODSUPERVISOR]', por_sup), ('ROW("venda"', totais),
+        ('PCUSUARI[CODUSUR]', vr_usur), ('PCPEDC[CODUSUR]', cli_usur), ('PCPEDI[CODUSUR]', mix_usur),
+    ]
+
+
+def test_admin_metas_list_filtra_por_supervisor(client, usuario_admin, mock_dax_capture, clean_redis):
+    """Editor herda o chip: ?supervisor=17 traz só o time 17; sem param traz a empresa toda."""
+    mock_dax_capture.set_routes(_rotas_editor_2sup())
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+
+    # sem filtro → os dois vendedores (empresa toda)
+    todos = client.get(f'/api/admin/metas?{_AM}').get_json()
+    assert todos['ok']
+    cods = {v['codusur'] for v in todos['vendedores']}
+    assert cods == {879, 700}
+
+    # filtrado por time 17 → só o 879
+    so17 = client.get(f'/api/admin/metas?{_AM}&supervisor=17').get_json()
+    assert so17['ok']
+    assert {v['codusur'] for v in so17['vendedores']} == {879}
+
+
+def test_admin_metas_bulk_salva(client, usuario_admin, clean_redis, monkeypatch):
+    """Botão único: um POST grava todas as linhas de uma vez (lote atômico)."""
+    capturado = {}
+    def _fake_lote(ano, mes, itens, user_id=None):
+        capturado['ano'] = ano; capturado['mes'] = mes; capturado['itens'] = itens
+        return len(itens)
+    monkeypatch.setattr(server, '_metas_upsert_lote', _fake_lote)
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+    body = {'ano': 2026, 'mes': 6, 'metas': [
+        {'codusur': 879, 'valor_meta': 400000, 'rentabilidade_meta': 96000, 'clientes_meta': 55, 'mix_meta': 200},
+        {'codusur': 700, 'valor_meta': 250000, 'rentabilidade_meta': 50000, 'clientes_meta': 40, 'mix_meta': 150},
+    ]}
+    r = client.post('/api/admin/metas/bulk', json=body)
+    assert r.status_code == 200
+    j = r.get_json()
+    assert j['ok'] and j['salvos'] == 2
+    assert capturado['ano'] == 2026 and capturado['mes'] == 6
+    assert {it['codusur'] for it in capturado['itens']} == {879, 700}
+
+
+def test_admin_metas_bulk_valida_lista_vazia(client, usuario_admin, clean_redis):
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+    r = client.post('/api/admin/metas/bulk', json={'ano': 2026, 'mes': 6, 'metas': []})
+    assert r.status_code == 400
+
+
+def test_admin_metas_bulk_exige_admin(client, usuario_vendedor, clean_redis):
+    login_as(client, usuario_vendedor['email'], usuario_vendedor['senha'])
+    r = client.post('/api/admin/metas/bulk', json={'ano': 2026, 'mes': 6,
+                    'metas': [{'codusur': 1, 'valor_meta': 1000}]})
+    assert r.status_code == 403

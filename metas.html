@@ -165,9 +165,12 @@
 <!-- Editor de metas (admin) -->
 <div id="editorBg" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:500;display:flex;align-items:center;justify-content:center;padding:20px;">
   <div class="card" style="width:min(1000px,96vw);max-height:90vh;display:flex;flex-direction:column;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;">
       <div class="secao-titulo" id="editorTitulo" style="margin:0;">Editar metas</div>
-      <button class="btn-sm" onclick="fecharEditor()">Fechar</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-sm" style="border-color:var(--green);color:var(--green);font-weight:600;" onclick="salvarTodas()">💾 Salvar metas</button>
+        <button class="btn-sm" onclick="fecharEditor()">Fechar</button>
+      </div>
     </div>
     <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;flex-wrap:wrap;">
       <div class="ff"><label>Método de sugestão</label>
@@ -183,6 +186,14 @@
       <table>
         <thead><tr><th>Vendedor</th><th>Venda (R$)</th><th>Rentab. (R$)</th><th>Clientes</th><th>Mix</th><th>Realiz. venda</th><th></th></tr></thead>
         <tbody id="edBody"></tbody>
+        <tfoot><tr class="total" id="edTotais" style="display:none;">
+          <td>SOMA DIGITADA <span id="edPreench" style="font-weight:400;color:var(--text-dim);font-size:.72rem;"></span></td>
+          <td class="mono" id="edTotVenda">—</td>
+          <td class="mono" id="edTotRent">—</td>
+          <td class="mono" id="edTotCli">—</td>
+          <td class="mono" id="edTotMix">—</td>
+          <td colspan="2"></td>
+        </tr></tfoot>
       </table>
     </div>
   </div>
@@ -411,19 +422,30 @@ function toast(msg, tipo) {
 }
 async function abrirEditor() {
   const ano = document.getElementById('fAno').value, mes = document.getElementById('fMes').value;
+  // herda o(s) chip(s) de supervisor da tela; sem chip = empresa toda (decisão do diretor)
+  const sup = _supsSel.map(s => s.cod).join(',');
+  const timeLbl = _supsSel.length ? ' · ' + _supsSel.map(s => s.nome).join(', ') : ' · empresa toda';
   document.getElementById('editorTitulo').textContent =
-    `Editar metas — ${document.getElementById('fMes').selectedOptions[0].text}/${ano}`;
+    `Editar metas — ${document.getElementById('fMes').selectedOptions[0].text}/${ano}${timeLbl}`;
   document.getElementById('editorBg').classList.remove('hidden');
+  document.getElementById('edTotais').style.display = 'none';
   document.getElementById('edBody').innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-dim);">Carregando...</td></tr>';
   try {
-    const r = await fetchJSON(`/api/admin/metas?ano=${ano}&mes=${mes}`);
+    const qs = `ano=${ano}&mes=${mes}` + (sup ? `&supervisor=${sup}` : '');
+    const r = await fetchJSON(`/api/admin/metas?${qs}`);
     _edVendedores = r.vendedores || [];
     renderEditor();
   } catch (e) { toast('Erro ao carregar: ' + e.message, 'err'); }
 }
 function fecharEditor() { document.getElementById('editorBg').classList.add('hidden'); }
 function renderEditor() {
-  const inp = (id, v) => `<input id="${id}" type="number" value="${v || 0}" style="width:110px;padding:5px 7px;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;">`;
+  const inp = (id, v) => `<input id="${id}" type="number" value="${v || 0}" oninput="recalcularTotais()" style="width:110px;padding:5px 7px;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;">`;
+  if (!_edVendedores.length) {
+    document.getElementById('edBody').innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-dim);">Nenhum vendedor neste time/mês.</td></tr>';
+    document.getElementById('edTotais').style.display = 'none';
+    document.getElementById('edInfo').textContent = '0 vendedores';
+    return;
+  }
   document.getElementById('edBody').innerHTML = _edVendedores.map(v => `
     <tr data-cod="${v.codusur}">
       <td style="text-align:left;">${v.nome}<div style="font-size:.68rem;color:var(--text-dim);">cod ${v.codusur}</div></td>
@@ -434,10 +456,28 @@ function renderEditor() {
       <td class="mono" style="color:var(--text-dim);">${BRL.format(v.venda_real || 0)}</td>
       <td style="white-space:nowrap;">
         <button class="btn-sm" style="padding:4px 8px;" onclick="sugerirLinha(${v.codusur})">📊</button>
-        <button class="btn-sm" style="padding:4px 8px;border-color:var(--green);color:var(--green);" onclick="salvarLinha(${v.codusur})">Salvar</button>
       </td>
     </tr>`).join('');
   document.getElementById('edInfo').textContent = `${_edVendedores.length} vendedores`;
+  document.getElementById('edTotais').style.display = '';
+  recalcularTotais();
+}
+
+function recalcularTotais() {
+  let tv = 0, tr = 0, tc = 0, tm = 0, preench = 0;
+  for (const v of _edVendedores) {
+    const val = +document.getElementById('v_valor_' + v.codusur).value || 0;
+    const rnt = +document.getElementById('v_rent_' + v.codusur).value || 0;
+    const cli = +document.getElementById('v_cli_' + v.codusur).value || 0;
+    const mix = +document.getElementById('v_mix_' + v.codusur).value || 0;
+    tv += val; tr += rnt; tc += cli; tm += mix;
+    if (val || rnt || cli || mix) preench++;
+  }
+  document.getElementById('edTotVenda').textContent = BRL.format(tv);
+  document.getElementById('edTotRent').textContent = BRL.format(tr);
+  document.getElementById('edTotCli').textContent = NUM.format(tc);
+  document.getElementById('edTotMix').textContent = NUM.format(tm);
+  document.getElementById('edPreench').textContent = `(${preench}/${_edVendedores.length} preenchidos)`;
 }
 function _setLinha(cod, s) {
   if (s.valor_meta != null) document.getElementById('v_valor_' + cod).value = s.valor_meta;
@@ -462,21 +502,24 @@ async function sugerirTodos() {
   for (const v of _edVendedores) { await sugerirLinha(v.codusur); }
   toast('Sugestões aplicadas (revise e salve)', 'ok');
 }
-async function salvarLinha(cod) {
+async function salvarTodas() {
+  if (!_edVendedores.length) { toast('Nada para salvar', 'err'); return; }
   const ano = +document.getElementById('fAno').value, mes = +document.getElementById('fMes').value;
-  const body = {
-    ano, mes, codusur: cod,
-    valor_meta: +document.getElementById('v_valor_' + cod).value || 0,
-    rentabilidade_meta: +document.getElementById('v_rent_' + cod).value || 0,
-    clientes_meta: +document.getElementById('v_cli_' + cod).value || 0,
-    mix_meta: +document.getElementById('v_mix_' + cod).value || 0,
-  };
+  const metasArr = _edVendedores.map(v => ({
+    codusur: v.codusur,
+    valor_meta: +document.getElementById('v_valor_' + v.codusur).value || 0,
+    rentabilidade_meta: +document.getElementById('v_rent_' + v.codusur).value || 0,
+    clientes_meta: +document.getElementById('v_cli_' + v.codusur).value || 0,
+    mix_meta: +document.getElementById('v_mix_' + v.codusur).value || 0,
+  }));
   try {
-    const r = await fetch('/api/admin/metas', { method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const r = await fetch('/api/admin/metas/bulk', { method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ano, mes, metas: metasArr }) });
     const j = await r.json();
     if (!r.ok || !j.ok) throw new Error(j.error || 'erro');
-    toast('Meta salva: ' + (_edVendedores.find(x => x.codusur === cod) || {}).nome, 'ok');
+    toast(`${j.salvos} metas salvas`, 'ok');
+    fecharEditor();
+    carregar(true);
   } catch (e) { toast('Erro ao salvar: ' + e.message, 'err'); }
 }
 async function importarBI() {
