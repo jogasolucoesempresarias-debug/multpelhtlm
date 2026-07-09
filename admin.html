@@ -116,6 +116,7 @@
   <a href="/radar">Radar</a>
   <a href="/tendencias">Tendências</a>
   <a href="/metas">Metas</a>
+  <a href="/gerencial">Gerencial</a>
   <a href="/admin" class="active">Admin</a>
   <span class="spacer"></span>
   <span id="userInfo">—</span>
@@ -124,6 +125,32 @@
 
 <div class="container">
   <h1>Administração de usuários</h1>
+
+  <div class="panel" style="margin-bottom:16px;">
+    <div class="toolbar">
+      <h2 style="margin:0;">Cobertura de carteira (Gerencial)</h2>
+    </div>
+    <div style="display:flex; gap:20px; flex-wrap:wrap; align-items:flex-end; padding:6px 2px;">
+      <div class="ff" style="max-width:220px;">
+        <label>Limiar de baixa performance (%)
+          <span style="color:var(--text-dim);font-size:0.72rem;font-weight:400;">— corte vermelho + gatilho do alerta</span>
+        </label>
+        <input type="number" id="cfg_limiar" min="0" max="100" step="1" style="width:120px;">
+      </div>
+      <div class="ff" style="max-width:220px;">
+        <label>Janela "em dia" (dias)
+          <span style="color:var(--text-dim);font-size:0.72rem;font-weight:400;">— define coberto</span>
+        </label>
+        <select id="cfg_coberto" style="width:120px;">
+          <option value="30">≤ 30 dias</option>
+          <option value="45">≤ 45 dias</option>
+          <option value="60">≤ 60 dias</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" onclick="salvarConfigCobertura()">Salvar config</button>
+      <span id="cfgMsg" style="font-size:0.8rem;color:var(--text-dim);"></span>
+    </div>
+  </div>
 
   <div class="panel">
     <div class="toolbar">
@@ -214,6 +241,12 @@
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
           <input type="checkbox" id="f_email_proximo_pedido" style="width:auto;">
           Incluir "Lista do Dia" (Próximo Pedido) no email
+        </label>
+      </div>
+      <div class="ff">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" id="f_email_alerta_cobertura" style="width:auto;">
+          Receber alerta de baixa performance de cobertura
         </label>
       </div>
       <div class="ff">
@@ -525,6 +558,7 @@ function abrirNovo() {
   document.getElementById('f_senha').value = '';
   document.getElementById('f_cron_enabled').checked = false;
   document.getElementById('f_email_proximo_pedido').checked = false;
+  document.getElementById('f_email_alerta_cobertura').checked = false;
   document.getElementById('f_ativo').checked = true;
   document.getElementById('f_cron_horario').value = '08:00';
   document.getElementById('f_cron_frequencia').value = 'diaria';
@@ -552,6 +586,7 @@ function abrirEdicao(id) {
   document.getElementById('f_senha').value = '';
   document.getElementById('f_cron_enabled').checked = !!u.cron_enabled;
   document.getElementById('f_email_proximo_pedido').checked = !!u.email_proximo_pedido;
+  document.getElementById('f_email_alerta_cobertura').checked = !!u.email_alerta_cobertura;
   document.getElementById('f_ativo').checked = !!u.ativo;
   document.getElementById('f_cron_horario').value = (u.cron_horario || '08:00').substring(0, 5);
   document.getElementById('f_cron_frequencia').value = u.cron_frequencia || 'diaria';
@@ -595,6 +630,7 @@ async function salvar() {
       telefone: document.getElementById('f_telefone').value.trim(),
       cron_enabled: document.getElementById('f_cron_enabled').checked,
       email_proximo_pedido: document.getElementById('f_email_proximo_pedido').checked,
+      email_alerta_cobertura: document.getElementById('f_email_alerta_cobertura').checked,
       ativo: document.getElementById('f_ativo').checked,
       cron_horario: document.getElementById('f_cron_horario').value,
       cron_frequencia: document.getElementById('f_cron_frequencia').value,
@@ -656,10 +692,40 @@ async function enviarRelatorio(id) {
   }
 }
 
+async function loadConfigCobertura() {
+  try {
+    const r = await fetch('/api/admin/config/cobertura', { credentials: 'same-origin' });
+    const d = await r.json();
+    if (d.ok) {
+      document.getElementById('cfg_limiar').value = d.limiar_pct;
+      document.getElementById('cfg_coberto').value = String(d.coberto_dias);
+    }
+  } catch (e) {}
+}
+
+async function salvarConfigCobertura() {
+  const msg = document.getElementById('cfgMsg');
+  msg.textContent = 'Salvando...';
+  try {
+    const body = {
+      limiar_pct: parseFloat(document.getElementById('cfg_limiar').value),
+      coberto_dias: parseInt(document.getElementById('cfg_coberto').value, 10),
+    };
+    const r = await fetch('/api/admin/config/cobertura', {
+      method: 'PUT', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (d.ok) { msg.textContent = '✓ Salvo. Limiar ' + d.limiar_pct + '% · coberto ≤' + d.coberto_dias + 'd'; }
+    else { msg.textContent = '✗ ' + (d.error || 'erro'); }
+  } catch (e) { msg.textContent = '✗ ' + (e.message || e); }
+}
+
 (async () => {
   await loadMe();
   await loadMaps();
   await loadUsers();
+  await loadConfigCobertura();
 })();
 </script>
 </body>

@@ -51,6 +51,21 @@ cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS codsupervisores 
 # Aba Próximo Pedido — incluir a "Lista do Dia" (clientes a contatar + top produtos) no email
 cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS email_proximo_pedido BOOLEAN DEFAULT false;")
 
+# Página Gerencial (Cobertura) — opt-in do alerta de baixa performance de cobertura por email
+cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS email_alerta_cobertura BOOLEAN DEFAULT false;")
+
+# Config global chave/valor (ex.: limiar de cobertura editável no Admin, sem redeploy)
+cur.execute("""
+    CREATE TABLE IF NOT EXISTS multpel_config (
+        chave         TEXT PRIMARY KEY,
+        valor         TEXT,
+        atualizado_em TIMESTAMP DEFAULT NOW()
+    );
+""")
+# Seeds idempotentes (não sobrescreve valor já ajustado pelo diretor)
+cur.execute("INSERT INTO multpel_config (chave, valor) VALUES ('cobertura_limiar_pct', '60') ON CONFLICT (chave) DO NOTHING;")
+cur.execute("INSERT INTO multpel_config (chave, valor) VALUES ('cobertura_coberto_dias', '30') ON CONFLICT (chave) DO NOTHING;")
+
 # Módulo Metas — meta (alvo) por vendedor/mês. Nosso app é dono da meta (input + sugestão).
 # Realizado/projeção vêm do dataset META; aqui só guardamos o alvo digitado.
 cur.execute("""

@@ -100,6 +100,58 @@ def get_db():
     )
 
 
+# ── Config global (tabela multpel_config, chave/valor) ──
+def _config_get(chave, default=None):
+    """Lê um valor de multpel_config. Silencioso em erro → default (nunca derruba request).
+    Fecha a conexão mesmo em erro (ex.: tabela ainda não migrada) pra não vazar conexão."""
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT valor FROM multpel_config WHERE chave = %s", (chave,))
+        row = cur.fetchone()
+        cur.close()
+        return row[0] if row and row[0] is not None else default
+    except Exception:
+        return default
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _config_set(chave, valor):
+    """Upsert de um valor em multpel_config."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO multpel_config (chave, valor, atualizado_em) VALUES (%s, %s, NOW()) "
+        "ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, atualizado_em = NOW()",
+        (chave, str(valor)),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def _cobertura_limiar_pct():
+    """Limiar de baixa performance (%) — configurável no Admin, default 60."""
+    try:
+        return float(_config_get('cobertura_limiar_pct', '60'))
+    except (TypeError, ValueError):
+        return 60.0
+
+
+def _cobertura_coberto_dias():
+    """Janela 'em dia' default (dias) — configurável, default 30."""
+    try:
+        return int(float(_config_get('cobertura_coberto_dias', '30')))
+    except (TypeError, ValueError):
+        return 30
+
+
 # ── Decorators de autenticação ──
 def login_required(f):
     @functools.wraps(f)
@@ -557,7 +609,7 @@ def _ler_usuario(usuario_id):
     cur.execute(
         "SELECT id, nome, email, role, codusur, codsupervisor, telefone, ativo, "
         "cron_enabled, cron_horario, cron_frequencia, email_cc, segmentos_rfm, codsupervisores, "
-        "email_proximo_pedido "
+        "email_proximo_pedido, email_alerta_cobertura "
         "FROM multpel_users WHERE id = %s",
         (usuario_id,)
     )
@@ -576,6 +628,7 @@ def _ler_usuario(usuario_id):
         'segmentos_rfm': row[12] or '',
         'codsupervisores': sups,
         'email_proximo_pedido': bool(row[14]),
+        'email_alerta_cobertura': bool(row[15]),
     }
 
 
@@ -781,6 +834,113 @@ def enviar_relatorio_email(usuario_id):
     except Exception as e:
         erro_str = str(e)[:500]
         _log_background(f'email:erro:user{usuario_id}', erro=erro_str)
+        return {'ok': False, 'error': erro_str}
+
+
+def enviar_alerta_cobertura_email(usuario_id):
+    """Alerta de baixa performance de cobertura. Calcula o placar NO ESCOPO do destinatário
+    (admin/diretor → empresa; supervisor → suas áreas) e envia digest de Times e RCAs abaixo
+    do limiar, pior→melhor. Retorna {ok, ...} ou {ok: False, error}. Não envia se não houver
+    ninguém abaixo do limiar (silêncio = tudo em dia)."""
+    if not resend.api_key:
+        return {'ok': False, 'error': 'RESEND_API_KEY não configurado'}
+
+    user = _ler_usuario(usuario_id)
+    if not user:
+        return {'ok': False, 'error': f'Usuário {usuario_id} não encontrado'}
+    if not user.get('email') or not user.get('ativo'):
+        return {'ok': False, 'error': f'Usuário {usuario_id} sem email ou desativado'}
+
+    coberto_dias = _cobertura_coberto_dias()
+    limiar_pct = _cobertura_limiar_pct()
+
+    # Simula a sessão do destinatário para _carteira_no_escopo() recortar corretamente (RBAC).
+    with app.test_request_context():
+        session['user_id'] = user['id']
+        session['role'] = user.get('role')
+        session['codusur'] = user.get('codusur')
+        session['codsupervisores'] = user.get('codsupervisores') or []
+        session['codsupervisor'] = user.get('codsupervisor')
+        try:
+            clientes = _carteira_no_escopo()
+            niveis = cob.agregar_niveis(clientes, coberto_dias=coberto_dias)
+            baixos = cob.times_rcas_abaixo(niveis, limiar_pct)
+        except Exception as e:
+            return {'ok': False, 'error': f'Falha ao calcular cobertura: {e}'}
+
+    if not baixos['times'] and not baixos['vendedores']:
+        return {'ok': True, 'skipped': 'nada abaixo do limiar'}
+
+    from datetime import date as _date
+    emp = niveis['empresa']
+
+    def _pct(v):
+        return f"{(v or 0) * 100:.1f}%".replace('.', ',')
+
+    def _brl(v):
+        return f"R$ {(v or 0):,.0f}".replace(',', '.')
+
+    def _linhas(itens, rotulo):
+        if not itens:
+            return f"<p style='color:#94a3b8;'>Nenhum {rotulo} abaixo do limiar. 👏</p>"
+        li = ''.join(
+            f"<tr><td style='padding:4px 8px;'>{(g.get('nome') or '')}"
+            + (" <span style='color:#94a3b8;'>(amostra pequena)</span>" if g.get('amostra_pequena') else "")
+            + f"</td><td style='padding:4px 8px;text-align:center;color:#dc2626;font-weight:bold;'>{_pct(g['cobertura_clientes'])}</td>"
+            f"<td style='padding:4px 8px;text-align:center;'>{g['total_clientes']}</td>"
+            f"<td style='padding:4px 8px;text-align:right;'>{_brl(g['receita_em_risco'])}</td></tr>"
+            for g in itens
+        )
+        return (
+            f"<h3 style='color:#0a0e17;margin:14px 0 4px;'>{rotulo} abaixo de {limiar_pct:.0f}% "
+            f"({len(itens)})</h3>"
+            "<table style='border-collapse:collapse;width:100%;font-size:13px;'>"
+            "<tr style='background:#1e293b;color:#fff;'>"
+            "<th style='padding:5px 8px;text-align:left;'>Nome</th>"
+            "<th style='padding:5px 8px;'>Cobertura</th>"
+            "<th style='padding:5px 8px;'>Clientes</th>"
+            "<th style='padding:5px 8px;text-align:right;'>Receita em risco</th></tr>"
+            f"{li}</table>"
+        )
+
+    html = f"""<html><body style="font-family:Arial,sans-serif;color:#0a0e17;">
+<h2 style="color:#dc2626;">⚠ Alerta de Cobertura de Carteira</h2>
+<p>Olá <strong>{user.get('nome')}</strong>, em {_date.today().strftime('%d/%m/%Y')} há
+<strong>{len(baixos['times'])} time(s)</strong> e <strong>{len(baixos['vendedores'])} RCA(s)</strong>
+abaixo do limiar de <strong>{limiar_pct:.0f}%</strong> de cobertura (compra ≤ {coberto_dias} dias).</p>
+<p style="background:#f1f5f9;padding:10px;border-radius:6px;">
+  <strong>Empresa (seu escopo):</strong> cobertura {_pct(emp['cobertura_clientes'])} por clientes ·
+  {_pct(emp['cobertura_valor'])} por valor · receita em risco <strong>{_brl(emp['receita_em_risco'])}</strong>.
+</p>
+{_linhas(baixos['times'], 'Times')}
+{_linhas(baixos['vendedores'], 'RCAs / Vendedores')}
+<p style="color:#94a3b8;font-size:12px;margin-top:16px;">Ordenado do pior para o melhor. Acesse o painel
+Gerencial para o detalhamento por faixa. Email automatizado — Multpel Analytics.</p>
+</body></html>"""
+
+    try:
+        emails_cc = _normalizar_emails_cc(user.get('email_cc') or [], user['email'])
+    except ValueError:
+        emails_cc = []
+
+    payload = {
+        'from': RESEND_FROM,
+        'to': [user['email']],
+        'subject': f"⚠ Cobertura abaixo de {limiar_pct:.0f}% — {_date.today().strftime('%d/%m/%Y')}",
+        'html': html,
+    }
+    if emails_cc:
+        payload['cc'] = emails_cc
+
+    try:
+        resp = resend.Emails.send(payload)
+        message_id = resp.get('id') if isinstance(resp, dict) else getattr(resp, 'id', None)
+        _log_background(f'alerta_cobertura:enviado:user{usuario_id}')
+        return {'ok': True, 'message_id': message_id,
+                'times_abaixo': len(baixos['times']), 'rcas_abaixo': len(baixos['vendedores'])}
+    except Exception as e:
+        erro_str = str(e)[:500]
+        _log_background(f'alerta_cobertura:erro:user{usuario_id}', erro=erro_str)
         return {'ok': False, 'error': erro_str}
 
 
@@ -1473,6 +1633,7 @@ SUMMARIZECOLUMNS(
 # ──────────────────────────────────────────────────────────────────────
 
 import rfm  # módulo puro de RFM
+import cobertura as cob  # módulo puro de Cobertura de Carteira (página Gerencial)
 
 VENDEDORES_TECNICOS = {999, 900, 4, 272}  # excluir das listas de vendedor (técnicos)
 
@@ -3501,6 +3662,232 @@ ORDER BY CALENDARIO[AnoMes]"""
     resp = {'ok': True, 'rows': rows}
     _cache_set(key, resp, 'dax_agregado')
     return jsonify(resp)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Página Gerencial — Cobertura de Carteira (placar Empresa/Time/RCA)
+# Motor puro cobertura.py sobre _carteira_no_escopo() (RBAC por cadastro já aplicado).
+# Zero DAX novo — só agrega a carteira já cacheada. Alerta por email reusa cron+Resend.
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _coberto_dias_arg():
+    """Lê ?coberto_dias= (toggle 30/45/60), com fallback pro default configurável."""
+    try:
+        v = int(request.args.get('coberto_dias', _cobertura_coberto_dias()))
+        return v if v in (30, 45, 60) else _cobertura_coberto_dias()
+    except (TypeError, ValueError):
+        return _cobertura_coberto_dias()
+
+
+@app.route('/gerencial')
+@login_required
+def gerencial_page():
+    return send_from_directory('.', 'gerencial.html')
+
+
+@app.route('/api/gerencial/cobertura')
+@login_required
+def api_gerencial_cobertura():
+    """Placar de cobertura em 3 níveis (empresa/times/vendedores) sobre a carteira no escopo
+    do usuário. O frontend faz o drill in-memory a partir deste payload único."""
+    coberto_dias = _coberto_dias_arg()
+    limiar_pct = _cobertura_limiar_pct()
+    key = cache_key_for_user('gerencial:cobertura', {'coberto_dias': coberto_dias, 'limiar': limiar_pct})
+    cached = _cache_get(key)
+    if cached:
+        return jsonify(cached)
+
+    clientes = _carteira_no_escopo()
+    niveis = cob.agregar_niveis(clientes, coberto_dias=coberto_dias)
+    baixos = cob.times_rcas_abaixo(niveis, limiar_pct)
+    resp = {
+        'ok': True,
+        'limiar_pct': limiar_pct,
+        'abaixo_do_limiar': {
+            'times': len(baixos['times']),
+            'vendedores': len(baixos['vendedores']),
+        },
+        **niveis,
+    }
+    _cache_set(key, resp, 'dax_lista')  # TTL curto (5min): reflete ajuste de limiar rápido
+    return jsonify(resp)
+
+
+def _cobertura_csv_linhas(niveis):
+    """Gera as linhas do CSV de cobertura (empresa + cada time + cada vendedor, com faixas)."""
+    faixas = [chave for chave, _, _ in cob.FAIXAS]
+    cabecalho = (
+        ['Nivel', 'Nome', 'TotalClientes', 'ValorTotal', 'Cobertura%Clientes', 'Cobertura%Valor',
+         '0-30Clientes', 'DentroDoCiclo%', 'ReceitaEmRisco', 'BaseMorta']
+        + [f'Faixa {f} (clientes)' for f in faixas]
+        + [f'Faixa {f} (valor)' for f in faixas]
+    )
+    yield '﻿' + _csv_linha(cabecalho).rstrip('\n')
+
+    def _linha(nivel, g):
+        buckets = {b['faixa']: b for b in g['buckets']}
+        vals = [
+            nivel, g.get('nome', ''), g['total_clientes'], g['valor_total'],
+            round(g['cobertura_clientes'] * 100, 1), round(g['cobertura_valor'] * 100, 1),
+            g['rollup_0_30']['clientes'], round(g['cobertura_ciclo'] * 100, 1),
+            g['receita_em_risco'], g['base_morta'],
+        ]
+        vals += [buckets[f]['clientes'] for f in faixas]
+        vals += [buckets[f]['valor'] for f in faixas]
+        return _csv_linha(vals).rstrip('\n')
+
+    yield _linha('EMPRESA', {**niveis['empresa'], 'nome': 'Empresa (escopo)'})
+    for t in niveis['times']:
+        yield _linha('TIME', t)
+    for v in niveis['vendedores']:
+        yield _linha('RCA', v)
+
+
+@app.route('/api/gerencial/cobertura/csv')
+@login_required
+def api_gerencial_cobertura_csv():
+    """Export CSV do placar completo (empresa + times + RCAs + faixas)."""
+    from datetime import date as _date
+    coberto_dias = _coberto_dias_arg()
+    clientes = _carteira_no_escopo()
+    niveis = cob.agregar_niveis(clientes, coberto_dias=coberto_dias)
+
+    def gerar():
+        for linha in _cobertura_csv_linhas(niveis):
+            yield linha + '\n'
+
+    nome = f"cobertura_gerencial_{coberto_dias}d_{_date.today().isoformat()}.csv"
+    return Response(
+        stream_with_context(gerar()),
+        mimetype='text/csv; charset=utf-8',
+        headers={'Content-Disposition': _content_disposition(nome)},
+    )
+
+
+def _gerar_pdf_cobertura(niveis, coberto_dias, limiar_pct):
+    """PDF do placar gerencial: resumo da empresa + ranking de times + ranking de RCAs."""
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT
+    from io import BytesIO
+    from datetime import date as _date
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=landscape(A4),
+        leftMargin=1.2 * cm, rightMargin=1.2 * cm, topMargin=1.2 * cm, bottomMargin=1.5 * cm,
+        title=f"Cobertura Gerencial Multpel {_date.today().isoformat()}",
+    )
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle('titulo', parent=styles['Heading1'], fontSize=14, alignment=TA_LEFT, textColor=colors.HexColor('#0a0e17'))
+    sub_style = ParagraphStyle('sub', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#475569'))
+    limiar_frac = (limiar_pct or 0) / 100.0
+
+    def _brl(v):
+        return f"R$ {(v or 0):,.0f}".replace(',', '.')
+
+    def _pct(v):
+        return f"{(v or 0) * 100:.1f}%".replace('.', ',')
+
+    emp = niveis['empresa']
+    story = []
+    story.append(Paragraph('<b>Multpel Analytics</b> — Cobertura de Carteira (Gerencial)', titulo_style))
+    story.append(Paragraph(
+        f"Gerado em {_date.today().strftime('%d/%m/%Y')} · Coberto = ≤{coberto_dias} dias · "
+        f"Limiar baixa performance = {limiar_pct:.0f}% · Empresa: {_pct(emp['cobertura_clientes'])} clientes / "
+        f"{_pct(emp['cobertura_valor'])} valor · Receita em risco {_brl(emp['receita_em_risco'])}", sub_style))
+    story.append(Spacer(1, 0.3 * cm))
+
+    def _tabela_ranking(titulo, itens):
+        story.append(Paragraph(f"<b>{titulo}</b>", sub_style))
+        header = ['Nome', 'Clientes', 'Cob.% clientes', 'Cob.% valor', 'Dentro do ciclo', 'Receita em risco', 'Base morta', '⚑']
+        data = [header]
+        for g in itens:
+            abaixo = g['cobertura_clientes'] < limiar_frac
+            data.append([
+                (g.get('nome') or '')[:32] + (' *' if g.get('amostra_pequena') else ''),
+                g['total_clientes'], _pct(g['cobertura_clientes']), _pct(g['cobertura_valor']),
+                _pct(g['cobertura_ciclo']), _brl(g['receita_em_risco']), g['base_morta'],
+                'BAIXA' if abaixo else '',
+            ])
+        tbl = Table(data, repeatRows=1, colWidths=[7 * cm, 2 * cm, 3 * cm, 2.8 * cm, 3 * cm, 3.2 * cm, 2 * cm, 1.8 * cm])
+        tbl.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e293b')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 7),
+            ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#cbd5e1')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8fafc')]),
+            ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        story.append(tbl)
+        story.append(Spacer(1, 0.4 * cm))
+
+    _tabela_ranking('Times (pior → melhor)', niveis['times'])
+    _tabela_ranking('RCAs / Vendedores (pior → melhor)', niveis['vendedores'])
+    story.append(Paragraph('* amostra pequena (poucos clientes) — % pode não ser representativo.', sub_style))
+
+    def _rodape(canvas, doc):
+        canvas.saveState()
+        canvas.setFont('Helvetica', 7)
+        canvas.setFillColor(colors.HexColor('#94a3b8'))
+        canvas.drawRightString(doc.pagesize[0] - 1.2 * cm, 0.8 * cm, f"Página {doc.page}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_rodape, onLaterPages=_rodape)
+    return buf.getvalue()
+
+
+@app.route('/api/gerencial/cobertura/pdf')
+@login_required
+def api_gerencial_cobertura_pdf():
+    from datetime import date as _date
+    coberto_dias = _coberto_dias_arg()
+    limiar_pct = _cobertura_limiar_pct()
+    clientes = _carteira_no_escopo()
+    niveis = cob.agregar_niveis(clientes, coberto_dias=coberto_dias)
+    pdf = _gerar_pdf_cobertura(niveis, coberto_dias, limiar_pct)
+    nome = f"cobertura_gerencial_{coberto_dias}d_{_date.today().isoformat()}.pdf"
+    return Response(pdf, mimetype='application/pdf',
+                    headers={'Content-Disposition': _content_disposition(nome)})
+
+
+@app.route('/api/admin/config/cobertura', methods=['GET'])
+@admin_required
+def api_admin_config_cobertura_get():
+    return jsonify({
+        'ok': True,
+        'limiar_pct': _cobertura_limiar_pct(),
+        'coberto_dias': _cobertura_coberto_dias(),
+    })
+
+
+@app.route('/api/admin/config/cobertura', methods=['PUT'])
+@admin_required
+def api_admin_config_cobertura_set():
+    data = request.get_json() or {}
+    if 'limiar_pct' in data:
+        try:
+            lim = float(data['limiar_pct'])
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'limiar_pct inválido'}), 400
+        if not (0 <= lim <= 100):
+            return jsonify({'ok': False, 'error': 'limiar_pct deve estar entre 0 e 100'}), 400
+        _config_set('cobertura_limiar_pct', lim)
+    if 'coberto_dias' in data:
+        try:
+            dias = int(data['coberto_dias'])
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'coberto_dias inválido'}), 400
+        if dias not in (30, 45, 60):
+            return jsonify({'ok': False, 'error': 'coberto_dias deve ser 30, 45 ou 60'}), 400
+        _config_set('cobertura_coberto_dias', dias)
+    return jsonify({'ok': True, 'limiar_pct': _cobertura_limiar_pct(), 'coberto_dias': _cobertura_coberto_dias()})
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -6070,7 +6457,7 @@ def api_admin_users_list():
     cur.execute(
         "SELECT id, nome, email, role, codusur, codsupervisor, telefone, ativo, "
         "cron_enabled, cron_horario::text, cron_frequencia, criado_em, email_cc, segmentos_rfm, codsupervisores, "
-        "email_proximo_pedido "
+        "email_proximo_pedido, email_alerta_cobertura "
         "FROM multpel_users ORDER BY ativo DESC, nome"
     )
     users = []
@@ -6086,6 +6473,7 @@ def api_admin_users_list():
             'segmentos_rfm': r[13] or '',
             'codsupervisores': sups,
             'email_proximo_pedido': bool(r[15]),
+            'email_alerta_cobertura': bool(r[16]),
         })
     cur.close()
     conn.close()
@@ -6115,6 +6503,7 @@ def api_admin_users_create():
     cron_horario = data.get('cron_horario') or '08:00'
     cron_frequencia = data.get('cron_frequencia') or 'diaria'
     email_proximo_pedido = bool(data.get('email_proximo_pedido', False))
+    email_alerta_cobertura = bool(data.get('email_alerta_cobertura', False))
 
     # Patch J — destinatários CC (lista de emails extras)
     try:
@@ -6139,14 +6528,14 @@ def api_admin_users_create():
             """INSERT INTO multpel_users
                (nome, email, password_hash, role, codusur, codsupervisor, codsupervisores, telefone,
                 cron_enabled, cron_horario, cron_frequencia, email_cc, segmentos_rfm,
-                email_proximo_pedido, must_change_password)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, true)
+                email_proximo_pedido, email_alerta_cobertura, must_change_password)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, true)
                RETURNING id""",
             (nome, email, generate_password_hash(senha), role,
              int(codusur) if codusur else None,
              codsupervisor, Json(codsupervisores),
              telefone, cron_enabled, cron_horario, cron_frequencia,
-             Json(emails_cc), segmentos_rfm, email_proximo_pedido)
+             Json(emails_cc), segmentos_rfm, email_proximo_pedido, email_alerta_cobertura)
         )
         novo_id = cur.fetchone()[0]
         conn.commit()
@@ -6166,7 +6555,7 @@ def api_admin_users_update(user_id):
     data = request.get_json() or {}
     campos_permitidos = ['nome', 'email', 'role', 'codusur', 'codsupervisor', 'telefone',
                          'ativo', 'cron_enabled', 'cron_horario', 'cron_frequencia',
-                         'email_cc', 'segmentos_rfm', 'email_proximo_pedido']
+                         'email_cc', 'segmentos_rfm', 'email_proximo_pedido', 'email_alerta_cobertura']
     # Pra normalizar email_cc precisa do email principal do user
     email_principal_atual = (data.get('email') or '').strip().lower() or None
     if 'email_cc' in data and not email_principal_atual:
@@ -7041,9 +7430,9 @@ def _disparar_relatorios_agendados():
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        """SELECT id, nome, email, cron_horario, cron_frequencia
+        """SELECT id, nome, email, cron_horario, cron_frequencia, cron_enabled, email_alerta_cobertura
            FROM multpel_users
-           WHERE ativo = true AND cron_enabled = true
+           WHERE ativo = true AND (cron_enabled = true OR email_alerta_cobertura = true)
              AND cron_horario >= %s AND cron_horario < %s""",
         (inicio_janela, fim_janela)
     )
@@ -7056,16 +7445,26 @@ def _disparar_relatorios_agendados():
 
     print(f"[CRON] {len(candidatos)} candidato(s) na janela {inicio_janela}–{fim_janela}")
     for row in candidatos:
-        uid, nome, email, horario, frequencia = row
+        uid, nome, email, horario, frequencia, cron_enabled, alerta_cobertura = row
         # Filtro por frequência (diária roda todo dia; semanal só no dia certo)
         if frequencia in _DIAS_SEMANA_MAP and dia_semana != _DIAS_SEMANA_MAP[frequencia]:
             continue
-        try:
-            resultado = enviar_relatorio_email(uid)
-            print(f"[CRON] user {uid} ({email}): {'OK' if resultado.get('ok') else 'FAIL'} — {resultado.get('error') or resultado.get('message_id')}")
-        except Exception as e:
-            print(f"[CRON] user {uid} ({email}): erro {e}")
-            _log_background(f'cron:erro:user{uid}', erro=str(e)[:500])
+        # 1) Relatório de carteira (se cron_enabled)
+        if cron_enabled:
+            try:
+                resultado = enviar_relatorio_email(uid)
+                print(f"[CRON] user {uid} ({email}): relatório {'OK' if resultado.get('ok') else 'FAIL'} — {resultado.get('error') or resultado.get('message_id')}")
+            except Exception as e:
+                print(f"[CRON] user {uid} ({email}): erro relatório {e}")
+                _log_background(f'cron:erro:user{uid}', erro=str(e)[:500])
+        # 2) Alerta de cobertura (se opt-in) — só envia se houver alguém abaixo do limiar
+        if alerta_cobertura:
+            try:
+                res = enviar_alerta_cobertura_email(uid)
+                print(f"[CRON] user {uid} ({email}): alerta cobertura {'OK' if res.get('ok') else 'FAIL'} — {res.get('skipped') or res.get('error') or res.get('message_id')}")
+            except Exception as e:
+                print(f"[CRON] user {uid} ({email}): erro alerta {e}")
+                _log_background(f'cron:erro_alerta:user{uid}', erro=str(e)[:500])
 
 
 def _start_scheduler():
