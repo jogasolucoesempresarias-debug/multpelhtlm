@@ -564,7 +564,7 @@ const _modo = 'personalizada';  // régua FIXA removida — sempre personalizada
 let _vendedoresMap = {};
 let _ultimoRfm = null;  // resposta do /rfm
 // Filtros como ARRAYS pra suportar multi-seleção (chips)
-let _filtros = { segmento: [], vendedor: '', time: '', uf: '', cidade: '', busca: '', dias_min: '', sort: 'receita_perdida', dir: 'desc' };
+let _filtros = { segmento: [], vendedor: '', time: '', uf: '', cidade: '', busca: '', dias_min: '', dias_max: '', sort: 'receita_perdida', dir: 'desc' };
 const _SORT_DEFAULT = { sort: 'receita_perdida', dir: 'desc' };
 let _cidadesAtivas = [];  // [{cidade, uf}] — populado por loadRfm
 let _offset = 0;
@@ -863,6 +863,7 @@ async function loadClientes() {
   if (_filtros.cidade)   params.set('cidade', _filtros.cidade);
   if (_filtros.busca)    params.set('busca', _filtros.busca);
   if (_filtros.dias_min !== '' && _filtros.dias_min != null) params.set('dias_min', _filtros.dias_min);
+  if (_filtros.dias_max !== '' && _filtros.dias_max != null) params.set('dias_max', _filtros.dias_max);
 
   const r = await fetchJSON('/api/carteira/clientes?' + params.toString());
   renderTabela(r);
@@ -925,7 +926,11 @@ function filtrosAtivosLabel() {
   if (_filtros.uf)     parts.push(`uf=${_filtros.uf}`);
   if (_filtros.cidade) parts.push(`cidade=${_filtros.cidade}`);
   if (_filtros.busca)  parts.push(`busca="${_filtros.busca}"`);
-  if (_filtros.dias_min !== '' && _filtros.dias_min != null) parts.push(`${_filtros.dias_min}+ dias s/ comprar`);
+  const dmin = _filtros.dias_min, dmax = _filtros.dias_max;
+  const temMin = dmin !== '' && dmin != null, temMax = dmax !== '' && dmax != null;
+  if (temMin && temMax)      parts.push(`${dmin}–${dmax} dias s/ comprar`);
+  else if (temMin)           parts.push(`${dmin}+ dias s/ comprar`);
+  else if (temMax)           parts.push(`até ${dmax} dias s/ comprar`);
   return parts.length ? '· ' + parts.join(' · ') : '';
 }
 
@@ -999,6 +1004,7 @@ function aplicarDiasMin(val) {
   // val: '' (limpar) ou inteiro
   const ativo = val !== '' && Number.isFinite(val) && val >= 0;
   _filtros.dias_min = ativo ? val : '';
+  _filtros.dias_max = '';   // controle manual é "mín." → descarta topo herdado de deep-link
   // Aplica/limpa highlight nos atalhos
   document.querySelectorAll('.btn-dias-shortcut').forEach(b => {
     b.classList.toggle('active', ativo && parseInt(b.textContent, 10) === val);
@@ -1018,7 +1024,7 @@ function aplicarDiasMin(val) {
 }
 
 function limparFiltros() {
-  _filtros = { segmento: [], status: [], vendedor: '', time: '', uf: '', cidade: '', busca: '', dias_min: '', sort: 'receita_perdida', dir: 'desc' };
+  _filtros = { segmento: [], status: [], vendedor: '', time: '', uf: '', cidade: '', busca: '', dias_min: '', dias_max: '', sort: 'receita_perdida', dir: 'desc' };
   document.getElementById('filt_vendedor').value = '';
   document.getElementById('filt_time').value = '';
   document.getElementById('filt_uf').value = '';
@@ -1075,6 +1081,7 @@ function _paramsExport() {
   if (_filtros.cidade)   params.set('cidade',   _filtros.cidade);
   if (_filtros.busca)    params.set('busca',    _filtros.busca);
   if (_filtros.dias_min !== '' && _filtros.dias_min != null) params.set('dias_min', _filtros.dias_min);
+  if (_filtros.dias_max !== '' && _filtros.dias_max != null) params.set('dias_max', _filtros.dias_max);
   return params;
 }
 function exportarCSV() { window.location.href = '/api/carteira/csv?' + _paramsExport().toString(); }
@@ -1249,6 +1256,41 @@ function exportarProximoPDF() {
 // Estado _modo é lido por aquele script via window._modo. Sempre 'personalizada' agora.
 window._modo = _modo;
 
+// Deep-link: aplica filtros vindos da URL (ex.: painel Gerencial → clique numa faixa
+// abre /carteira?dias_min=31&dias_max=45&time=18). Chamado 1x no boot, após os mapas/RFM.
+function _aplicarParamsURL() {
+  const q = new URLSearchParams(window.location.search);
+  if (![...q.keys()].length) return;
+
+  const setInputCod = (id, cod, mapa) => {
+    const m = mapa && mapa[String(cod)];
+    document.getElementById(id).value = m ? `${m.nome} (${cod})` : String(cod);
+  };
+
+  if (q.get('vendedor')) { _filtros.vendedor = q.get('vendedor'); setInputCod('filt_vendedor', q.get('vendedor'), _vendedoresMap); }
+  if (q.get('time'))     { _filtros.time = q.get('time');       setInputCod('filt_time', q.get('time'), _timesMap); }
+  if (q.get('uf'))       { _filtros.uf = q.get('uf');           document.getElementById('filt_uf').value = q.get('uf'); }
+  if (q.get('cidade'))   { _filtros.cidade = q.get('cidade');   document.getElementById('filt_cidade').value = q.get('cidade'); }
+  if (q.get('busca'))    { _filtros.busca = q.get('busca');     document.getElementById('filt_busca').value = q.get('busca'); }
+  if (q.get('segmento')) {
+    _filtros.segmento = q.get('segmento').split(',').filter(Boolean);
+    _filtros.segmento.forEach(s => {
+      const chip = document.querySelector(`#chips_segmento .chip[data-val="${s}"]`);
+      if (chip) chip.classList.add('active');
+      document.querySelectorAll(`.card[data-segmento="${s}"]`).forEach(c => c.classList.add('active'));
+    });
+  }
+  const dmin = q.get('dias_min'), dmax = q.get('dias_max');
+  if (dmin != null && dmin !== '') { _filtros.dias_min = parseInt(dmin, 10); document.getElementById('filt_dias_min').value = dmin; }
+  if (dmax != null && dmax !== '') { _filtros.dias_max = parseInt(dmax, 10); }
+  // Deep-link por recência → ordena por recência crescente (do quase-recente pro mais antigo)
+  if ((dmin != null && dmin !== '') || (dmax != null && dmax !== '')) {
+    _filtros.sort = 'recencia'; _filtros.dir = 'asc';
+  }
+  repopularTodosFiltros();
+  atualizarIndicadorSort();
+}
+
 async function carregarTudo(retry) {
   document.getElementById('bannerErro').classList.add('hidden');
   if (retry) document.getElementById('loading').classList.remove('hidden');
@@ -1256,6 +1298,7 @@ async function carregarTudo(retry) {
     await loadMe();
     await Promise.all([loadVendedores(), loadTimes()]);
     await loadRfm();
+    _aplicarParamsURL();
     await loadClientes();
     document.getElementById('loading').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');

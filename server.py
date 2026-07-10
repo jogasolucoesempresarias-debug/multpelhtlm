@@ -2831,13 +2831,20 @@ def _filtrar_carteira(clientes, args, vendedor_forcado=None):
     status_key = 'status_personalizada' if modo == 'personalizada' else 'status_fixa'
     cidade = args.get('cidade')
     time = args.get('time')
-    # Filtro "dias sem comprar (mín.)" — recencia_dias >= dias_min
+    # Filtro "dias sem comprar" — recencia_dias >= dias_min (mín.) e <= dias_max (máx.).
+    # dias_max é usado pelo deep-link de faixa do painel Gerencial (ex.: 31-45 → min=31, max=45).
     dias_min = None
     if args.get('dias_min') not in (None, ''):
         try:
             dias_min = max(0, int(args['dias_min']))
         except (TypeError, ValueError):
             dias_min = None
+    dias_max = None
+    if args.get('dias_max') not in (None, ''):
+        try:
+            dias_max = max(0, int(args['dias_max']))
+        except (TypeError, ValueError):
+            dias_max = None
 
     # Aplica todos os filtros (geo + drill + busca) num único pass.
     # Cards/donut e tabela compartilham o mesmo resultado (single source of truth).
@@ -2879,6 +2886,9 @@ def _filtrar_carteira(clientes, args, vendedor_forcado=None):
         # Clientes sem compra (recencia_dias None) ficam de fora — só conta quem tem histórico
         filtrados = [c for c in filtrados
                      if c.get('recencia_dias') is not None and c['recencia_dias'] >= dias_min]
+    if dias_max is not None:
+        filtrados = [c for c in filtrados
+                     if c.get('recencia_dias') is not None and c['recencia_dias'] <= dias_max]
 
     sort_map = {
         'lucro_perdido':   'lucro_perdido_proj',

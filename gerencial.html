@@ -164,7 +164,7 @@
       <table>
         <thead><tr>
           <th id="rankColNome">Nome</th>
-          <th class="num">Clientes</th>
+          <th class="num">Positivados / Carteira</th>
           <th class="num">Cobertura clientes</th>
           <th class="num">Cobertura valor</th>
           <th class="num">Dentro do ciclo</th>
@@ -338,7 +338,7 @@ function renderFaixas() {
     </tr>`).join('');
   const r = g.rollup_0_30;
   const rollup = `
-    <tr style="background:rgba(52,211,153,.06); font-weight:600;">
+    <tr class="click" onclick="drillRollup0_30()" style="background:rgba(52,211,153,.06); font-weight:600;">
       <td>✓ 0–30 dias (em dia)</td>
       <td class="num">${NUM.format(r.clientes)}</td>
       <td class="num">${PCT(r.pct_clientes)}</td>
@@ -348,14 +348,20 @@ function renderFaixas() {
   document.getElementById('faixaBody').innerHTML = rollup + rows;
 }
 
-// Deep-link pra Carteira acionável filtrando por faixa (dias_min = limite inferior).
-const FAIXA_LO = { '0-15':0,'16-30':16,'31-45':31,'46-60':46,'61-90':61,'91+':91 };
+// Deep-link pra Carteira acionável filtrando pela faixa EXATA (dias_min E dias_max).
+// Ex.: 31-45 → dias_min=31&dias_max=45. 91+ → só dias_min=91 (sem topo).
+const FAIXA_RANGE = { '0-15':[0,15], '16-30':[16,30], '31-45':[31,45], '46-60':[46,60], '61-90':[61,90], '91+':[91,null] };
 function drillFaixa(faixa) {
+  const [lo, hi] = FAIXA_RANGE[faixa] || [null, null];
+  _drillCarteira(lo, hi);
+}
+function drillRollup0_30() { _drillCarteira(0, 30); }   // linha "0-30 (em dia)"
+function _drillCarteira(lo, hi) {
   const params = new URLSearchParams();
-  const lo = FAIXA_LO[faixa];
-  if (lo > 0) params.set('dias_min', lo);
-  if (_scope.level === 'time') params.set('time', _scope.id);
-  if (_scope.level === 'vendedor') params.set('vendedor', _scope.id);
+  if (lo != null) params.set('dias_min', lo);
+  if (hi != null) params.set('dias_max', hi);
+  if (_scope.level === 'time' && _scope.id != null) params.set('time', _scope.id);
+  if (_scope.level === 'vendedor' && _scope.id != null) params.set('vendedor', _scope.id);
   window.location.href = '/carteira?' + params.toString();
 }
 
@@ -381,7 +387,7 @@ function renderRanking() {
       <td>${g.nome}${g.amostra_pequena ? ' <span class="small">(amostra pequena)</span>' : ''}
         <div class="gauge"><i style="width:${w}%; background:var(--${cls==='r'?'red':cls==='y'?'yellow':'green'})"></i></div>
       </td>
-      <td class="num">${NUM.format(g.total_clientes)}</td>
+      <td class="num"><b>${NUM.format(g.clientes_cobertos)}</b> <span class="small">/ ${NUM.format(g.total_clientes)}</span></td>
       <td class="num"><span class="pill ${cls}">${PCT(g.cobertura_clientes)}</span></td>
       <td class="num">${PCT(g.cobertura_valor)}</td>
       <td class="num">${PCT(g.cobertura_ciclo)}</td>
