@@ -887,7 +887,8 @@ def enviar_alerta_cobertura_email(usuario_id):
             f"<tr><td style='padding:4px 8px;'>{(g.get('nome') or '')}"
             + (" <span style='color:#94a3b8;'>(amostra pequena)</span>" if g.get('amostra_pequena') else "")
             + f"</td><td style='padding:4px 8px;text-align:center;color:#dc2626;font-weight:bold;'>{_pct(g['cobertura_clientes'])}</td>"
-            f"<td style='padding:4px 8px;text-align:center;'>{g['total_clientes']}</td>"
+            f"<td style='padding:4px 8px;text-align:center;'>{g['clientes_cobertos']}</td>"
+            f"<td style='padding:4px 8px;text-align:center;color:#94a3b8;'>{g['total_clientes']}</td>"
             f"<td style='padding:4px 8px;text-align:right;'>{_brl(g['receita_em_risco'])}</td></tr>"
             for g in itens
         )
@@ -898,7 +899,8 @@ def enviar_alerta_cobertura_email(usuario_id):
             "<tr style='background:#1e293b;color:#fff;'>"
             "<th style='padding:5px 8px;text-align:left;'>Nome</th>"
             "<th style='padding:5px 8px;'>Cobertura</th>"
-            "<th style='padding:5px 8px;'>Clientes</th>"
+            "<th style='padding:5px 8px;'>Positivados (&le;" + str(coberto_dias) + "d)</th>"
+            "<th style='padding:5px 8px;'>Carteira (total)</th>"
             "<th style='padding:5px 8px;text-align:right;'>Receita em risco</th></tr>"
             f"{li}</table>"
         )
@@ -911,6 +913,12 @@ abaixo do limiar de <strong>{limiar_pct:.0f}%</strong> de cobertura (compra ≤ 
 <p style="background:#f1f5f9;padding:10px;border-radius:6px;">
   <strong>Empresa (seu escopo):</strong> cobertura {_pct(emp['cobertura_clientes'])} por clientes ·
   {_pct(emp['cobertura_valor'])} por valor · receita em risco <strong>{_brl(emp['receita_em_risco'])}</strong>.
+</p>
+<p style="color:#475569;font-size:12px;">
+  <strong>Como ler:</strong> <em>Cobertura</em> = % da carteira que <strong>comprou</strong> nos últimos
+  {coberto_dias} dias (positivados). <em>Positivados</em> = clientes que compraram na janela;
+  <em>Carteira (total)</em> = universo do time/RCA. Ex.: cobertura 30% de 584 = ~175 positivados,
+  ~409 sem positivação.
 </p>
 {_linhas(baixos['times'], 'Times')}
 {_linhas(baixos['vendedores'], 'RCAs / Vendedores')}
