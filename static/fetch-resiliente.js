@@ -60,3 +60,31 @@
 
   window.fetchJSON = _fetchJSONResiliente;
 })();
+
+/**
+ * Injeta "BI atualizado em dd/mm/aaaa hh:mm" no cabeçalho de QUALQUER página que
+ * inclua este script. Ancora logo abaixo do #userInfo (existe em todas as telas),
+ * então serve o site inteiro sem editar cada HTML. Degrada em silêncio (login, erro).
+ */
+(function () {
+  document.addEventListener('DOMContentLoaded', function () {
+    var anchor = document.getElementById('userInfo');
+    if (!anchor || document.getElementById('biRefresh')) return;
+    var el = document.createElement(anchor.tagName === 'SPAN' ? 'span' : 'div');
+    el.id = 'biRefresh';
+    el.className = anchor.className || 'meta';
+    el.style.opacity = '0.85';
+    if (anchor.tagName === 'SPAN') el.style.marginLeft = '10px';
+    el.textContent = 'BI: —';
+    anchor.parentNode.insertBefore(el, anchor.nextSibling);
+
+    window.fetchJSON('/api/pbi/refresh').then(function (j) {
+      if (j && j.refresh && j.refresh.end_fmt) {
+        el.textContent = 'BI atualizado em ' + j.refresh.end_fmt +
+                         (j.refresh.in_progress ? ' · 🔄 atualizando' : '');
+      } else {
+        el.textContent = 'BI: atualização indisponível';
+      }
+    }).catch(function () { el.textContent = 'BI: —'; });
+  });
+})();
