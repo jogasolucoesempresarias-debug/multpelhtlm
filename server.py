@@ -1095,6 +1095,56 @@ def status():
     })
 
 
+def _get_dataset_refresh():
+    """Última atualização CONCLUÍDA do dataset via refresh history do Power BI (mesmo método
+    do projeto MultpelEstoque). Retorna {'end','end_fmt','in_progress'} ou None (degrada
+    silenciosamente). Cache Redis 5min (chave 'multpel:pbi:refresh')."""
+    from datetime import datetime, timezone, timedelta
+    key = 'multpel:pbi:refresh'
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached or None
+    out = None
+    try:
+        token = get_token_cached()
+        url = (f"https://api.powerbi.com/v1.0/myorg/groups/{CONFIG['group_id']}"
+               f"/datasets/{CONFIG['dataset_id']}/refreshes?$top=10")
+        resp = requests.get(url, headers={'Authorization': f'Bearer {token}'}, timeout=30)
+        resp.raise_for_status()
+        rows = resp.json().get('value', [])
+        in_progress = any(not r.get('endTime')
+                          and (r.get('status') or '').lower() in ('unknown', 'inprogress', 'notstarted')
+                          for r in rows)
+        last = next((r for r in rows if r.get('status') == 'Completed' and r.get('endTime')), None)
+        dtloc = None
+        if last:
+            s = (last['endTime'] or '').replace('Z', '').split('.')[0]  # descarta fração de seg
+            try:
+                dt = datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
+                try:
+                    from zoneinfo import ZoneInfo
+                    dtloc = dt.astimezone(ZoneInfo('America/Sao_Paulo'))
+                except Exception:
+                    dtloc = dt.astimezone(timezone(timedelta(hours=-3)))  # Brasil é UTC-3 o ano todo
+            except ValueError:
+                dtloc = None
+        if dtloc:
+            out = {'end': dtloc.isoformat(),
+                   'end_fmt': dtloc.strftime('%d/%m/%Y %H:%M'),
+                   'in_progress': in_progress}
+    except Exception as e:
+        print(f"[pbi] refresh history indisponível ({e})")
+    _cache_set(key, out or False, 'dax_lista')  # 300s; False = 'consultado, sem dado'
+    return out
+
+
+@app.route('/api/pbi/refresh')
+@login_required
+def api_pbi_refresh():
+    """Data/hora da última atualização do dataset Power BI (pra exibir no topo do painel)."""
+    return jsonify({'ok': True, 'refresh': _get_dataset_refresh()})
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Dashboard Executivo — 6 endpoints
 # Todos: @login_required + cache Redis 1h + RBAC aplicado (quando faz sentido)

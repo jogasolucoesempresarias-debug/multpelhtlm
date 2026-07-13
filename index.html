@@ -202,6 +202,7 @@
       <div>
         <h1>Multpel Analytics</h1>
         <div class="meta" id="userInfo"></div>
+        <div class="meta" id="biRefresh" style="margin-top:2px;">BI: —</div>
       </div>
     </div>
     <div class="nav">
@@ -728,6 +729,20 @@ async function loadMe() {
   } catch (e) { /* /api/me retorna 401 → redirect já feito */ }
 }
 
+// Última atualização do dataset Power BI (refresh history) — exibida no topo.
+async function loadBiRefresh() {
+  const el = document.getElementById('biRefresh');
+  try {
+    const j = await fetchJSON('/api/pbi/refresh');
+    if (j.refresh && j.refresh.end_fmt) {
+      const andamento = j.refresh.in_progress ? ' · 🔄 atualizando agora' : '';
+      el.textContent = `BI atualizado em ${j.refresh.end_fmt}${andamento}`;
+    } else {
+      el.textContent = 'BI: atualização indisponível';
+    }
+  } catch (e) { el.textContent = 'BI: —'; }
+}
+
 // Re-dispara só os 6 indicadores (sem refazer login/me/maps) — usado nas mudanças de filtro
 async function recarregarDados() {
   document.getElementById('bannerErro').classList.add('hidden');
@@ -763,6 +778,7 @@ async function carregarTudo(retry) {
   }, 5000);
   try {
     await loadMe();
+    loadBiRefresh();  // fire-and-forget: mostra a última atualização do BI no topo
     await Promise.allSettled([loadVendedoresMap(), loadSupervisoresMap()]);
     const resultados = await Promise.allSettled([
       loadKpis(), loadSerie(), loadYoy(), loadTopDeptos(), loadTopVendedores(), loadTop()
