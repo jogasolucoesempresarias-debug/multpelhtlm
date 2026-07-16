@@ -1095,12 +1095,14 @@ def status():
     })
 
 
-def _get_dataset_refresh():
-    """Última atualização CONCLUÍDA do dataset via refresh history do Power BI (mesmo método
+def _get_dataset_refresh(dataset_id=None, cache_key='multpel:pbi:refresh'):
+    """Última atualização CONCLUÍDA de um dataset via refresh history do Power BI (mesmo método
     do projeto MultpelEstoque). Retorna {'end','end_fmt','in_progress'} ou None (degrada
-    silenciosamente). Cache Redis 5min (chave 'multpel:pbi:refresh')."""
+    silenciosamente). Cache Redis 5min. `dataset_id`/`cache_key` permitem consultar o dataset
+    META (separado do RCA) sem colidir de cache."""
     from datetime import datetime, timezone, timedelta
-    key = 'multpel:pbi:refresh'
+    ds = dataset_id or CONFIG['dataset_id']
+    key = cache_key
     cached = _cache_get(key)
     if cached is not None:
         return cached or None
@@ -1108,7 +1110,7 @@ def _get_dataset_refresh():
     try:
         token = get_token_cached()
         url = (f"https://api.powerbi.com/v1.0/myorg/groups/{CONFIG['group_id']}"
-               f"/datasets/{CONFIG['dataset_id']}/refreshes?$top=10")
+               f"/datasets/{ds}/refreshes?$top=10")
         resp = requests.get(url, headers={'Authorization': f'Bearer {token}'}, timeout=30)
         resp.raise_for_status()
         rows = resp.json().get('value', [])
@@ -1143,6 +1145,23 @@ def _get_dataset_refresh():
 def api_pbi_refresh():
     """Data/hora da última atualização do dataset Power BI (pra exibir no topo do painel)."""
     return jsonify({'ok': True, 'refresh': _get_dataset_refresh()})
+
+
+def _get_meta_refresh():
+    """Última atualização concluída do dataset META (separado do RCA — refresh próprio, ~2h)."""
+    return _get_dataset_refresh(META_DATASET_ID, 'multpel:pbi:refresh:meta')
+
+
+def _meta_refresh_tag():
+    """Identificador que muda a cada refresh do dataset META. Entra na chave de cache do
+    realizado de metas: quando o BI atualiza, a chave muda e o realizado/projeção voltam a bater
+    com o BI na hora (sem esperar o TTL). Sem refresh history disponível → bucket de 30min."""
+    r = _get_meta_refresh()
+    if r and r.get('end'):
+        return str(r['end'])
+    from datetime import datetime
+    n = datetime.now()
+    return n.strftime('%Y%m%d%H') + ('H' if n.minute >= 30 else 'L')
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -6849,13 +6868,18 @@ def _carregar_metas_realizado(ano, mes, supervisores):
     from datetime import date as _date
     ano, mes = int(ano), int(mes)
     escopo = _metas_escopo_codusur(supervisores)
-    key = cache_key_for_user('metas:realizado', {'ano': ano, 'mes': mes, 'sup': _sup_cache_key(supervisores)})
+    hoje = _date.today()
+    corrente = (ano == hoje.year and mes == hoje.month)
+    # Mês corrente: amarra o cache ao refresh do dataset META (~2h). Quando o BI atualiza, a tag
+    # muda → chave nova → realizado/projeção voltam a bater com o BI na hora (sem lag de TTL).
+    # Antes, o TTL de 1h desalinhava do ciclo de 2h e servia número de refresh anterior. Mês
+    # fechado não muda → tag estática.
+    rf = _meta_refresh_tag() if corrente else 'fechado'
+    key = cache_key_for_user('metas:realizado', {'ano': ano, 'mes': mes,
+                                                  'sup': _sup_cache_key(supervisores), 'rf': rf})
     cached = _cache_get(key)
     if cached:
         return cached
-
-    hoje = _date.today()
-    corrente = (ano == hoje.year and mes == hoje.month)
 
     # Mês FECHADO: dataset META esvazia PCPEDC/CALENDARIO ao virar o mês → realizado vem do RCA.
     if not corrente:
@@ -7219,7 +7243,10 @@ def api_metas_serie():
     rb = _metas_rbac_frag('PCPEDC', escopo)
     f = _and_dax(f"MONTH(PCPEDC[DATA])={mes} && YEAR(PCPEDC[DATA])={ano}",
                  'PCPEDC[POSICAO] IN {"F","L","B"}', rb)
-    key = cache_key_for_user('metas:serie', {'ano': ano, 'mes': mes, 'sup': _sup_cache_key(sup)})
+    from datetime import date as _date
+    corrente = (ano == _date.today().year and mes == _date.today().month)
+    rf = _meta_refresh_tag() if corrente else 'fechado'  # segue o refresh do META (igual ao realizado)
+    key = cache_key_for_user('metas:serie', {'ano': ano, 'mes': mes, 'sup': _sup_cache_key(sup), 'rf': rf})
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)
@@ -7239,6 +7266,15 @@ def api_metas_serie():
     resp = {'ok': True, 'ano': ano, 'mes': mes, 'serie': serie}
     _cache_set(key, resp, 'dax_agregado')
     return jsonify(resp)
+
+
+@app.route('/api/metas/refresh')
+@login_required
+def api_metas_refresh():
+    """Data/hora da última atualização do dataset META (topo da página de metas). Difere do
+    /api/pbi/refresh (dataset RCA) — cada dataset tem refresh próprio; aqui mostramos o do META,
+    que é a fonte do realizado/projeção, pra bater com o horário do BI que o diretor vê."""
+    return jsonify({'ok': True, 'refresh': _get_meta_refresh()})
 
 
 # ── Admin: edição de meta + sugestão + importação inicial ──

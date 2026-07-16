@@ -15,7 +15,8 @@ Construído como solução SaaS multi-tenant com RBAC (admin / supervisor / vend
 - **Categorias** — treemap de departamentos (tamanho=venda, cor=margem) + top fornecedores + drill de clientes por depto
 - **Mix abandonado** — clientes que pararam de comprar um depto há X dias; **clique no cliente → top 5 departamentos perdidos** (painel lateral); **export CSV da lista completa**
 - **Tendências** — cohort retention heatmap (M+0 a M+12) com **filtros de vendedor e supervisor** (cascata supervisor→vendedor)
-- **Admin** — CRUD de usuários (**supervisor multi-área**), cron de email, multi-CC, filtro de segmento RFM (rótulo "Função")
+- **Metas** — réplica das 4 telas META do cliente (Venda / Rentabilidade / Clientes / Mix): **meta (alvo) × realizado × projeção** por supervisor + total, com **drill de vendedores**, gauge, KPIs, série diária de venda e **necessidade/dia** em dias úteis. A **meta é nossa** (Postgres, por vendedor/mês; editor admin com sugestão automática e importação do BI); o **realizado vem de um 2º dataset Power BI** (dataset META — pedidos `PCPEDC/PCPEDI` + calendário `EhDiaMeta`), batendo centavo com as medidas oficiais no mês corrente
+- **Admin** — CRUD de usuários (**supervisor multi-área**), cron de email, multi-CC, filtro de segmento RFM (rótulo "Função"), **editor de metas por vendedor** (sugestão `ano_anterior`/`media_3m` + importar do dataset META)
 
 ### Relatórios automatizados
 - Cron de email (APScheduler) a cada 5min — dispara PDF + CSV filtrado por usuário
@@ -57,6 +58,7 @@ Multpel HTML/
 ├── server.py              # Backend Flask (~4300 linhas)
 ├── rfm.py                 # Módulo puro RFM (calcular_clientes, histograma_recencia)
 ├── cohort.py              # Lógica de cohort retention
+├── metas.py               # Módulo puro Metas (projeção, necessidade/dia, sugestão) — só matemática
 ├── init_db.py             # Migrations Postgres (idempotente)
 ├── requirements.txt       # Dependências Python
 ├── Dockerfile             # Imagem prod (python:3.13-slim + waitress)
@@ -76,6 +78,7 @@ Multpel HTML/
 ├── categorias.html        # Treemap deptos
 ├── mix.html               # Mix abandonado
 ├── tendencias.html        # Cohort heatmap
+├── metas.html             # Painel de metas (4 métricas + drill + editor admin)
 ├── admin.html             # CRUD usuários
 ├── login.html             # Tela de login
 ├── trocar-senha.html      # Reset 1º acesso
@@ -115,6 +118,7 @@ POWERBI_CLIENT_ID=...
 POWERBI_CLIENT_SECRET=...
 POWERBI_GROUP_ID=...
 POWERBI_DATASET_ID=...
+POWERBI_META_DATASET_ID=...  # 2º dataset (telas de Meta); default embutido no server.py
 
 # Resend (pra testar email)
 RESEND_API_KEY=re_...
@@ -134,7 +138,7 @@ docker compose -f docker-compose.dev.yml up -d redis
 python -X utf8 init_db.py
 ```
 
-Cria/migra tabelas `multpel_users` (inclui colunas de cron, `email_cc`, `segmentos_rfm` e **`codsupervisores`** JSONB p/ supervisor multi-área) e `multpel_log` + admin default (`admin@multpel.com.br` / `admin123`). **Idempotente** — rode também após cada deploy que mexa no schema.
+Cria/migra tabelas `multpel_users` (inclui colunas de cron, `email_cc`, `segmentos_rfm` e **`codsupervisores`** JSONB p/ supervisor multi-área), **`multpel_metas`** (alvo por vendedor/mês — `UNIQUE(ano,mes,codusur)`) e `multpel_log` + admin default (`admin@multpel.com.br` / `admin123`). **Idempotente** — rode também após cada deploy que mexa no schema.
 
 ### 5. Subir servidor
 
@@ -226,6 +230,9 @@ A carteira é carregada **global** (sem filtro de venda → números totais) e r
 
 Assim, **admin filtrando uma área == supervisor daquela área**, cliente por cliente. Para agregados que não dá pra filtrar em memória (Categorias), usa-se `CODCLI IN {...}` com fallback IN/NOT-IN dinâmico. Drills têm guarda de escopo (404 fora do cadastro).
 
+### 3. Metas (por CODUSUR, no 2º dataset)
+As telas de Meta rodam contra o **dataset META** (não o RCA). O escopo do usuário é resolvido em `_metas_escopo_codusur()` para um conjunto de `CODUSUR` (vendedor = o próprio; supervisor = vendedores das suas áreas; admin/viewer = tudo ou `?supervisor=`), e injetado como `PCPEDC[CODUSUR] IN {...}` nas queries. **Clientes/Mix são DISTINCTCOUNT** — nunca somados vendedor→supervisor→total; são sempre medidos no grão certo via DAX. O painel só mostra times **com meta cadastrada** (alinha com o BI). No mês corrente o realizado vem das medidas oficiais do META (bate centavo); em mês fechado (o META só guarda o mês atual) cai no dataset RCA como proxy.
+
 ---
 
 ## 📐 Alinhamento com o ERP (RCA)
@@ -283,12 +290,22 @@ _(aceitam `?supervisor=18,19` — multi-supervisor, admin/viewer)_
 - `GET /api/tendencias/cohort?periodo=12m&vendedor=&supervisor=`
 - `GET /api/tendencias/cohort/<aquisicao>/<mes_relativo>/clientes` (drill por bucket)
 
+### Metas
+_(aceitam `?ano=&mes=` — default mês corrente; `?supervisor=` p/ admin/viewer)_
+- `GET /api/metas` (painel: supervisores + total, 4 métricas c/ meta/realizado/projeção)
+- `GET /api/metas/vendedores?codsupervisor=X` (drill: vendedores de um time)
+- `GET /api/metas/serie` (realizado diário de venda p/ gráfico)
+
 ### Internos (datalists)
 - `GET /api/_internal/vendedores-map` / `GET /api/_internal/supervisores-map`
 
 ### Admin
 - `GET /api/admin/users` / `POST` / `PUT /<id>` / `DELETE /<id>`
 - `POST /api/admin/enviar-relatorio/<user_id>`
+- `GET /api/admin/metas` (lista vendedores p/ edição; `?todos=1` traz a força toda)
+- `POST /api/admin/metas` / `POST /api/admin/metas/bulk` (salva 1 meta / lote atômico)
+- `GET /api/admin/metas/sugestao?codusur=&metodo=ano_anterior|media_3m&crescimento=`
+- `POST /api/admin/metas/importar` (semeia do dataset META; `?todos=1` = todos os meses)
 
 ### Sistema
 - `GET /health` (liveness check pro Docker/Traefik)
@@ -306,6 +323,8 @@ _(aceitam `?supervisor=18,19` — multi-supervisor, admin/viewer)_
 | Drill mensal | `multpel:carteira:mes:*` | 30min |
 | Ranking vendedores | `multpel:vendedores:ranking:*` | 1h |
 | Cohort (compras GLOBAIS) | `multpel:cohort:compras_global:*` | 24h |
+| Metas: realizado/série (por escopo) | `multpel:metas:realizado:*` / `metas:serie:*` | agregado |
+| Metas: dias úteis do mês | `multpel:metas:dias:*` | lista |
 
 A carteira/cohort/mapas mensais são **globais** (1 entrada p/ todos) — o recorte por usuário é feito em Python. As chaves dos endpoints agregados incluem o RBAC do usuário (role + codusur + **lista de codsupervisores**) pra não vazar entre escopos.
 
@@ -335,6 +354,7 @@ A carteira/cohort/mapas mensais são **globais** (1 entrada p/ todos) — o reco
 | M | 09/06/26 | Tendências: filtro de supervisor + cascata; dropdowns só do liberado; limpar filtro |
 | M | 09/06/26 | Mix: drill top 5 deptos perdidos + export CSV completo + limpar filtro + busca por código |
 | M | 09/06/26 | Email: corpo mostra segmentos/áreas; ordenação de vendedor insensível a acento/maiúscula |
+| N | — | **Módulo Metas**: 4 telas META (Venda/Rentab/Clientes/Mix) — meta própria (Postgres `multpel_metas`) × realizado (2º dataset META, DAX centavo-a-centavo) + projeção/necessidade em dias úteis, drill de vendedores, editor admin (sugestão + importar do BI), série diária, `metas.py` puro |
 
 Detalhes completos em `_PROGRESSO.md` (não versionado).
 

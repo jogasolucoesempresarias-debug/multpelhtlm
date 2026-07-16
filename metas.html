@@ -128,7 +128,10 @@
         <button class="btn-sm" onclick="importarBI()">⬇ Importar do BI</button>
       </span>
     </div>
-    <div class="meta" id="diasInfo" style="margin-left:auto;align-self:center;"></div>
+    <div style="margin-left:auto;align-self:center;text-align:right;">
+      <div class="meta" id="metaRefresh" style="font-size:.72rem;opacity:.85;"></div>
+      <div class="meta" id="diasInfo"></div>
+    </div>
   </div>
 
   <div class="tabs" id="tabs"></div>
@@ -280,8 +283,21 @@ function getParams() {
   return p;
 }
 
+async function atualizarBadgeRefresh() {
+  // Horário do refresh do dataset META (fonte do realizado/projeção). Bate com o "atualizado às"
+  // que o diretor vê no BI — cada dataset tem refresh próprio, então mostramos o do META, não o RCA.
+  try {
+    const rf = await fetchJSON('/api/metas/refresh');
+    const el = document.getElementById('metaRefresh');
+    if (rf && rf.ok && rf.refresh && rf.refresh.end_fmt) {
+      el.textContent = 'BI atualizado ' + rf.refresh.end_fmt + (rf.refresh.in_progress ? ' · atualizando…' : '');
+    } else { el.textContent = ''; }
+  } catch (e) {}
+}
+
 async function carregar(force) {
   document.getElementById('bannerErro').classList.add('hidden');
+  atualizarBadgeRefresh();
   const p = getParams();
   try {
     _dados = await fetchJSON('/api/metas?' + p.toString());
