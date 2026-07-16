@@ -6901,20 +6901,30 @@ def _carregar_metas_realizado(ano, mes, supervisores):
     # Expressões de venda/rentabilidade. Mês corrente → medidas oficiais (exato).
     # Mês fechado → reconstrução por VLATEND(F,L) (o BI mostra 0 pra passado; é ganho).
     if corrente:
-        venda_expr  = '[Realizado Sem Bonus]'
+        # REALIZADO de venda = BRUTO (com bônus) = [Tem Pedido] = [Realizado Sem Bonus]+[Venda Bonus].
+        # É o que o BI mostra em "($) REALIZADO" (provado: [Projecao] = bruto × DiasMes/Decorridos,
+        # então projeção÷realizado do BI = 23/12 exato). O app antes mostrava [Realizado Sem Bonus]
+        # → ficava ~R$27k menor que o BI. `venda_sb` (sem bônus) é carregado só p/ o denominador da
+        # margem, que foi calibrada como lucro÷receita-sem-bônus — não muda com esta troca.
+        venda_expr    = '[Tem Pedido]'
+        venda_sb_expr = '[Realizado Sem Bonus]'
         rentab_expr = '[MARGEM META(%)]'
         proj_expr   = '[Projecao]'  # projeção oficial (bruta×dias) — bate com o BI
-        venda_tot  = (f'CALCULATE([Realizado Sem Bonus], FILTER(PCPEDC, {rb_pedc}))' if rb_pedc
-                      else '[Realizado Sem Bonus]')
+        venda_tot  = (f'CALCULATE([Tem Pedido], FILTER(PCPEDC, {rb_pedc}))' if rb_pedc
+                      else '[Tem Pedido]')
+        venda_sb_tot = (f'CALCULATE([Realizado Sem Bonus], FILTER(PCPEDC, {rb_pedc}))' if rb_pedc
+                        else '[Realizado Sem Bonus]')
         rentab_tot = (f'CALCULATE([MARGEM META(%)], FILTER(PCPEDC, {rb_pedc}))' if rb_pedc
                       else '[MARGEM META(%)]')
         proj_tot   = (f'CALCULATE([Projecao], FILTER(PCPEDC, {rb_pedc}))' if rb_pedc else '[Projecao]')
     else:
         f_fl = _and_dax(fp_pedc, 'PCPEDC[POSICAO] IN {"F","L"}', rb_pedc)
         venda_expr  = f'CALCULATE(SUM(PCPEDC[VLATEND]), FILTER(PCPEDC, {f_fl}))'
+        venda_sb_expr = venda_expr  # mês fechado: sem bônus == bruto (VLATEND não separa bônus)
         rentab_expr = f'CALCULATE(SUM(PCPEDC[VLATEND]) - SUM(PCPEDC[VLCUSTOFIN]), FILTER(PCPEDC, {f_fl}))'
         proj_expr   = 'BLANK()'  # mês fechado → projeção recalculada em Python (run-rate)
         venda_tot, rentab_tot, proj_tot = venda_expr, rentab_expr, 'BLANK()'
+        venda_sb_tot = venda_tot
 
     # cli/mix distinct: medidas dão DISTINCTCOUNT direto; rentab/venda via medidas/recon.
     cli_expr = f'CALCULATE(DISTINCTCOUNT(PCPEDC[CODCLI]), FILTER(PCPEDC, {f_cli}))'
@@ -6923,16 +6933,16 @@ def _carregar_metas_realizado(ano, mes, supervisores):
     queries = {
         # tudo por supervisor (transação), num só passe — bate com o BI
         'por_sup': (f'EVALUATE SUMMARIZECOLUMNS(PCSUPERV[CODSUPERVISOR], PCSUPERV[NOME], {filtro_med}'
-                    f'"venda", {venda_expr}, "rentab", {rentab_expr}, "proj", {proj_expr}, '
+                    f'"venda", {venda_expr}, "venda_sb", {venda_sb_expr}, "rentab", {rentab_expr}, "proj", {proj_expr}, '
                     f'"cli", {cli_expr}, "mix", {mix_expr})'),
         # totais escalares (distinct verdadeiro + medidas)
-        'totais': (f'EVALUATE ROW("venda", {venda_tot}, "rentab", {rentab_tot}, "proj", {proj_tot}, '
+        'totais': (f'EVALUATE ROW("venda", {venda_tot}, "venda_sb", {venda_sb_tot}, "rentab", {rentab_tot}, "proj", {proj_tot}, '
                    f'"cli", {cli_expr}, "mix", {mix_expr})'),
         # drill por vendedor
         'vr_usur':  (f'EVALUATE SUMMARIZECOLUMNS(PCUSUARI[CODUSUR], {filtro_med}'
-                     f'"venda", {venda_expr}, "rentab", {rentab_expr}, "proj", {proj_expr})') if corrente else
+                     f'"venda", {venda_expr}, "venda_sb", {venda_sb_expr}, "rentab", {rentab_expr}, "proj", {proj_expr})') if corrente else
                     (f'EVALUATE SUMMARIZECOLUMNS(PCPEDC[CODUSUR], '
-                     f'"venda", {venda_expr}, "rentab", {rentab_expr})'),
+                     f'"venda", {venda_expr}, "venda_sb", {venda_sb_expr}, "rentab", {rentab_expr})'),
         'cli_usur': f'EVALUATE SUMMARIZECOLUMNS(PCPEDC[CODUSUR], "v", {cli_expr})',
         'mix_usur': f'EVALUATE SUMMARIZECOLUMNS(PCPEDI[CODUSUR], "v", {mix_expr})',
     }
@@ -6953,7 +6963,8 @@ def _carregar_metas_realizado(ano, mes, supervisores):
     for cod, r in _mapa('por_sup', 'CODSUPERVISOR').items():
         por_supervisor[cod] = {
             'nome': r.get('NOME') or f'Time {cod}',
-            'venda': r.get('venda') or 0, 'rentabilidade': r.get('rentab') or 0,
+            'venda': r.get('venda') or 0, 'venda_sb': r.get('venda_sb') or 0,
+            'rentabilidade': r.get('rentab') or 0,
             'clientes': r.get('cli') or 0, 'mix': r.get('mix') or 0,
             'proj_venda': r.get('proj'),
         }
@@ -6961,7 +6972,8 @@ def _carregar_metas_realizado(ano, mes, supervisores):
     # por vendedor (drill)
     por_vendedor = {}
     for cod, r in _mapa('vr_usur', 'CODUSUR').items():
-        por_vendedor[cod] = {'venda': r.get('venda') or 0, 'rentabilidade': r.get('rentab') or 0,
+        por_vendedor[cod] = {'venda': r.get('venda') or 0, 'venda_sb': r.get('venda_sb') or 0,
+                             'rentabilidade': r.get('rentab') or 0,
                              'clientes': 0, 'mix': 0, 'proj_venda': r.get('proj')}
     for cod, r in _mapa('cli_usur', 'CODUSUR').items():
         por_vendedor.setdefault(cod, {'venda': 0, 'rentabilidade': 0, 'clientes': 0, 'mix': 0})
@@ -6976,7 +6988,8 @@ def _carregar_metas_realizado(ano, mes, supervisores):
         'por_supervisor': por_supervisor,
         'por_vendedor': por_vendedor,
         'total': {
-            'venda': tot.get('[venda]') or 0, 'rentabilidade': tot.get('[rentab]') or 0,
+            'venda': tot.get('[venda]') or 0, 'venda_sb': tot.get('[venda_sb]') or 0,
+            'rentabilidade': tot.get('[rentab]') or 0,
             'clientes': tot.get('[cli]') or 0, 'mix': tot.get('[mix]') or 0,
             'proj_venda': tot.get('[proj]'),
         },
@@ -7131,8 +7144,9 @@ def _montar_metas_resposta(ano, mes, supervisores):
             'rentabilidade': metas.linha_metrica(mt['rentab'], rz['rentabilidade'], dm, dd, dr),
             'clientes':      metas.linha_metrica(mt['cli'],    rz['clientes'],      dm, dd, dr),
             'mix':           metas.linha_metrica(mt['mix'],    rz['mix'],           dm, dd, dr),
-            # Margem de lucro bruto realizada = lucro realizado / receita realizada (pedido do diretor)
-            'margem':        metas.pct(rz['rentabilidade'], rz['venda']),
+            # Margem = lucro realizado / receita realizada SEM bônus (calibrada assim vs BI; usa
+            # venda_sb, não o realizado bruto exibido, p/ não mudar o % já validado).
+            'margem':        metas.pct(rz['rentabilidade'], rz.get('venda_sb') or rz['venda']),
         })
     supervisores_out.sort(key=lambda s: s['venda']['realizado'], reverse=True)
 
@@ -7147,8 +7161,8 @@ def _montar_metas_resposta(ano, mes, supervisores):
         'rentabilidade': metas.linha_metrica(meta_rentab_t, rt['rentabilidade'], dm, dd, dr),
         'clientes':      metas.linha_metrica(meta_cli_t,    rt['clientes'],      dm, dd, dr),
         'mix':           metas.linha_metrica(meta_mix_t,    rt['mix'],           dm, dd, dr),
-        # Margem de lucro bruto realizada do total = lucro realizado / receita realizada
-        'margem':        metas.pct(rt['rentabilidade'], rt['venda']),
+        # Margem do total = lucro realizado / receita realizada SEM bônus (denominador calibrado)
+        'margem':        metas.pct(rt['rentabilidade'], rt.get('venda_sb') or rt['venda']),
     }
     return {'ok': True, 'ano': int(ano), 'mes': int(mes), 'dias': dias,
             'supervisores': supervisores_out, 'total': total}
@@ -7227,7 +7241,7 @@ def api_metas_vendedores():
             'rentabilidade': metas.linha_metrica(m.get('rentabilidade_meta'),rz.get('rentabilidade'),dm, dd, dr),
             'clientes':      metas.linha_metrica(m.get('clientes_meta'),     rz.get('clientes'),     dm, dd, dr),
             'mix':           metas.linha_metrica(m.get('mix_meta'),          rz.get('mix'),          dm, dd, dr),
-            'margem':        metas.pct(rz.get('rentabilidade'), rz.get('venda')),
+            'margem':        metas.pct(rz.get('rentabilidade'), rz.get('venda_sb') or rz.get('venda')),
         })
     linhas.sort(key=lambda x: x['venda']['realizado'], reverse=True)
     return jsonify({'ok': True, 'codsupervisor': codsup, 'dias': dias, 'vendedores': linhas})
