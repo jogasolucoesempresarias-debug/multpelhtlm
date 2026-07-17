@@ -33,10 +33,10 @@ services:
       labels:
         - "traefik.enable=true"
         - "traefik.docker.network=proxy"
-        - "traefik.http.routers.multpel.rule=Host(`multpel.jogasolucoes.com.br`)"
-        - "traefik.http.routers.multpel.entrypoints=websecure"
-        - "traefik.http.routers.multpel.tls.certresolver=le"
-        - "traefik.http.services.multpel.loadbalancer.server.port=5000"
+        - "traefik.http.routers.analytics.rule=Host(`analytics.jogasolucoes.com.br`)"
+        - "traefik.http.routers.analytics.entrypoints=websecure"
+        - "traefik.http.routers.analytics.tls.certresolver=le"
+        - "traefik.http.services.analytics.loadbalancer.server.port=5000"
 
   multpel-redis:
     image: redis:7-alpine

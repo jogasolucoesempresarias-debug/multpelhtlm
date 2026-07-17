@@ -1,5 +1,5 @@
 """
-Multpel Analytics — Backend
+JOGA Analytics — Backend
 Rode: python -X utf8 server.py
 Acesse: http://localhost:5000
 """
@@ -789,7 +789,7 @@ def enviar_relatorio_email(usuario_id):
         areas_li = f"  <li>Áreas: {nomes_areas}</li>\n"
 
     html = f"""<html><body style="font-family:Arial,sans-serif;color:#0a0e17;">
-<h2 style="color:#38bdf8;">Multpel Analytics</h2>
+<h2 style="color:#38bdf8;">JOGA Analytics</h2>
 <p>Olá <strong>{user.get('nome')}</strong>,</p>
 <p>Segue seu relatório de carteira atualizado em {_date.today().strftime('%d/%m/%Y')}.</p>
 <ul>
@@ -797,7 +797,7 @@ def enviar_relatorio_email(usuario_id):
 {areas_li}  <li>Segmentos: {seg_txt}</li>
 </ul>
 <p>Anexos: {plural_pdf} + 1 CSV (Excel-compatível).</p>
-<p style="color:#94a3b8;font-size:12px;">Email automatizado — Multpel Analytics</p>
+<p style="color:#94a3b8;font-size:12px;">Email automatizado — JOGA Analytics</p>
 </body></html>"""
 
     # Patch J — sanitiza lista de CC (remove principal duplicado, valida formato, limita)
@@ -815,7 +815,7 @@ def enviar_relatorio_email(usuario_id):
     payload = {
         'from': RESEND_FROM,
         'to': [user['email']],
-        'subject': f"Multpel — Carteira {_date.today().strftime('%d/%m/%Y')}",
+        'subject': f"JOGA Analytics — Carteira {_date.today().strftime('%d/%m/%Y')}",
         'html': html,
         'attachments': attachments,
     }
@@ -923,7 +923,7 @@ abaixo do limiar de <strong>{limiar_pct:.0f}%</strong> de cobertura (compra ≤ 
 {_linhas(baixos['times'], 'Times')}
 {_linhas(baixos['vendedores'], 'RCAs / Vendedores')}
 <p style="color:#94a3b8;font-size:12px;margin-top:16px;">Ordenado do pior para o melhor. Acesse o painel
-Gerencial para o detalhamento por faixa. Email automatizado — Multpel Analytics.</p>
+Gerencial para o detalhamento por faixa. Email automatizado — JOGA Analytics.</p>
 </body></html>"""
 
     try:
@@ -970,16 +970,7 @@ def login_page():
 @app.route('/health')
 def health():
     """Liveness check pro Docker/Traefik. Sem auth, retorna 200 quando o processo está up."""
-    return jsonify({'ok': True, 'service': 'multpel-analytics'}), 200
-
-
-@app.route('/multpel-logo.png')
-def multpel_logo():
-    """Logo Multpel (círculo com setas) usada como loader animado. Pública (aparece na tela de
-    carregamento antes/depois do login). Cache no navegador via max-age."""
-    resp = send_from_directory('.', 'logo multpel alta resolução (1).png')
-    resp.headers['Cache-Control'] = 'public, max-age=86400'
-    return resp
+    return jsonify({'ok': True, 'service': 'joga-analytics'}), 200
 
 
 @app.route('/trocar-senha', methods=['GET'])
@@ -3461,14 +3452,14 @@ def _gerar_pdf_carteira(filtrados, filtros_resumo=''):
         buf, pagesize=landscape(A4),
         leftMargin=1.2*cm, rightMargin=1.2*cm,
         topMargin=1.2*cm, bottomMargin=1.5*cm,
-        title=f"Carteira Multpel {_date.today().isoformat()}",
+        title=f"Carteira JOGA {_date.today().isoformat()}",
     )
     styles = getSampleStyleSheet()
     titulo_style = ParagraphStyle('titulo', parent=styles['Heading1'], fontSize=14, alignment=TA_LEFT, textColor=colors.HexColor('#0a0e17'))
     sub_style = ParagraphStyle('sub', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#475569'))
 
     story = []
-    story.append(Paragraph('<b>Multpel Analytics</b> — Carteira', titulo_style))
+    story.append(Paragraph('<b>JOGA Analytics</b> — Carteira', titulo_style))
     story.append(Paragraph(f"Gerado em {_date.today().strftime('%d/%m/%Y')} · {len(filtrados)} clientes" + (f" · {filtros_resumo}" if filtros_resumo else ''), sub_style))
     story.append(Spacer(1, 0.3*cm))
 
@@ -3538,14 +3529,14 @@ def _gerar_pdf_proximo_pedido(filtrados, filtros_resumo=''):
     doc = SimpleDocTemplate(
         buf, pagesize=landscape(A4),
         leftMargin=1.2*cm, rightMargin=1.2*cm, topMargin=1.2*cm, bottomMargin=1.5*cm,
-        title=f"Proximo Pedido Multpel {_date.today().isoformat()}",
+        title=f"Proximo Pedido JOGA {_date.today().isoformat()}",
     )
     styles = getSampleStyleSheet()
     titulo_style = ParagraphStyle('titulo', parent=styles['Heading1'], fontSize=14, alignment=TA_LEFT, textColor=colors.HexColor('#0a0e17'))
     sub_style = ParagraphStyle('sub', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#475569'))
 
     story = []
-    story.append(Paragraph('<b>Multpel Analytics</b> — Lista do Dia (Próximo Pedido)', titulo_style))
+    story.append(Paragraph('<b>JOGA Analytics</b> — Lista do Dia (Próximo Pedido)', titulo_style))
     story.append(Paragraph(f"Gerado em {_date.today().strftime('%d/%m/%Y')} · {len(filtrados)} clientes a contatar" + (f" · {filtros_resumo}" if filtros_resumo else ''), sub_style))
     story.append(Spacer(1, 0.3*cm))
 
@@ -3867,7 +3858,7 @@ def _gerar_pdf_cobertura(niveis, coberto_dias, limiar_pct):
     doc = SimpleDocTemplate(
         buf, pagesize=landscape(A4),
         leftMargin=1.2 * cm, rightMargin=1.2 * cm, topMargin=1.2 * cm, bottomMargin=1.5 * cm,
-        title=f"Cobertura Gerencial Multpel {_date.today().isoformat()}",
+        title=f"Cobertura Gerencial JOGA {_date.today().isoformat()}",
     )
     styles = getSampleStyleSheet()
     titulo_style = ParagraphStyle('titulo', parent=styles['Heading1'], fontSize=14, alignment=TA_LEFT, textColor=colors.HexColor('#0a0e17'))
@@ -3882,7 +3873,7 @@ def _gerar_pdf_cobertura(niveis, coberto_dias, limiar_pct):
 
     emp = niveis['empresa']
     story = []
-    story.append(Paragraph('<b>Multpel Analytics</b> — Cobertura de Carteira (Gerencial)', titulo_style))
+    story.append(Paragraph('<b>JOGA Analytics</b> — Cobertura de Carteira (Gerencial)', titulo_style))
     story.append(Paragraph(
         f"Gerado em {_date.today().strftime('%d/%m/%Y')} · Coberto = ≤{coberto_dias} dias · "
         f"Limiar baixa performance = {limiar_pct:.0f}% · Empresa: {_pct(emp['cobertura_clientes'])} clientes / "
@@ -5021,7 +5012,7 @@ def api_mix_cliente_fornecedores_pdf(codcli):
 
     story = []
     cliente = cli_meta.get('cliente') or f'Cliente #{codcli}'
-    story.append(Paragraph(f"<b>Multpel Analytics</b> — Fornecedores parados · {cliente}", titulo_style))
+    story.append(Paragraph(f"<b>JOGA Analytics</b> — Fornecedores parados · {cliente}", titulo_style))
     sub = (f"Gerado em {_date.today().strftime('%d/%m/%Y')} · #{codcli} · "
            f"{(cli_meta.get('cidade') or '')}/{cli_meta.get('uf') or ''} · "
            f"{cli_meta.get('vendedor') or '—'} · {len(out)} fornecedor(es) parado(s) há ≥ {dias} dias")
@@ -5223,14 +5214,14 @@ def _gerar_pdf_mix_abandonado(linhas, filtros_resumo='', dias=60):
         buf, pagesize=landscape(A4),
         leftMargin=1.2*cm, rightMargin=1.2*cm,
         topMargin=1.2*cm, bottomMargin=1.5*cm,
-        title=f"Mix Abandonado Multpel {_date.today().isoformat()}",
+        title=f"Mix Abandonado JOGA {_date.today().isoformat()}",
     )
     styles = getSampleStyleSheet()
     titulo_style = ParagraphStyle('titulo', parent=styles['Heading1'], fontSize=14, alignment=TA_LEFT, textColor=colors.HexColor('#0a0e17'))
     sub_style = ParagraphStyle('sub', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#475569'))
 
     story = []
-    story.append(Paragraph('<b>Multpel Analytics</b> — Mix Abandonado', titulo_style))
+    story.append(Paragraph('<b>JOGA Analytics</b> — Mix Abandonado', titulo_style))
     sub = (f"Gerado em {_date.today().strftime('%d/%m/%Y')} · {len(linhas)} oportunidades · "
            f"parados há ≥ {dias} dias" + (f" · {filtros_resumo}" if filtros_resumo else ''))
     story.append(Paragraph(sub, sub_style))
@@ -5830,14 +5821,14 @@ def _gerar_pdf_radar_board(rows, dias, metrica, resumo=''):
     doc = SimpleDocTemplate(
         buf, pagesize=landscape(A4),
         leftMargin=1.2*cm, rightMargin=1.2*cm, topMargin=1.2*cm, bottomMargin=1.5*cm,
-        title=f"Radar Board Multpel {_date.today().isoformat()}",
+        title=f"Radar Board JOGA {_date.today().isoformat()}",
     )
     styles = getSampleStyleSheet()
     titulo_style = ParagraphStyle('titulo', parent=styles['Heading1'], fontSize=14, alignment=TA_LEFT, textColor=colors.HexColor('#0a0e17'))
     sub_style = ParagraphStyle('sub', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#475569'))
 
     story = []
-    story.append(Paragraph('<b>Multpel Analytics</b> — Radar · Produtos perdendo receita', titulo_style))
+    story.append(Paragraph('<b>JOGA Analytics</b> — Radar · Produtos perdendo receita', titulo_style))
     sub = (f"Gerado em {_date.today().strftime('%d/%m/%Y')} · janela {dias}d · "
            f"ordenado por {_RADAR_BOARD_METRICAS.get(metrica, '')} · {len(rows)} produtos"
            + (f" · {resumo}" if resumo else ''))
@@ -6025,7 +6016,7 @@ def _gerar_pdf_radar_produto(produto, linhas, dias=60):
     sub_style = ParagraphStyle('sub', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#475569'))
 
     story = []
-    story.append(Paragraph(f"<b>Multpel Analytics</b> — Radar · {produto.get('descricao') or ''}", titulo_style))
+    story.append(Paragraph(f"<b>JOGA Analytics</b> — Radar · {produto.get('descricao') or ''}", titulo_style))
     parados = [c for c in linhas if c['status'] in ('parou', 'perdido')]
     sub = (f"Gerado em {_date.today().strftime('%d/%m/%Y')} · {produto.get('depto_nome') or ''}"
            f" · {produto.get('fornec_nome') or ''} · {len(linhas)} clientes · {len(parados)} pararam (≥ {dias} dias)")
@@ -6345,7 +6336,7 @@ def api_radar_cliente_pdf(codcli):
 
     story = []
     cliente = cli_meta.get('cliente') or f'Cliente #{codcli}'
-    story.append(Paragraph(f"<b>Multpel Analytics</b> — Produtos parados · {cliente}", titulo_style))
+    story.append(Paragraph(f"<b>JOGA Analytics</b> — Produtos parados · {cliente}", titulo_style))
     sub = (f"Gerado em {_date.today().strftime('%d/%m/%Y')} · #{codcli} · "
            f"{(cli_meta.get('cidade') or '')}/{cli_meta.get('uf') or ''} · "
            f"{cli_meta.get('vendedor') or '—'} · {len(linhas)} produto(s) parado(s) há ≥ {dias} dias")
@@ -7602,7 +7593,7 @@ def _start_scheduler():
 
 
 if __name__ == '__main__':
-    print("\n[Multpel Analytics] Backend iniciando...")
+    print("\n[JOGA Analytics] Backend iniciando...")
     missing = [k for k, v in CONFIG.items() if not v]
     if missing:
         print(f"[AVISO] Vars Power BI faltando: {', '.join(missing)}")
