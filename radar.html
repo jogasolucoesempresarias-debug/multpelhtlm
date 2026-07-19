@@ -7,6 +7,8 @@
 <link rel="icon" href="/static/joga-mark.svg" type="image/svg+xml">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="/static/fetch-resiliente.js"></script>
+<link rel="stylesheet" href="/static/tooltips.css">
+<script defer src="/static/tooltips.js"></script>
 <style>
   :root {
     --bg: #0a0e17; --surface: #111827; --surface2: #1a2235; --border: #1e293b;
@@ -117,7 +119,7 @@
   .backdrop.show { opacity: 1; pointer-events: auto; }
 </style>
 </head>
-<body>
+<body data-page="radar">
 
 <div id="loading" class="loading-screen">
   <img src="/static/joga-loader.svg" alt="JOGA" width="78" height="78" style="object-fit: contain;">

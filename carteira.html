@@ -9,6 +9,8 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
 <script src="/static/fetch-resiliente.js"></script>
+<link rel="stylesheet" href="/static/tooltips.css">
+<script defer src="/static/tooltips.js"></script>
 <link rel="stylesheet" href="/static/drill-cliente.css">
 <script defer src="/static/drill-cliente.js"></script>
 <style>
@@ -242,7 +244,7 @@
   /* .backdrop também extraída pra /static/drill-cliente.css */
 </style>
 </head>
-<body>
+<body data-page="carteira">
 
 <div id="loading" class="loading-screen">
   <img src="/static/joga-loader.svg" alt="JOGA" width="78" height="78" style="object-fit: contain;">
@@ -1323,7 +1325,7 @@ carregarTudo().then(() => atualizarIndicadorSort());
 <aside class="side-panel" id="mesPanel">
   <div class="side-head">
     <div>
-      <h2 id="mesTitulo">Detalhe do mês</h2>
+      <h2 id="mesTitulo" data-tip-key="Detalhe do mês">Detalhe do mês</h2>
       <div class="meta-cli" id="mesSubtitulo">—</div>
     </div>
     <button onclick="fecharPainelMes()" aria-label="Fechar">×</button>

@@ -8,6 +8,8 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
 <script src="/static/fetch-resiliente.js"></script>
+<link rel="stylesheet" href="/static/tooltips.css">
+<script defer src="/static/tooltips.js"></script>
 <style>
   :root {
     --bg: #0a0e17; --surface: #111827; --surface2: #1a2235; --border: #1e293b;
@@ -67,7 +69,7 @@
   .row-gradient { background-image: linear-gradient(90deg, transparent 0%, transparent 95%, var(--strip-color, transparent) 100%); }
 </style>
 </head>
-<body>
+<body data-page="vendedores">
 
 <div id="loading" class="loading-screen">
   <img src="/static/joga-loader.svg" alt="JOGA" width="78" height="78" style="object-fit: contain;">

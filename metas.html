@@ -9,6 +9,8 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
 <script src="/static/fetch-resiliente.js"></script>
+<link rel="stylesheet" href="/static/tooltips.css">
+<script defer src="/static/tooltips.js"></script>
 <style>
   :root {
     --bg: #0a0e17; --surface: #111827; --surface2: #1a2235; --border: #1e293b;
@@ -78,7 +80,7 @@
   .secao-titulo { font-size: .9rem; font-weight: 600; margin-bottom: 12px; color: var(--text-dim); }
 </style>
 </head>
-<body>
+<body data-page="metas">
 <div id="loading" class="loading-screen">
   <img src="/static/joga-loader.svg" alt="JOGA" width="78" height="78" style="object-fit: contain;">
   <div style="color: var(--text-dim); font-size: 0.85rem;">Carregando metas...</div>

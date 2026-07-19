@@ -8,6 +8,8 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
 <script src="/static/fetch-resiliente.js"></script>
+<link rel="stylesheet" href="/static/tooltips.css">
+<script defer src="/static/tooltips.js"></script>
 <style>
   :root {
     --bg:#0a0e17; --surface:#111827; --surface2:#1a2235; --border:#1e293b;
@@ -89,7 +91,7 @@
   .hidden { display:none !important; }
 </style>
 </head>
-<body>
+<body data-page="gerencial">
 
 <div id="loading" class="loading-screen">
   <img src="/static/joga-loader.svg" alt="JOGA" width="78" height="78" style="object-fit: contain;">
@@ -141,7 +143,7 @@
 
   <!-- Distribuição por faixa -->
   <div class="card">
-    <h3 id="faixaTitulo">Distribuição por faixa de recência</h3>
+    <h3 id="faixaTitulo" data-tip-key="Distribuição por faixa de recência">Distribuição por faixa de recência</h3>
     <div class="faixa-bar" id="faixaBar"></div>
     <div class="faixa-legend" id="faixaLegend"></div>
     <div style="overflow-x:auto; margin-top:14px;">
@@ -159,7 +161,7 @@
 
   <!-- Ranking dos filhos -->
   <div class="card">
-    <h3 id="rankTitulo">Ranking (pior → melhor)</h3>
+    <h3 id="rankTitulo" data-tip-key="Ranking (pior → melhor)">Ranking (pior → melhor)</h3>
     <div style="overflow-x:auto;">
       <table>
         <thead><tr>

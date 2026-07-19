@@ -10,6 +10,8 @@
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
 <script src="/static/fetch-resiliente.js"></script>
+<link rel="stylesheet" href="/static/tooltips.css">
+<script defer src="/static/tooltips.js"></script>
 <link rel="stylesheet" href="/static/drill-cliente.css">
 <script defer src="/static/drill-cliente.js"></script>
 <style>
@@ -186,7 +188,7 @@
   .hidden { display: none !important; }
 </style>
 </head>
-<body>
+<body data-page="index">
 
 <div id="loading" class="loading-screen">
   <img src="/static/joga-loader.svg" alt="JOGA" width="78" height="78" style="object-fit: contain;">
@@ -295,7 +297,7 @@
   <div class="tables-2col">
     <!-- Top 10 departamentos por lucro (clique → clientes) -->
     <div class="table-card">
-      <h3>Top 10 departamentos por lucro (12m) — clique para ver os clientes</h3>
+      <h3 data-tip-key="Top 10 departamentos por lucro (12m)">Top 10 departamentos por lucro (12m) — clique para ver os clientes</h3>
       <div class="table-scroll">
         <table>
           <thead>
