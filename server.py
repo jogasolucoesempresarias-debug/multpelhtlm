@@ -293,6 +293,12 @@ def _csv_linha(valores):
     return ';'.join(out) + '\n'
 
 
+# Preâmbulo de TODO CSV: BOM UTF-8 + dica de separador. O "sep=;" força o Excel a abrir
+# em colunas em QUALQUER máquina (independe do separador de listas das configs regionais).
+# O Excel consome essa 1ª linha (não vira dado). Ambos os helpers de linha usam ';'.
+CSV_PREAMBULO = '﻿sep=;\n'
+
+
 def _csv_linha_br(valores):
     """Versão BR de _csv_linha: separador ;, decimal vírgula (Excel pt-BR não
     confunde ponto/vírgula). Para campos numéricos, troca '.' por ',' no decimal."""
@@ -698,7 +704,7 @@ def _gerar_relatorio_para_usuario(usuario):
     # CSV (1 só, combinado)
     cabecalho = ['CodCli', 'Cliente', 'Cidade', 'UF', 'Vendedor', 'Telefone',
                  'R(dias)', 'Segmento', 'Venda12m', 'MediaVenda12m', 'ReceitaPerdidaProj']
-    csv_lines = ['﻿' + _csv_linha(cabecalho).rstrip('\n')]
+    csv_lines = [CSV_PREAMBULO + _csv_linha(cabecalho).rstrip('\n')]
     for c in csv_rows:
         v = c.get('venda_12m') or 0
         csv_lines.append(_csv_linha([
@@ -720,7 +726,7 @@ def _gerar_relatorio_para_usuario(usuario):
         prods = _top_produtos_varios([c['codcli'] for c in due], 5) if due else {}
         pp_head = ['CodCli', 'Cliente', 'Cidade', 'UF', 'Vendedor', 'Telefone', 'UltimaCompra',
                    'Ciclo', 'Previsao', 'DiasAtraso', 'Status', 'Venda12m', 'ReceitaEmRisco', 'Top5Produtos']
-        pp_lines = ['﻿' + _csv_linha(pp_head).rstrip('\n')]
+        pp_lines = [CSV_PREAMBULO + _csv_linha(pp_head).rstrip('\n')]
         for c in due:
             tp = ' | '.join(p['descricao'] for p in prods.get(c['codcli'], []))
             pp_lines.append(_csv_linha([
@@ -3396,7 +3402,7 @@ def api_carteira_csv():
     ]
 
     def gerar():
-        yield '﻿'  # BOM UTF-8
+        yield CSV_PREAMBULO  # BOM UTF-8
         yield _csv_linha(cabecalho)
         for c in filtrados:
             venda = c.get('venda_12m') or 0
@@ -3659,7 +3665,7 @@ def api_carteira_proximo_pedido_csv():
 
     head = ['CodCli', 'Cliente', 'Cidade', 'UF', 'Telefone', 'UltimaCompra', 'Ciclo',
             'Previsao', 'DiasAtraso', 'Status', 'Venda12m', 'ReceitaEmRisco']
-    linhas = ['﻿' + _csv_linha(head).rstrip('\n')]
+    linhas = [CSV_PREAMBULO + _csv_linha(head).rstrip('\n')]
     for c in rows:
         linhas.append(_csv_linha([
             c.get('codcli'), c.get('cliente'), c.get('cidade'), c.get('uf'), c.get('telefone'),
@@ -3801,7 +3807,7 @@ def _cobertura_csv_linhas(niveis):
         + [f'Faixa {f} (clientes)' for f in faixas]
         + [f'Faixa {f} (valor)' for f in faixas]
     )
-    yield '﻿' + _csv_linha(cabecalho).rstrip('\n')
+    yield CSV_PREAMBULO + _csv_linha(cabecalho).rstrip('\n')
 
     def _linha(nivel, g):
         buckets = {b['faixa']: b for b in g['buckets']}
@@ -4962,7 +4968,7 @@ def api_mix_cliente_fornecedores_csv(codcli):
     cabecalho = ['Fornecedor', 'CodFornec', 'UltimaCompra', 'DiasParado', 'VendaCat12m', 'LucroCat12m']
 
     def gerar():
-        yield '﻿'  # BOM UTF-8
+        yield CSV_PREAMBULO  # BOM UTF-8
         yield _csv_linha_br(cabecalho)
         for c in out:
             yield _csv_linha_br([
@@ -5178,7 +5184,7 @@ def api_mix_abandonado_csv():
                  'DiasParado', 'VendaCat12m', 'LucroCat12m', 'Vendedor', 'Time', 'Telefone']
 
     def gerar():
-        yield '﻿'  # BOM UTF-8
+        yield CSV_PREAMBULO  # BOM UTF-8
         yield _csv_linha_br(cabecalho)
         for c in linhas:
             yield _csv_linha_br([
@@ -5788,7 +5794,7 @@ def api_radar_board_csv():
                  'PctQueda', 'ClientesPerdidos', 'VendaAnterior', 'VendaRecente']
 
     def gerar():
-        yield '﻿'  # BOM UTF-8
+        yield CSV_PREAMBULO  # BOM UTF-8
         yield _csv_linha(cabecalho)
         for i, r in enumerate(rows, 1):
             pct = r.get('pct_queda')
@@ -5975,7 +5981,7 @@ def api_radar_produto_csv(codprod):
                  'Situacao_Troca', 'Venda12m', 'Qtd12m', 'VendaAnterior', 'VendaRecente', 'Vendedor', 'Telefone']
 
     def gerar():
-        yield '﻿'  # BOM UTF-8
+        yield CSV_PREAMBULO  # BOM UTF-8
         yield _csv_linha(cabecalho)
         for c in linhas:
             yield _csv_linha([
@@ -6284,7 +6290,7 @@ def api_radar_cliente_csv(codcli):
                  'Situacao', 'Venda12m', 'Qtd12m', 'VendaAnterior', 'VendaRecente']
 
     def gerar():
-        yield '﻿'  # BOM UTF-8
+        yield CSV_PREAMBULO  # BOM UTF-8
         yield _csv_linha(cabecalho)
         for c in linhas:
             yield _csv_linha([
