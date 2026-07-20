@@ -18,7 +18,7 @@
   var TIPS = {
     index: {
       'Série temporal — 12 meses': 'Venda e lucro mês a mês nos últimos 12 meses.',
-      'YoY — Métricas-chave': 'Comparativo com o mesmo período do ano anterior (venda, lucro, clientes).',
+      'YoY — Métricas-chave (12m)': 'Últimos 12 meses vs. os 12 meses anteriores (venda, lucro, clientes, mix). Move devagar de propósito: é tendência de longo prazo. O % embaixo dos cards é outra conta — lá o mês atual é comparado com o mesmo período do ano passado.',
       'Top 10 departamentos por lucro (12m)': 'Departamentos que mais deram lucro nos últimos 12 meses. Clique para ver os clientes.',
       'Top 10 vendedores por lucro (12m)': 'Vendedores que mais deram lucro nos últimos 12 meses.',
       'Top 10 clientes por lucro (12m)': 'Clientes que mais deram lucro nos últimos 12 meses.'

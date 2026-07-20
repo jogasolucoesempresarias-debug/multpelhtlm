@@ -288,7 +288,7 @@
       <div class="chart-wrap"><canvas id="chartSerie"></canvas></div>
     </div>
     <div class="chart-card">
-      <h3>YoY — Métricas-chave</h3>
+      <h3>YoY — Métricas-chave (12m)</h3>
       <div class="chart-wrap"><canvas id="chartYoy"></canvas></div>
     </div>
   </div>
@@ -459,13 +459,19 @@ function limparFiltros() {
 
 function setText(id, v) { document.getElementById(id).textContent = v; }
 
-function setYoyBadge(id, v) {
+// Badge de YoY dos cards. `info` (yoy_mes_info) traz o rótulo do mês comparado e o detalhe
+// do período pro tooltip — inclusive a contagem de dias úteis, que explica distorção de
+// calendário (ex.: 01–18/jul/26 tem 13 dias úteis; 01–18/jul/25 tinha 14).
+function setYoyBadge(id, v, info) {
   const el = document.getElementById(id);
-  if (v == null) { el.textContent = ''; return; }
+  if (v == null) { el.textContent = ''; el.title = ''; return; }
   const up = v >= 0;
   el.className = 'yoy ' + (up ? 'up' : 'down');
   const arrow = up ? '↗' : '↘';
-  el.textContent = `${arrow} ${PCT(v)} vs ano anterior`;
+  el.textContent = `${arrow} ${PCT(v)} ${info ? info.rotulo : 'vs ano anterior'}`;
+  el.title = info
+    ? `${info.periodo}\n${info.dias_uteis} dias úteis vs ${info.dias_uteis_anterior}`
+    : '';
 }
 
 // fetchJSON vem do /static/fetch-resiliente.js (retry + backoff + timeout)
@@ -474,7 +480,10 @@ async function loadKpis() {
   const d = await fetchJSON(_comFiltro('/api/dashboard/kpis'));
   const p = d.primarios || {};
   const s = d.secundarios || {};
-  const y = d.yoy || {};
+  // Cards são do MÊS ATUAL → o % embaixo deles compara MÊS com MÊS (yoy_mes).
+  // d.yoy (12m vs 12m) fica reservado ao gráfico YoY, onde o rótulo diz o que ele é.
+  const y = d.yoy_mes || {};
+  const yInfo = d.yoy_mes_info || null;
   setText('k_venda',    p.venda_liquida != null ? BRL.format(p.venda_liquida) : '—');
   setText('k_lucro',    p.lucro_total   != null ? BRL.format(p.lucro_total)   : '—');
   setText('k_margem',   PCT2(p.margem));
@@ -483,9 +492,9 @@ async function loadKpis() {
   setText('k_mix',      s.total_mix     != null ? NUM.format(s.total_mix)     : '—');
   setText('k_novos',    s.clientes_novos != null ? NUM.format(s.clientes_novos) : '—');
   setText('k_peso',     s.valor_medio_peso != null ? BRL2.format(s.valor_medio_peso) + '/kg' : '—');
-  setYoyBadge('k_venda_yoy',    y.receita_liquida);
-  setYoyBadge('k_lucro_yoy',    y.lucro_bruto);
-  setYoyBadge('k_clientes_yoy', y.positivacao_cliente);
+  setYoyBadge('k_venda_yoy',    y.receita_liquida,     yInfo);
+  setYoyBadge('k_lucro_yoy',    y.lucro_bruto,         yInfo);
+  setYoyBadge('k_clientes_yoy', y.positivacao_cliente, yInfo);
 }
 
 let _charts = {};

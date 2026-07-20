@@ -395,7 +395,29 @@ def rbac_devol_av_dax():
 
 
 # ── Helper temporal ──
+def _range_dax(tipo, tabela: str, coluna: str):
+    """Traduz o token 'range:AAAA-MM-DD:AAAA-MM-DD' num filtro de intervalo FECHADO.
+    Retorna None se `tipo` não for um range (aí o chamador segue no fluxo normal).
+
+    Existe pro YoY mensal (MTD vs mesmo MTD do ano anterior): como as janelas dependem do
+    último dia COM DADO no BI, elas não cabem nos períodos nomeados. Passando por aqui,
+    expr_venda_liquida_rca/expr_lucro_rca e todo o RBAC funcionam sem alteração."""
+    if not isinstance(tipo, str) or not tipo.startswith('range:'):
+        return None
+    _, ini, fim = tipo.split(':')
+
+    def _d(s):
+        a, m, d = s.split('-')
+        return f'DATE({int(a)},{int(m)},{int(d)})'
+
+    c = f'{tabela}[{coluna}]'
+    return f"{c} >= {_d(ini)} && {c} <= {_d(fim)}"
+
+
 def filtro_periodo(tipo: str) -> str:
+    r = _range_dax(tipo, 'FATURAMENTO_VENDAS', 'DTSAIDA')
+    if r:
+        return r
     if tipo == 'mes_atual':
         return "MONTH(FATURAMENTO_VENDAS[DTSAIDA])=MONTH(TODAY()) && YEAR(FATURAMENTO_VENDAS[DTSAIDA])=YEAR(TODAY())"
     if tipo == 'mes_anterior':
@@ -417,6 +439,9 @@ def filtro_periodo(tipo: str) -> str:
 
 def filtro_periodo_devol(tipo: str) -> str:
     """Mesmo que filtro_periodo, mas pra FATURAMENTO_DEVOLUCAO via DTENT (alinha RCA)."""
+    r = _range_dax(tipo, 'FATURAMENTO_DEVOLUCAO', 'DTENT')
+    if r:
+        return r
     if tipo == 'mes_atual':
         return "MONTH(FATURAMENTO_DEVOLUCAO[DTENT])=MONTH(TODAY()) && YEAR(FATURAMENTO_DEVOLUCAO[DTENT])=YEAR(TODAY())"
     if tipo == 'mes_anterior':
@@ -438,6 +463,9 @@ def filtro_periodo_devol(tipo: str) -> str:
 
 def filtro_periodo_devol_av(tipo: str) -> str:
     """Mesmo que filtro_periodo, mas pra FATURAMENTO_DEVOLUCAO_AVULSA via DTENT."""
+    r = _range_dax(tipo, 'FATURAMENTO_DEVOLUCAO_AVULSA', 'DTENT')
+    if r:
+        return r
     if tipo == 'mes_atual':
         return "MONTH(FATURAMENTO_DEVOLUCAO_AVULSA[DTENT])=MONTH(TODAY()) && YEAR(FATURAMENTO_DEVOLUCAO_AVULSA[DTENT])=YEAR(TODAY())"
     if tipo == 'mes_anterior':
@@ -1265,6 +1293,101 @@ def _yoy_parse(row):
     }
 
 
+# ── YoY MENSAL (cards do Dashboard) ────────────────────────────────────────
+# Os cards mostram o MÊS ATUAL, então o % embaixo deles tem que comparar MÊS com MÊS.
+# Antes vinha do _yoy_query (12m vs 12m): um número que mal se mexe (a janela troca 1 dia
+# de 365 por vez) e que chegou a ficar com o SINAL TROCADO em relação ao mês — jul/26
+# marcava -6,7% no card enquanto o mês estava +10,6%. O 12m vs 12m continua vivo no
+# gráfico YoY (/api/dashboard/yoy), onde o rótulo diz o que ele é.
+MESES_ABREV = ('jan', 'fev', 'mar', 'abr', 'mai', 'jun',
+               'jul', 'ago', 'set', 'out', 'nov', 'dez')
+
+
+def _corte_dados():
+    """Último dia COM DADO em FATURAMENTO_VENDAS (não TODAY()).
+
+    O BI roda com atraso — em 20/07/26 o MAX(DTSAIDA) era 18/07. Ancorar em TODAY()
+    compararia 18 dias deste ano contra 20 do ano passado e derrubaria o YoY ~10pp de
+    graça. Cache curto: passa a valer assim que o dataset atualiza."""
+    from datetime import date as _date
+    key = 'multpel:corte_dados'
+    cached = _cache_get(key)
+    if cached:
+        try:
+            return _date.fromisoformat(cached)
+        except (TypeError, ValueError):
+            pass
+    row = _primeira_linha(retry_dax(execute_dax)(
+        get_token_cached(), 'EVALUATE ROW("d", MAX(FATURAMENTO_VENDAS[DTSAIDA]))'))
+    bruto = row.get('[d]')
+    if not bruto:
+        return None
+    corte = _date.fromisoformat(str(bruto)[:10])
+    _cache_set(key, corte.isoformat(), 'dax_lista')
+    return corte
+
+
+def _janelas_yoy_mes():
+    """Janelas do YoY mensal: (mês corrente 1→corte) vs (mesmo mês do ano anterior, 1→corte).
+
+    Comparação por DIA DO MÊS — é a régua que o diretor consegue conferir na mão contra o
+    RCA. Retorna None quando a comparação não é honesta:
+      - sem corte (dataset vazio);
+      - corte fora do mês corrente (virou o mês e o BI ainda não carregou nada) — aí o card
+        mostra R$ 0 e qualquer % seria ruído.
+    O dia é clampado ao fim do mês do ano anterior (29/02 → 28/02 em ano não bissexto)."""
+    import calendar
+    from datetime import date as _date
+    corte = _corte_dados()
+    hoje = _date.today()
+    if corte is None or (corte.year, corte.month) != (hoje.year, hoje.month):
+        return None
+    ano, mes, dia = corte.year, corte.month, corte.day
+    dia_ant = min(dia, calendar.monthrange(ano - 1, mes)[1])
+    return {
+        'atual':    (_date(ano, mes, 1), _date(ano, mes, dia)),
+        'anterior': (_date(ano - 1, mes, 1), _date(ano - 1, mes, dia_ant)),
+    }
+
+
+def _dias_uteis_entre(ini, fim):
+    """Dias úteis (seg-sex) no intervalo fechado. Só informativo — vai no tooltip do card
+    pra explicar distorção de calendário (jul/26 teve 13 dias úteis até o dia 18; jul/25, 14)."""
+    from datetime import timedelta as _td
+    return sum(1 for n in range((fim - ini).days + 1) if (ini + _td(n)).weekday() < 5)
+
+
+def _yoy_mes_query(janelas, supervisores=None):
+    """Mesma estrutura do _yoy_query (8 valores), mas nas janelas MTD em vez de 12m."""
+    t_at = f"range:{janelas['atual'][0].isoformat()}:{janelas['atual'][1].isoformat()}"
+    t_an = f"range:{janelas['anterior'][0].isoformat()}:{janelas['anterior'][1].isoformat()}"
+    f_at = _construir_filtro(t_at, supervisores)
+    f_an = _construir_filtro(t_an, supervisores)
+    return f"""EVALUATE {{(
+        {expr_venda_liquida_rca(t_at, supervisores)},
+        {expr_venda_liquida_rca(t_an, supervisores)},
+        {expr_lucro_rca(t_at, supervisores)},
+        {expr_lucro_rca(t_an, supervisores)},
+        CALCULATE(DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI]), FILTER(FATURAMENTO_VENDAS, {f_at})),
+        CALCULATE(DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI]), FILTER(FATURAMENTO_VENDAS, {f_an})),
+        CALCULATE([TOTAL MIX], FILTER(FATURAMENTO_VENDAS, {f_at})),
+        CALCULATE([TOTAL MIX], FILTER(FATURAMENTO_VENDAS, {f_an}))
+    )}}"""
+
+
+def _yoy_mes_meta(janelas):
+    """Contexto do YoY mensal pro frontend: rótulo curto do card + detalhe do tooltip."""
+    (ia, fa), (ip, fp) = janelas['atual'], janelas['anterior']
+    du_at, du_an = _dias_uteis_entre(ia, fa), _dias_uteis_entre(ip, fp)
+    return {
+        'rotulo':      f"vs {MESES_ABREV[ip.month - 1]}/{ip.year % 100:02d}",
+        'periodo':     f"{ia.day:02d}–{fa.day:02d}/{MESES_ABREV[ia.month - 1]}/{ia.year % 100:02d} "
+                       f"vs {ip.day:02d}–{fp.day:02d}/{MESES_ABREV[ip.month - 1]}/{ip.year % 100:02d}",
+        'dias_uteis':  du_at,
+        'dias_uteis_anterior': du_an,
+    }
+
+
 @app.route('/api/dashboard/kpis')
 @login_required
 def api_dashboard_kpis():
@@ -1294,6 +1417,11 @@ def api_dashboard_kpis():
         )}}""",
         'yoy': _yoy_query(sup),
     }
+    # YoY MENSAL (o % que vai embaixo dos cards de mês). None = comparação não honesta
+    # (virada de mês sem carga no BI) → o frontend mostra '—' em vez de um número inventado.
+    janelas = _janelas_yoy_mes()
+    if janelas:
+        queries['yoy_mes'] = _yoy_mes_query(janelas, sup)
 
     resultados = executar_dax_paralelo(queries)
 
@@ -1327,7 +1455,11 @@ def api_dashboard_kpis():
             'valor_medio_peso':       vs[2],
             'clientes_positivados':   vs[3],
         },
+        # 12m vs 12m — mantido pro gráfico YoY e por compatibilidade de contrato.
         'yoy': _yoy_parse(y),
+        # Mês vs mesmo período do mês do ano anterior — é este que alimenta os cards.
+        'yoy_mes': _yoy_parse(_primeira_linha(resultados['yoy_mes'])) if janelas else None,
+        'yoy_mes_info': _yoy_mes_meta(janelas) if janelas else None,
     }
     _cache_set(key, resp, 'dax_agregado')
     return jsonify(resp)
