@@ -80,16 +80,8 @@ cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS bloqueado_ate TI
 # em vez de o atacante poder tentar 5 senhas a cada 15 minutos, para sempre.
 cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS bloqueios_seguidos INTEGER DEFAULT 0;")
 
-# Rastro de tentativas de login (com IP) — sem isso não há como constatar um ataque depois.
-cur.execute("ALTER TABLE multpel_log ADD COLUMN IF NOT EXISTS ip VARCHAR(45);")
-
-# A FK do log era RESTRICT (padrão): com o log de login gravando por usuário, apagar um
-# usuário de fato passou a ser barrado pelas linhas de auditoria. Tabela de auditoria não pode
-# impedir a exclusão — vira SET NULL: o evento e o e-mail (em `parametros`) permanecem, só o
-# vínculo com a linha de usuário se desfaz.
-cur.execute("ALTER TABLE multpel_log DROP CONSTRAINT IF EXISTS multpel_log_usuario_id_fkey;")
-cur.execute("""ALTER TABLE multpel_log ADD CONSTRAINT multpel_log_usuario_id_fkey
-               FOREIGN KEY (usuario_id) REFERENCES multpel_users(id) ON DELETE SET NULL;""")
+# (as migrations de multpel_log ficam logo APÓS o CREATE dela, mais abaixo — em banco novo
+#  a tabela ainda não existe neste ponto)
 
 # Config global chave/valor (ex.: limiar de cobertura editável no Admin, sem redeploy)
 cur.execute("""
@@ -139,6 +131,22 @@ cur.execute("""
         acessado_em   TIMESTAMP DEFAULT NOW()
     );
 """)
+
+# ── Migrations de multpel_log ──
+# Ficam AQUI, logo após o CREATE, e não junto das colunas de multpel_users lá em cima: num
+# banco novo a tabela ainda não existe naquele ponto e o init_db quebrava com
+# "relation multpel_log does not exist". Em base existente passava despercebido.
+
+# Rastro de tentativas de login (com IP) — sem isso não há como constatar um ataque depois.
+cur.execute("ALTER TABLE multpel_log ADD COLUMN IF NOT EXISTS ip VARCHAR(45);")
+
+# A FK do log era RESTRICT (padrão): com o log de login gravando por usuário, apagar um
+# usuário de fato passou a ser barrado pelas linhas de auditoria. Tabela de auditoria não pode
+# impedir a exclusão — vira SET NULL: o evento e o e-mail (em `parametros`) permanecem, só o
+# vínculo com a linha de usuário se desfaz.
+cur.execute("ALTER TABLE multpel_log DROP CONSTRAINT IF EXISTS multpel_log_usuario_id_fkey;")
+cur.execute("""ALTER TABLE multpel_log ADD CONSTRAINT multpel_log_usuario_id_fkey
+               FOREIGN KEY (usuario_id) REFERENCES multpel_users(id) ON DELETE SET NULL;""")
 
 # ── Tabelas do módulo Compras (estoque_*) ──
 # O DDL vive no próprio módulo (estoque/store.py) e é importado aqui — fonte de verdade única.
