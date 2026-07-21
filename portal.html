@@ -38,6 +38,24 @@
   .card h2 { font-size: 1.02rem; font-weight: 700; margin-bottom: 6px; }
   .card p { font-size: .8rem; color: var(--text-dim); line-height: 1.5; }
 
+  /* Administração não é uma área de trabalho — ninguém começa o dia por ela. Entra como faixa
+     de largura total, com peso visual menor, em vez de um terceiro cartão competindo com os
+     dois produtos (que ainda por cima deixava um buraco no grid de 2 colunas). */
+  .ferramenta {
+    display: flex; align-items: center; gap: 14px; margin-top: 14px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 18px; text-decoration: none; color: var(--text);
+    transition: border-color .15s;
+  }
+  .ferramenta:hover { border-color: var(--accent); }
+  .ferramenta .ico {
+    width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center;
+    background: var(--surface2); border: 1px solid var(--border);
+    font-size: .95rem; flex: none;
+  }
+  .ferramenta h2 { font-size: .88rem; font-weight: 600; }
+  .ferramenta p { font-size: .75rem; color: var(--text-dim); margin-top: 1px; }
+
   .fixar {
     margin-top: 22px; background: var(--surface); border: 1px solid var(--border);
     border-radius: 12px; padding: 14px 16px;
@@ -69,6 +87,7 @@
   <div class="sub">Olá, <strong id="nome">—</strong>. Por onde você quer entrar?</div>
 
   <div class="cards" id="cards"></div>
+  <div id="ferramentas"></div>
 
   <div class="fixar">
     <label>
@@ -110,9 +129,14 @@ function cartao(a) {
 }
 
 function pintarCards() {
-  const lista = areas.map(a => cartao(AREAS[a]));
-  if (ehAdmin) lista.push(cartao(ADMIN));
-  document.getElementById('cards').innerHTML = lista.join('');
+  document.getElementById('cards').innerHTML = areas.map(a => cartao(AREAS[a])).join('');
+  // A Administração fica fora do grid: é ferramenta, não área de trabalho.
+  document.getElementById('ferramentas').innerHTML = ehAdmin
+    ? `<a class="ferramenta" href="${ADMIN.href}">
+         <div class="ico">${ADMIN.ico}</div>
+         <div><h2>${ADMIN.rotulo}</h2><p>${ADMIN.desc}</p></div>
+       </a>`
+    : '';
 }
 
 function pintarFixar() {
