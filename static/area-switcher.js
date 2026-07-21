@@ -63,9 +63,27 @@
     document.head.appendChild(st);
   }
 
+  /* Onde encravar o seletor. As páginas NÃO têm o mesmo cabeçalho: as do Comercial usam
+     `.top-bar > .brand`, o Admin usa `.topbar` com links soltos (sem .brand) e o Compras usa
+     `.topbar > .brand`. Depender de um seletor só deixou o Admin sem seletor — e quem entrava
+     nele pelo Compras ficava sem caminho de volta. Cascata de âncoras resolve sem precisar
+     uniformizar os 12 HTMLs. */
+  function inserirNaBarra(el) {
+    const barra = document.querySelector('.top-bar, .topbar');
+    if (!barra) return false;
+    const marca = barra.querySelector('.brand');
+    if (marca) {                       // Comercial e Compras: logo antes do menu
+      marca.insertAdjacentElement('afterend', el);
+    } else if (barra.firstElementChild) {   // Admin: depois do "JOGA"
+      barra.firstElementChild.insertAdjacentElement('afterend', el);
+    } else {
+      barra.appendChild(el);
+    }
+    return true;
+  }
+
   function montar(efetivas) {
-    const brand = document.querySelector('.top-bar .brand, .topbar .brand');
-    if (!brand || document.querySelector('.area-sw')) return;
+    if (document.querySelector('.area-sw')) return;
 
     const atual = areaAtual();
     const wrap = document.createElement('div');
@@ -100,8 +118,7 @@
 
     wrap.appendChild(btn);
     wrap.appendChild(menu);
-    // Depois do bloco de marca: fica no mesmo lugar nas duas áreas.
-    brand.insertAdjacentElement('afterend', wrap);
+    inserirNaBarra(wrap);
   }
 
   /* O Compras nasceu como app standalone de senha única: o cabeçalho dele não tem Admin nem
