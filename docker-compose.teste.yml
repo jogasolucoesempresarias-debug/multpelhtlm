@@ -1,0 +1,99 @@
+# Stack de TESTE da fusão Comercial + Compras — painel.jogasolucoes.com.br
+#
+# Totalmente isolada da produção. Nada aqui compartilha recurso com o que está no ar:
+#   • Postgres PRÓPRIO (painel-postgres / painel_db) — NÃO usa o postgres_postgres, onde vive
+#     o multpel_db de produção. Rodar init_db.py aqui não pode encostar no banco do cliente.
+#   • Redis próprio, rede própria, volume próprio.
+#   • Router/serviço do Traefik com nome `painel` — reusar `analytics` sequestraria o domínio
+#     de produção, porque o Traefik casa por nome de router.
+#   • Imagem na tag `:teste-fusao`, publicada pela branch. A produção segue em `:latest`.
+#
+# ⚠️ CRON_HABILITADO fica "false" CRAVADO, não como variável: um ambiente de teste com cron
+# ligado dispararia relatório de verdade, por email, para os usuários de verdade (a base de
+# teste é cópia da produção, com os endereços reais). Não é algo para depender de alguém
+# lembrar de preencher certo no Portainer.
+version: '3.8'
+
+services:
+  painel-app:
+    image: ghcr.io/jogasolucoesempresarias-debug/multpelhtlm:teste-fusao
+    networks:
+      - proxy
+      - painel-internal
+    environment:
+      FLASK_ENV: production          # exercita o modo real: SECRET_KEY obrigatória + cookie Secure
+      TZ: America/Sao_Paulo
+      SECRET_KEY: ${SECRET_KEY}      # SEM ela o app NÃO SOBE (proposital)
+
+      # Módulos contratados por esta instância. Para testar a fusão inteira, os dois.
+      # Vale também usar esta stack para ensaiar "só-Comercial" / "só-Compras" trocando aqui.
+      MODULOS: ${MODULOS:-comercial,compras}
+
+      DB_HOST: painel-postgres
+      DB_PORT: "5432"
+      DB_NAME: painel_db
+      DB_USER: painel
+      DB_PASSWORD: ${DB_PASSWORD}
+
+      REDIS_HOST: painel-redis
+      REDIS_PORT: "6379"
+
+      POWERBI_TENANT_ID: ${POWERBI_TENANT_ID}
+      POWERBI_CLIENT_ID: ${POWERBI_CLIENT_ID}
+      POWERBI_CLIENT_SECRET: ${POWERBI_CLIENT_SECRET}
+      POWERBI_GROUP_ID: ${POWERBI_GROUP_ID}
+      POWERBI_DATASET_ID: ${POWERBI_DATASET_ID}
+      # Módulo Compras (os mesmos datasets do estoque em produção — leitura, sem risco)
+      POWERBI_DATASET_ID_ESTOQUE: ${POWERBI_DATASET_ID_ESTOQUE:-32fb60e1-5ff1-47ae-9472-b7ce7049f2ce}
+      POWERBI_DATASET_ID_RCA: ${POWERBI_DATASET_ID_RCA:-f2fbf288-611a-4b17-aeb3-a6f77ef04e3b}
+
+      # Email desligado em teste — ver nota no topo. Deixar a chave vazia é a 2ª trava:
+      # mesmo que alguém ligue o cron, sem RESEND_API_KEY nada sai.
+      CRON_HABILITADO: "false"
+      RESEND_API_KEY: ""
+      RESEND_FROM: joga@jogasolucoes.com.br
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=proxy"
+        - "traefik.http.routers.painel.rule=Host(`painel.jogasolucoes.com.br`)"
+        - "traefik.http.routers.painel.entrypoints=websecure"
+        - "traefik.http.routers.painel.tls.certresolver=le"
+        - "traefik.http.services.painel.loadbalancer.server.port=5000"
+
+  painel-redis:
+    image: redis:7-alpine
+    networks:
+      - painel-internal
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+  painel-postgres:
+    image: postgres:16-alpine
+    networks:
+      - painel-internal
+    environment:
+      POSTGRES_DB: painel_db
+      POSTGRES_USER: painel
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - painel-pgdata:/var/lib/postgresql/data
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+networks:
+  proxy:
+    external: true
+  painel-internal:
+    driver: overlay
+
+volumes:
+  painel-pgdata:
