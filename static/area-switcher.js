@@ -14,7 +14,28 @@
     compras: { rotulo: 'Compras', href: '/estoque/', dica: 'Estoque, reposição e pedidos' },
   };
 
-  const areaAtual = () => (location.pathname.startsWith('/estoque') ? 'compras' : 'comercial');
+  /* Telas que não pertencem a área nenhuma: o Admin administra usuários das DUAS áreas.
+     Nelas o seletor mostraria "Comercial" e daria a impressão de que o usuário foi movido de
+     área ao abrir o Admin vindo do Compras. Guardamos a última área de verdade e usamos ela
+     como rótulo, para o cabeçalho refletir de onde a pessoa veio. */
+  const NEUTRAS = ['/admin', '/portal'];
+  const CHAVE_AREA = 'joga:ultima-area';
+
+  const ehNeutra = () => NEUTRAS.some(r => location.pathname === r || location.pathname.startsWith(r + '/'));
+
+  function areaAtual() {
+    if (location.pathname.startsWith('/estoque')) return 'compras';
+    if (ehNeutra()) {
+      try { return sessionStorage.getItem(CHAVE_AREA) || 'comercial'; } catch (e) { return 'comercial'; }
+    }
+    return 'comercial';
+  }
+
+  function lembrarArea() {
+    if (ehNeutra()) return;   // neutra não sobrescreve a lembrança
+    try { sessionStorage.setItem(CHAVE_AREA, location.pathname.startsWith('/estoque') ? 'compras' : 'comercial'); }
+    catch (e) { /* navegador sem storage: cai no default */ }
+  }
 
   const CSS = `
   .area-sw { position: relative; margin-left: 14px; }
@@ -145,7 +166,8 @@
       .then(r => (r.ok ? r.json() : null))
       .then(me => {
         if (!me || !me.ok) return;
-        esconderModulosInativos(me.modulos || []);
+        lembrarArea();
+        esconderComercialIndisponivel(me);
         injetarCSS();
         montarConta(me);
         const efetivas = (me.areas || []).filter(a => AREAS[a]);
@@ -155,13 +177,18 @@
       .catch(() => { /* seletor é acessório: falha silenciosa não pode derrubar a página */ });
   }
 
-  /* Se o módulo Comercial não foi contratado, os links do menu dele não devem sequer aparecer.
-     O servidor já nega as rotas (404), mas link que leva a erro é defeito de produto. */
-  function esconderModulosInativos(modulos) {
-    if (!modulos.length || modulos.includes('comercial')) return;
-    document.querySelectorAll('.top-bar .nav a').forEach(a => {
+  /* Esconde os links do Comercial quando ele não está disponível — seja porque a empresa não
+     contratou o módulo, seja porque este usuário não tem a área. O servidor já nega (404/403),
+     mas link que leva a erro é defeito de produto: some do menu.
+     Vale principalmente no Admin, que é neutro e um admin só de Compras consegue abrir. */
+  function esconderComercialIndisponivel(me) {
+    const temModulo = !(me.modulos || []).length || (me.modulos || []).includes('comercial');
+    const temArea = (me.areas || []).includes('comercial');
+    if (temModulo && temArea) return;
+    const NEUTROS = ['/logout', '/portal', '/admin'];
+    document.querySelectorAll('.top-bar .nav a, .topbar > a').forEach(a => {
       const href = a.getAttribute('href') || '';
-      if (href === '/logout' || href.startsWith('/estoque') || href === '/portal') return;
+      if (NEUTROS.includes(href) || href.startsWith('/estoque')) return;
       a.style.display = 'none';
     });
   }

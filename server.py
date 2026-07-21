@@ -319,6 +319,22 @@ _ROTAS_NEUTRAS = {
     '/multpel-logo.png',
 }
 
+# Administração do sistema NÃO pertence a nenhuma área: a tela gerencia usuários das duas
+# (é lá que se libera a área Compras, o comprador vinculado e os relatórios de Compras).
+# Tratá-la como página do Comercial travava em 403 o admin que só tem Compras — que ficaria
+# sem conseguir administrar o próprio sistema. Quem protege aqui é o @admin_required.
+_PREFIXOS_NEUTROS = ('/admin', '/api/admin/')
+
+# Metadados (mapas de vendedor/supervisor/comprador) alimentam os campos do Admin, então um
+# admin sem a área Comercial precisa deles. Mas são @login_required, não @admin_required —
+# liberar o prefixo para todos deixaria um usuário comum de Compras listar a força de vendas.
+# Por isso a exceção é condicional: admin sempre, os demais só com a área Comercial.
+_PREFIXO_METADADOS = '/api/_internal/'
+
+
+def _rota_neutra(p):
+    return p in _ROTAS_NEUTRAS or p.startswith(_PREFIXOS_NEUTROS)
+
 
 @app.before_request
 def _guard_comercial():
@@ -332,7 +348,7 @@ def _guard_comercial():
     pelo guard do blueprint; aqui é o espelho que faltava.
     """
     p = request.path
-    if p in _ROTAS_NEUTRAS or p.startswith('/static/') or p.startswith('/estoque'):
+    if _rota_neutra(p) or p.startswith('/static/') or p.startswith('/estoque'):
         return
 
     # 1) Módulo não contratado nesta instância
@@ -348,6 +364,9 @@ def _guard_comercial():
     # 2) Usuário sem a área Comercial (só decide para quem já está logado; quem não está cai
     #    no login_required de cada rota, que trata redirect/401).
     if 'user_id' in session and not tem_area('comercial'):
+        # Metadados liberados para admin (precisa deles para editar usuários do Comercial).
+        if p.startswith(_PREFIXO_METADADOS) and session.get('role') == 'admin':
+            return
         if p == '/':
             destino = destino_pos_login()
             if destino and destino != '/':
