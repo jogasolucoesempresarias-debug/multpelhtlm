@@ -108,18 +108,12 @@
 </style>
 </head>
 <body data-page="admin">
+<!-- Cabeçalho NEUTRO: a Administração não pertence ao Comercial nem ao Compras — ela
+     administra usuários das duas. Antes esta barra trazia o menu inteiro do Comercial, então
+     abrir o Admin vindo do Compras parecia trocar de área. Sem esse menu, o Admin é um lugar
+     próprio e o seletor (injetado ao lado do "JOGA") é o caminho de volta para onde se estava. -->
 <div class="topbar">
   <strong style="color:var(--accent);">JOGA</strong>
-  <a href="/">Dashboard</a>
-  <a href="/carteira">Carteira</a>
-  <a href="/vendedores">Vendedores</a>
-  <a href="/categorias">Categorias</a>
-  <a href="/mix">Mix</a>
-  <a href="/radar">Radar</a>
-  <a href="/tendencias">Tendências</a>
-  <a href="/metas">Metas</a>
-  <a href="/gerencial">Gerencial</a>
-  <a href="/admin" class="active">Admin</a>
   <span class="spacer"></span>
   <span id="userInfo">—</span>
   <a href="/logout">Sair</a>

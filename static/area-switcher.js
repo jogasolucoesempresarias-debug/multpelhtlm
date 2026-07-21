@@ -1,40 +1,34 @@
 'use strict';
-/* Seletor de área (Comercial ⇄ Compras).
+/* Seletor de área do JOGA Analytics.
 
-   Componente ÚNICO, carregado por todas as páginas das duas áreas. A escolha de injetar via
-   JS (em vez de colar o markup em cada .html) é deliberada: o comercial é multi-página, então
-   markup duplicado em 12 arquivos divergiria com o tempo — e é justamente a barra desalinhada
-   entre as áreas que faz o produto parecer dois apps colados.
+   O sistema tem três lugares, e essa distinção é o que faz a navegação parar de confundir:
+     • Comercial      — vendas, carteira, metas
+     • Compras        — estoque, reposição, pedidos
+     • Administração  — não pertence a nenhuma das duas; administra usuários das DUAS
 
-   Só aparece para quem tem 2 áreas efetivas (areas ∩ MODULOS). Com uma área só, o sistema se
-   comporta exatamente como antes da fusão: sem seletor e sem portal. */
+   Componente ÚNICO, carregado por todas as páginas. Injetar via JS (em vez de colar markup em
+   cada .html) é deliberado: o Comercial é multi-página, e markup repetido em 12 arquivos
+   diverge com o tempo — foi exatamente essa divergência que já deixou o Admin sem seletor.
+
+   O seletor só aparece para quem tem 2 áreas efetivas (areas ∩ MODULOS). Com uma área só o
+   sistema se comporta como antes da fusão: sem seletor e sem portal. */
 (function () {
   const AREAS = {
     comercial: { rotulo: 'Comercial', href: '/', dica: 'Vendas, carteira e metas' },
     compras: { rotulo: 'Compras', href: '/estoque/', dica: 'Estoque, reposição e pedidos' },
   };
 
-  /* Telas que não pertencem a área nenhuma: o Admin administra usuários das DUAS áreas.
-     Nelas o seletor mostraria "Comercial" e daria a impressão de que o usuário foi movido de
-     área ao abrir o Admin vindo do Compras. Guardamos a última área de verdade e usamos ela
-     como rótulo, para o cabeçalho refletir de onde a pessoa veio. */
-  const NEUTRAS = ['/admin', '/portal'];
-  const CHAVE_AREA = 'joga:ultima-area';
+  const ROTULO_ADMIN = 'Administração';
 
-  const ehNeutra = () => NEUTRAS.some(r => location.pathname === r || location.pathname.startsWith(r + '/'));
+  const emCompras = () => location.pathname.startsWith('/estoque');
+  const emAdmin = () => location.pathname === '/admin' || location.pathname.startsWith('/admin/');
 
-  function areaAtual() {
-    if (location.pathname.startsWith('/estoque')) return 'compras';
-    if (ehNeutra()) {
-      try { return sessionStorage.getItem(CHAVE_AREA) || 'comercial'; } catch (e) { return 'comercial'; }
-    }
+  /* Onde a pessoa ESTÁ. O Admin é um lugar próprio: dizer "Comercial" ali dava a impressão de
+     que ela tinha sido movida de área ao abrir o Admin vindo do Compras. */
+  function localAtual() {
+    if (emCompras()) return 'compras';
+    if (emAdmin()) return 'admin';
     return 'comercial';
-  }
-
-  function lembrarArea() {
-    if (ehNeutra()) return;   // neutra não sobrescreve a lembrança
-    try { sessionStorage.setItem(CHAVE_AREA, location.pathname.startsWith('/estoque') ? 'compras' : 'comercial'); }
-    catch (e) { /* navegador sem storage: cai no default */ }
   }
 
   const CSS = `
@@ -62,7 +56,8 @@
   .area-sw__item.on { color: var(--accent, #38bdf8); }
   .area-sw__sep { height: 1px; background: var(--border, #1e293b); margin: 5px 4px; }
 
-  /* Bloco de conta — só no Compras, que não tinha nem Admin nem Sair no cabeçalho. */
+  /* Bloco de conta — injetado só no Compras, que nasceu standalone (senha única) e não tinha
+     nem Admin nem Sair no cabeçalho. As demais páginas já trazem o delas no HTML. */
   .area-conta { display: flex; align-items: center; gap: 8px; margin-left: auto; }
   .area-conta__nome {
     font-size: .72rem; color: var(--text-dim, #94a3b8);
@@ -84,18 +79,16 @@
     document.head.appendChild(st);
   }
 
-  /* Onde encravar o seletor. As páginas NÃO têm o mesmo cabeçalho: as do Comercial usam
-     `.top-bar > .brand`, o Admin usa `.topbar` com links soltos (sem .brand) e o Compras usa
-     `.topbar > .brand`. Depender de um seletor só deixou o Admin sem seletor — e quem entrava
-     nele pelo Compras ficava sem caminho de volta. Cascata de âncoras resolve sem precisar
-     uniformizar os 12 HTMLs. */
+  /* Os cabeçalhos das páginas NÃO são iguais: o Comercial usa `.top-bar > .brand`, o Compras
+     usa `.topbar > .brand` e o Admin usa `.topbar` com links soltos (sem .brand). Cascata de
+     âncoras cobre as três sem exigir que os 12 HTMLs sejam uniformizados. */
   function inserirNaBarra(el) {
     const barra = document.querySelector('.top-bar, .topbar');
     if (!barra) return false;
     const marca = barra.querySelector('.brand');
-    if (marca) {                       // Comercial e Compras: logo antes do menu
+    if (marca) {
       marca.insertAdjacentElement('afterend', el);
-    } else if (barra.firstElementChild) {   // Admin: depois do "JOGA"
+    } else if (barra.firstElementChild) {
       barra.firstElementChild.insertAdjacentElement('afterend', el);
     } else {
       barra.appendChild(el);
@@ -103,10 +96,10 @@
     return true;
   }
 
-  function montar(efetivas) {
+  function montar(efetivas, ehAdmin) {
     if (document.querySelector('.area-sw')) return;
 
-    const atual = areaAtual();
+    const atual = localAtual();
     const wrap = document.createElement('div');
     wrap.className = 'area-sw';
 
@@ -115,8 +108,14 @@
     btn.className = 'area-sw__btn';
     btn.setAttribute('aria-haspopup', 'true');
     btn.setAttribute('aria-expanded', 'false');
-    btn.innerHTML = `${(AREAS[atual] || {}).rotulo || 'Área'}
+    const rotulo = atual === 'admin' ? ROTULO_ADMIN : (AREAS[atual] || {}).rotulo || 'Área';
+    btn.innerHTML = `${rotulo}
       <svg viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M1 1l4 4 4-4"/></svg>`;
+
+    const itemAdmin = ehAdmin
+      ? `<a class="area-sw__item${atual === 'admin' ? ' on' : ''}" href="/admin">
+           ${ROTULO_ADMIN}<small>Usuários, acessos e relatórios</small></a>`
+      : '';
 
     const menu = document.createElement('div');
     menu.className = 'area-sw__menu';
@@ -124,8 +123,8 @@
     menu.innerHTML =
       efetivas.map(a => `<a class="area-sw__item${a === atual ? ' on' : ''}" href="${AREAS[a].href}">
            ${AREAS[a].rotulo}<small>${AREAS[a].dica}</small></a>`).join('') +
-      `<div class="area-sw__sep"></div>
-       <a class="area-sw__item" href="/portal">Portal de entrada<small>Escolher e fixar a área padrão</small></a>`;
+      `<div class="area-sw__sep"></div>${itemAdmin}` +
+      `<a class="area-sw__item" href="/portal">Portal de entrada<small>Escolher e fixar a área padrão</small></a>`;
 
     const fechar = () => { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
     btn.addEventListener('click', e => {
@@ -142,12 +141,11 @@
     inserirNaBarra(wrap);
   }
 
-  /* O Compras nasceu como app standalone de senha única: o cabeçalho dele não tem Admin nem
-     Sair. Com conta nominal isso vira problema real — um usuário exclusivo de Compras não
-     teria como sair do sistema. Injetamos aqui em vez de colar no HTML para o bloco nascer
-     igual ao do Comercial e continuar assim. */
+  /* Só no Compras. A condição é a LOCALIZAÇÃO FÍSICA, não a área "atual" — quando eram a mesma
+     coisa, abrir o Admin vindo do Compras duplicava o bloco de conta numa página que já tem o
+     seu (nome e Sair apareciam duas vezes). */
   function montarConta(me) {
-    if (areaAtual() !== 'compras') return;              // o Comercial já tem os seus
+    if (!emCompras()) return;
     const bar = document.querySelector('.topbar');
     if (!bar || document.querySelector('.area-conta')) return;
 
@@ -161,26 +159,10 @@
     bar.appendChild(box);
   }
 
-  function iniciar() {
-    fetch('/api/me', { credentials: 'same-origin' })
-      .then(r => (r.ok ? r.json() : null))
-      .then(me => {
-        if (!me || !me.ok) return;
-        lembrarArea();
-        esconderComercialIndisponivel(me);
-        injetarCSS();
-        montarConta(me);
-        const efetivas = (me.areas || []).filter(a => AREAS[a]);
-        if (efetivas.length < 2) return;   // 1 área → nada a trocar
-        montar(efetivas);
-      })
-      .catch(() => { /* seletor é acessório: falha silenciosa não pode derrubar a página */ });
-  }
-
-  /* Esconde os links do Comercial quando ele não está disponível — seja porque a empresa não
-     contratou o módulo, seja porque este usuário não tem a área. O servidor já nega (404/403),
-     mas link que leva a erro é defeito de produto: some do menu.
-     Vale principalmente no Admin, que é neutro e um admin só de Compras consegue abrir. */
+  /* Esconde links do Comercial quando ele não está disponível — porque a empresa não contratou
+     o módulo, ou porque este usuário não tem a área. O servidor já nega (404/403), mas link que
+     leva a erro é defeito de produto. Vale sobretudo no Admin, que é neutro e um admin só de
+     Compras consegue abrir. */
   function esconderComercialIndisponivel(me) {
     const temModulo = !(me.modulos || []).length || (me.modulos || []).includes('comercial');
     const temArea = (me.areas || []).includes('comercial');
@@ -191,6 +173,23 @@
       if (NEUTROS.includes(href) || href.startsWith('/estoque')) return;
       a.style.display = 'none';
     });
+  }
+
+  function iniciar() {
+    fetch('/api/me', { credentials: 'same-origin' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(me => {
+        if (!me || !me.ok) return;
+        esconderComercialIndisponivel(me);
+        injetarCSS();
+        montarConta(me);
+        const efetivas = (me.areas || []).filter(a => AREAS[a]);
+        // Com 1 área só não há troca a fazer — exceto no Admin, onde o seletor é o caminho de
+        // volta: sem ele, um admin de área única entra no Admin e fica sem saída.
+        if (efetivas.length < 2 && !emAdmin()) return;
+        montar(efetivas, me.role === 'admin');
+      })
+      .catch(() => { /* seletor é acessório: falha silenciosa não pode derrubar a página */ });
   }
 
   if (document.readyState === 'loading') {

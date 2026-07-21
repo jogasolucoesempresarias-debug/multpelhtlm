@@ -95,15 +95,24 @@ const AREAS = {
   compras:   { rotulo: 'Compras',   href: '/estoque/', ico: '📦',
                desc: 'Abastecimento, ruptura, validade, pedidos, orçamento e giro.' },
 };
-let areas = [], padraoAtual = 'portal';
+// A Administração não é uma área de trabalho (ninguém "fixa" ela como padrão), mas precisa de
+// um ponto de entrada neutro: antes só dava pra chegar nela por dentro do Comercial.
+const ADMIN = { rotulo: 'Administração', href: '/admin', ico: '⚙️',
+                desc: 'Usuários, acessos por área, comprador vinculado e relatórios.' };
+let areas = [], padraoAtual = 'portal', ehAdmin = false;
+
+function cartao(a) {
+  return `<a class="card" href="${a.href}">
+      <div class="ico">${a.ico}</div>
+      <h2>${a.rotulo}</h2>
+      <p>${a.desc}</p>
+    </a>`;
+}
 
 function pintarCards() {
-  document.getElementById('cards').innerHTML = areas.map(a => `
-    <a class="card" href="${AREAS[a].href}">
-      <div class="ico">${AREAS[a].ico}</div>
-      <h2>${AREAS[a].rotulo}</h2>
-      <p>${AREAS[a].desc}</p>
-    </a>`).join('');
+  const lista = areas.map(a => cartao(AREAS[a]));
+  if (ehAdmin) lista.push(cartao(ADMIN));
+  document.getElementById('cards').innerHTML = lista.join('');
 }
 
 function pintarFixar() {
@@ -150,6 +159,7 @@ fetch('/api/me', { credentials: 'same-origin' })
     if (!me.ok) { location.href = '/login'; return; }
     document.getElementById('nome').textContent = me.nome || '—';
     areas = (me.areas || []).filter(a => AREAS[a]);
+    ehAdmin = me.role === 'admin';
     padraoAtual = me.area_padrao || 'portal';
     // Uma área só não tem o que escolher — o servidor já manda direto pra ela.
     if (areas.length < 2) { location.href = AREAS[areas[0] || 'comercial'].href; return; }
