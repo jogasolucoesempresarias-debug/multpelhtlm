@@ -1470,7 +1470,7 @@ def static_assets(filename):
 @app.route('/login', methods=['GET'])
 def login_page():
     if 'user_id' in session and not session.get('must_change_password'):
-        return redirect('/')
+        return redirect(destino_pos_login() or '/')
     return send_from_directory('.', 'login.html')
 
 
@@ -1632,7 +1632,10 @@ def trocar_senha_post():
     cur.close()
     conn.close()
     session['must_change_password'] = False
-    return jsonify({'ok': True, 'redirect': '/'})
+    # Respeita as áreas do usuário, como o login faz. Cravar '/' aqui mandava todo mundo pro
+    # Comercial depois da troca obrigatória — quem tinha as duas áreas nunca via o portal no
+    # primeiro acesso, e quem só tinha Compras entrava por um redirect a mais.
+    return jsonify({'ok': True, 'redirect': destino_pos_login() or '/'})
 
 
 @app.route('/logout')
