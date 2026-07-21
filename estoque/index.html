@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>JOGA · Estoque</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%3Crect%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2220%22%20fill%3D%22%23F4A52A%22%2F%3E%3Cpath%20d%3D%22M18%2072%20L33%2055%20L45%2062%20L65%2039%22%20fill%3D%22none%22%20stroke%3D%22%2313171E%22%20stroke-width%3D%229%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3Cpath%20d%3D%22M77%2024%20L73%2047%20L55%2032%20Z%22%20fill%3D%22%2313171E%22%2F%3E%3C%2Fsvg%3E">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+<link rel="stylesheet" href="/static/estoque/estoque.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="mark"><img src="/static/joga-mark.svg" alt="JOGA"></div>
+    <h1>JOGA <span>· Estoque</span></h1>
+  </div>
+  <div class="comprador-box">
+    <label>Unidade</label>
+    <select id="f-unidade" class="fb-control"></select>
+  </div>
+  <div class="comprador-box">
+    <label>Comprador</label>
+    <select id="f-comprador" class="fb-control"><option value="">Empresa toda</option></select>
+  </div>
+  <div class="meta">
+    <div id="meta-gerado">—</div>
+    <div id="meta-filiais" class="mono">—</div>
+  </div>
+</div>
+
+<div class="filterbar">
+  <div class="fb-group"><label>Curva</label>
+    <details class="ms" id="f-curva"><summary class="fb-control" style="width:auto">Todas</summary>
+      <div class="ms-menu">
+        <label><input type="checkbox" value="A">A</label>
+        <label><input type="checkbox" value="B">B</label>
+        <label><input type="checkbox" value="C">C</label>
+      </div></details></div>
+  <div class="fb-group"><label>XYZ</label>
+    <!-- value SEMPRE explícito (X/Y/Z): é ele que o filtro compara com p.xyz e que o clique na
+         matriz ABC-XYZ escreve de volta. Sem value, o rótulo viraria o valor e o filtro quebraria. -->
+    <select id="f-xyz" class="fb-control"><option value="">Todas</option><option value="X">X - Estável</option><option value="Y">Y - Variável</option><option value="Z">Z - Errático</option></select></div>
+  <div class="fb-group"><label>Fornecedor</label>
+    <input type="text" id="f-fornec" class="fb-control" list="f-fornec-dl" autocomplete="off" placeholder="Cód. ou razão social…" style="width:240px">
+    <datalist id="f-fornec-dl"></datalist></div>
+  <div class="fb-group"><label>Depto</label>
+    <select id="f-depto" class="fb-control"><option value="">Todos</option></select></div>
+  <div class="fb-group grow"><label>Buscar produto</label>
+    <input type="text" id="f-busca" class="search" placeholder="código ou descrição…"></div>
+  <div class="fb-group"><label>Venda</label>
+    <select id="f-vperiodo" class="fb-control"><option value="mes">Mês atual</option><option value="90d">Últimos 90d</option><option value="6m">6 meses</option><option value="12m">12 meses</option></select></div>
+  <button class="btn sm" id="btn-params">⚙ Parâmetros</button>
+  <button class="btn sm" id="btn-limpar">✕ Limpar</button>
+</div>
+
+<div class="panel" id="params-panel" style="display:none; margin:12px 22px 0;">
+  <div class="row">
+    <div class="fb-group"><label>Lead time (dias)</label><input type="number" id="p-lead" value="10" style="width:80px"></div>
+    <div class="fb-group"><label>Estoque segurança (dias)</label><input type="number" id="p-seg" value="25" style="width:80px"></div>
+    <div class="fb-group"><label>Cobertura alvo (dias)</label><input type="number" id="p-cob" value="30" style="width:80px"></div>
+    <div class="fb-group"><label>Horizonte validade (dias)</label><input type="number" id="p-hor" value="30" style="width:80px"></div>
+    <div class="fb-group"><label>Parado: dias parados (≥)</label><input type="number" id="p-parado" value="60" style="width:80px"></div>
+    <div class="fb-group"><label>Meta % s/ ped. curva A</label><input type="number" id="p-meta-a" value="2" step="0.5" style="width:80px"></div>
+    <div class="fb-group"><label>Meta % s/ ped. curva B+C</label><input type="number" id="p-meta-bc" value="5" step="0.5" style="width:80px"></div>
+    <div class="fb-group"><label>&nbsp;</label><button class="btn primary" id="p-apply">Aplicar</button></div>
+  </div>
+  <div class="row" style="margin-top:6px;border-top:1px solid var(--line,#1e293b);padding-top:10px">
+    <div class="fb-group"><label>Demanda (giro)</label>
+      <div class="seg" id="p-forecast">
+        <span class="seg-opt on" data-v="0">Média 3m (oficial)</span>
+        <span class="seg-opt" data-v="1">Forecast</span>
+        <span class="seg-opt" data-v="2">Forecast sazonal</span>
+      </div>
+    </div>
+    <div class="fb-group"><label>Janela forecast (meses)</label><input type="number" id="p-fcmeses" value="6" min="1" max="24" style="width:80px"></div>
+    <div class="fb-group"><label>Arredondar p/ caixa</label>
+      <div class="seg" id="p-arredcx">
+        <span class="seg-opt on" data-v="1">Caixa fechada</span>
+        <span class="seg-opt" data-v="0">Unidade</span>
+      </div>
+    </div>
+  </div>
+  <div class="count-line">Giro: média 3m (oficial do TI) · forecast = média móvel da venda real (RCA) · sazonal = + fator do mês (ano-a-ano, 24m). Caixa fechada = sugestão arredondada pra cima em caixas (QTUNITCX).</div>
+</div>
+
+<div class="navgroups" id="navgroups">
+  <div class="navgroup active" data-group="visao">Visão</div>
+  <div class="navgroup" data-group="comprar">Comprar</div>
+  <div class="navgroup" data-group="pedidos">Pedidos</div>
+  <div class="navgroup" data-group="estoque">Estoque</div>
+  <div class="navgroup" data-group="analise">Análise</div>
+</div>
+<div class="tabs" id="tabs">
+  <div class="tab active" data-view="cockpit" data-group="visao">Cockpit</div>
+  <div class="tab" data-view="gerencial" data-group="visao">Painel gerencial</div>
+  <div class="tab" data-view="meta_ruptura" data-group="visao">Meta de ruptura</div>
+  <div class="tab" data-view="reposicao" data-group="comprar">Abastecimento</div>
+  <div class="tab" data-view="estoque_zero" data-group="comprar">Estoque zerado</div>
+  <div class="tab" data-view="plano" data-group="comprar">Plano reposição</div>
+  <div class="tab" data-view="orcamento" data-group="pedidos">Orçamento</div>
+  <!-- aba Logística oculta a pedido do diretor (reversível: re-adicionar a linha) -->
+  <div class="tab" data-view="ruptura" data-group="estoque">Cobertura</div>
+  <div class="tab" data-view="parado" data-group="estoque">Parado</div>
+  <div class="tab" data-view="validade" data-group="estoque">Validade</div>
+  <div class="tab" data-view="vencidos" data-group="estoque">Vencidos</div>
+  <div class="tab" data-view="ruptura_comprador" data-group="estoque">Ruptura</div>
+  <div class="tab" data-view="ocupacao" data-group="estoque">Ocupação</div>
+  <div class="tab" data-view="desempenho" data-group="analise">Desempenho comercial</div>
+  <div class="tab" data-view="comprasvendas" data-group="analise">Compras × Vendas</div>
+  <div class="tab" data-view="fornecedores" data-group="analise">Fornecedores</div>
+  <div class="tab" data-view="abcxyz" data-group="analise">ABC-XYZ</div>
+  <div class="tab" data-view="produtos" data-group="analise">Produtos</div>
+  <div class="tab" data-view="qualidade" data-group="analise">Qualidade da base</div>
+</div>
+
+<main>
+  <div id="loader" class="loader"><img class="loader-logo" src="/static/joga-loader.svg" alt="JOGA" width="78" height="78"><div>Carregando estoque…</div></div>
+  <div id="content" style="display:none">
+    <section class="view active" id="v-cockpit"></section>
+    <section class="view" id="v-gerencial"></section>
+    <section class="view" id="v-meta_ruptura"></section>
+    <section class="view" id="v-ruptura"></section>
+    <section class="view" id="v-estoque_zero"></section>
+    <section class="view" id="v-reposicao"></section>
+    <section class="view" id="v-plano"></section>
+    <section class="view" id="v-validade"></section>
+    <section class="view" id="v-vencidos"></section>
+    <section class="view" id="v-parado"></section>
+    <section class="view" id="v-ruptura_comprador"></section>
+    <section class="view" id="v-ocupacao"></section>
+    <section class="view" id="v-orcamento"></section>
+    <section class="view" id="v-logistica"></section>
+    <section class="view" id="v-desempenho"></section>
+    <section class="view" id="v-comprasvendas"></section>
+    <section class="view" id="v-abcxyz"></section>
+    <section class="view" id="v-fornecedores"></section>
+    <section class="view" id="v-produtos"></section>
+    <section class="view" id="v-qualidade"></section>
+  </div>
+</main>
+
+<div class="overlay" id="overlay"></div>
+<aside class="drawer" id="drawer"></aside>
+<div class="modal-bg" id="modal-bg"><div class="modal" id="modal"></div></div>
+
+<script src="/static/estoque/estoque.js"></script>
+<script src="/static/area-switcher.js"></script>
+</body>
+</html>

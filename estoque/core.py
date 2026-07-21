@@ -1,0 +1,1637 @@
+"""
+Motor de cálculo do painel de estoque — metodologia OFICIAL (query do TI).
+
+Giro = média de 3 meses (QTVENDMES1..3); QTDISP = estoque endereçado (default) ou
+gerencial; custo = CUSTOFIN. Produz lista de produtos enriquecida + cockpit +
+ranking de fornecedores + FEFO de validade.
+
+Técnicas: Days of Supply, ABC (Pareto), XYZ (variabilidade), matriz ABC-XYZ,
+ponto de reposição (ROP) com lead time por fornecedor, ruptura, dead stock, FEFO.
+"""
+
+import math
+import statistics
+from datetime import datetime, date, timedelta
+
+
+# ───────────────────────── parâmetros (configuráveis) ─────────────────────────
+DEFAULTS = {
+    "giro_base":        "media3",  # media3 (oficial) | m1 (último mês)
+    "base_estoque":     "gerencial",  # gerencial (QTESTGER cru, oficial v3) | endereco (WMS)
+    "lead_time":        10,        # dias (fallback quando o fornecedor não tem prazo)
+    "dias_seguranca":   25,        # dias de estoque de segurança
+    "cobertura_total":  45,        # dias-alvo de cobertura p/ COMPRA (N2 da planilha = 45d)
+    "ruptura_dias":     30,        # cobertura <= isso = ruptura
+    "horizonte_val":    30,        # janela de risco de vencimento
+    "parado_atencao":   60,        # dias sem venda
+    "parado_critico":   90,
+    "parado_mcritico":  120,
+    "excesso_cob":      120,       # cobertura acima disso = excesso
+    "abc_a":            80.0,      # % acumulado
+    "abc_b":            95.0,
+    "xyz_x":            0.5,       # coeficiente de variação
+    "xyz_y":            1.0,
+    "forecast":         0,         # 1 = giro vem do forecast (RCA mensal); 0 = média3 oficial
+    "forecast_meses":   6,         # janela da média móvel simples do forecast bruto
+    "forecast_sazonal": 0,         # 1 = aplica fator sazonal ano-a-ano (implica forecast on)
+    "arredonda_cx":     1,         # 1 = arredonda sugestão/pedido p/ caixa fechada (QTUNITCX)
+}
+_STR_PARAMS = {"giro_base", "base_estoque"}
+
+
+def merge_params(q):
+    """Mescla querystring (dict) sobre os defaults, com cast numérico."""
+    p = dict(DEFAULTS)
+    for k, v in (q or {}).items():
+        if k not in p or v in (None, ""):
+            continue
+        if k in _STR_PARAMS:
+            p[k] = str(v)
+        else:
+            try:
+                p[k] = float(v) if "." in str(v) else int(v)
+            except (TypeError, ValueError):
+                pass
+    return p
+
+
+# ───────────────────────── helpers ─────────────────────────
+def _n(x):
+    if x in (None, ""):
+        return 0.0
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _parse_dt(s):
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(str(s).replace("Z", "")).date()
+    except ValueError:
+        return None
+
+
+def _giro_mensal(row, base):
+    g1, g2, g3 = _n(row.get("giro_m1")), _n(row.get("giro_m2")), _n(row.get("giro_m3"))
+    if base == "m1":
+        return g1
+    return round((g1 + g2 + g3) / 3)  # media3 — oficial do TI
+
+
+def _meses_anteriores(hoje, n):
+    """Lista dos N AnoMes (YYYYMM) imediatamente anteriores ao mês de `hoje` (mais recente 1º)."""
+    out, ano, mes = [], hoje.year, hoje.month
+    for _ in range(n):
+        mes -= 1
+        if mes == 0:
+            mes, ano = 12, ano - 1
+        out.append(ano * 100 + mes)
+    return out
+
+
+def _meses_ate(hoje, n):
+    """Lista dos N AnoMes terminando NO MÊS CORRENTE (ordem cronológica, mais antigo 1º).
+    Usada SÓ pelo gráfico de venda 12m do 360°, que precisa mostrar o mês em andamento
+    (o comprador quer ver a venda de hoje). NÃO usar em giro/forecast/sazonal: lá a janela
+    é de meses FECHADOS de propósito — um mês pela metade subestimaria a previsão."""
+    out, ano, mes = [], hoje.year, hoje.month
+    for _ in range(int(n)):
+        out.append(ano * 100 + mes)
+        mes -= 1
+        if mes == 0:
+            mes, ano = 12, ano - 1
+    return list(reversed(out))
+
+
+def previsao_giro_mensal(serie_am, meses, hoje):
+    """Forecast bruto: média móvel SIMPLES da QT vendida nos N meses fechados anteriores.
+    serie_am: {AnoMes: qtd}. Retorna giro mensal previsto (qtd/mês) ou None se sem histórico."""
+    if not serie_am:
+        return None
+    chaves = _meses_anteriores(hoje, int(meses))
+    total = sum(_n(serie_am.get(am)) for am in chaves)
+    return round(total / len(chaves)) if chaves else None
+
+
+def giro_novo_item(serie_am, hoje, janela=6):
+    """Giro mensal p/ ITEM NOVO cujo giro média-3m oficial deu 0 (os campos QTVENDMES1..3 do
+    PCEST são os 3 meses FECHADOS anteriores — ainda zerados p/ item com <3 meses de casa),
+    mas que já teve venda REAL recente (RCA). Média da qtd vendida sobre os meses ativos, do
+    1º mês com venda (dentro da janela) até o mês fechado mais recente — não dilui pelos meses
+    anteriores ao lançamento. serie_am: {AnoMes: qtd}. None se nunca vendeu na janela."""
+    if not serie_am:
+        return None
+    chaves = _meses_anteriores(hoje, int(janela))          # meses fechados, mais recente 1º
+    com_dado = [am for am in chaves if _n(serie_am.get(am)) > 0]
+    if not com_dado:
+        return None
+    prim = min(com_dado)                                    # 1º mês com venda dentro da janela
+    ativos = [am for am in chaves if am >= prim]            # do lançamento até o mês fechado atual
+    total = sum(_n(serie_am.get(am)) for am in ativos)
+    return round(total / len(ativos)) if ativos else None
+
+
+def fatores_sazonais(serie_am, hoje, janela=24, min_meses=12):
+    """Índices sazonais ano-a-ano a partir da venda mensal (RCA).
+    media_mensal = média dos últimos `janela` meses (naturalmente dessazonalizada);
+    fator[m] = média do mês-calendário m ÷ media_mensal, clampado a [0.3, 3.0].
+    Retorna {"media_mensal", "fatores": {1..12}} ou None se histórico < min_meses."""
+    if not serie_am:
+        return None
+    chaves = _meses_anteriores(hoje, int(janela))
+    com_dado = [am for am in chaves if am in serie_am]
+    if len(com_dado) < int(min_meses):
+        return None
+    media_mensal = sum(_n(serie_am.get(am)) for am in chaves) / len(chaves)
+    if media_mensal <= 0:
+        return None
+    fatores = {}
+    for m in range(1, 13):
+        obs = [_n(serie_am.get(am)) for am in chaves if am % 100 == m and am in serie_am]
+        fatores[m] = max(0.3, min(3.0, (sum(obs) / len(obs)) / media_mensal)) if obs else 1.0
+    return {"media_mensal": media_mensal, "fatores": fatores}
+
+
+def previsao_giro_sazonal(saz, mes):
+    """Giro mensal previsto p/ um mês-calendário: nível dessazonalizado × fator do mês."""
+    return round(saz["media_mensal"] * saz["fatores"].get(mes, 1.0))
+
+
+def arredonda_caixa(qt, qtunitcx):
+    """Arredonda `qt` PRA CIMA em caixas fechadas. Retorna (qt_arredondado, n_caixas).
+    No-op (qt, None) se qtunitcx<=1 ou qt<=0."""
+    if not qtunitcx or qtunitcx <= 1 or qt <= 0:
+        return qt, None
+    cx = math.ceil(qt / qtunitcx)
+    return cx * qtunitcx, cx
+
+
+def item_master(qtd_un, qtunitcx, custo_unit):
+    """Converte um item do pedido (gravado sempre em UNIDADES) para a **unidade master**,
+    que é como o pedido tem de sair no PDF e na planilha de importação do Winthor.
+
+    Fonte única de verdade dos dois documentos — antes a regra estava duplicada no PDF e na
+    planilha e elas divergiram: o PDF saía em caixa e o Excel em unidade (pedido do diretor
+    07/2026, "tem que sair tudo em unidade Master").
+
+    Devolve `(qtd, preco, unidade)`, com **`qtd × preco` sempre igual a `qtd_un × custo_unit`** —
+    o valor da linha não pode mudar por causa da conversão.
+    • com fator (`qtunitcx` > 1): qtd em CAIXAS e preço da CAIXA (`custo_unit × fator`);
+    • sem fator: a unidade do Winthor já É a master → devolve como está ("un").
+    O fator vem do `QTUNITCX`/`QTUNIT`, não do texto da embalagem — os dois divergem em alguns
+    cadastros (ex.: cód. 57474, embalagem diz CX/0100/UN mas o fator real é 10)."""
+    q = _n(qtd_un)
+    cx = _n(qtunitcx)
+    custo = _n(custo_unit)
+    if cx > 1 and q > 0:
+        n_cx = math.ceil(q / cx)
+        return n_cx, _round(custo * cx, 4), "CX"
+    return int(round(q)), _round(custo, 4), "UN"
+
+
+def _round(v, n=2):
+    return round(v, n) if isinstance(v, (int, float)) else v
+
+
+# cobertura em dias (regra OFICIAL da planilha: ROUNDUP(QTDISP/(GIROMESUNID/30));
+# giro<=0 -> 9999 não calculável; estoque<=0 com giro -> 0). Faixas fixas (independem de
+# parâmetro) — espelham GRAFICO COBERTURA ESTOQUE / resumo_cobertura.
+_FAIXAS_COB_LIM = [("0-30", 30), ("31-60", 60), ("61-90", 90), ("91-120", 120), ("121+", 10**9)]
+
+
+def cobertura_dias_oficial(qtdisp, giro_dia):
+    if giro_dia <= 0:
+        return 9999
+    if qtdisp <= 0:
+        return 0
+    return math.ceil(qtdisp / giro_dia)
+
+
+def cobertura_faixa_de(cob_dias):
+    for nome, hi in _FAIXAS_COB_LIM:
+        if cob_dias <= hi:
+            return nome
+    return "121+"
+
+
+# faixa de "dias parado" (dias sem venda) p/ o relatório de Estoque Parado — indicador.
+# Partição inteira ≥ início (sem gap/overlap); nunca-vendeu (None) = pior (121+); <15 ou sem
+# estoque = fora do parado (None).
+def parado_faixa_de(dias_sem_venda, qtdisp):
+    if qtdisp <= 0:
+        return None
+    d = dias_sem_venda if dias_sem_venda is not None else 10**9
+    if d < 15:
+        return None
+    if d <= 30:
+        return "15-30"
+    if d <= 60:
+        return "31-60"
+    if d <= 90:
+        return "61-90"
+    if d <= 120:
+        return "91-120"
+    return "121+"
+
+
+# ───────────────────────── pedido de compra real (Winthor) ─────────────────────────
+def montar_ja_pedida(cab_rows, item_rows, hoje=None, dias=180):
+    """Pedido de compra REAL em ABERTO por produto, a partir do Winthor (PCPEDIDO×PCITEM).
+    Ativo = emitido nos últimos `dias` (DTEMISSAO) — regra v3 da planilha (validada).
+    Aberto = max(0, QTPEDIDA − QTENTREGUE): o gerencial já reflete o recebido, então só o
+    aberto entra na projeção (não duplica estoque). Retorna {cod: qt_aberta}."""
+    hoje = hoje or date.today()
+    corte = hoje - timedelta(days=int(dias))
+    ativos = {int(_n(r.get("NUMPED"))) for r in cab_rows
+              if (_parse_dt(r.get("DTEMISSAO")) or date.min) >= corte}
+    out = {}
+    for r in item_rows:
+        if int(_n(r.get("NUMPED"))) not in ativos:
+            continue
+        aberto = _n(r.get("qtped")) - _n(r.get("qtentregue"))
+        if aberto <= 0:
+            continue
+        cod = int(_n(r.get("CODPROD")))
+        out[cod] = out.get(cod, 0.0) + aberto
+    return out
+
+
+# ───────────────────────── produtos ─────────────────────────
+def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, venda_map, params,
+                       hoje=None, venda_mensal_map=None, ja_pedida_map=None, embalagem_map=None,
+                       preco_venda_map=None, venda_ant_map=None, venda_mensal_rs_map=None):
+    """snapshot: linhas do PCEST; end_map: {cod: qt_end}; prod_map/forn_map: cadastro;
+    comprador_map: {matricula: nome}; venda_map: {cod:{venda,custo,qtd}} líquido do RCA.
+    venda_mensal_map: {cod:{AnoMes:qtd}} p/ forecast (opcional; só quando forecast ligado).
+    ja_pedida_map: {cod: qt} pedido de compra REAL em ABERTO (Winthor, qtped−entregue, 180d).
+    embalagem_map: {cod: {qtunit, volume, ...}} caixa/cubagem do PCEMBALAGEM.
+    Mantém só produtos do cadastro (revenda/não-FL)."""
+    hoje = hoje or date.today()
+    base = params["base_estoque"]
+    forecast_on = bool(params.get("forecast"))
+    sazonal_on = bool(params.get("forecast_sazonal")) and forecast_on
+    fc_meses = int(params.get("forecast_meses", 6))
+    arred_cx = bool(params.get("arredonda_cx"))
+    out = []
+    for r in snapshot:
+        cod = int(_n(r.get("CODPROD")))
+        cad = prod_map.get(cod)
+        if cad is None:
+            continue  # fora do universo (não-revenda / FL)
+
+        qtestger   = _n(r.get("qtestger"))
+        qtreserv   = _n(r.get("qtreserv"))
+        qtbloq     = _n(r.get("qtbloq"))
+        qtpend     = _n(r.get("qtpend"))
+        qttransito = _n(r.get("qttransito"))
+        custofin   = _n(r.get("custofin"))
+        qt_end     = _n(end_map.get(cod))
+
+        # QTDISP conforme a base escolhida
+        # gerencial = DISPONÍVEL = QTESTGER − avaria (QTBLOQUEADA) − reserva (QTRESERV): itens em
+        # avaria ou reservados não estão disponíveis p/ venda (decisão do diretor 2026-07;
+        # substitui o "QTESTGER cru" anterior). Ex.: item 44094 = 86 − 81 − 5 = 0.
+        # endereco = estoque WMS endereçado (usado só na validade/FEFO).
+        if base == "endereco":
+            qtdisp = qt_end
+        else:  # gerencial (default v3) — desconta avaria e reserva
+            qtdisp = qtestger - qtbloq - qtreserv
+        # valor financeiro com piso em zero: estoque negativo é erro de saldo, não vale R$ negativo
+        # (alinha o total ao BASE PRODUTOS; mantém qtdisp negativo visível na tela)
+        valor = max(0.0, qtdisp) * custofin
+
+        # pedido de compra REAL em aberto (Winthor) — já descontado o que foi entregue
+        qtd_ja_pedida = _n((ja_pedida_map or {}).get(cod))
+        # caixa: QTUNIT do PCEMBALAGEM (oficial v3), fallback QTUNITCX do cadastro
+        emb = (embalagem_map or {}).get(cod) or {}
+        qtunit_emb = _n(emb.get("qtunit"))
+
+        giro_media3 = _giro_mensal(r, params["giro_base"])
+        serie_am = (venda_mensal_map or {}).get(cod)
+        giro_forecast = previsao_giro_mensal(serie_am, fc_meses, hoje) if forecast_on else None
+        saz = fatores_sazonais(serie_am, hoje) if sazonal_on else None
+        nivel_base_dia = None
+        if saz is not None:
+            giro_mes, giro_fonte = previsao_giro_sazonal(saz, hoje.month), "sazonal"
+            nivel_base_dia = saz["media_mensal"] / 30.0
+        elif forecast_on and giro_forecast is not None:
+            giro_mes, giro_fonte = giro_forecast, "forecast"
+        else:
+            giro_mes, giro_fonte = giro_media3, "media3"
+        # fallback ITEM NOVO: giro média-3m deu 0 (3 meses fechados ainda zerados p/ item novo)
+        # mas há venda real recente no RCA → deriva o giro dos meses desde o lançamento. Só no
+        # caminho oficial (media3); forecast/sazonal já tratam item novo pela própria série RCA.
+        if giro_fonte == "media3" and giro_mes <= 0:
+            gnovo = giro_novo_item(serie_am, hoje)
+            if gnovo and gnovo > 0:
+                giro_mes, giro_fonte = gnovo, "novo_item"
+        giro_dia = giro_mes / 30.0
+        serie = [_n(r.get("giro_m1")), _n(r.get("giro_m2")), _n(r.get("giro_m3"))]
+        # série mensal (12 meses, ordem cronológica) p/ sparkline e gráfico do 360°.
+        # INCLUI o mês corrente (_meses_ate) — o diretor precisa ver a venda do mês em
+        # andamento; a tela marca a última barra como parcial p/ não parecer queda.
+        serie_meses = _meses_ate(hoje, 12)
+        serie_mensal = ([_round(_n(serie_am.get(am))) for am in serie_meses]
+                        if serie_am else None)
+        # mesma janela em R$ — alimenta SÓ o gráfico "venda 12m" do 360°. Mapa separado de
+        # propósito: o de quantidade continua intocado alimentando giro/forecast/item novo.
+        serie_am_rs = (venda_mensal_rs_map or {}).get(cod)
+        serie_mensal_rs = ([_round(_n(serie_am_rs.get(am)), 2) for am in serie_meses]
+                           if serie_am_rs else None)
+
+        cobertura = (qtdisp / giro_dia) if giro_dia > 0 and qtdisp > 0 else None
+        # cobertura em dias inteiros + faixa (regra oficial da planilha; faixa fixa)
+        cobertura_dias = cobertura_dias_oficial(qtdisp, giro_dia)
+        cobertura_faixa = cobertura_faixa_de(cobertura_dias)
+        # excesso real só quando a cobertura é CALCULÁVEL e alta (separa de "sem giro" no 121+)
+        excesso_real = giro_dia > 0 and cobertura_dias > 120
+
+        dt_saida = _parse_dt(r.get("dtultsaida"))
+        dias_sem_venda = (hoje - dt_saida).days if dt_saida else None
+
+        # fornecedor / comprador
+        fornec_cod = cad.get("CODFORNEC")
+        forn = forn_map.get(int(_n(fornec_cod))) if fornec_cod not in (None, "") else None
+        codcomprador = int(_n((forn or {}).get("CODCOMPRADOR"))) if forn and (forn.get("CODCOMPRADOR") not in (None, "")) else None
+        comprador = comprador_map.get(codcomprador) if codcomprador is not None else None
+
+        # lead time do abastecimento = parâmetro da tela (o comprador controla manual;
+        # decisão 07/2026). Antes priorizava o PRAZOENTREGA do fornecedor, mas mexer no
+        # slider não afetava quem já tinha prazo cadastrado (~95% dos itens) e parecia
+        # "não funcionar" — agora o slider vale p/ todos. (A previsão de ENTREGA do
+        # orçamento segue usando o prazo real do fornecedor; é outra finalidade.)
+        lead = params["lead_time"]
+        est_seg = giro_dia * params["dias_seguranca"]
+        rop = giro_dia * lead + est_seg
+        # alvo medido NO MOMENTO DA ENTREGA: soma o consumo do lead time. O pedido só
+        # chega em `lead` dias e o estoque continua caindo até lá — sem isso a compra
+        # assume "entrega hoje" e sub-dimensiona (verificado pelo diretor 07/2026).
+        # Ex.: lead 10 + cobertura 45 = alvo de 55 dias de giro.
+        est_alvo = giro_dia * (lead + params["cobertura_total"])
+        # posição efetiva = disponível + pedido de compra REAL em aberto (Winthor).
+        # Como o gerencial já reflete o que foi recebido, o "já pedido" é só o ABERTO
+        # (qtped−entregue) — evita comprar de novo o que já está pedido e não duplica estoque.
+        estoque_projetado = qtdisp + qtd_ja_pedida
+        cobertura_proj = (estoque_projetado / giro_dia) if giro_dia > 0 and estoque_projetado > 0 else None
+        sugestao = max(0.0, est_alvo - estoque_projetado)
+
+        # prioridade de abastecimento sobre o ESTOQUE PROJETADO (metodologia v3)
+        lead_un = giro_dia * lead
+        seg_un = giro_dia * params["dias_seguranca"]
+        if giro_dia <= 0:
+            status_abast = "sem_giro" if qtdisp > 0 else "ok"
+        elif estoque_projetado <= lead_un:
+            status_abast = "urgente"
+        elif estoque_projetado <= lead_un + seg_un:
+            status_abast = "alta"
+        elif estoque_projetado < est_alvo:
+            status_abast = "atencao"
+        elif cobertura_proj is not None and cobertura_proj > params["excesso_cob"]:
+            status_abast = "excesso"
+        else:
+            status_abast = "ok"
+
+        # cobertura crítica / atenção de abastecimento — bandas FIXAS (manual: cobertura até 30
+        # dias = atenção, dividida em 0-15 urgente / 16-30). Não depende de parâmetro de compra.
+        estoque_zero = qtdisp <= 0
+        if giro_dia <= 0:
+            status_ruptura = None
+        else:
+            cob_eff = cobertura if (cobertura is not None) else 0.0
+            if cob_eff <= 15:
+                status_ruptura = "0-15"
+            elif cob_eff <= 30:
+                status_ruptura = "16-30"
+            else:
+                status_ruptura = None
+
+        # estoque parado / dead stock — bandas FIXAS por dias sem venda (manual da planilha:
+        # ATENCAO 60-90, CRITICO 90-120, MUITO CRITICO 120+). Independe de parâmetro — o campo
+        # "parado_atencao" vira só filtro de exibição (mín. dias) na tela/export, não desloca faixa.
+        sem_giro = giro_dia <= 0 and qtdisp > 0
+        if qtdisp <= 0:
+            status_parado = None
+        elif dias_sem_venda is None:
+            status_parado = "muito_critico"
+        elif dias_sem_venda >= 120:
+            status_parado = "muito_critico"
+        elif dias_sem_venda >= 90:
+            status_parado = "critico"
+        elif dias_sem_venda >= 60:
+            status_parado = "atencao"
+        else:
+            status_parado = None
+
+        if dt_saida is None:
+            status_saida = "sem_saida"
+        elif dias_sem_venda <= 30:
+            status_saida = "recente"
+        elif dias_sem_venda <= 90:
+            status_saida = "media"
+        else:
+            status_saida = "antiga"
+
+        # compra suspensa: tem giro (média 3m, defasada) mas parou de vender há tempo
+        # → não sugerir comprar estoque morto (giro está "preso" no histórico). Limiar FIXO 60d
+        # (alinha com a faixa "atenção" do parado; não depende mais do parâmetro de exibição).
+        compra_suspensa = (giro_dia > 0 and dias_sem_venda is not None
+                           and dias_sem_venda >= 60)
+
+        # venda real (RCA, líquida) do período
+        vd = venda_map.get(cod) or {}
+        venda = vd.get("venda", 0.0)
+        custo_vendido = vd.get("custo", 0.0)
+        qtd_vendida = vd.get("qtd", 0.0)
+        lucro = venda - custo_vendido
+        margem = (lucro / venda) if venda else None
+
+        # crescimento vs. o MESMO período do ANO ANTERIOR (líquida × líquida — comparar com a
+        # bruta inflaria o número). Sem venda no ano passado (item novo, ou período anterior a
+        # 2024, que é onde o RCA começa) → None ⇒ a tela mostra "—", nunca −100% nem infinito.
+        venda_ant = _n(((venda_ant_map or {}).get(cod) or {}).get("venda"))
+        crescimento = ((venda - venda_ant) / venda_ant) if venda_ant > 0 else None
+
+        # XYZ — coeficiente de variação da série de 3 meses
+        media = statistics.mean(serie) if serie else 0.0
+        if media > 0:
+            cv = statistics.pstdev(serie) / media
+            xyz = "X" if cv < params["xyz_x"] else ("Y" if cv < params["xyz_y"] else "Z")
+        else:
+            cv, xyz = None, None
+
+        qtunitcx = _n(cad.get("QTUNITCX"))
+        # caixa oficial v3 = QTUNIT do PCEMBALAGEM; fallback no QTUNITCX do cadastro
+        caixa = qtunit_emb if qtunit_emb > 1 else qtunitcx
+        # sugestão em CAIXAS quando há fator (>1); SEM fator (=1, cadastro incompleto) fica em
+        # UNIDADES — não força "1 cx". Normaliza sozinho quando o TI cadastrar o QTUNIT no Winthor.
+        sugestao_bruta = sugestao
+        if sugestao <= 0:
+            sugestao_cx = 0
+        elif caixa > 1:
+            sugestao_cx = math.ceil(sugestao / caixa)   # caixas fechadas
+        else:
+            sugestao_cx = math.ceil(sugestao)           # sem fator: unidades (o front mostra "un")
+        if arred_cx and caixa > 1 and sugestao > 0:
+            sugestao = sugestao_cx * caixa  # sugestão em unidades, arredondada p/ caixa fechada
+        # valor da compra líquida sugerida (caixa fechada × custo, ou unidades × custo se sem fator)
+        valor_sugerido_liq = (sugestao_cx * caixa * custofin) if caixa > 1 else (sugestao_cx * custofin)
+
+        # cubagem da caixa: PCEMBALAGEM[VOLUME] (oficial); se faltar (muito item sem cadastro
+        # na embalagem), deriva do PCPRODUT[VOLUME] (unitário × fator de caixa) — mesma fonte
+        # que a aba Logística usa. Assim a cubagem deixa de vir vazia p/ a maioria.
+        _fator_cx = caixa if caixa and caixa > 1 else 1
+        cub_caixa = _n(emb.get("volume")) or (_n(cad.get("VOLUME")) * _fator_cx)
+
+        # VENDA PERDIDA acumulada na ruptura = dias em ruptura × giro/dia × PREÇO DE VENDA.
+        # dias em ruptura: proxy = dias_sem_venda (dias desde a última venda), com TETO de 60 dias.
+        # preço de venda: realizado médio de 3m (janela FIXA, estável — não muda com o filtro de
+        # período); o preço de tabela do BI (PCPRODUT[PVENDA]) está vazio. Fallback no custo se
+        # não houver preço realizado. Só p/ item em ruptura (estoque<=0 e giro>0); senão 0.
+        preco_venda = _n((preco_venda_map or {}).get(cod)) or custofin
+        if qtdisp <= 0 and giro_dia > 0:
+            _dias_rup = min(dias_sem_venda if dias_sem_venda is not None else 30, 60)
+            venda_perdida = _dias_rup * giro_dia * preco_venda
+        else:
+            venda_perdida = 0.0
+
+        # status executivo + ação recomendada (taxonomia v3 — clareza pro comprador)
+        tem_compra = sugestao_cx > 0
+        if qtdisp <= 0:
+            if qtd_ja_pedida <= 0:
+                status_exec = "ruptura_sem_pedido"
+            else:
+                status_exec = "ruptura_pedido_parcial" if tem_compra else "ruptura_pedido_cobre"
+        elif tem_compra:
+            if qtd_ja_pedida > 0:
+                status_exec = "compra_complementar"
+            else:
+                status_exec = {"urgente": "compra_urgente", "alta": "compra_alta"}.get(status_abast, "programar_compra")
+        else:
+            status_exec = "pedido_cobre" if qtd_ja_pedida > 0 else "estoque_ok"
+        if not tem_compra:
+            acao_rec = "acompanhar_entrega" if qtd_ja_pedida > 0 else "sem_compra"
+        elif estoque_projetado <= lead_un:
+            acao_rec = "comprar_imediato"
+        elif estoque_projetado <= lead_un + seg_un:
+            acao_rec = "negociar_pedido"
+        else:
+            acao_rec = "programar_compra"
+        out.append({
+            "codprod": cod,
+            "descricao": cad.get("DESCRICAO") or f"PRODUTO {cod}",
+            "codfornec": int(_n(fornec_cod)) if fornec_cod not in (None, "") else None,
+            "fornecedor": (forn or {}).get("FORNECEDOR") if forn else None,
+            "codcomprador": codcomprador,
+            "comprador": comprador,
+            "codepto": cad.get("CODEPTO"),
+            "ncm": cad.get("NCM"), "marca": cad.get("MARCA"),
+            "embalagem": cad.get("EMBALAGEM"),
+            "qtunitcx": qtunitcx or None,
+            "qtdisp": _round(qtdisp), "disponivel": _round(qtdisp),
+            "qtestger": _round(qtestger), "qt_end": _round(qt_end),
+            "qtreserv": _round(qtreserv), "qtbloq": _round(qtbloq),
+            "qttransito": _round(qttransito), "qtpend": _round(qtpend),
+            "custo_unit": _round(custofin, 4),
+            "valor": _round(valor),
+            "giro_mes": _round(giro_mes), "giro_dia": _round(giro_dia, 3),
+            "giro_media3": _round(giro_media3), "giro_forecast": _round(giro_forecast) if giro_forecast is not None else None,
+            "giro_fonte": giro_fonte, "serie_mensal": serie_mensal,
+            "nivel_base_dia": _round(nivel_base_dia, 3) if nivel_base_dia is not None else None,
+            "fatores_sazonais": saz["fatores"] if saz else None,
+            "giro_cx": _round(giro_mes / qtunitcx, 2) if qtunitcx else None,
+            "venda": _round(venda), "lucro": _round(lucro), "qtd_vendida": _round(qtd_vendida),
+            "venda_ano_ant": _round(venda_ant) if venda_ant else None,
+            "crescimento": _round(crescimento * 100, 1) if crescimento is not None else None,
+            "serie_mensal_rs": serie_mensal_rs, "serie_mensal_meses": serie_meses,
+            "margem": _round(margem * 100, 1) if margem is not None else None,
+            "preco_venda": _round(preco_venda, 4), "venda_perdida": _round(venda_perdida),
+            "serie_giro": [_round(x) for x in serie],
+            "cobertura": _round(cobertura, 1) if cobertura is not None else None,
+            "cobertura_dias": cobertura_dias, "cobertura_faixa": cobertura_faixa,
+            "excesso_real": excesso_real,
+            "dias_sem_venda": dias_sem_venda,
+            "dtultsaida": dt_saida.isoformat() if dt_saida else None,
+            "cv": _round(cv, 3) if cv is not None else None,
+            "xyz": xyz,
+            "lead_efetivo": _round(lead),
+            "rop": _round(rop), "est_seguranca": _round(est_seg),
+            "est_alvo": _round(est_alvo), "sugestao_compra": _round(sugestao),
+            "sugestao_bruta": _round(sugestao_bruta), "sugestao_cx": sugestao_cx,
+            "caixa": _round(caixa) if caixa else None,
+            "embalagem_caixa": emb.get("embalagem"),
+            "qtd_ja_pedida": _round(qtd_ja_pedida),
+            "estoque_projetado": _round(estoque_projetado),
+            "cobertura_proj": _round(cobertura_proj, 1) if cobertura_proj is not None else None,
+            "valor_sugerido_liq": _round(valor_sugerido_liq),
+            "status_exec": status_exec, "acao_rec": acao_rec,
+            "cubagem_caixa_m3": _round(cub_caixa, 5) if cub_caixa else None,
+            "peso_caixa_kg": _round(_n(emb.get("pesobruto")), 3) if emb.get("pesobruto") else None,
+            "compra_suspensa": compra_suspensa,
+            "status_abast": status_abast,
+            "status_ruptura": status_ruptura, "estoque_zero": estoque_zero,
+            "status_parado": status_parado,
+            "status_saida": status_saida,
+            "sem_giro": sem_giro,
+            "parado_faixa": parado_faixa_de(dias_sem_venda, qtdisp),
+            "curva_abc": None, "curva_giro": None, "abc_xyz": None,
+        })
+
+    # curva ABC por VENDA (faturamento do período selecionado) — leitura clássica: A = campeões
+    # de venda. Segue o seletor de período (o campo `venda` já é do período). O valor de estoque
+    # continua nas visões de capital (Cobertura/Parado/Fornecedores) e `curva_giro` é outra lente.
+    _aplicar_curva(out, "venda", "curva_abc", params["abc_a"], params["abc_b"])
+    _aplicar_curva(out, "giro_mes", "curva_giro", params["abc_a"], params["abc_b"])
+    for p in out:
+        if p["curva_abc"] and p["xyz"]:
+            p["abc_xyz"] = p["curva_abc"] + p["xyz"]
+    return out
+
+
+def _aplicar_curva(produtos, chave_valor, campo, a, b):
+    """Classifica curva ABC por Pareto (% acumulado) sobre `chave_valor`."""
+    total = sum(p[chave_valor] or 0 for p in produtos)
+    if total <= 0:
+        for p in produtos:
+            p[campo] = "C"
+        return
+    acum = 0.0
+    for p in sorted(produtos, key=lambda x: x[chave_valor] or 0, reverse=True):
+        acum += (p[chave_valor] or 0)
+        pct = acum / total * 100
+        p[campo] = "A" if pct <= a else ("B" if pct <= b else "C")
+
+
+# ───────────────────────── cockpit ─────────────────────────
+FAIXAS_COB = [
+    ("0-30", 0, 30), ("31-60", 31, 60), ("61-90", 61, 90),
+    ("91-120", 91, 120), ("121+", 121, float("inf")),
+]
+
+
+def cockpit(produtos):
+    valor_total = sum(p["valor"] or 0 for p in produtos)
+    venda_total = sum(p["venda"] or 0 for p in produtos)
+    lucro_total = sum(p["lucro"] or 0 for p in produtos)
+    com_estoque = [p for p in produtos if (p["qtdisp"] or 0) > 0]
+    com_giro = [p for p in produtos if (p["giro_dia"] or 0) > 0]
+    sem_giro = [p for p in com_estoque if (p["giro_dia"] or 0) <= 0]
+
+    valor_parado = sum(p["valor"] or 0 for p in produtos if p["status_parado"])
+    valor_sem_giro = sum(p["valor"] or 0 for p in sem_giro)
+
+    faixas = []
+    for nome, lo, hi in FAIXAS_COB:
+        itens = [p for p in com_giro if p["cobertura"] is not None and lo <= p["cobertura"] <= hi]
+        faixas.append({"faixa": nome, "qt": len(itens),
+                       "valor": _round(sum(p["valor"] or 0 for p in itens))})
+    faixas.append({"faixa": "sem giro", "qt": len(sem_giro), "valor": _round(valor_sem_giro)})
+
+    abc = {}
+    for c in ("A", "B", "C"):
+        itens = [p for p in produtos if p["curva_abc"] == c]
+        abc[c] = {"qt": len(itens), "valor": _round(sum(p["valor"] or 0 for p in itens)),
+                  "venda": _round(sum(p["venda"] or 0 for p in itens))}
+
+    matriz = {}
+    for p in produtos:
+        if p["abc_xyz"]:
+            cell = matriz.setdefault(p["abc_xyz"], {"qt": 0, "valor": 0.0, "venda": 0.0})
+            cell["qt"] += 1
+            cell["valor"] += (p["valor"] or 0)
+            cell["venda"] += (p["venda"] or 0)
+    for v in matriz.values():
+        v["valor"] = _round(v["valor"]); v["venda"] = _round(v["venda"])
+
+    def _cont(field, val):
+        itens = [p for p in produtos if p[field] == val]
+        return {"qt": len(itens), "valor": _round(sum(p["valor"] or 0 for p in itens))}
+
+    repor = [p for p in produtos if (p["sugestao_compra"] or 0) > 0
+             and (p["giro_dia"] or 0) > 0 and not p.get("compra_suspensa")]
+    suspensos = [p for p in produtos if p.get("compra_suspensa")]
+    em_ruptura = [p for p in produtos if p["status_ruptura"]]
+
+    return {
+        "valor_total": _round(valor_total),
+        "venda_total": _round(venda_total),
+        "lucro_total": _round(lucro_total),
+        "margem_total": _round(lucro_total / venda_total * 100, 1) if venda_total else None,
+        "n_total": len(produtos),
+        "n_com_estoque": len(com_estoque),
+        "n_com_giro": len(com_giro),
+        "n_sem_giro": len(sem_giro),
+        "valor_parado": _round(valor_parado),
+        "pct_capital_parado": _round(valor_parado / valor_total * 100, 1) if valor_total else 0,
+        "valor_sem_giro": _round(valor_sem_giro),
+        "faixas_cobertura": faixas,
+        "abc": abc,
+        "matriz_abc_xyz": matriz,
+        "parado": {
+            "atencao": _cont("status_parado", "atencao"),
+            "critico": _cont("status_parado", "critico"),
+            "muito_critico": _cont("status_parado", "muito_critico"),
+            "sem_giro": {"qt": len(sem_giro), "valor": _round(valor_sem_giro)},
+        },
+        "ruptura": {
+            "f0_15": _cont("status_ruptura", "0-15"),
+            "f16_30": _cont("status_ruptura", "16-30"),
+            "estoque_zero": sum(1 for p in produtos if p["estoque_zero"] and (p["giro_dia"] or 0) > 0),
+            "total": len(em_ruptura),
+            "valor": _round(sum(p["valor"] or 0 for p in em_ruptura)),
+        },
+        "abastecimento": {
+            "urgente": _cont("status_abast", "urgente"),
+            "alta": _cont("status_abast", "alta"),
+            "atencao": _cont("status_abast", "atencao"),
+            "excesso": _cont("status_abast", "excesso"),
+            "n_repor": len(repor),
+            "qt_sugerida": _round(sum(p["sugestao_compra"] or 0 for p in repor)),
+            "valor_sugerido": _round(sum((p["sugestao_compra"] or 0) * (p["custo_unit"] or 0) for p in repor)),
+            "n_suspensos": len(suspensos),
+            "valor_suspenso": _round(sum((p["sugestao_compra"] or 0) * (p["custo_unit"] or 0) for p in suspensos)),
+        },
+        "valor_risco_venc": None,  # preenchido pelo app a partir do FEFO
+    }
+
+
+# ───────────────────────── fornecedores ─────────────────────────
+def fornecedores(produtos, params=None):
+    total_valor = sum(p["valor"] or 0 for p in produtos) or 1
+    total_giro = sum(p["giro_mes"] or 0 for p in produtos) or 1
+    total_venda = sum(p["venda"] or 0 for p in produtos) or 1
+    grupos = {}
+    for p in produtos:
+        cf = p["codfornec"]
+        if cf is None:
+            continue
+        g = grupos.setdefault(cf, {
+            "codfornec": cf, "fornecedor": p["fornecedor"] or f"FORN {cf}",
+            "comprador": p.get("comprador"),
+            "n_produtos": 0, "valor": 0.0, "giro": 0.0, "venda": 0.0, "lucro": 0.0,
+            "disponivel": 0.0, "giro_dia": 0.0, "n_sem_giro": 0, "venda_ant": 0.0,
+        })
+        g["n_produtos"] += 1
+        g["valor"] += (p["valor"] or 0)
+        g["giro"] += (p["giro_mes"] or 0)
+        g["venda"] += (p["venda"] or 0)
+        g["venda_ant"] += (p.get("venda_ano_ant") or 0)
+        g["lucro"] += (p["lucro"] or 0)
+        g["disponivel"] += (p["qtdisp"] or 0)
+        g["giro_dia"] += (p["giro_dia"] or 0)
+        if (p["giro_dia"] or 0) <= 0 and (p["qtdisp"] or 0) > 0:
+            g["n_sem_giro"] += 1
+
+    lead = params["lead_time"] if params else DEFAULTS["lead_time"]
+    saida = []
+    for g in grupos.values():
+        perc_giro = g["giro"] / total_giro * 100
+        perc_venda = g["venda"] / total_venda * 100
+        perc_est = g["valor"] / total_valor * 100
+        # índice = participação na VENDA (R$) ÷ participação no ESTOQUE (R$) — "vende mais do que
+        # pesa em estoque". Antes usava giro em UNIDADES, o que distorcia fornecedores de alto
+        # valor/baixo volume (ex.: embalagem cara vendendo bem virava "estoque alto").
+        indice = (perc_venda / perc_est) if perc_est > 0 else (999.0 if perc_venda > 0 else 0.0)
+        # cobertura média do fornecedor (dias) — distingue eficiência real de desabastecimento
+        cobertura = (g["disponivel"] / g["giro_dia"]) if g["giro_dia"] > 0 else None
+        if g["giro"] <= 0 and g["venda"] <= 0:
+            classif = "critico_sem_giro"
+        elif cobertura is not None and cobertura < lead:
+            classif = "ruptura"            # gira mas quase sem estoque (não é performance)
+        elif indice >= 1.2:
+            classif = "alta_performance"
+        elif indice >= 0.8:
+            classif = "equilibrado"
+        else:
+            classif = "estoque_alto"
+        saida.append({
+            **g,
+            "valor": _round(g["valor"]), "giro": _round(g["giro"]),
+            "venda": _round(g["venda"]), "lucro": _round(g["lucro"]),
+            "margem": _round(g["lucro"] / g["venda"] * 100, 1) if g["venda"] else None,
+            "cobertura": _round(cobertura, 1) if cobertura is not None else None,
+            "venda_ano_ant": _round(g["venda_ant"]) if g["venda_ant"] else None,
+            "crescimento": _round((g["venda"] - g["venda_ant"]) / g["venda_ant"] * 100, 1) if g["venda_ant"] > 0 else None,
+            "perc_giro": _round(perc_giro, 2), "perc_venda": _round(perc_venda, 2),
+            "perc_estoque": _round(perc_est, 2),
+            "indice": _round(indice, 2), "classificacao": classif,
+        })
+    # curva ABC do FORNECEDOR por venda (Pareto do faturamento) — mesma leitura dos produtos
+    _a = params["abc_a"] if params else DEFAULTS["abc_a"]
+    _b = params["abc_b"] if params else DEFAULTS["abc_b"]
+    _aplicar_curva(saida, "venda", "curva_abc", _a, _b)
+    saida.sort(key=lambda x: x["valor"], reverse=True)
+    return saida
+
+
+# ───────────────────────── compras × vendas por comprador ─────────────────────────
+def por_comprador(produtos):
+    """Agrega compras (estoque/custo) × vendas (faturamento) por comprador."""
+    grupos = {}
+    for p in produtos:
+        cc = p.get("codcomprador")
+        chave = cc if cc is not None else 0
+        g = grupos.setdefault(chave, {
+            "codcomprador": cc, "comprador": p.get("comprador") or "Sem comprador",
+            "n_produtos": 0, "estoque": 0.0, "venda": 0.0, "lucro": 0.0,
+            "n_ruptura": 0, "valor_parado": 0.0, "sugestao_valor": 0.0,
+        })
+        g["n_produtos"] += 1
+        g["estoque"] += (p["valor"] or 0)
+        g["venda"] += (p["venda"] or 0)
+        g["lucro"] += (p["lucro"] or 0)
+        # ruptura = critério OFICIAL (estoque <= 0 E giro > 0); cobertura baixa é atenção, não ruptura
+        if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0:
+            g["n_ruptura"] += 1
+        if p["status_parado"]:
+            g["valor_parado"] += (p["valor"] or 0)
+        if (p["sugestao_compra"] or 0) > 0 and (p["giro_dia"] or 0) > 0 and not p.get("compra_suspensa"):
+            g["sugestao_valor"] += (p["sugestao_compra"] or 0) * (p["custo_unit"] or 0)
+    saida = []
+    for g in grupos.values():
+        saida.append({
+            **g,
+            "estoque": _round(g["estoque"]), "venda": _round(g["venda"]), "lucro": _round(g["lucro"]),
+            "margem": _round(g["lucro"] / g["venda"] * 100, 1) if g["venda"] else None,
+            "giro_estoque": _round(g["venda"] / g["estoque"], 2) if g["estoque"] else None,  # venda/estoque (turn)
+            "valor_parado": _round(g["valor_parado"]), "sugestao_valor": _round(g["sugestao_valor"]),
+        })
+    saida.sort(key=lambda x: x["venda"], reverse=True)
+    return saida
+
+
+def ruptura_por_comprador(produtos):
+    """Ruptura agregada por comprador (a mais rica). Ruptura = estoque ≤ 0 e giro > 0.
+    n_sem_pedido = ruptura ainda sem pedido de compra em aberto (risco real);
+    venda_perdida = Σ giro_mes × custo (venda potencial/mês não atendida);
+    custo_reposicao = Σ sugestao_compra × custo (o que custa repor até o alvo)."""
+    grupos = {}
+    for p in produtos:
+        cc = p.get("codcomprador")
+        g = grupos.setdefault(cc if cc is not None else 0, {
+            "codcomprador": cc, "comprador": p.get("comprador") or "Sem comprador",
+            "n_produtos": 0, "n_ruptura": 0, "n_sem_pedido": 0,
+            "venda_perdida": 0.0, "custo_reposicao": 0.0,
+        })
+        g["n_produtos"] += 1
+        if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0:
+            g["n_ruptura"] += 1
+            if (p.get("qtd_ja_pedida") or 0) <= 0:
+                g["n_sem_pedido"] += 1
+            g["venda_perdida"] += (p.get("venda_perdida") or 0)   # acumulada na ruptura, a preço de venda
+            g["custo_reposicao"] += (p.get("sugestao_compra") or 0) * (p.get("custo_unit") or 0)
+    saida = []
+    for g in grupos.values():
+        saida.append({
+            **g,
+            "pct_ruptura": _round(g["n_ruptura"] / g["n_produtos"] * 100, 1) if g["n_produtos"] else 0,
+            # % dos itens SEM pedido sobre o TOTAL de produtos do comprador (base da meta —
+            # todo item do comprador conta, não só os em ruptura). Complementa o pct_ruptura.
+            "pct_sem_pedido": _round(g["n_sem_pedido"] / g["n_produtos"] * 100, 1) if g["n_produtos"] else 0,
+            "venda_perdida": _round(g["venda_perdida"]),
+            "custo_reposicao": _round(g["custo_reposicao"]),
+        })
+    saida.sort(key=lambda x: x["n_ruptura"], reverse=True)
+    return saida
+
+
+# ───────────────────────── desempenho comercial por comprador (RCA) ─────────────────────────
+def desempenho_comprador(receita_rows, devol_map, comp_map, venda_ant_map=None, custo_ant_map=None,
+                         custo_dev_map=None):
+    """Espelha a aba RECEITA COMPRADOR: venda líquida, lucro bruto, margem ponderada,
+    positivação (clientes distintos), devolução e comparativo ano×ano (venda E lucro) por comprador.
+    receita_rows: [{CODCOMPRADOR, venda, custo, qtd, clientes_pos, fornecedores}];
+    devol_map: {codcomprador: valor_devolvido}; custo_dev_map: {cc: custo_da_devolução} (RCA);
+    venda_ant_map/custo_ant_map: {cc: valor} do ano ant."""
+    venda_ant_map = venda_ant_map or {}
+    custo_ant_map = custo_ant_map or {}
+    custo_dev_map = custo_dev_map or {}
+    linhas = []
+    for r in receita_rows:
+        cc = int(_n(r.get("CODCOMPRADOR"))) if r.get("CODCOMPRADOR") not in (None, "") else None
+        if cc is None:
+            continue
+        venda_bruta = _n(r.get("venda"))
+        custo = _n(r.get("custo"))
+        dev = _n(devol_map.get(cc))
+        cdev = _n(custo_dev_map.get(cc))
+        venda_liq = venda_bruta - dev
+        # Alinhamento RCA: a devolução tira o valor de venda da receita E devolve o
+        # custo da mercadoria devolvida ao lucro (senão o custo é contado em dobro).
+        lucro = venda_liq - (custo - cdev)
+        margem = (lucro / venda_liq) if venda_liq else None
+        venda_ant = _n(venda_ant_map.get(cc))
+        yoy = ((venda_bruta - venda_ant) / venda_ant) if venda_ant > 0 else None
+        # lucro do ano anterior (bruto = venda_ant − custo_ant) p/ o ano×ano do lucro
+        lucro_ant = venda_ant - _n(custo_ant_map.get(cc))
+        yoy_lucro = ((lucro - lucro_ant) / abs(lucro_ant)) if lucro_ant > 0 else None
+        linhas.append({
+            "codcomprador": cc,
+            "comprador": comp_map.get(cc) or f"COMPRADOR {cc}",
+            "fornecedores": int(_n(r.get("fornecedores"))),
+            "clientes_pos": int(_n(r.get("clientes_pos"))),
+            "qtd": _round(_n(r.get("qtd"))),
+            "venda_bruta": _round(venda_bruta),
+            "devolucao": _round(dev),
+            "venda_liquida": _round(venda_liq),
+            "lucro_bruto": _round(lucro),
+            "margem": _round(margem * 100, 1) if margem is not None else None,
+            "venda_ano_ant": _round(venda_ant) if venda_ant else None,
+            "yoy": _round(yoy * 100, 1) if yoy is not None else None,
+            "lucro_ano_ant": _round(lucro_ant) if lucro_ant else None,
+            "yoy_lucro": _round(yoy_lucro * 100, 1) if yoy_lucro is not None else None,
+        })
+    tot_v = sum(l["venda_liquida"] for l in linhas) or 0
+    tot_l = sum(l["lucro_bruto"] for l in linhas) or 0
+    for l in linhas:
+        l["part_receita"] = _round(l["venda_liquida"] / tot_v * 100, 1) if tot_v else 0
+        l["part_lucro"] = _round(l["lucro_bruto"] / tot_l * 100, 1) if tot_l else 0
+        if l["lucro_bruto"] < 0:
+            l["status_lucro"] = "negativo"
+        elif (l["part_lucro"] or 0) >= 30:
+            l["status_lucro"] = "alta"
+        elif (l["part_lucro"] or 0) >= 8:
+            l["status_lucro"] = "boa"
+        else:
+            l["status_lucro"] = "baixa"
+    linhas.sort(key=lambda x: x["lucro_bruto"], reverse=True)
+    for i, l in enumerate(linhas, 1):
+        l["ranking"] = i
+    resumo = {
+        "venda_liquida": _round(tot_v), "lucro_bruto": _round(tot_l),
+        "margem": _round(tot_l / tot_v * 100, 1) if tot_v else None,
+        "clientes_pos": sum(l["clientes_pos"] for l in linhas),
+        "devolucao": _round(sum(l["devolucao"] for l in linhas)),
+        "n_compradores": len(linhas),
+    }
+    return {"resumo": resumo, "compradores": linhas}
+
+
+# ───────────────────────── orçamento de compras (pedido real Winthor) ─────────────────────────
+def _cnpj_raiz(v):
+    """8 primeiros dígitos do CNPJ (a 'raiz' da empresa) — filiais compartilham a raiz."""
+    d = "".join(ch for ch in str(v or "") if ch.isdigit())
+    return d[:8] if len(d) >= 8 else ""
+
+
+def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS",
+                      pct=0.65, hoje=None, meta_override=None, lead_padrao=10,
+                      cnpj_empresa=None):
+    """Orçamento de compras a partir do pedido de compra REAL (PCPEDIDO).
+    cab: linhas do cabeçalho; venda_comp: {nome_comprador: venda_liq_30d} (p/ a meta);
+    comp_map: {matricula:nome}; forn_map: {codfornec: row}; mes: 'YYYY-MM'.
+    meta = pct × venda_liq (override manual opcional); realizado = Σ VLTOTAL dos pedidos do mês;
+    aberto = pedidos do mês ainda não recebidos (sem DTENTRADAESTOQUE).
+
+    `cnpj_empresa`: CNPJ da própria empresa. Pedido cujo FORNECEDOR tem a **mesma raiz de CNPJ**
+    é **transferência entre filiais**, não compra (o CD abastecendo as lojas) — fica FORA do
+    orçamento (decisão do diretor 07/2026: "não deve contabilizar como compra, pois de fato é
+    transferência"). Compara pela raiz (8 dígitos) p/ pegar qualquer filial da mesma empresa,
+    e não pelo CODFORNEC, que muda. Os excluídos voltam em `transferencias` — sem isso o valor
+    do card cai sem explicação e vira a próxima desconfiança."""
+    hoje = hoje or date.today()
+    todos = (not comprador or comprador == "TODOS")
+    raiz_empresa = _cnpj_raiz(cnpj_empresa)
+    pedidos = []
+    realizado = aberto = 0.0
+    tr_n = 0
+    tr_valor = 0.0
+    for r in cab:
+        nome = comp_map.get(int(_n(r.get("CODCOMPRADOR"))))
+        if not todos and nome != comprador:
+            continue
+        dtem = _parse_dt(r.get("DTEMISSAO"))
+        forn = forn_map.get(int(_n(r.get("CODFORNEC"))))
+        # transferência entre filiais: fornecedor é a própria empresa → não é compra
+        if raiz_empresa and _cnpj_raiz((forn or {}).get("CGC")) == raiz_empresa:
+            if bool(dtem) and dtem.strftime("%Y-%m") == mes:
+                tr_n += 1
+                tr_valor += _n(r.get("VLTOTAL"))
+            continue
+        vlt = _n(r.get("VLTOTAL"))
+        vle = _n(r.get("VLENTREGUE"))            # valor já entregue (DTENTRADAESTOQUE é vazio aqui)
+        aberto_val = max(0.0, vlt - vle)
+        # recebido se o que falta entregar é desprezível (tolera resíduo de centavos)
+        recebido = vlt > 0 and aberto_val <= max(1.0, vlt * 0.005)
+        if recebido:
+            aberto_val = 0.0
+        no_mes = bool(dtem) and dtem.strftime("%Y-%m") == mes
+        if no_mes:
+            realizado += vlt                     # comprado válido = tudo que foi pedido no mês
+            aberto += aberto_val                 # comprometido aberto = ainda não entregue
+        # previsão de entrega (HÍBRIDO): usa a DTPREVENT do Winthor quando é previsão REAL
+        # (posterior à emissão); senão = data do pedido + lead time do fornecedor (PRAZOENTREGA,
+        # ou padrão). Evita marcar como atrasado pedido em que o Winthor só repetiu a emissão.
+        dtprev_raw = _parse_dt(r.get("DTPREVENT"))
+        lead = _n((forn or {}).get("PRAZOENTREGA"))
+        lead = int(lead) if lead > 0 else int(lead_padrao)
+        if dtprev_raw and dtem and dtprev_raw > dtem:
+            dtprev = dtprev_raw
+        elif dtem:
+            dtprev = dtem + timedelta(days=lead)
+        else:
+            dtprev = dtprev_raw
+        dias_prev = (dtprev - hoje).days if (dtprev and not recebido) else None
+        if recebido:
+            status_prazo = "recebido"
+        elif dias_prev is None:
+            status_prazo = "sem_prev"
+        elif dias_prev < 0:
+            status_prazo = "atrasado"
+        elif dias_prev <= 7:
+            status_prazo = "chega_7"
+        else:
+            status_prazo = "no_prazo"
+        pedidos.append({
+            "numped": int(_n(r.get("NUMPED"))),
+            "data_pedido": dtem.isoformat() if dtem else None,
+            "mes": dtem.strftime("%Y-%m") if dtem else None,
+            "codfornec": int(_n(r.get("CODFORNEC"))),
+            "fornecedor": (forn or {}).get("FORNECEDOR") if forn else None,
+            "comprador": nome,
+            "valor": _round(vlt),
+            "valor_aberto": _round(aberto_val),
+            "dt_previsao": dtprev.isoformat() if dtprev else None,
+            "dias_para_chegar": dias_prev,
+            "status_prazo": status_prazo,
+            "recebido": recebido,
+        })
+    if meta_override is not None and _n(meta_override) > 0:
+        meta = _n(meta_override)
+    elif todos:
+        meta = sum(_n(v) for v in venda_comp.values()) * pct
+    else:
+        meta = _n(venda_comp.get(comprador)) * pct
+    saldo = meta - realizado
+    # quebra por comprador (tabela do Orçamento): meta = venda_liq×pct de cada comprador;
+    # comprado/aberto = pedidos do mês. Inclui compradores com venda mas sem pedido.
+    # Só na visão "Empresa toda" (TODOS) — com filtro por comprador a quebra não faz sentido.
+    agg_c = {}
+    for p in (pedidos if todos else []):
+        if p["mes"] != mes:
+            continue
+        nome_c = p["comprador"] or "Sem comprador"
+        a = agg_c.setdefault(nome_c, {"comprador": nome_c, "meta": 0.0, "comprado": 0.0, "aberto": 0.0})
+        a["comprado"] += _n(p["valor"])
+        a["aberto"] += _n(p["valor_aberto"])
+    for nome_c, v in ((venda_comp or {}).items() if todos else []):
+        a = agg_c.setdefault(nome_c, {"comprador": nome_c, "meta": 0.0, "comprado": 0.0, "aberto": 0.0})
+        a["meta"] = _n(v) * pct
+    por_comprador = []
+    for a in agg_c.values():
+        a["saldo"] = _round(a["meta"] - a["comprado"])
+        a["pct_consumido"] = _round(a["comprado"] / a["meta"], 4) if a["meta"] > 0 else None
+        a["meta"] = _round(a["meta"]); a["comprado"] = _round(a["comprado"]); a["aberto"] = _round(a["aberto"])
+        por_comprador.append(a)
+    por_comprador.sort(key=lambda x: (x["meta"] or 0), reverse=True)
+    abertos = [p for p in pedidos if not p["recebido"]]
+    abertos.sort(key=lambda p: (p["dias_para_chegar"] if p["dias_para_chegar"] is not None else 9999))
+    pedidos.sort(key=lambda p: (p["data_pedido"] or ""), reverse=True)
+    resumo = {
+        "mes": mes, "comprador": comprador, "pct": pct,
+        "meta": _round(meta), "comprado": _round(realizado), "aberto": _round(aberto),
+        "saldo": _round(saldo),
+        "pct_consumido": _round(realizado / meta, 4) if meta > 0 else None,
+        "n_pedidos": sum(1 for p in pedidos if p["mes"] == mes),
+        "n_abertos": len(abertos),
+        "n_atrasados": sum(1 for p in abertos if p["status_prazo"] == "atrasado"),
+        "n_chega7": sum(1 for p in abertos if p["status_prazo"] == "chega_7"),
+        "valor_aberto": _round(sum(p["valor_aberto"] for p in abertos)),
+        "meta_auto": meta_override is None,
+        # transferências entre filiais do mês, excluídas do orçamento (front avisa na tela)
+        "transf_n": tr_n, "transf_valor": _round(tr_valor),
+    }
+    return {"resumo": resumo, "pedidos": pedidos, "abertos": abertos, "por_comprador": por_comprador}
+
+
+# ───────────────────────── resumos gerenciais (painel do diretor) ─────────────────────────
+_FX_VALIDADE = [("0 a 15 dias", 0, 15, "URGENTE"), ("16 a 30 dias", 16, 30, "ALTO"),
+                ("31 a 60 dias", 31, 60, "ATENCAO"), ("61 a 90 dias", 61, 90, "BAIXO"),
+                ("Acima de 90 dias", 91, 10**9, "OK")]
+_FX_COBERTURA = [("0 a 30 dias", 0, 30, "RISCO RUPTURA"), ("31 a 60 dias", 31, 60, "OK"),
+                 ("61 a 90 dias", 61, 90, "ATENCAO"), ("91 a 120 dias", 91, 120, "URGENTE"),
+                 ("Acima de 120 dias", 121, 10**9, "CRITICO")]
+
+
+def resumo_validade(lotes, produtos_idx, hoje=None):
+    """Bloco 'Itens a vencer por faixa de validade' (RELATORIO GERENCIAL do diretor).
+    Consolida os lotes por (CODPROD, DTVAL) e classifica por dias até vencer.
+    valor = qt consolidada × custo do produto. Devolve {faixas:[...], total:{...}}."""
+    hoje = hoje or date.today()
+    agg = {}
+    for r in lotes:
+        cod = int(_n(r.get("CODPROD")))
+        dtval = _parse_dt(r.get("DTVAL"))
+        if not dtval:
+            continue
+        agg[(cod, dtval)] = agg.get((cod, dtval), 0.0) + _n(r.get("qt"))
+    faixas = []
+    tot_itens = 0
+    tot_valor = 0.0
+    buckets = {nome: [0, 0.0] for nome, *_ in _FX_VALIDADE}
+    for (cod, dtval), qt in agg.items():
+        dias = (dtval - hoje).days
+        custo = (produtos_idx.get(cod) or {}).get("custo_unit") or 0
+        for nome, lo, hi, _status in _FX_VALIDADE:
+            if lo <= dias <= hi:
+                buckets[nome][0] += 1
+                buckets[nome][1] += qt * custo
+                break
+    for nome, lo, hi, status in _FX_VALIDADE:
+        n, v = buckets[nome]
+        tot_itens += n
+        tot_valor += v
+        faixas.append({"faixa": nome, "itens": n, "valor": _round(v), "status": status})
+    for f in faixas:
+        f["perc"] = _round(f["itens"] / tot_itens, 4) if tot_itens else 0
+    return {"faixas": faixas,
+            "total": {"itens": tot_itens, "valor": _round(tot_valor)}}
+
+
+def resumo_cobertura(produtos):
+    """Bloco 'Cobertura de estoque por faixa de dias' (RELATORIO GERENCIAL do diretor).
+    Cobertura no critério dele: giro<=0 → 9999; senão ceil(qtdisp/giro_dia); qtdisp<=0 → 0.
+    valor = p['valor'] (já com piso zero). Devolve {faixas:[...], total:{...}}."""
+    buckets = {nome: [0, 0.0] for nome, *_ in _FX_COBERTURA}
+    tot_prod = 0
+    tot_valor = 0.0
+    for p in produtos:
+        giro_dia = p.get("giro_dia") or 0
+        qtdisp = p.get("qtdisp") or 0
+        if giro_dia <= 0:
+            cob = 9999
+        elif qtdisp <= 0:
+            cob = 0
+        else:
+            cob = math.ceil(qtdisp / giro_dia)
+        for nome, lo, hi, _status in _FX_COBERTURA:
+            if lo <= cob <= hi:
+                buckets[nome][0] += 1
+                buckets[nome][1] += (p.get("valor") or 0)
+                break
+    faixas = []
+    for nome, lo, hi, status in _FX_COBERTURA:
+        n, v = buckets[nome]
+        tot_prod += n
+        tot_valor += v
+        faixas.append({"faixa": nome, "produtos": n, "valor": _round(v), "status": status})
+    for f in faixas:
+        f["perc"] = _round(f["produtos"] / tot_prod, 4) if tot_prod else 0
+    return {"faixas": faixas,
+            "total": {"produtos": tot_prod, "valor": _round(tot_valor)}}
+
+
+def resumo_ruptura(produtos):
+    """Bloco 'Ruptura de produtos' (RELATORIO GERENCIAL). Critério oficial do diretor:
+    estoque ≤ 0 e giro mensal > 0. % sobre o universo construído (revenda com posição).
+    venda_perdida = giro_mes × custo dos itens em ruptura (o "valor" da ruptura — o antigo
+    "valor de estoque" era sempre ~0, pois item em ruptura tem estoque ≤ 0)."""
+    total = len(produtos)
+    rup = [p for p in produtos if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0]
+    return {
+        "itens": len(rup),
+        "total": total,
+        "perc": _round(len(rup) / total, 4) if total else 0,
+        "venda_perdida": _round(sum((p.get("venda_perdida") or 0) for p in rup)),
+        "valor": _round(sum(p.get("valor") or 0 for p in rup)),  # mantido p/ compat (≈0)
+        "criterio": "ESTOQUE <= 0 E GIRO MENSAL > 0",
+    }
+
+
+def resumo_estoque_ideal(produtos, limiar_dias=45, meta_pct=0.90):
+    """Cobertura MÍNIMA de estoque (pedido do diretor) — % de SKUs por faixa de cobertura.
+    `limiar_dias` = MÍNIMO de dias para o item contar como ideal (fronteira inclusiva):
+    • Em risco  = giro > 0 e cobertura < `limiar_dias` (≤44d)
+    • Ideal     = giro > 0 e cobertura ≥ `limiar_dias` (45d+)
+    A fronteira é inclusiva de propósito (ajuste 07/2026): 45d é o próprio ALVO de compra
+    (`cobertura_total`), então o item reposto no alvo ATINGIU a meta — contá-lo como "em risco"
+    punia justamente quem comprou certo (28 SKUs pousavam exatamente em 45d, ~2× os dias vizinhos).
+    • Sem giro  = giro ≤ 0 (reportado à parte; NÃO entra no % ideal p/ não distorcer)
+    O % ideal é medido só sobre os itens QUE GIRAM (base da 'cobertura mínima'); o gatilho de
+    alerta dispara quando ideal% < `meta_pct` (90%). Cobertura na regra oficial da planilha."""
+    risco = ideal = semgiro = 0
+    v_risco = v_ideal = v_semgiro = 0.0
+    for p in produtos:
+        giro_dia = p.get("giro_dia") or 0
+        valor = p.get("valor") or 0
+        if giro_dia <= 0:
+            semgiro += 1; v_semgiro += valor
+            continue
+        cob = cobertura_dias_oficial(p.get("qtdisp") or 0, giro_dia)
+        if cob < limiar_dias:          # fronteira inclusiva: cobertura == limiar já é ideal
+            risco += 1; v_risco += valor
+        else:
+            ideal += 1; v_ideal += valor
+    com_giro = risco + ideal
+    total = com_giro + semgiro
+    pct_ideal = (ideal / com_giro) if com_giro else None
+    return {
+        "limiar": limiar_dias, "meta_pct": meta_pct,
+        "em_risco": {"n": risco, "valor": _round(v_risco),
+                     "pct": _round(risco / com_giro, 4) if com_giro else None},
+        "ideal": {"n": ideal, "valor": _round(v_ideal),
+                  "pct": _round(pct_ideal, 4) if pct_ideal is not None else None},
+        "sem_giro": {"n": semgiro, "valor": _round(v_semgiro),
+                     "pct": _round(semgiro / total, 4) if total else None},
+        "com_giro": com_giro, "total": total,
+        "alerta": bool(pct_ideal is not None and pct_ideal < meta_pct),
+    }
+
+
+# ───────────────────────── logística / cubagem (pedido real) ─────────────────────────
+def vol_unitario(cad):
+    """Volume unitário em m³ (PCPRODUT.VOLUME; fallback dims/1e6). 0 se sem cadastro."""
+    v = _n((cad or {}).get("VOLUME"))
+    if v > 0:
+        return v
+    a, l, c = _n(cad.get("ALTURAM3")), _n(cad.get("LARGURAM3")), _n(cad.get("COMPRIMENTOM3"))
+    return (a * l * c) / 1e6 if (a > 0 and l > 0 and c > 0) else 0.0
+
+
+def logistica_pedidos(cab, itens, prod_map, embalagem_map, comp_map, forn_map, hoje=None,
+                      capacidade_m3=60.0, baixa_ate=0.1, dias=180):
+    """Cubagem/ocupação por pedido em ABERTO (o que ainda vai chegar).
+    cubagem = Σ (qtd_aberta × volume_unitário); ocupação = cubagem ÷ capacidade do veículo."""
+    hoje = hoje or date.today()
+    corte = hoje - timedelta(days=int(dias))
+    cab_by = {}
+    for r in cab:
+        dtem = _parse_dt(r.get("DTEMISSAO"))
+        if not dtem or dtem < corte:
+            continue
+        vlt, vle = _n(r.get("VLTOTAL")), _n(r.get("VLENTREGUE"))
+        if max(0.0, vlt - vle) <= max(1.0, vlt * 0.005):
+            continue  # já recebido
+        cab_by[int(_n(r.get("NUMPED")))] = r
+    ped = {}
+    for r in itens:
+        np_ = int(_n(r.get("NUMPED")))
+        if np_ not in cab_by:
+            continue
+        oq = _n(r.get("qtped")) - _n(r.get("qtentregue"))
+        if oq <= 0:
+            continue
+        cod = int(_n(r.get("CODPROD")))
+        cad = prod_map.get(cod) or {}
+        emb = (embalagem_map or {}).get(cod) or {}
+        uv = vol_unitario(cad)
+        cx = _n(emb.get("qtunit")) or _n(cad.get("QTUNITCX")) or 1
+        # peso: PCEMBALAGEM[PESOBRUTO] é o peso da CAIXA → multiplica pelas caixas do item
+        # (mesma regra da contagem de caixas: sem fator de caixa, a "caixa" é a própria unidade).
+        peso_cx = _n(emb.get("pesobruto"))
+        cxs = (oq / cx if cx > 1 else oq)
+        d = ped.setdefault(np_, {"cubagem": 0.0, "skus": 0, "caixas": 0.0, "unid": 0.0,
+                                 "sem_vol": 0, "peso": 0.0, "sem_peso": 0})
+        d["cubagem"] += oq * uv
+        d["unid"] += oq
+        d["caixas"] += cxs
+        d["peso"] += cxs * peso_cx
+        d["skus"] += 1
+        if uv <= 0:
+            d["sem_vol"] += 1
+        if peso_cx <= 0:
+            d["sem_peso"] += 1
+    out = []
+    for np_, d in ped.items():
+        r = cab_by[np_]
+        valor_aberto = max(0.0, _n(r.get("VLTOTAL")) - _n(r.get("VLENTREGUE")))
+        cub = d["cubagem"]
+        ocup = (cub / capacidade_m3) if capacidade_m3 > 0 else 0.0
+        if cub <= 0:
+            status = "sem_cubagem"
+        elif ocup <= baixa_ate:
+            status = "baixa"
+        elif ocup <= 0.3:
+            status = "media"
+        else:
+            status = "ok"
+        forn = forn_map.get(int(_n(r.get("CODFORNEC"))))
+        dtprev = _parse_dt(r.get("DTPREVENT"))
+        out.append({
+            "numped": np_,
+            "data_pedido": (_parse_dt(r.get("DTEMISSAO")) or date.min).isoformat(),
+            "fornecedor": (forn or {}).get("FORNECEDOR") if forn else None,
+            "comprador": comp_map.get(int(_n(r.get("CODCOMPRADOR")))),
+            "skus": d["skus"], "caixas": _round(d["caixas"]), "unidades": _round(d["unid"]),
+            "cubagem_m3": _round(cub, 3), "valor_aberto": _round(valor_aberto),
+            "peso_kg": _round(d["peso"], 2),
+            "valor_m3": _round(valor_aberto / cub) if cub > 0 else None,
+            "ocupacao": _round(ocup, 3), "status": status,
+            "sem_cubagem_itens": d["sem_vol"], "sem_peso_itens": d["sem_peso"],
+            "dt_previsao": dtprev.isoformat() if dtprev else None,
+        })
+    out.sort(key=lambda x: x["cubagem_m3"], reverse=True)
+    resumo = {
+        "n_pedidos": len(out),
+        "cubagem_total": _round(sum(p["cubagem_m3"] for p in out), 2),
+        "valor_total": _round(sum(p["valor_aberto"] for p in out)),
+        "n_baixa": sum(1 for p in out if p["status"] == "baixa"),
+        "capacidade_m3": capacidade_m3, "baixa_ate": baixa_ate,
+    }
+    return {"resumo": resumo, "pedidos": out}
+
+
+# ───────────────────────── validade / FEFO ─────────────────────────
+def vencidos_por_mes(rows, produtos_idx=None, venda_mes_map=None, venda_comp_map=None):
+    """Perda por VALIDADE (conta 200042) por mês — espelha a planilha VENCIDOS do diretor.
+
+    rows: saída de q_vencidos (grão = item da nota, já escopado na conta 200042).
+    produtos_idx: {codprod: produto} do snapshot atual. Serve p/ marcar o item que já
+    venceu e **ainda está na casa** (qtdisp > 0) = risco de vencer de novo — é o
+    contraponto do validade_fefo (que olha risco futuro; aqui é perda realizada).
+    venda_mes_map/venda_comp_map: venda líquida por mês ('YYYY-MM') e por comprador (cc),
+    p/ o % da perda sobre a venda. Só há venda ≥2024 → meses antigos saem com pct=None.
+    """
+    idx = produtos_idx or {}
+    vmes = venda_mes_map or {}
+    vcomp = venda_comp_map or {}
+
+    def _pct(perda, venda):
+        return _round(perda / venda * 100, 3) if venda else None
+    itens = []
+    for r in rows:
+        dt = _parse_dt(r.get("dtsaida"))
+        cod = r.get("codprod")
+        cod = int(_n(cod)) if cod is not None else None
+        qt, punit = _n(r.get("qt")), _n(r.get("punit"))
+        p = idx.get(cod) or {}
+        qtdisp = _n(p.get("qtdisp"))
+        itens.append({
+            "dtsaida": dt.isoformat() if dt else None,
+            "mes": dt.strftime("%Y-%m") if dt else None,
+            "numnota": int(_n(r.get("numnota"))),
+            "codprod": cod,
+            "descricao": r.get("descricao") or p.get("descricao") or "—",
+            "qt": _round(qt),
+            "punit": _round(punit, 6),
+            "total": _round(_n(r.get("total")) or qt * punit),
+            "codfornec": int(_n(r.get("codfornec"))) or None,
+            "fornecedor": r.get("fornecedor") or "—",
+            "codcomprador": int(_n(r.get("codcomprador"))) or None,
+            "comprador": r.get("comprador") or "Sem comprador",
+            "codfilial": str(r.get("codfilial") or ""),
+            "curva_abc": p.get("curva_abc"),
+            "qtdisp": _round(qtdisp),
+            "em_estoque": qtdisp > 0,
+        })
+    itens.sort(key=lambda x: (x["dtsaida"] or "", x["total"]), reverse=True)
+
+    # por mês (o pedido do diretor)
+    mm = {}
+    for i in itens:
+        if not i["mes"]:
+            continue
+        g = mm.setdefault(i["mes"], {"mes": i["mes"], "itens": 0, "qt": 0.0, "valor": 0.0, "produtos": set()})
+        g["itens"] += 1
+        g["qt"] += i["qt"]
+        g["valor"] += i["total"]
+        g["produtos"].add(i["codprod"])
+    meses = []
+    for g in mm.values():
+        venda = vmes.get(g["mes"])
+        meses.append({"mes": g["mes"], "itens": g["itens"], "qt": _round(g["qt"]),
+                      "valor": _round(g["valor"]), "produtos": len(g["produtos"]),
+                      "venda": _round(venda) if venda is not None else None,
+                      "pct": _pct(g["valor"], venda)})
+    meses.sort(key=lambda x: x["mes"], reverse=True)
+
+    # rankings (comprador / fornecedor)
+    def _rank(cod_key, nome_key, venda_map=None):
+        # venda_map (só p/ comprador): venda líq → % da perda sobre a venda. O numerador
+        # do % conta só a perda dos meses COM venda (≥2024), p/ casar com o denominador.
+        g = {}
+        for i in itens:
+            d = g.setdefault(i[nome_key], {"nome": i[nome_key], "cod": i.get(cod_key),
+                                           "itens": 0, "qt": 0.0, "valor": 0.0, "valor_com_venda": 0.0})
+            d["itens"] += 1
+            d["qt"] += i["qt"]
+            d["valor"] += i["total"]
+            if i.get("mes") in vmes:
+                d["valor_com_venda"] += i["total"]
+        out = []
+        for d in g.values():
+            d["qt"], d["valor"] = _round(d["qt"]), _round(d["valor"])
+            if venda_map is not None:
+                venda = venda_map.get(d["cod"])
+                d["venda"] = _round(venda) if venda is not None else None
+                d["pct"] = _pct(d.pop("valor_com_venda"), venda)
+            else:
+                d.pop("valor_com_venda", None)
+            out.append(d)
+        return sorted(out, key=lambda x: -x["valor"])
+
+    # por produto — base do painel "ainda em estoque"
+    pp = {}
+    for i in itens:
+        d = pp.setdefault(i["codprod"], {
+            "codprod": i["codprod"], "descricao": i["descricao"],
+            "fornecedor": i["fornecedor"], "codfornec": i["codfornec"],
+            "comprador": i["comprador"], "codcomprador": i["codcomprador"], "curva_abc": i["curva_abc"],
+            "vezes": 0, "qt": 0.0, "valor": 0.0, "ultima": None,
+            "qtdisp": i["qtdisp"], "em_estoque": i["em_estoque"]})
+        d["vezes"] += 1
+        d["qt"] += i["qt"]
+        d["valor"] += i["total"]
+        if (i["dtsaida"] or "") > (d["ultima"] or ""):
+            d["ultima"] = i["dtsaida"]
+    for d in pp.values():
+        d["qt"], d["valor"] = _round(d["qt"]), _round(d["valor"])
+    produtos = sorted(pp.values(), key=lambda x: -x["valor"])
+    em_estoque = [p for p in produtos if p["em_estoque"]]
+
+    pior = max(meses, key=lambda m: m["valor"]) if meses else None
+    # % global: perda dos meses COM venda ÷ venda líquida total (mesmo período)
+    perda_com_venda = sum(i["total"] for i in itens if i.get("mes") in vmes)
+    venda_total = sum(vmes.values())
+    return {
+        "resumo": {
+            "itens": len(itens),
+            "qt": _round(sum(i["qt"] for i in itens)),
+            "valor": _round(sum(i["total"] for i in itens)),
+            "produtos": len(pp),
+            "meses": len(meses),
+            "mes_pior": pior["mes"] if pior else None,
+            "mes_pior_valor": pior["valor"] if pior else 0,
+            "em_estoque_n": len(em_estoque),
+            "em_estoque_valor": _round(sum(p["valor"] for p in em_estoque)),
+            "venda_total": _round(venda_total) if venda_total else None,
+            "pct_total": _pct(perda_com_venda, venda_total),
+        },
+        "meses": meses,
+        "itens": itens,
+        "produtos": produtos,
+        "em_estoque": em_estoque,
+        "por_comprador": _rank("codcomprador", "comprador", venda_map=vcomp),
+        "por_fornecedor": _rank("codfornec", "fornecedor"),
+    }
+
+
+def validade_fefo(lotes, produtos_idx, params, hoje=None):
+    hoje = hoje or date.today()
+    # unifica lotes do MESMO produto + validade (soma a qtd) — evita linhas repetidas do mesmo
+    # item e deixa o saldo/risco correto (consumo projetado incide sobre o total, não por lote).
+    agg = {}
+    for r in lotes:
+        cod = int(_n(r.get("CODPROD")))
+        dtval = _parse_dt(r.get("DTVAL"))
+        if not dtval:
+            continue
+        a = agg.setdefault((cod, dtval), {"qt": 0.0, "n_lotes": 0, "lote": None, "desc": None})
+        a["qt"] += _n(r.get("qt"))
+        a["n_lotes"] += 1
+        a["lote"] = r.get("NUMLOTE") or a["lote"]
+        a["desc"] = a["desc"] or r.get("DESCRICAO")   # nome vindo do próprio lote (LOOKUPVALUE)
+
+    out = []
+    for (cod, dtval), a in agg.items():
+        qt = a["qt"]
+        p = produtos_idx.get(cod, {})
+        giro_dia = p.get("giro_dia") or 0
+        custo_unit = p.get("custo_unit") or 0
+
+        dias = (dtval - hoje).days
+        consumo_proj = giro_dia * max(dias, 0)
+        saldo_proj = qt - consumo_proj
+        valor_risco = max(0.0, saldo_proj) * custo_unit
+
+        if dias <= 7:
+            classif = "critico"
+        elif dias <= 15:
+            classif = "atencao"
+        else:
+            classif = "planejar"
+        if giro_dia <= 0:
+            risco = "giro_zero"
+        elif saldo_proj > 0:
+            risco = "alto" if dias <= 15 else "medio"
+        else:
+            risco = "baixo"
+
+        # rótulo do lote: mostra o nº quando é um só; senão indica quantos foram unificados
+        numlote = (a["lote"] or "—") if a["n_lotes"] == 1 else f"{a['n_lotes']} lotes"
+
+        out.append({
+            "codprod": cod,
+            "descricao": p.get("descricao") or a.get("desc") or f"PRODUTO {cod}",
+            "fornecedor": p.get("fornecedor"),
+            "comprador": p.get("comprador"),
+            "curva_abc": p.get("curva_abc"),
+            "numlote": numlote,
+            "n_lotes": a["n_lotes"],
+            "dtval": dtval.isoformat(),
+            "dias_para_vencer": dias,
+            "qt": _round(qt),
+            "giro_dia": _round(giro_dia, 3),
+            "consumo_proj": _round(consumo_proj),
+            "saldo_proj": _round(saldo_proj),
+            "custo_unit": _round(custo_unit, 4),
+            "valor_risco": _round(valor_risco),
+            "classificacao": classif,
+            "risco": risco,
+        })
+    out.sort(key=lambda x: (x["dias_para_vencer"], -x["valor_risco"]))
+    return out
+
+
+# ───────────────────────── plano de reposição (time-phased / DRP) ─────────────────────────
+def plano_reposicao(p, params, hoje=None, semanas=12):
+    """Grade DRP semanal de um produto: projeta o saldo semana a semana, gera pedidos
+    planejados quando cruza o estoque de segurança e calcula QUANDO o pedido precisa SAIR
+    (liberação = recebimento − lead time).
+
+    Ressalva: sem dados de trânsito no BI (QTTRANSITO=0) → inbound só pelo pendente (raro).
+    Demanda herda o giro escolhido (média3/forecast); no modo sazonal varia por mês na grade."""
+    hoje = hoje or date.today()
+    giro_dia = p.get("giro_dia") or 0
+    seg = p.get("est_seguranca") or 0
+    alvo = p.get("est_alvo") or 0
+    custo = p.get("custo_unit") or 0
+    lead = p.get("lead_efetivo") or params.get("lead_time", 10)
+    lead_sem = max(1, math.ceil(lead / 7.0))
+    receb_prog_total = (p.get("qttransito") or 0) + (p.get("qtpend") or 0)
+    # sazonalidade: demanda da semana varia pelo mês quando há fatores; senão constante
+    nivel_base_dia = p.get("nivel_base_dia")
+    fatores = p.get("fatores_sazonais")
+    # caixa fechada: arredonda o pedido planejado p/ múltiplo de QTUNITCX
+    arred = bool(params.get("arredonda_cx")) and (p.get("qtunitcx") or 0) > 1
+    qtcx = p.get("qtunitcx") or 0
+
+    if giro_dia <= 0:
+        return {"semanas": [], "liberacoes": [], "inbound_zero": receb_prog_total <= 0,
+                "lead_semanas": lead_sem, "sem_giro": True}
+
+    def _dem_sem(data_ini):
+        if nivel_base_dia and fatores:
+            return nivel_base_dia * (fatores.get(data_ini.month) or fatores.get(str(data_ini.month)) or 1.0) * 7.0
+        return giro_dia * 7.0
+
+    saldo = p.get("qtdisp") or 0
+    grade, liberacoes = [], []
+    for s in range(1, semanas + 1):
+        data_ini = hoje + timedelta(days=(s - 1) * 7)
+        dem_sem = _dem_sem(data_ini)
+        receb_prog = receb_prog_total if s == lead_sem else 0.0
+        saldo = saldo - dem_sem + receb_prog
+        receb_plan = 0.0
+        if saldo < seg:
+            receb_plan = max(0.0, round(alvo - saldo))
+            n_cx = None
+            if arred and receb_plan > 0:
+                receb_plan, n_cx = arredonda_caixa(receb_plan, qtcx)
+            saldo += receb_plan
+            sem_lib = max(0, s - lead_sem)
+            liberacoes.append({
+                "semana": sem_lib,
+                "data": (hoje + timedelta(days=sem_lib * 7)).isoformat(),
+                "qt": _round(receb_plan),
+                "qt_cx": n_cx,
+                "valor": _round(receb_plan * custo),
+            })
+        grade.append({
+            "semana": s,
+            "data_ini": data_ini.isoformat(),
+            "demanda": _round(dem_sem),
+            "receb_prog": _round(receb_prog),
+            "receb_plan": _round(receb_plan),
+            "saldo_proj": _round(saldo),
+            "abaixo_seg": saldo < seg,
+        })
+    return {
+        "semanas": grade,
+        "liberacoes": liberacoes,
+        "estoque_seguranca": _round(seg),
+        "estoque_alvo": _round(alvo),
+        "lead_semanas": lead_sem,
+        "inbound_zero": receb_prog_total <= 0,
+        "sem_giro": False,
+    }
+
+
+# ───────────────────────── ocupação / WMS ─────────────────────────
+TIPO_WMS = {"AP": "Picking", "AE": "Pulmão"}
+
+
+def rua_conferencia(rua, itens_rows, vazias_rows):
+    """Lista de conferência de uma RUA, em ORDEM DE CAMINHADA (prédio → nível → apto).
+    Junta as posições COM estoque e as reservadas VAZIAS (que devem ser conferidas como
+    vazias) — é o que valida o endereçamento na prateleira."""
+    def _pos(r, situacao, qt, dtval):
+        p, n, a = int(_n(r.get("predio"))), int(_n(r.get("nivel"))), int(_n(r.get("apto")))
+        cp = r.get("codprod")
+        return {"_p": p, "_n": n, "_a": a,
+                "endereco": "R%d·P%d·N%d·A%d" % (int(rua), p, n, a),
+                "tipo": TIPO_WMS.get(r.get("tipo"), r.get("tipo") or "—"),
+                "codprod": int(_n(cp)) if cp is not None else None,
+                "qt": qt, "dtval": dtval, "situacao": situacao}
+
+    out = [_pos(r, "com estoque", _round(_n(r.get("qt"))), (str(r.get("dtval")) or "")[:10] if r.get("dtval") else None)
+           for r in (itens_rows or [])]
+    out += [_pos(r, "VAZIA (reservada)", 0, None) for r in (vazias_rows or [])]
+    out.sort(key=lambda x: (x["_p"], x["_n"], x["_a"], -(x["qt"] or 0)))
+    for x in out:
+        x.pop("_p"); x.pop("_n"); x.pop("_a")
+    return out
+
+
+def ocupacao_resumo(kpi_rows, rua_rows, tipo_rows=None, vazias_rows=None):
+    """KPIs de ocupação do depósito + ocupação por RUA e por tipo (picking/pulmão).
+    Denominador = posições ativas (PCENDERECO); ocupadas = posições distintas com QT>0.
+    media_pos = pares (produto×posição) / produtos endereçados."""
+    k = kpi_rows[0] if kpi_rows else {}
+    pos = int(_n(k.get("posicoes")))          # régua WMS: não-bloqueadas, todas as ruas
+    occ = int(_n(k.get("ocupadas")))          # OFICIAL: WMS SITUACAO="O"
+    ce = int(_n(k.get("com_estoque")))        # secundário: com estoque físico (QT>0)
+    blq = int(_n(k.get("bloqueados")))        # à parte: BLOQUEIO="S"
+    prod = int(_n(k.get("produtos")))
+    pares = int(_n(k.get("pares")))
+    livres = max(0, pos - occ)
+    ruas = []
+    for r in (rua_rows or []):
+        rp = int(_n(r.get("posicoes")))
+        ro = int(_n(r.get("ocupadas")))
+        if rp <= 0:
+            continue
+        rua = r.get("RUA")
+        ruas.append({
+            "rua": int(_n(rua)) if rua is not None else None,
+            "posicoes": rp, "ocupadas": ro,
+            "pct": _round(ro / rp, 4) if rp else 0,
+        })
+    ruas.sort(key=lambda x: (x["pct"], x["posicoes"]), reverse=True)
+    tipos = []
+    for r in (tipo_rows or []):
+        rp = int(_n(r.get("posicoes")))
+        if rp <= 0:
+            continue
+        ro = int(_n(r.get("ocupadas")))
+        cod = r.get("TIPOENDER")
+        tipos.append({
+            "tipo": cod, "label": TIPO_WMS.get(cod, cod or "—"),
+            "posicoes": rp, "ocupadas": ro, "pct": _round(ro / rp, 4) if rp else 0,
+        })
+    tipos.sort(key=lambda x: x["posicoes"], reverse=True)
+    # posições ocupadas pelo WMS mas sem estoque físico ("reservado vazio") + produto alocado
+    vazias = []
+    for r in (vazias_rows or []):
+        cp = r.get("codprod")
+        vazias.append({
+            "end": "R%d·P%d·N%d·A%d" % (int(_n(r.get("rua"))), int(_n(r.get("predio"))),
+                                        int(_n(r.get("nivel"))), int(_n(r.get("apto")))),
+            "tipo": TIPO_WMS.get(r.get("tipo"), r.get("tipo") or "—"),
+            "codprod": int(_n(cp)) if cp is not None else None,
+            "nprod": int(_n(r.get("nprod"))),
+        })
+    vazias.sort(key=lambda x: (x["codprod"] is None, x["end"]))
+    vazias_com_prod = sum(1 for v in vazias if v["codprod"] is not None)
+    return {
+        "posicoes": pos, "ocupadas": occ, "livres": livres, "produtos": prod,
+        "com_estoque": ce, "bloqueados": blq,
+        "vazias": vazias, "vazias_total": len(vazias), "vazias_com_prod": vazias_com_prod,
+        "pct_ocupado": _round(occ / pos, 4) if pos else 0,
+        "pct_livre": _round(livres / pos, 4) if pos else 0,
+        "pct_com_estoque": _round(ce / pos, 4) if pos else 0,
+        "media_pos": _round(pares / prod, 2) if prod else 0,
+        "ruas": ruas, "tipos": tipos,
+    }

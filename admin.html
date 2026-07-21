@@ -182,6 +182,23 @@
   <div class="modal">
     <h3 id="modalTitulo">Novo usuário</h3>
     <div class="form-grid">
+      <!-- Acesso por área: define quais campos abaixo fazem sentido. Só aparece quando a
+           instância tem os 2 módulos contratados (com 1 módulo a escolha é redundante). -->
+      <div class="ff full" id="ff_areas" style="display:none;">
+        <label>Acesso ao sistema
+          <span style="color:var(--text-dim);font-size:0.72rem;font-weight:400;">— o que esta pessoa pode abrir</span>
+        </label>
+        <div style="display:flex;gap:18px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:500;">
+            <input type="checkbox" id="f_area_comercial" style="width:auto;" onchange="atualizarVisibilidadeRoleFields()">
+            Comercial
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:500;">
+            <input type="checkbox" id="f_area_compras" style="width:auto;" onchange="atualizarVisibilidadeRoleFields()">
+            Compras
+          </label>
+        </div>
+      </div>
       <div class="ff">
         <label>Nome</label>
         <input type="text" id="f_nome" placeholder="Ex: João Silva">
@@ -200,7 +217,7 @@
                  onkeydown="ccOnKeydown(event)" onblur="ccFlushInput()">
         </div>
       </div>
-      <div class="ff">
+      <div class="ff" id="ff_role">
         <label>Função</label>
         <select id="f_role" onchange="atualizarVisibilidadeRoleFields()">
           <option value="vendedor">Vendedor</option>
@@ -228,6 +245,13 @@
                  onkeydown="supOnKeydown(event)" onchange="supOnChange()" onblur="supOnChange()">
         </div>
         <datalist id="dl_supervisores"></datalist>
+      </div>
+      <div class="ff" id="ff_codcomprador" style="display:none;">
+        <label>Comprador vinculado
+          <span style="color:var(--text-dim);font-size:0.72rem;font-weight:400;">— filtro inicial, não trava</span>
+        </label>
+        <input list="dl_compradores" id="f_codcomprador" placeholder="Digite nome ou matrícula">
+        <datalist id="dl_compradores"></datalist>
       </div>
       <div class="ff full">
         <label>Senha (deixe vazio pra gerar automática)</label>
@@ -269,7 +293,7 @@
           <option value="semanal_sex">Semanal (sexta)</option>
         </select>
       </div>
-      <div class="ff full">
+      <div class="ff full" id="ff_segmentos">
         <label>Segmentos RFM (opcional)
           <span style="color:var(--text-dim);font-size:0.72rem;font-weight:400;">— deixe vazio pra receber a carteira completa</span>
         </label>
@@ -284,6 +308,17 @@
           <span class="chip g-lost"               data-val="lost"               onclick="toggleModalChip('lost', this)">Perdidos</span>
         </div>
         <span id="seg_hint" style="color:var(--text-dim);font-size:0.72rem;margin-top:4px;display:block;">Nenhum selecionado — receberá a carteira completa</span>
+      </div>
+      <!-- Relatórios de Compras: reusam o horário/frequência do cron acima, então não têm
+           agendamento próprio. Só aparece se a pessoa tiver a área Compras. -->
+      <div class="ff full" id="ff_relatorios_estoque" style="display:none;">
+        <label>Relatórios de Compras por email
+          <span style="color:var(--text-dim);font-size:0.72rem;font-weight:400;">— usam o horário e a frequência acima</span>
+        </label>
+        <div id="rel_estoque_box" style="padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;max-height:190px;overflow-y:auto;">
+          <span style="color:var(--text-dim);font-size:0.75rem;">Carregando…</span>
+        </div>
+        <span id="rel_estoque_hint" style="color:var(--text-dim);font-size:0.72rem;margin-top:4px;display:block;">Nenhum selecionado — não recebe relatório de Compras</span>
       </div>
     </div>
     <div class="modal-acoes">
@@ -528,7 +563,13 @@ function renderTabela() {
         <td class="cron-info">${cron}</td>
         <td>
           <button class="btn" onclick="abrirEdicao(${u.id})">Editar</button>
-          <button class="btn btn-success" onclick="enviarRelatorio(${u.id})" title="Enviar relatório por email agora">📧 Enviar</button>
+          <button class="btn btn-success" onclick="enviarRelatorio(${u.id})" title="Enviar relatório de carteira (Comercial) por email agora">📧 Enviar</button>
+          ${(u.relatorios_estoque || []).length
+              ? `<button class="btn btn-success" onclick="enviarRelatorioCompras(${u.id})" title="Enviar os relatórios de Compras marcados">📦 Compras</button>`
+              : ''}
+          ${u.bloqueado
+              ? `<button class="btn btn-danger" onclick="desbloquear(${u.id})" title="Conta bloqueada por tentativas de login — liberar agora">🔒 Desbloquear</button>`
+              : ''}
           ${u.ativo ? `<button class="btn btn-danger" onclick="desativar(${u.id})">Desativar</button>` : ''}
         </td>
       </tr>`;
@@ -545,8 +586,103 @@ function extrairCodigo(valor) {
 
 function atualizarVisibilidadeRoleFields() {
   const role = document.getElementById('f_role').value;
-  document.getElementById('ff_codusur').style.display       = (role === 'vendedor')   ? '' : 'none';
-  document.getElementById('ff_codsupervisor').style.display = (role === 'supervisor') ? '' : 'none';
+  // "Função" e seus campos governam o RBAC do COMERCIAL — não fazem sentido para quem só
+  // acessa Compras. Some tudo em bloco em vez de deixar campo morto na tela.
+  const temComercial = document.getElementById('f_area_comercial').checked;
+  const temCompras   = document.getElementById('f_area_compras').checked;
+
+  const mostrar = (id, ok) => { const el = document.getElementById(id); if (el) el.style.display = ok ? '' : 'none'; };
+
+  mostrar('ff_role', temComercial);
+  mostrar('ff_codusur',       temComercial && role === 'vendedor');
+  mostrar('ff_codsupervisor', temComercial && role === 'supervisor');
+  mostrar('ff_segmentos',     temComercial);
+
+  mostrar('ff_codcomprador',       temCompras);
+  mostrar('ff_relatorios_estoque', temCompras);
+}
+
+// ── Fusão: acesso por área, comprador vinculado e relatórios de Compras ──
+let _relEstoqueSel = [];      // views marcadas no modal
+let _catalogoRel = [];        // catálogo vindo do backend (fonte única: estoque/relatorios.py)
+let _compradoresMap = {};     // {matricula: nome}
+let _modulos = ['comercial', 'compras'];
+
+function areasDoModal() {
+  const a = [];
+  if (document.getElementById('f_area_comercial').checked) a.push('comercial');
+  if (document.getElementById('f_area_compras').checked) a.push('compras');
+  return a;
+}
+
+function setAreasNoModal(areas) {
+  const lista = Array.isArray(areas) && areas.length ? areas : ['comercial'];
+  document.getElementById('f_area_comercial').checked = lista.includes('comercial');
+  document.getElementById('f_area_compras').checked = lista.includes('compras');
+  // Com 1 módulo contratado não há escolha a fazer: esconde o bloco e força a área daquele módulo.
+  const bloco = document.getElementById('ff_areas');
+  if (_modulos.length > 1) {
+    bloco.style.display = '';
+  } else {
+    bloco.style.display = 'none';
+    document.getElementById('f_area_comercial').checked = _modulos.includes('comercial');
+    document.getElementById('f_area_compras').checked = _modulos.includes('compras');
+  }
+}
+
+function pintarRelatoriosEstoque() {
+  const box = document.getElementById('rel_estoque_box');
+  if (!_catalogoRel.length) { box.innerHTML = '<span style="color:var(--text-dim);font-size:0.75rem;">Catálogo indisponível</span>'; return; }
+  const grupos = {};
+  _catalogoRel.forEach(r => { (grupos[r.grupo] = grupos[r.grupo] || []).push(r); });
+  box.innerHTML = Object.entries(grupos).map(([g, itens]) => `
+    <div style="margin-bottom:8px;">
+      <div style="color:var(--text-dim);font-size:0.68rem;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">${g}</div>
+      ${itens.map(r => `
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.8rem;padding:2px 0;">
+          <input type="checkbox" style="width:auto;" value="${r.view}"
+                 ${_relEstoqueSel.includes(r.view) ? 'checked' : ''} onchange="toggleRelEstoque(this)">
+          ${r.rotulo}
+        </label>`).join('')}
+    </div>`).join('');
+  atualizarHintRelEstoque();
+}
+
+function toggleRelEstoque(el) {
+  const v = el.value;
+  if (el.checked) { if (!_relEstoqueSel.includes(v)) _relEstoqueSel.push(v); }
+  else { _relEstoqueSel = _relEstoqueSel.filter(x => x !== v); }
+  atualizarHintRelEstoque();
+}
+
+function atualizarHintRelEstoque() {
+  const h = document.getElementById('rel_estoque_hint');
+  h.textContent = _relEstoqueSel.length
+    ? `${_relEstoqueSel.length} relatório(s) — enviados no horário/frequência do cron acima`
+    : 'Nenhum selecionado — não recebe relatório de Compras';
+}
+
+function nomeComprador(cod) {
+  if (cod === null || cod === undefined || cod === '') return '';
+  const n = _compradoresMap[String(cod)];
+  return n ? `${n} (${cod})` : String(cod);
+}
+
+async function carregarApoioFusao() {
+  try {
+    const me = await (await fetch('/api/me', {credentials: 'same-origin'})).json();
+    if (me && me.ok && Array.isArray(me.modulos) && me.modulos.length) _modulos = me.modulos;
+  } catch (e) { /* mantém o default de 2 módulos */ }
+  try {
+    const j = await (await fetch('/api/_internal/relatorios-estoque', {credentials: 'same-origin'})).json();
+    if (j && j.ok) _catalogoRel = j.relatorios || [];
+  } catch (e) { _catalogoRel = []; }
+  try {
+    const j = await (await fetch('/api/_internal/compradores-map', {credentials: 'same-origin'})).json();
+    if (j && j.ok) _compradoresMap = j.compradores || {};
+    document.getElementById('dl_compradores').innerHTML =
+      Object.entries(_compradoresMap).map(([c, n]) => `<option value="${n} (${c})">`).join('');
+  } catch (e) { _compradoresMap = {}; }
 }
 
 function abrirNovo() {
@@ -571,6 +707,12 @@ function abrirNovo() {
   document.getElementById('sup_input').value = '';
   supRender();
   carregarSegmentosNoModal('');
+  // Novo usuário nasce só com Comercial — mesmo default da coluna no banco: acesso a Compras
+  // é sempre uma decisão explícita do admin, nunca herdada.
+  setAreasNoModal(['comercial']);
+  document.getElementById('f_codcomprador').value = '';
+  _relEstoqueSel = [];
+  pintarRelatoriosEstoque();
   atualizarVisibilidadeRoleFields();
   document.getElementById('modal').classList.add('show');
 }
@@ -601,6 +743,10 @@ function abrirEdicao(id) {
   document.getElementById('sup_input').value = '';
   supRender();
   carregarSegmentosNoModal(u.segmentos_rfm || '');
+  setAreasNoModal(u.areas);
+  document.getElementById('f_codcomprador').value = nomeComprador(u.codcomprador);
+  _relEstoqueSel = Array.isArray(u.relatorios_estoque) ? [...u.relatorios_estoque] : [];
+  pintarRelatoriosEstoque();
   atualizarVisibilidadeRoleFields();
   document.getElementById('modal').classList.add('show');
 }
@@ -623,6 +769,10 @@ async function salvar() {
     supOnChange();
     const codsupervisores = role === 'supervisor' ? _supervisoresList.slice() : [];
 
+    const areas = areasDoModal();
+    const temCompras = areas.includes('compras');
+    if (!areas.length) throw new Error('Marque ao menos uma área de acesso');
+
     const body = {
       nome: document.getElementById('f_nome').value.trim(),
       email: document.getElementById('f_email').value.trim(),
@@ -638,6 +788,11 @@ async function salvar() {
       cron_frequencia: document.getElementById('f_cron_frequencia').value,
       email_cc: _ccList,
       segmentos_rfm: _modalSegmentosRfm.join(','),
+      areas,
+      // Só manda o que a área comporta: sem Compras, limpa vínculo e relatórios em vez de
+      // deixar resíduo no banco de uma configuração que a pessoa não pode mais usar.
+      codcomprador: temCompras ? (extrairCodigo(document.getElementById('f_codcomprador').value) || null) : null,
+      relatorios_estoque: temCompras ? _relEstoqueSel.slice() : [],
     };
     const senha = document.getElementById('f_senha').value.trim();
     if (senha) body.senha = senha;
@@ -694,6 +849,40 @@ async function enviarRelatorio(id) {
   }
 }
 
+async function desbloquear(id) {
+  const u = _users.find(x => x.id === id);
+  if (!u) return;
+  if (!confirm(`Liberar o acesso de ${u.nome} agora? (o bloqueio expiraria sozinho)`)) return;
+  try {
+    const r = await fetch(`/api/admin/users/${id}/desbloquear`, { method: 'POST', credentials: 'same-origin' });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || 'Erro');
+    toast('✓ Conta liberada', 'ok');
+    await loadUsers();
+  } catch (e) {
+    toast('Erro: ' + (e.message || e), 'err');
+  }
+}
+
+async function enviarRelatorioCompras(id) {
+  const u = _users.find(x => x.id === id);
+  if (!u) return;
+  const n = (u.relatorios_estoque || []).length;
+  if (!n) { toast('Esse usuário não tem relatório de Compras marcado', 'err'); return; }
+  if (!confirm(`Enviar ${n} relatório(s) de Compras agora pra ${u.nome} (${u.email})?`)) return;
+  toast('Gerando relatórios de Compras...', 'ok');
+  try {
+    const r = await fetch(`/api/admin/enviar-relatorio/${id}?tipo=compras`, { method: 'POST', credentials: 'same-origin' });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || 'Erro');
+    if (j.skipped) { toast('Nada enviado: ' + j.skipped, 'err'); return; }
+    const falhas = (j.falhas && j.falhas.length) ? ` · ${j.falhas.length} falharam` : '';
+    toast(`✓ Enviado! ${j.relatorios} relatório(s) · ${j.anexos} anexos · ${j.anexos_kb || 0}KB${falhas}`, 'ok');
+  } catch (e) {
+    toast('Erro ao enviar: ' + (e.message || e), 'err');
+  }
+}
+
 async function loadConfigCobertura() {
   try {
     const r = await fetch('/api/admin/config/cobertura', { credentials: 'same-origin' });
@@ -726,9 +915,11 @@ async function salvarConfigCobertura() {
 (async () => {
   await loadMe();
   await loadMaps();
+  await carregarApoioFusao();   // módulos ativos, catálogo de relatórios e compradores
   await loadUsers();
   await loadConfigCobertura();
 })();
 </script>
+<script src="/static/area-switcher.js"></script>
 </body>
 </html>

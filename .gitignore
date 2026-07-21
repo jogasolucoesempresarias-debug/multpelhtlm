@@ -10,6 +10,8 @@ venv/
 !.env.example
 *.pem
 *.key
+*recovery-codes*
+hostinger-recovery-codes.txt
 
 .pytest_cache/
 .coverage
@@ -23,10 +25,11 @@ cookies.txt
 _PROGRESSO.md
 _rca_*.json
 
-# App interno de estoque — não vai pro cliente
-_estoque_app/
-estoque.md
+# Estoque: o MÓDULO (estoque/, static/estoque/) É versionado — faz parte do produto desde a
+# aquisição pela Multpel. Aqui ficam só rascunhos e helpers de dev que não vão pro repo.
+/estoque.md
 test_novas_tabelas.py
+itens_sem_fator_caixa.csv
 
 # Exports gerados em dev
 *.xlsx

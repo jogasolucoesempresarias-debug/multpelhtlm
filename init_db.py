@@ -54,6 +54,43 @@ cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS email_proximo_pe
 # Página Gerencial (Cobertura) — opt-in do alerta de baixa performance de cobertura por email
 cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS email_alerta_cobertura BOOLEAN DEFAULT false;")
 
+# ── Fusão Comercial + Compras ──
+# `areas` = o que a PESSOA acessa; o que a EMPRESA comprou vem da env MODULOS. O acesso
+# efetivo é a interseção dos dois. DEFAULT ["comercial"] é deliberado: numa base existente
+# ninguém ganha acesso ao Compras por acidente — o admin libera um a um.
+cur.execute("""ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS areas JSONB
+               DEFAULT '["comercial"]'::jsonb;""")
+# Destino pós-login p/ quem tem as 2 áreas: 'portal' (escolhe toda vez) | 'comercial' | 'compras'.
+# É o "fixar" da tela de portal.
+cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS area_padrao VARCHAR(20) DEFAULT 'portal';")
+# Comprador vinculado (PCEMPR.MATRICULA). Filtro DEFAULT do módulo Compras, não trava:
+# o usuário pode trocar e ver os outros compradores.
+cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS codcomprador INTEGER;")
+# Quais relatórios de compras o usuário recebe por email (lista de views: ["reposicao",...]).
+cur.execute("""ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS relatorios_estoque JSONB
+               DEFAULT '[]'::jsonb;""")
+
+# ── Proteção contra força bruta no login ──
+# Fonte de verdade no Postgres (e não só no Redis) de propósito: é o controle de segurança
+# principal e precisa sobreviver a queda/restart do cache. Falha de login é evento raro,
+# então o custo de escrita é irrelevante.
+cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS tentativas_falhas INTEGER DEFAULT 0;")
+cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS bloqueado_ate TIMESTAMP;")
+# Quantos bloqueios a conta já sofreu — é o que faz o castigo escalonar (15min → 1h → 4h)
+# em vez de o atacante poder tentar 5 senhas a cada 15 minutos, para sempre.
+cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS bloqueios_seguidos INTEGER DEFAULT 0;")
+
+# Rastro de tentativas de login (com IP) — sem isso não há como constatar um ataque depois.
+cur.execute("ALTER TABLE multpel_log ADD COLUMN IF NOT EXISTS ip VARCHAR(45);")
+
+# A FK do log era RESTRICT (padrão): com o log de login gravando por usuário, apagar um
+# usuário de fato passou a ser barrado pelas linhas de auditoria. Tabela de auditoria não pode
+# impedir a exclusão — vira SET NULL: o evento e o e-mail (em `parametros`) permanecem, só o
+# vínculo com a linha de usuário se desfaz.
+cur.execute("ALTER TABLE multpel_log DROP CONSTRAINT IF EXISTS multpel_log_usuario_id_fkey;")
+cur.execute("""ALTER TABLE multpel_log ADD CONSTRAINT multpel_log_usuario_id_fkey
+               FOREIGN KEY (usuario_id) REFERENCES multpel_users(id) ON DELETE SET NULL;""")
+
 # Config global chave/valor (ex.: limiar de cobertura editável no Admin, sem redeploy)
 cur.execute("""
     CREATE TABLE IF NOT EXISTS multpel_config (
@@ -65,6 +102,12 @@ cur.execute("""
 # Seeds idempotentes (não sobrescreve valor já ajustado pelo diretor)
 cur.execute("INSERT INTO multpel_config (chave, valor) VALUES ('cobertura_limiar_pct', '60') ON CONFLICT (chave) DO NOTHING;")
 cur.execute("INSERT INTO multpel_config (chave, valor) VALUES ('cobertura_coberto_dias', '30') ON CONFLICT (chave) DO NOTHING;")
+# Limiares do bloqueio de login — ajustáveis sem redeploy, mesmo padrão da cobertura
+cur.execute("INSERT INTO multpel_config (chave, valor) VALUES ('login_max_tentativas', '5') ON CONFLICT (chave) DO NOTHING;")
+cur.execute("INSERT INTO multpel_config (chave, valor) VALUES ('login_bloqueio_min', '15') ON CONFLICT (chave) DO NOTHING;")
+# 50 e não 20: um escritório inteiro costuma sair por um único IP (NAT). Força bruta faz
+# centenas/milhares de tentativas, então 50 ainda pega o ataque sem punir quem só digitou errado.
+cur.execute("INSERT INTO multpel_config (chave, valor) VALUES ('login_max_por_ip', '50') ON CONFLICT (chave) DO NOTHING;")
 
 # Módulo Metas — meta (alvo) por vendedor/mês. Nosso app é dono da meta (input + sugestão).
 # Realizado/projeção vêm do dataset META; aqui só guardamos o alvo digitado.
@@ -96,6 +139,14 @@ cur.execute("""
         acessado_em   TIMESTAMP DEFAULT NOW()
     );
 """)
+
+# ── Tabelas do módulo Compras (estoque_*) ──
+# O DDL vive no próprio módulo (estoque/store.py) e é importado aqui — fonte de verdade única.
+# Antes ele rodava no import do app; migration é o lugar certo. O store.ensure() em runtime
+# continua servindo de rede de segurança se o Postgres subir depois do app.
+from estoque.store import DDL as ESTOQUE_DDL
+cur.execute(ESTOQUE_DDL)
+print("[OK] Tabelas estoque_* criadas/atualizadas.")
 
 admin_email = 'admin@multpel.com.br'
 cur.execute("SELECT id FROM multpel_users WHERE email = %s", (admin_email,))

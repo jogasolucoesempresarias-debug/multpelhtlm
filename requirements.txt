@@ -6,6 +6,8 @@ Werkzeug==3.0.1
 requests==2.31.0
 redis==5.0.1
 reportlab==4.0.7
+openpyxl==3.1.5
+Pillow==11.3.0
 resend==0.7.0
 APScheduler==3.10.4
 waitress==2.1.2

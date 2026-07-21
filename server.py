@@ -12,6 +12,7 @@ import functools
 import traceback
 import secrets
 import base64
+from datetime import datetime, timedelta, timezone
 import psycopg2
 from psycopg2.extras import Json
 import redis
@@ -34,7 +35,43 @@ RESEND_FROM = os.getenv('RESEND_FROM', 'onboarding@resend.dev')
 CRON_HABILITADO = os.getenv('CRON_HABILITADO', 'false').lower() == 'true'
 
 app = Flask(__name__, static_folder='.')
-app.secret_key = os.getenv('SECRET_KEY', 'dev-secret-change-me')
+
+# ── Chave de sessão ──
+# Em produção a SECRET_KEY é OBRIGATÓRIA. Antes havia um fallback fixo ('dev-secret-change-me'):
+# se a variável faltasse no deploy, o app subia "funcionando" com chave pública e QUALQUER UM
+# podia forjar um cookie de sessão de admin. Falha silenciosa em controle de acesso é pior que
+# app fora do ar, então aqui ela derruba o boot.
+_EM_PRODUCAO = os.getenv('FLASK_ENV', '').lower() == 'production'
+_SECRET = os.getenv('SECRET_KEY', '')
+if not _SECRET:
+    if _EM_PRODUCAO:
+        raise RuntimeError(
+            'SECRET_KEY não definida. Em produção ela é obrigatória — sem ela os cookies de '
+            'sessão seriam forjáveis. Defina a variável na stack (valor fixo, aleatório e longo; '
+            'trocá-la desloga todos os usuários).'
+        )
+    _SECRET = 'dev-secret-change-me'
+    print('[AVISO] SECRET_KEY ausente — usando chave de desenvolvimento. NUNCA em produção.')
+app.secret_key = _SECRET
+
+# ── Endurecimento do cookie de sessão ──
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,     # JS não lê o cookie (reduz roubo de sessão via XSS)
+    SESSION_COOKIE_SAMESITE='Lax',    # não vai em requisição cross-site (anti-CSRF)
+    # Secure só em produção: o dev local roda em HTTP e o flag impediria o login na própria
+    # máquina. Em produção os domínios são TLS via Traefik.
+    SESSION_COOKIE_SECURE=_EM_PRODUCAO,
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
+)
+
+
+@app.before_request
+def _sessao_expira():
+    """Antes a sessão não expirava nunca. Passa a durar 12h, renovando a cada uso — quem está
+    trabalhando não é deslogado, quem esqueceu o navegador aberto perde a sessão."""
+    session.permanent = True
+
+
 CORS(app, supports_credentials=True)
 
 # ── Config Power BI ──
@@ -52,6 +89,20 @@ _R = redis.Redis(
     port=int(os.getenv('REDIS_PORT', '6379')),
     decode_responses=True,
     socket_connect_timeout=2,
+)
+
+# Handle separado, com timeout curto de LEITURA, usado só no caminho do login.
+# Motivo: o cliente acima não define socket_timeout — se o Redis aceitar a conexão e travar
+# (sobrecarga, rede ruim), a chamada fica pendurada. Isso é tolerável num cache de dashboard,
+# mas inaceitável no login, que passaria a não responder. Aqui a camada por IP é acessória:
+# melhor perdê-la em 1s do que segurar a autenticação. O cache principal segue com a folga
+# maior, porque lá há payloads grandes (carteira completa) que legitimamente demoram mais.
+_R_LOGIN = redis.Redis(
+    host=os.getenv('REDIS_HOST', 'localhost'),
+    port=int(os.getenv('REDIS_PORT', '6379')),
+    decode_responses=True,
+    socket_connect_timeout=1,
+    socket_timeout=1,
 )
 _CACHE_TTLS = {
     'dax_agregado':  3600,
@@ -157,11 +208,11 @@ def login_required(f):
     @functools.wraps(f)
     def decorated(*args, **kwargs):
         if 'user_id' not in session:
-            if request.path.startswith('/api/'):
+            if '/api/' in request.path:
                 return jsonify({'ok': False, 'error': 'Não autenticado'}), 401
             return redirect('/login')
         if session.get('must_change_password') and request.path not in ('/trocar-senha', '/api/trocar-senha'):
-            if request.path.startswith('/api/'):
+            if '/api/' in request.path:
                 return jsonify({'ok': False, 'error': 'Troque a senha antes de continuar', 'redirect': '/trocar-senha'}), 403
             return redirect('/trocar-senha')
         return f(*args, **kwargs)
@@ -177,6 +228,112 @@ def admin_required(f):
             return jsonify({'ok': False, 'error': 'Acesso negado'}), 403
         return f(*args, **kwargs)
     return decorated
+
+
+# ── Áreas do sistema (Comercial × Compras) ──
+# Duas coisas diferentes que se combinam:
+#   MODULOS         → o que a EMPRESA comprou (env var da stack; uma instância por cliente)
+#   multpel_users.areas → o que a PESSOA pode acessar
+# O acesso real é a interseção. Assim, num cliente que só comprou o Estoque, todo usuário
+# fica com 1 área efetiva e cai direto no Compras, sem nenhum caso especial no código.
+MODULOS = [m.strip() for m in os.getenv('MODULOS', 'comercial,compras').split(',') if m.strip()]
+
+AREAS_VALIDAS = ('comercial', 'compras')
+
+
+def normalizar_areas(bruto):
+    """Normaliza a coluna `areas` (JSONB) numa lista. Base legada/NULL/vazio → ['comercial'],
+    que preserva o comportamento de antes da fusão: ninguém ganha Compras por acidente."""
+    if isinstance(bruto, list):
+        lista = [str(a).strip() for a in bruto if str(a).strip()]
+    elif isinstance(bruto, str) and bruto.strip():
+        try:
+            lista = [str(a).strip() for a in json.loads(bruto)]
+        except (ValueError, TypeError):
+            lista = [a.strip() for a in bruto.split(',') if a.strip()]
+    else:
+        lista = []
+    lista = [a for a in lista if a in AREAS_VALIDAS]
+    return lista or ['comercial']
+
+
+def areas_efetivas():
+    """O que o usuário logado realmente enxerga: suas áreas ∩ os módulos contratados."""
+    return [a for a in (session.get('areas') or []) if a in MODULOS]
+
+
+def tem_area(area):
+    return area in areas_efetivas()
+
+
+def destino_pos_login():
+    """Para onde mandar o usuário logado. Uma área só → direto pra ela (sem portal nem
+    seletor). Duas áreas → respeita o 'fixar' do portal (area_padrao)."""
+    efetivas = areas_efetivas()
+    if not efetivas:
+        return None                     # sem área contratada/liberada — chamador trata
+    if len(efetivas) == 1:
+        return '/estoque/' if efetivas[0] == 'compras' else '/'
+    padrao = session.get('area_padrao') or 'portal'
+    if padrao in ('comercial', 'compras'):
+        return '/estoque/' if padrao == 'compras' else '/'
+    return '/portal'
+
+
+# ── Módulo Compras (Estoque) ──
+# O pacote estoque/ é autocontido e NÃO importa o server — por isso a guarda de acesso é
+# atada aqui, do lado do app. O contrário criaria import circular (server → estoque → server)
+# e amarraria o módulo ao servidor, atrapalhando vendê-lo separado.
+from estoque import bp as estoque_bp
+
+
+@estoque_bp.before_request
+def _guard_estoque():
+    """Login + acesso à área de Compras, para tudo sob /estoque."""
+    # Reusa login_required aplicando-o a um no-op: se a autenticação falha ele devolve a
+    # resposta pronta (401 ou redirect); se passa, devolve None e seguimos.
+    negado = login_required(lambda: None)()
+    if negado is not None:
+        return negado
+    if not tem_area('compras'):
+        if '/api/' in request.path:
+            return jsonify({'ok': False, 'error': 'Sem acesso ao módulo Compras'}), 403
+        return Response('Sem acesso ao módulo Compras', status=403)
+
+
+if 'compras' in MODULOS:
+    app.register_blueprint(estoque_bp)
+else:
+    # Módulo não contratado: nem entra no mapa de rotas. /estoque/* devolve 404 — não existe,
+    # em vez de "existe mas você não pode", que já entregaria informação sobre o produto.
+    print('[MODULOS] Compras desativado nesta instância — blueprint /estoque não registrado.')
+
+
+# ── Guarda de módulo do Comercial ──
+# O Comercial tem ~92 rotas declaradas direto no app (não é blueprint), então não dá pra
+# "não registrar". A guarda nega no request. Regra DENY BY DEFAULT: em vez de listar o que
+# bloquear (e esquecer a rota nova de amanhã), listamos o pouco que é neutro e barramos o resto.
+_ROTAS_NEUTRAS = {
+    '/login', '/api/login', '/logout', '/health', '/portal', '/api/me',
+    '/api/me/area-padrao', '/trocar-senha', '/api/trocar-senha', '/api/status',
+    '/multpel-logo.png',
+}
+
+
+@app.before_request
+def _guard_modulo_comercial():
+    if 'comercial' in MODULOS:
+        return
+    p = request.path
+    if p in _ROTAS_NEUTRAS or p.startswith('/static/') or p.startswith('/estoque'):
+        return
+    # A raiz é o endereço que o usuário digita. Num cliente que só tem Compras ela deve levar
+    # ao produto, não a um 404 — 404 na home passa impressão de sistema quebrado.
+    if p == '/':
+        return redirect('/estoque/' if 'compras' in MODULOS else '/login')
+    if '/api/' in p:
+        return jsonify({'ok': False, 'error': 'Módulo Comercial não contratado'}), 404
+    return Response('Módulo Comercial não contratado', status=404)
 
 
 # ── Power BI: token cacheado ──
@@ -628,6 +785,183 @@ def _normalizar_segmentos_rfm(entrada):
     return ','.join(sorted(set(validos)))
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Proteção do login contra força bruta
+#
+# Duas camadas com papéis distintos:
+#   • CONTA (Postgres) — proteção principal. Sobrevive a queda/restart do Redis.
+#   • IP    (Redis)    — camada de volume, descartável: se o Redis cair, degrada sozinha
+#                        sem derrubar o login, porque a proteção que importa é a de cima.
+#
+# O bloqueio é TEMPORÁRIO e escalona (15min → 1h → 4h). Bloqueio permanente até um admin
+# destravar seria pior: qualquer um poderia travar usuários legítimos de propósito só errando
+# a senha deles — vira negação de serviço e enxurrada de chamado no suporte.
+# ══════════════════════════════════════════════════════════════════════
+
+# Hash descartável de uma senha aleatória. Serve só para gastar, no caminho "e-mail não
+# existe", o mesmo tempo que o hash de um usuário real gastaria (ver login_post).
+_HASH_ISCA = generate_password_hash(secrets.token_urlsafe(16))
+
+
+def _cfg_int(chave, default):
+    try:
+        return max(1, int(_config_get(chave, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _ip_do_request():
+    """IP real do cliente. Atrás de Traefik/Cloudflare o remote_addr é o do proxy, então o
+    X-Forwarded-For (1º da cadeia) é quem identifica o cliente."""
+    xff = request.headers.get('X-Forwarded-For', '')
+    if xff:
+        return xff.split(',')[0].strip()[:45]
+    return (request.remote_addr or '')[:45]
+
+
+def _login_bloqueio_restante(bloqueado_ate):
+    """Segundos restantes de bloqueio, ou 0 se liberado."""
+    if not bloqueado_ate:
+        return 0
+    restante = (bloqueado_ate - datetime.now()).total_seconds()
+    return int(restante) if restante > 0 else 0
+
+
+def _chave_ip(ip):
+    return f'multpel:login:ip:{ip}'
+
+
+def _login_ip_excedido(ip):
+    """Só CONSULTA o contador do IP — não incrementa.
+
+    ⚠️ Conta apenas tentativas que FALHARAM (ver _login_ip_falha). Contar todo login faria o
+    contador estourar num escritório atrás de um único IP (NAT corporativo): a partir do 21º
+    acesso legítimo do dia, a empresa inteira ficaria de fora. O sinal de ataque é erro
+    repetido, não uso normal.
+
+    Fail-open: sem Redis devolve False e a trava por conta (Postgres) assume sozinha."""
+    if not ip or app.config.get('TESTING'):
+        # Em teste a camada de IP fica fora: a suíte exercita senha errada de propósito, de um
+        # "IP" único, e estouraria o contador derrubando todos os testes seguintes. A proteção
+        # que importa (por conta, no Postgres) continua ativa e testada.
+        return False
+    try:
+        n = _R_LOGIN.get(_chave_ip(ip))
+        return int(n or 0) > _cfg_int('login_max_por_ip', 50)
+    except Exception:      # noqa: BLE001 — inclui timeout/rede, não só RedisError
+        return False
+
+
+def _login_ip_falha(ip):
+    """Incrementa o contador do IP. Chamado só quando a tentativa falhou."""
+    if not ip or app.config.get('TESTING'):
+        return
+    try:
+        n = _R_LOGIN.incr(_chave_ip(ip))
+        if n == 1:
+            _R_LOGIN.expire(_chave_ip(ip), _cfg_int('login_bloqueio_min', 15) * 60)
+    except Exception:      # noqa: BLE001
+        pass
+
+
+def _login_ip_ok(ip):
+    """Login válido limpa o contador: se alguém do escritório acertou a senha, aquele IP não
+    está sob ataque e não deve carregar os erros de digitação dos colegas."""
+    if not ip:
+        return
+    try:
+        _R_LOGIN.delete(_chave_ip(ip))
+    except Exception:      # noqa: BLE001
+        pass
+
+
+def _login_registrar_falha(user_id, email, ip):
+    """Incrementa o contador da conta e bloqueia ao atingir o limite, com castigo crescente."""
+    max_tent = _cfg_int('login_max_tentativas', 5)
+    base_min = _cfg_int('login_bloqueio_min', 15)
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE multpel_users SET tentativas_falhas = COALESCE(tentativas_falhas, 0) + 1 "
+            "WHERE id = %s RETURNING tentativas_falhas, COALESCE(bloqueios_seguidos, 0)",
+            (user_id,)
+        )
+        linha = cur.fetchone()
+        if linha and linha[0] >= max_tent:
+            rodada = linha[1]                      # 0 no 1º bloqueio, 1 no 2º, ...
+            minutos = base_min * (4 ** min(rodada, 2))   # 15min → 1h → 4h (teto)
+            cur.execute(
+                "UPDATE multpel_users SET bloqueado_ate = %s, tentativas_falhas = 0, "
+                "bloqueios_seguidos = COALESCE(bloqueios_seguidos, 0) + 1 WHERE id = %s",
+                (datetime.now() + timedelta(minutes=minutos), user_id)
+            )
+            conn.commit()
+            _log_login(user_id, email, ip, f'bloqueado:{minutos}min')
+            return minutos * 60
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+    _log_login(user_id, email, ip, 'senha_incorreta')
+    return 0
+
+
+def _login_registrar_sucesso(user_id):
+    """Login válido zera o contador e o escalonamento — quem acerta não carrega histórico."""
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE multpel_users SET tentativas_falhas = 0, bloqueado_ate = NULL, "
+            "bloqueios_seguidos = 0 WHERE id = %s", (user_id,)
+        )
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+
+def _log_login(user_id, email, ip, evento):
+    """Rastro de tentativa de login. Nunca derruba o login se o log falhar."""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO multpel_log (usuario_id, rota, parametros, ip) VALUES (%s, %s, %s, %s)",
+            (user_id, f'login:{evento}', json.dumps({'email': email}), ip)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception:
+        pass
+
+
+def _msg_bloqueio(segundos):
+    minutos = max(1, round(segundos / 60))
+    if minutos < 60:
+        quando = f'{minutos} minuto(s)'
+    else:
+        quando = f'{round(minutos / 60, 1)} hora(s)'
+    return f'Muitas tentativas. Tente novamente em {quando}.'
+
+
+def _normalizar_relatorios_estoque(entrada):
+    """Views de relatório de Compras que o usuário recebe por email. Sanitiza contra o
+    catálogo do próprio módulo (estoque/relatorios.py), que é a fonte única."""
+    from estoque import relatorios as rel_estoque
+    return rel_estoque.normalizar(entrada)
+
+
+def _validar_area_compras(areas, relatorios_estoque):
+    """Impede o estado inconsistente de marcar relatórios de Compras para quem não tem a área
+    (o cron tentaria gerar um relatório que o usuário não pode nem abrir). Devolve msg ou None."""
+    if relatorios_estoque and 'compras' not in (areas or []):
+        return 'Relatórios de Compras exigem acesso à área Compras'
+    return None
+
+
 def _normalizar_codsupervisores(entrada):
     """Aceita lista, int único ou CSV string → list[int] ordenada e sem duplicatas.
     Usado no CRUD de usuários (supervisor multi-área)."""
@@ -643,7 +977,7 @@ def _ler_usuario(usuario_id):
     cur.execute(
         "SELECT id, nome, email, role, codusur, codsupervisor, telefone, ativo, "
         "cron_enabled, cron_horario, cron_frequencia, email_cc, segmentos_rfm, codsupervisores, "
-        "email_proximo_pedido, email_alerta_cobertura "
+        "email_proximo_pedido, email_alerta_cobertura, areas, codcomprador, relatorios_estoque "
         "FROM multpel_users WHERE id = %s",
         (usuario_id,)
     )
@@ -663,6 +997,9 @@ def _ler_usuario(usuario_id):
         'codsupervisores': sups,
         'email_proximo_pedido': bool(row[14]),
         'email_alerta_cobertura': bool(row[15]),
+        'areas': normalizar_areas(row[16]),
+        'codcomprador': row[17],
+        'relatorios_estoque': row[18] if row[18] is not None else [],
     }
 
 
@@ -871,6 +1208,102 @@ def enviar_relatorio_email(usuario_id):
         return {'ok': False, 'error': erro_str}
 
 
+def enviar_relatorios_estoque_email(usuario_id):
+    """Envia os relatórios de Compras marcados para o usuário (PDF + XLSX de cada um).
+
+    Espelha enviar_relatorio_email(), mas o conteúdo vem do módulo Compras. Retorna
+    {ok, message_id?, error?, skipped?} — `skipped` quando não há nada a enviar, para o cron
+    conseguir distinguir "não tinha o que mandar" de "falhou"."""
+    if not resend.api_key:
+        return {'ok': False, 'error': 'RESEND_API_KEY não configurado'}
+
+    user = _ler_usuario(usuario_id)
+    if not user:
+        return {'ok': False, 'error': f'Usuário {usuario_id} não encontrado'}
+    if not user.get('email'):
+        return {'ok': False, 'error': f'Usuário {usuario_id} sem email'}
+    if not user.get('ativo'):
+        return {'ok': False, 'error': f'Usuário {usuario_id} desativado'}
+
+    # Respeita os dois níveis: o que a empresa contratou e o que a pessoa acessa.
+    if 'compras' not in MODULOS:
+        return {'ok': True, 'skipped': 'módulo Compras não contratado nesta instância'}
+    if 'compras' not in (user.get('areas') or []):
+        return {'ok': True, 'skipped': 'usuário sem acesso à área Compras'}
+
+    from estoque import emails as est_emails
+    from estoque import relatorios as rel_estoque
+    views = rel_estoque.normalizar(user.get('relatorios_estoque'))
+    if not views:
+        return {'ok': True, 'skipped': 'nenhum relatório de Compras marcado'}
+
+    from datetime import date as _date
+    data_iso = _date.today().isoformat()
+    try:
+        anexos, erros = est_emails.gerar_anexos(
+            app, views, codcomprador=user.get('codcomprador'), data_iso=data_iso)
+    except Exception as e:
+        return {'ok': False, 'error': f'Falha ao gerar relatórios de Compras: {e}'}
+    if not anexos:
+        return {'ok': False, 'error': 'Nenhum relatório pôde ser gerado. ' + ('; '.join(erros))[:300]}
+
+    comp_txt = 'Empresa toda (todos os compradores)'
+    if user.get('codcomprador'):
+        try:
+            from estoque.routes import _compradores_map
+            comp_txt = _compradores_map().get(int(user['codcomprador'])) or f"Comprador {user['codcomprador']}"
+        except Exception:
+            comp_txt = f"Comprador {user['codcomprador']}"
+
+    itens_li = '\n'.join(f"  <li>{rel_estoque.ROTULOS.get(v, v)}</li>" for v in views)
+    aviso = ''
+    if erros:
+        aviso = ('<p style="color:#b45309;font-size:12px;">Alguns relatórios não puderam ser gerados '
+                 'nesta execução e ficaram de fora dos anexos.</p>')
+
+    html = f"""<html><body style="font-family:Arial,sans-serif;color:#0a0e17;">
+<h2 style="color:#38bdf8;">JOGA Analytics — Compras</h2>
+<p>Olá <strong>{user.get('nome')}</strong>,</p>
+<p>Seguem seus relatórios de compras de {_date.today().strftime('%d/%m/%Y')}.</p>
+<ul>
+  <li>Recorte: {comp_txt}</li>
+</ul>
+<p>Relatórios incluídos:</p>
+<ul>
+{itens_li}
+</ul>
+<p>Cada relatório vai em PDF (leitura) e XLSX (para trabalhar os dados).</p>
+{aviso}<p style="color:#94a3b8;font-size:12px;">Email automatizado — JOGA Analytics</p>
+</body></html>"""
+
+    try:
+        emails_cc = _normalizar_emails_cc(user.get('email_cc') or [], user['email'])
+    except ValueError:
+        emails_cc = []
+
+    payload = {
+        'from': RESEND_FROM,
+        'to': [user['email']],
+        'subject': f"JOGA Analytics — Compras {_date.today().strftime('%d/%m/%Y')}",
+        'html': html,
+        'attachments': [{'filename': fn, 'content': base64.b64encode(b).decode()} for fn, b in anexos],
+    }
+    if emails_cc:
+        payload['cc'] = emails_cc
+
+    try:
+        resp = resend.Emails.send(payload)
+        message_id = resp.get('id') if isinstance(resp, dict) else getattr(resp, 'id', None)
+        _log_background(f'email_estoque:enviado:user{usuario_id}')
+        return {'ok': True, 'message_id': message_id, 'relatorios': len(views),
+                'anexos': len(anexos), 'falhas': erros,
+                'anexos_kb': round(sum(len(b) for _, b in anexos) / 1024, 1)}
+    except Exception as e:
+        erro_str = str(e)[:500]
+        _log_background(f'email_estoque:erro:user{usuario_id}', erro=erro_str)
+        return {'ok': False, 'error': erro_str}
+
+
 def enviar_alerta_cobertura_email(usuario_id):
     """Alerta de baixa performance de cobertura. Calcula o placar NO ESCOPO do destinatário
     (admin/diretor → empresa; supervisor → suas áreas) e envia digest de Times e RCAs abaixo
@@ -1003,8 +1436,10 @@ def login_page():
 
 @app.route('/health')
 def health():
-    """Liveness check pro Docker/Traefik. Sem auth, retorna 200 quando o processo está up."""
-    return jsonify({'ok': True, 'service': 'joga-analytics'}), 200
+    """Liveness check pro Docker/Traefik. Sem auth, retorna 200 quando o processo está up.
+    Informa os módulos ativos — com uma instância por cliente, é o jeito mais rápido de
+    conferir remotamente o que aquela instalação está servindo."""
+    return jsonify({'ok': True, 'service': 'joga-analytics', 'modulos': MODULOS}), 200
 
 
 @app.route('/trocar-senha', methods=['GET'])
@@ -1017,7 +1452,47 @@ def trocar_senha_page():
 @app.route('/')
 @login_required
 def index_page():
+    # Quem não tem a área Comercial (ex.: cliente que só comprou o Estoque, ou usuário só de
+    # compras) não pode cair aqui — manda pro destino dele em vez de mostrar um 403 seco.
+    if not tem_area('comercial'):
+        destino = destino_pos_login()
+        if destino and destino != '/':
+            return redirect(destino)
+        return Response('Sem acesso ao módulo Comercial', status=403)
     return send_from_directory('.', 'index.html')
+
+
+@app.route('/portal')
+@login_required
+def portal_page():
+    """Tela de escolha de área. Só faz sentido com 2 áreas efetivas — com uma só, manda direto
+    (o próprio portal.html também redireciona, mas resolver no servidor evita o piscar)."""
+    destino = destino_pos_login()
+    if destino is None:
+        return Response('Usuário sem área liberada. Procure o administrador.', status=403)
+    if len(areas_efetivas()) < 2:
+        return redirect(destino)
+    return send_from_directory('.', 'portal.html')
+
+
+@app.route('/api/me/area-padrao', methods=['PUT'])
+@login_required
+def set_area_padrao():
+    """Grava o 'fixar' do portal: 'portal' (perguntar sempre) | 'comercial' | 'compras'."""
+    valor = (request.get_json() or {}).get('area_padrao', 'portal')
+    if valor not in ('portal',) + AREAS_VALIDAS:
+        return jsonify({'ok': False, 'error': 'Área inválida'}), 400
+    # Não deixa fixar numa área que o usuário não acessa (viraria um loop de redirect).
+    if valor in AREAS_VALIDAS and valor not in areas_efetivas():
+        return jsonify({'ok': False, 'error': 'Você não tem acesso a essa área'}), 403
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("UPDATE multpel_users SET area_padrao = %s WHERE id = %s", (valor, session['user_id']))
+    conn.commit()
+    cur.close()
+    conn.close()
+    session['area_padrao'] = valor
+    return jsonify({'ok': True, 'area_padrao': valor})
 
 
 # ── Auth API ──
@@ -1028,22 +1503,53 @@ def login_post():
     senha = data.get('senha', '')
     if not email or not senha:
         return jsonify({'ok': False, 'error': 'Preencha e-mail e senha'}), 400
+
+    ip = _ip_do_request()
+    # Camada de volume: barra o atacante antes mesmo de tocar no banco.
+    if _login_ip_excedido(ip):
+        _log_login(None, email, ip, 'ip_bloqueado')
+        return jsonify({'ok': False, 'error': _msg_bloqueio(_cfg_int('login_bloqueio_min', 15) * 60)}), 429
+
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        "SELECT id, nome, password_hash, role, ativo, codusur, codsupervisor, must_change_password, codsupervisores "
+        "SELECT id, nome, password_hash, role, ativo, codusur, codsupervisor, must_change_password, codsupervisores, "
+        "areas, area_padrao, codcomprador, bloqueado_ate "
         "FROM multpel_users WHERE email = %s", (email,)
     )
     user = cur.fetchone()
     cur.close()
     conn.close()
     if not user:
+        # Gasta o mesmo tempo de um hash real. Sem isso, e-mail inexistente responde na hora e
+        # e-mail válido demora o check_password_hash — a diferença permite descobrir por
+        # cronometragem quais contas existem.
+        check_password_hash(_HASH_ISCA, senha)
+        _login_ip_falha(ip)
+        _log_login(None, email, ip, 'email_inexistente')
         return jsonify({'ok': False, 'error': 'E-mail ou senha inválidos'}), 401
-    uid, nome, pw_hash, role, ativo, codusur, codsupervisor, mcp, codsupervisores = user
+    (uid, nome, pw_hash, role, ativo, codusur, codsupervisor, mcp, codsupervisores,
+     areas, area_padrao, codcomprador, bloqueado_ate) = user
     if not ativo:
         return jsonify({'ok': False, 'error': 'Conta desativada'}), 403
+
+    # Bloqueio vale antes de conferir a senha: durante a janela nem a senha correta entra —
+    # é o que impede continuar adivinhando.
+    restante = _login_bloqueio_restante(bloqueado_ate)
+    if restante:
+        _log_login(uid, email, ip, 'tentativa_durante_bloqueio')
+        return jsonify({'ok': False, 'error': _msg_bloqueio(restante)}), 429
+
     if not check_password_hash(pw_hash, senha):
+        _login_ip_falha(ip)
+        bloqueou = _login_registrar_falha(uid, email, ip)
+        if bloqueou:
+            return jsonify({'ok': False, 'error': _msg_bloqueio(bloqueou)}), 429
         return jsonify({'ok': False, 'error': 'E-mail ou senha inválidos'}), 401
+
+    _login_registrar_sucesso(uid)
+    _login_ip_ok(ip)
+    _log_login(uid, email, ip, 'sucesso')
     # Supervisor multi-área: lista normalizada (legado single → [single]); session guarda
     # a lista + o 1º elemento em codsupervisor (compatibilidade com qualquer caminho legado).
     sups = _como_lista_supervisores(codsupervisores) or _como_lista_supervisores(codsupervisor)
@@ -1054,9 +1560,16 @@ def login_post():
     session['codsupervisores']      = sups
     session['codsupervisor']        = sups[0] if sups else None
     session['must_change_password'] = bool(mcp)
+    session['areas']                = normalizar_areas(areas)
+    session['area_padrao']          = area_padrao or 'portal'
+    session['codcomprador']         = codcomprador   # filtro default do Compras (não é trava)
     if mcp:
         return jsonify({'ok': True, 'redirect': '/trocar-senha'})
-    return jsonify({'ok': True, 'redirect': '/'})
+    destino = destino_pos_login()
+    if destino is None:
+        session.clear()
+        return jsonify({'ok': False, 'error': 'Usuário sem área liberada. Procure o administrador.'}), 403
+    return jsonify({'ok': True, 'redirect': destino})
 
 
 @app.route('/api/trocar-senha', methods=['POST'])
@@ -1098,6 +1611,11 @@ def me():
         'codusur': session.get('codusur'),
         'codsupervisor': session.get('codsupervisor'),
         'codsupervisores': _session_supervisores(),
+        # Front usa isto pra montar o seletor de área e esconder o menu do que não é liberado.
+        'areas': areas_efetivas(),
+        'area_padrao': session.get('area_padrao') or 'portal',
+        'codcomprador': session.get('codcomprador'),
+        'modulos': MODULOS,
     })
 
 
@@ -1960,6 +2478,31 @@ def api_vendedores_map():
 def api_supervisores_map():
     """{codsupervisor_str: {nome, tipo}}. Cache 24h. Usado em selects de filtro de Time."""
     return jsonify({'ok': True, 'supervisores': _carregar_supervisores_map()})
+
+
+@app.route('/api/_internal/compradores-map')
+@admin_required
+def api_compradores_map():
+    """{matricula: nome} dos compradores, pro Admin vincular usuário ↔ comprador.
+
+    Fica aqui (e não no blueprint /estoque) de propósito: o Admin é tela do Comercial e o
+    administrador pode não ter a área Compras — sob /estoque a guarda o barraria com 403."""
+    try:
+        from estoque.routes import _compradores_map
+        mapa = _compradores_map()
+    except Exception as e:
+        # Sem Power BI o Admin ainda tem que abrir; o campo só fica sem sugestões.
+        print(f"[admin] compradores-map indisponível: {e}")
+        return jsonify({'ok': True, 'compradores': {}, 'aviso': 'lista indisponível'})
+    return jsonify({'ok': True, 'compradores': {str(k): v for k, v in mapa.items()}})
+
+
+@app.route('/api/_internal/relatorios-estoque')
+@admin_required
+def api_relatorios_estoque():
+    """Catálogo de relatórios de Compras que podem ir por email (fonte única: estoque/relatorios.py)."""
+    from estoque import relatorios as rel_estoque
+    return jsonify({'ok': True, 'relatorios': rel_estoque.catalogo()})
 
 
 @app.route('/api/_internal/supervisores-ativos')
@@ -6673,7 +7216,8 @@ def api_admin_users_list():
     cur.execute(
         "SELECT id, nome, email, role, codusur, codsupervisor, telefone, ativo, "
         "cron_enabled, cron_horario::text, cron_frequencia, criado_em, email_cc, segmentos_rfm, codsupervisores, "
-        "email_proximo_pedido, email_alerta_cobertura "
+        "email_proximo_pedido, email_alerta_cobertura, areas, area_padrao, codcomprador, relatorios_estoque, "
+        "bloqueado_ate "
         "FROM multpel_users ORDER BY ativo DESC, nome"
     )
     users = []
@@ -6690,6 +7234,11 @@ def api_admin_users_list():
             'codsupervisores': sups,
             'email_proximo_pedido': bool(r[15]),
             'email_alerta_cobertura': bool(r[16]),
+            'areas': normalizar_areas(r[17]),
+            'area_padrao': r[18] or 'portal',
+            'codcomprador': r[19],
+            'relatorios_estoque': r[20] if r[20] is not None else [],
+            'bloqueado': _login_bloqueio_restante(r[21]) > 0,
         })
     cur.close()
     conn.close()
@@ -6735,6 +7284,14 @@ def api_admin_users_create():
     if role == 'supervisor' and not codsupervisores:
         return jsonify({'ok': False, 'error': 'Supervisor exige ao menos uma área (codsupervisor)'}), 400
 
+    # ── Fusão: acesso por área + vínculo/relatórios do módulo Compras ──
+    areas = normalizar_areas(data.get('areas'))
+    codcomprador = data.get('codcomprador') or None
+    relatorios_estoque = _normalizar_relatorios_estoque(data.get('relatorios_estoque'))
+    erro_area = _validar_area_compras(areas, relatorios_estoque)
+    if erro_area:
+        return jsonify({'ok': False, 'error': erro_area}), 400
+
     senha = (data.get('senha') or '').strip() or secrets.token_urlsafe(10)
 
     conn = get_db()
@@ -6744,14 +7301,17 @@ def api_admin_users_create():
             """INSERT INTO multpel_users
                (nome, email, password_hash, role, codusur, codsupervisor, codsupervisores, telefone,
                 cron_enabled, cron_horario, cron_frequencia, email_cc, segmentos_rfm,
-                email_proximo_pedido, email_alerta_cobertura, must_change_password)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, true)
+                email_proximo_pedido, email_alerta_cobertura, must_change_password,
+                areas, codcomprador, relatorios_estoque)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, true,
+                       %s, %s, %s)
                RETURNING id""",
             (nome, email, generate_password_hash(senha), role,
              int(codusur) if codusur else None,
              codsupervisor, Json(codsupervisores),
              telefone, cron_enabled, cron_horario, cron_frequencia,
-             Json(emails_cc), segmentos_rfm, email_proximo_pedido, email_alerta_cobertura)
+             Json(emails_cc), segmentos_rfm, email_proximo_pedido, email_alerta_cobertura,
+             Json(areas), int(codcomprador) if codcomprador else None, Json(relatorios_estoque))
         )
         novo_id = cur.fetchone()[0]
         conn.commit()
@@ -6771,7 +7331,8 @@ def api_admin_users_update(user_id):
     data = request.get_json() or {}
     campos_permitidos = ['nome', 'email', 'role', 'codusur', 'codsupervisor', 'telefone',
                          'ativo', 'cron_enabled', 'cron_horario', 'cron_frequencia',
-                         'email_cc', 'segmentos_rfm', 'email_proximo_pedido', 'email_alerta_cobertura']
+                         'email_cc', 'segmentos_rfm', 'email_proximo_pedido', 'email_alerta_cobertura',
+                         'area_padrao', 'codcomprador']
     # Pra normalizar email_cc precisa do email principal do user
     email_principal_atual = (data.get('email') or '').strip().lower() or None
     if 'email_cc' in data and not email_principal_atual:
@@ -6802,6 +7363,10 @@ def api_admin_users_update(user_id):
                     return jsonify({'ok': False, 'error': str(e)}), 400
             elif k == 'segmentos_rfm':
                 v = _normalizar_segmentos_rfm(v)
+            elif k == 'codcomprador':
+                v = int(v) if v else None
+            elif k == 'area_padrao':
+                v = v if v in ('portal',) + AREAS_VALIDAS else 'portal'
             sets.append(f"{k} = %s")
             valores.append(v)
     # Supervisor multi-área: codsupervisores (lista) grava nas 2 colunas (lista + 1º elemento)
@@ -6811,6 +7376,30 @@ def api_admin_users_update(user_id):
             return jsonify({'ok': False, 'error': 'Supervisor exige ao menos uma área (codsupervisor)'}), 400
         sets.append("codsupervisores = %s"); valores.append(Json(sups))
         sets.append("codsupervisor = %s");   valores.append(sups[0] if sups else None)
+    # ── Fusão: áreas e relatórios de Compras (JSONB, como codsupervisores) ──
+    # Validação cruzada contra o estado FINAL: quem manda só um dos dois campos poderia deixar
+    # o usuário com relatórios de Compras sem ter a área. Lê o que falta do banco antes de decidir.
+    if 'areas' in data or 'relatorios_estoque' in data:
+        atuais = {}
+        if 'areas' not in data or 'relatorios_estoque' not in data:
+            conn1 = get_db(); c1 = conn1.cursor()
+            c1.execute("SELECT areas, relatorios_estoque FROM multpel_users WHERE id = %s", (user_id,))
+            r1 = c1.fetchone()
+            c1.close(); conn1.close()
+            if r1:
+                atuais = {'areas': r1[0], 'relatorios_estoque': r1[1]}
+        areas_final = (normalizar_areas(data['areas']) if 'areas' in data
+                       else normalizar_areas(atuais.get('areas')))
+        rels_final = (_normalizar_relatorios_estoque(data['relatorios_estoque'])
+                      if 'relatorios_estoque' in data
+                      else _normalizar_relatorios_estoque(atuais.get('relatorios_estoque')))
+        erro_area = _validar_area_compras(areas_final, rels_final)
+        if erro_area:
+            return jsonify({'ok': False, 'error': erro_area}), 400
+        if 'areas' in data:
+            sets.append("areas = %s"); valores.append(Json(areas_final))
+        if 'relatorios_estoque' in data:
+            sets.append("relatorios_estoque = %s"); valores.append(Json(rels_final))
     if 'senha' in data and data['senha']:
         sets.append("password_hash = %s")
         valores.append(generate_password_hash(data['senha']))
@@ -6847,10 +7436,42 @@ def api_admin_users_delete(user_id):
     return jsonify({'ok': True})
 
 
+@app.route('/api/admin/users/<int:user_id>/desbloquear', methods=['POST'])
+@admin_required
+def api_admin_desbloquear(user_id):
+    """Libera na hora uma conta bloqueada por tentativas. O bloqueio expira sozinho, mas quem
+    errou a senha e precisa entrar agora não deve ficar esperando."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE multpel_users SET bloqueado_ate = NULL, tentativas_falhas = 0, "
+        "bloqueios_seguidos = 0 WHERE id = %s RETURNING email", (user_id,)
+    )
+    linha = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
+    if not linha:
+        return jsonify({'ok': False, 'error': 'Usuário não encontrado'}), 404
+    # Zera também o contador por IP de quem está pedindo, senão o admin destrava a conta e o
+    # usuário continua barrado pela outra camada.
+    try:
+        _R_LOGIN.delete(f'multpel:login:ip:{_ip_do_request()}')
+    except Exception:      # noqa: BLE001
+        pass
+    _log_login(user_id, linha[0], _ip_do_request(), 'desbloqueado_pelo_admin')
+    return jsonify({'ok': True})
+
+
 @app.route('/api/admin/enviar-relatorio/<int:user_id>', methods=['POST'])
 @admin_required
 def api_admin_enviar_relatorio(user_id):
-    resultado = enviar_relatorio_email(user_id)
+    """Disparo manual. `?tipo=compras` envia os relatórios do módulo Compras; sem parâmetro,
+    mantém o comportamento histórico (relatório comercial de carteira)."""
+    if request.args.get('tipo') == 'compras':
+        resultado = enviar_relatorios_estoque_email(user_id)
+    else:
+        resultado = enviar_relatorio_email(user_id)
     status = 200 if resultado.get('ok') else 500
     return jsonify(resultado), status
 
@@ -6860,7 +7481,7 @@ def api_admin_enviar_relatorio(user_id):
 def erro_500(e):
     tb = traceback.format_exc()
     log_request(request.path, parametros=dict(request.args), erro=tb[:2000])
-    if request.path.startswith('/api/'):
+    if '/api/' in request.path:
         return jsonify({'ok': False, 'error': 'Erro interno'}), 500
     return Response('Erro interno do servidor', status=500)
 
@@ -7677,9 +8298,12 @@ def _disparar_relatorios_agendados():
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        """SELECT id, nome, email, cron_horario, cron_frequencia, cron_enabled, email_alerta_cobertura
+        """SELECT id, nome, email, cron_horario, cron_frequencia, cron_enabled, email_alerta_cobertura,
+                  relatorios_estoque
            FROM multpel_users
-           WHERE ativo = true AND (cron_enabled = true OR email_alerta_cobertura = true)
+           WHERE ativo = true
+             AND (cron_enabled = true OR email_alerta_cobertura = true
+                  OR COALESCE(jsonb_array_length(relatorios_estoque), 0) > 0)
              AND cron_horario >= %s AND cron_horario < %s""",
         (inicio_janela, fim_janela)
     )
@@ -7692,7 +8316,7 @@ def _disparar_relatorios_agendados():
 
     print(f"[CRON] {len(candidatos)} candidato(s) na janela {inicio_janela}–{fim_janela}")
     for row in candidatos:
-        uid, nome, email, horario, frequencia, cron_enabled, alerta_cobertura = row
+        uid, nome, email, horario, frequencia, cron_enabled, alerta_cobertura, rels_estoque = row
         # Filtro por frequência (diária roda todo dia; semanal só no dia certo)
         if frequencia in _DIAS_SEMANA_MAP and dia_semana != _DIAS_SEMANA_MAP[frequencia]:
             continue
@@ -7712,6 +8336,16 @@ def _disparar_relatorios_agendados():
             except Exception as e:
                 print(f"[CRON] user {uid} ({email}): erro alerta {e}")
                 _log_background(f'cron:erro_alerta:user{uid}', erro=str(e)[:500])
+        # 3) Relatórios do módulo Compras (reusam o horário/frequência acima, por decisão de
+        #    produto: um único agendamento por pessoa, não um por relatório).
+        if rels_estoque:
+            try:
+                res = enviar_relatorios_estoque_email(uid)
+                detalhe = res.get('skipped') or res.get('error') or res.get('message_id')
+                print(f"[CRON] user {uid} ({email}): compras {'OK' if res.get('ok') else 'FAIL'} — {detalhe}")
+            except Exception as e:
+                print(f"[CRON] user {uid} ({email}): erro compras {e}")
+                _log_background(f'cron:erro_estoque:user{uid}', erro=str(e)[:500])
 
 
 def _start_scheduler():

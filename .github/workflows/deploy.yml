@@ -2,7 +2,7 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/fusao-estoque]
   workflow_dispatch:
 
 jobs:
@@ -27,6 +27,18 @@ jobs:
         id: repo
         run: echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
+      # Só a main move a tag :latest. A produção da Multpel puxa :latest — se uma branch de
+      # trabalho publicasse nela, o próximo redeploy levaria código não validado ao cliente.
+      # Branch de fusão publica em :teste-fusao, consumida só pela stack de teste do JOGA.
+      - name: Definir tag conforme a branch
+        id: tag
+        run: |
+          if [ "${GITHUB_REF_NAME}" = "main" ]; then
+            echo "movel=latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "movel=teste-fusao" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -36,7 +48,7 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ steps.repo.outputs.name }}:latest
+            ghcr.io/${{ steps.repo.outputs.name }}:${{ steps.tag.outputs.movel }}
             ghcr.io/${{ steps.repo.outputs.name }}:sha-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
