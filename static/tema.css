@@ -1,0 +1,45 @@
+/* Paleta do JOGA Analytics — fonte única de cor.
+ *
+ * Antes cada página trazia o próprio bloco :root. Eram 17 cópias que já haviam divergido em
+ * 7 variantes — não nos valores (esses batiam), mas em QUAIS variáveis cada uma declarava.
+ * Resultado: mexer em cor significava caçar 17 arquivos, e uma página podia usar uma variável
+ * que ela mesma não definia.
+ *
+ * Este arquivo é carregado por todas as páginas, ANTES do <style> inline de cada uma, para que
+ * o CSS local continue podendo sobrescrever o que precisar.
+ *
+ * O tema claro entra aqui depois, como :root[data-tema="claro"] sobrescrevendo estes valores.
+ * Por isso as variáveis são nomeadas pelo PAPEL (surface, border, text-dim) e não pela cor —
+ * "surface" continua fazendo sentido quando for clara; "cinza-escuro" não faria.
+ */
+
+:root {
+  /* ── Fundo e superfícies ── */
+  --bg: #0a0e17;         /* fundo da página */
+  --surface: #111827;    /* cartões, painéis */
+  --surface2: #1a2235;   /* controles, cabeçalho de tabela, estados hover */
+  --surface3: #222d44;   /* 3º nível — usado pelo módulo Compras */
+  --border: #1e293b;
+
+  /* ── Texto ── */
+  --text: #e2e8f0;       /* corpo */
+  --text-dim: #94a3b8;   /* secundário, rótulos */
+  --text-mute: #64748b;  /* terciário, dicas */
+
+  /* ── Marca ── */
+  --accent: #38bdf8;
+  --accent2: #818cf8;    /* 2º tom dos gradientes */
+
+  /* ── Status ── */
+  --green: #34d399;
+  --red: #f87171;
+  --orange: #fb923c;
+  --yellow: #fbbf24;
+  --gray: #475569;
+
+  /* Roxo: os dois módulos usam tons diferentes. Mantidos separados de propósito — unificar
+   * mudaria a aparência, e esta etapa é refactor puro. A convergência (se valer a pena) é
+   * decisão de design, junto da calibragem do tema claro. */
+  --purple: #a78bfa;          /* Comercial — segmento RFM, cockpit do vendedor */
+  --purple-compras: #c084fc;  /* Compras — badge "sem giro"/parado e cor de gráfico */
+}
