@@ -20,12 +20,33 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
   body::before { content: ''; position: fixed; inset: 0; background: radial-gradient(circle at 25% 0%, rgba(56,189,248,0.05), transparent 60%); pointer-events: none; z-index: -1; }
-  .topbar { padding: 14px 26px; display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--border); background: rgba(17,24,39,0.7); backdrop-filter: blur(6px); }
-  .topbar a { color: var(--text-dim); text-decoration: none; font-size: 0.84rem; padding: 6px 10px; border-radius: 6px; transition: 0.15s; }
-  .topbar a:hover { color: var(--text); background: var(--surface2); }
-  .topbar a.active { color: var(--accent); background: var(--surface2); font-weight: 600; }
-  .topbar .spacer { flex: 1; }
-  .topbar #userInfo { color: var(--text-dim); font-size: 0.78rem; }
+  /* Cabeçalho: mesmas regras das páginas do Comercial, para o componente único renderizar
+     igual nas duas áreas (era a divergência que deixava o Admin com outra cara). */
+  .top-bar { padding: 14px 26px; display: flex; justify-content: space-between; align-items: center;
+             gap: 16px; flex-wrap: wrap; border-bottom: 1px solid var(--border);
+             background: rgba(17,24,39,0.7); backdrop-filter: blur(6px); }
+  .top-bar .brand { display: flex; align-items: center; gap: 12px; }
+  .top-bar .brand .mark {
+    width: 36px; height: 36px; border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; color: var(--bg); font-size: 1.05rem;
+  }
+  .top-bar h1 {
+    font-size: 1.3rem; font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .meta { font-size: 0.74rem; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; }
+  .nav { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn-sm {
+    padding: 7px 14px; background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); font-family: 'DM Sans', sans-serif; font-weight: 500;
+    font-size: 0.78rem; border-radius: 7px; cursor: pointer; transition: all 0.15s;
+    text-decoration: none; display: inline-block;
+  }
+  .btn-sm:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm.active { border-color: var(--accent); color: var(--accent); }
   .container { padding: 22px 26px; max-width: 1400px; margin: 0 auto; }
   h1 { font-size: 1.4rem; font-weight: 700; margin-bottom: 16px; }
   .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 11px; padding: 16px; margin-bottom: 16px; }
@@ -109,15 +130,10 @@
 </head>
 <body data-page="admin">
 <!-- Cabeçalho NEUTRO: a Administração não pertence ao Comercial nem ao Compras — ela
-     administra usuários das duas. Antes esta barra trazia o menu inteiro do Comercial, então
-     abrir o Admin vindo do Compras parecia trocar de área. Sem esse menu, o Admin é um lugar
-     próprio e o seletor (injetado ao lado do "JOGA") é o caminho de volta para onde se estava. -->
-<div class="topbar">
-  <strong style="color:var(--accent);">JOGA</strong>
-  <span class="spacer"></span>
-  <span id="userInfo">—</span>
-  <a href="/logout">Sair</a>
-</div>
+     administra usuários das duas. Por isso o componente não desenha o menu do Comercial aqui;
+     o seletor de área, ao lado da marca, é o caminho de volta para onde se estava. -->
+<div class="top-bar" data-joga-header data-titulo="Administração"></div>
+<script src="/static/joga-header.js"></script>
 
 <div class="container">
   <h1>Administração de usuários</h1>
@@ -914,6 +930,5 @@ async function salvarConfigCobertura() {
   await loadConfigCobertura();
 })();
 </script>
-<script src="/static/area-switcher.js"></script>
 </body>
 </html>

@@ -127,28 +127,8 @@
 </div>
 
 <div id="app" class="dashboard hidden">
-  <div class="top-bar">
-    <div class="brand">
-      <div class="mark" style="background:none;overflow:hidden;padding:0"><img src="/static/joga-mark.svg" alt="JOGA" style="width:100%;height:100%;display:block"></div>
-      <div>
-        <h1>Radar de Produtos</h1>
-        <div class="meta" id="userInfo"></div>
-      </div>
-    </div>
-    <div class="nav">
-      <a href="/" class="btn-sm">Dashboard</a>
-      <a href="/carteira" class="btn-sm">Carteira</a>
-      <a id="linkVendedores" href="/vendedores" class="btn-sm">Vendedores</a>
-      <a href="/categorias" class="btn-sm">Categorias</a>
-      <a href="/mix" class="btn-sm">Mix</a>
-      <a href="/radar" class="btn-sm active">Radar</a>
-      <a href="/tendencias" class="btn-sm">Tendências</a>
-      <a href="/metas" class="btn-sm">Metas</a>
-      <a href="/gerencial" class="btn-sm">Gerencial</a>
-      <a id="linkAdmin" href="/admin" class="btn-sm hidden">Admin</a>
-      <a href="/logout" class="btn-sm">Sair</a>
-    </div>
-  </div>
+  <div class="top-bar" data-joga-header data-titulo="Radar de Produtos"></div>
+  <script src="/static/joga-header.js"></script>
 
   <!-- ───────── VIEW BOARD (Nível 1) ───────── -->
   <div id="viewBoard">
@@ -453,9 +433,6 @@ async function loadMe() {
   try {
     const j = await fetchJSON('/api/me');
     _role = j.role;
-    document.getElementById('userInfo').textContent = `${j.nome} · ${j.role}${j.codusur ? ' · RCA ' + j.codusur : ''}`;
-    if (j.role === 'admin') document.getElementById('linkAdmin').classList.remove('hidden');
-    if (j.role === 'vendedor') document.getElementById('linkVendedores').style.display = 'none';
   } catch (e) {}
 }
 
@@ -826,6 +803,5 @@ function fecharDrill() {
   document.getElementById('app').classList.remove('hidden');
 })();
 </script>
-<script src="/static/area-switcher.js"></script>
 </body>
 </html>

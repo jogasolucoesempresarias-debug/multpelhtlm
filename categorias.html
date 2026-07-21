@@ -94,27 +94,8 @@
 </div>
 
 <div id="app" class="dashboard hidden">
-  <div class="top-bar">
-    <div class="brand">
-      <div class="mark" style="background:none;overflow:hidden;padding:0"><img src="/static/joga-mark.svg" alt="JOGA" style="width:100%;height:100%;display:block"></div>
-      <div>
-        <h1>Categorias</h1>
-        <div class="meta" id="userInfo"></div>
-      </div>
-    </div>
-    <div class="nav">
-      <a href="/" class="btn-sm">Dashboard</a>
-      <a href="/carteira" class="btn-sm">Carteira</a>
-      <a id="linkVendedores" href="/vendedores" class="btn-sm">Vendedores</a>
-      <a href="/categorias" class="btn-sm active">Categorias</a>
-      <a href="/mix" class="btn-sm">Mix</a>
-      <a href="/radar" class="btn-sm">Radar</a>
-      <a href="/tendencias" class="btn-sm">Tendências</a>
-      <a href="/metas" class="btn-sm">Metas</a>
-      <a href="/gerencial" class="btn-sm">Gerencial</a>
-      <a href="/logout" class="btn-sm">Sair</a>
-    </div>
-  </div>
+  <div class="top-bar" data-joga-header data-titulo="Categorias"></div>
+  <script src="/static/joga-header.js"></script>
 
   <div style="margin-bottom:12px;color:var(--text-dim);font-size:0.78rem;">
     <span class="badge-aviso">i</span> Análise por <strong>departamento de produto</strong> (33 deptos, 100% classificados). Categoria/subcategoria têm dados incompletos no ERP.
@@ -180,8 +161,6 @@ let _categorias = [];
 async function loadMe() {
   try {
     const j = await fetchJSON('/api/me');
-    document.getElementById('userInfo').textContent = `${j.nome} · ${j.role}`;
-    if (j.role === 'vendedor') document.getElementById('linkVendedores').style.display = 'none';
   } catch (e) {}
 }
 
@@ -317,6 +296,5 @@ async function carregar() {
 }
 carregar();
 </script>
-<script src="/static/area-switcher.js"></script>
 </body>
 </html>
