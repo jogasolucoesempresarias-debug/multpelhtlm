@@ -321,19 +321,40 @@ _ROTAS_NEUTRAS = {
 
 
 @app.before_request
-def _guard_modulo_comercial():
-    if 'comercial' in MODULOS:
-        return
+def _guard_comercial():
+    """Duas checagens para as rotas do Comercial, na ordem certa:
+
+    1) MÓDULO — a empresa contratou o Comercial? Se não, a rota nem existe (404).
+    2) ÁREA   — este usuário tem acesso ao Comercial? Se não, 403.
+
+    O (2) é indispensável: as ~92 rotas do Comercial só tinham @login_required, então um
+    usuário exclusivo de Compras abria /carteira normalmente. O lado do Estoque já barrava
+    pelo guard do blueprint; aqui é o espelho que faltava.
+    """
     p = request.path
     if p in _ROTAS_NEUTRAS or p.startswith('/static/') or p.startswith('/estoque'):
         return
-    # A raiz é o endereço que o usuário digita. Num cliente que só tem Compras ela deve levar
-    # ao produto, não a um 404 — 404 na home passa impressão de sistema quebrado.
-    if p == '/':
-        return redirect('/estoque/' if 'compras' in MODULOS else '/login')
-    if '/api/' in p:
-        return jsonify({'ok': False, 'error': 'Módulo Comercial não contratado'}), 404
-    return Response('Módulo Comercial não contratado', status=404)
+
+    # 1) Módulo não contratado nesta instância
+    if 'comercial' not in MODULOS:
+        # A raiz é o endereço que o usuário digita. Num cliente que só tem Compras ela deve
+        # levar ao produto, não a um 404 — 404 na home passa impressão de sistema quebrado.
+        if p == '/':
+            return redirect('/estoque/' if 'compras' in MODULOS else '/login')
+        if '/api/' in p:
+            return jsonify({'ok': False, 'error': 'Módulo Comercial não contratado'}), 404
+        return Response('Módulo Comercial não contratado', status=404)
+
+    # 2) Usuário sem a área Comercial (só decide para quem já está logado; quem não está cai
+    #    no login_required de cada rota, que trata redirect/401).
+    if 'user_id' in session and not tem_area('comercial'):
+        if p == '/':
+            destino = destino_pos_login()
+            if destino and destino != '/':
+                return redirect(destino)
+        if '/api/' in p:
+            return jsonify({'ok': False, 'error': 'Sem acesso ao módulo Comercial'}), 403
+        return Response('Sem acesso ao módulo Comercial', status=403)
 
 
 # ── Power BI: token cacheado ──
