@@ -37,6 +37,31 @@ def _mes_atual():
 # ⚠️ O caminho mudou na fusão: os assets saíram de estoque/static/ para static/estoque/ na
 # raiz do app. Como o Image() abaixo está sob try/except, o caminho errado não dava erro —
 # o pedido simplesmente saía sem logo.
+def compradores_reais(prod_map=None, forn_map=None):
+    """[{codcomprador, comprador}] — só quem de fato COMPRA PARA REVENDA.
+
+    ⚠️ Não confundir com `_compradores_map()`: aquele é a PCEMPR crua, ou seja, TODO
+    funcionário (vendedores, financeiro, etc.). O comprador de verdade se deriva da base:
+    fornecedor que tem produto de revenda → PCFORNEC.CODCOMPRADOR. Sem esse cruzamento a
+    lista vem cheia de gente que não compra nada.
+
+    Usada pela tela do módulo e pelo Admin (vínculo usuário↔comprador), para as duas
+    mostrarem exatamente o mesmo conjunto.
+    """
+    if prod_map is None:
+        prod_map = _cadastro_produtos()
+    if forn_map is None:
+        forn_map = _cadastro_fornecedores()
+    comp_map = _compradores_map()
+    forns_revenda = {int(core._n(p.get("CODFORNEC"))) for p in prod_map.values()
+                     if p.get("CODFORNEC") not in (None, "")}
+    cods = {int(core._n(forn_map[cf].get("CODCOMPRADOR"))) for cf in forns_revenda
+            if cf in forn_map and forn_map[cf].get("CODCOMPRADOR") not in (None, "")}
+    return sorted(
+        [{"codcomprador": c, "comprador": comp_map.get(c, f"COMPRADOR {c}")} for c in cods],
+        key=lambda x: x["comprador"] or "")
+
+
 def _logo_cliente():
     env = os.getenv("CLIENTE_LOGO", "").strip()
     if env and os.path.exists(env):
@@ -475,16 +500,7 @@ def api_filtros():
         [{"codfornec": cf, "fornecedor": f.get("FORNECEDOR") or f"FORN {cf}"}
          for cf, f in forn_map.items()],
         key=lambda x: x["fornecedor"] or "")
-    # compradores responsáveis por COMPRA P/ REVENDA: só os ligados a fornecedores
-    # que têm produto revenda (deriva da base, sem nome chumbado). Remove PAGAR, etc.
-    comp_map = _compradores_map()
-    forns_revenda = {int(core._n(p.get("CODFORNEC"))) for p in prod_map.values()
-                     if p.get("CODFORNEC") not in (None, "")}
-    cods = {int(core._n(forn_map[cf].get("CODCOMPRADOR"))) for cf in forns_revenda
-            if cf in forn_map and forn_map[cf].get("CODCOMPRADOR") not in (None, "")}
-    compradores = sorted(
-        [{"codcomprador": c, "comprador": comp_map.get(c, f"COMPRADOR {c}")} for c in cods],
-        key=lambda x: x["comprador"] or "")
+    compradores = compradores_reais(prod_map, forn_map)
     return jsonify({
         "ok": True,
         "filiais": _filiais_disponiveis(),

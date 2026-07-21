@@ -2507,15 +2507,19 @@ def api_compradores_map():
     """{matricula: nome} dos compradores, pro Admin vincular usuário ↔ comprador.
 
     Fica aqui (e não no blueprint /estoque) de propósito: o Admin é tela do Comercial e o
-    administrador pode não ter a área Compras — sob /estoque a guarda o barraria com 403."""
+    administrador pode não ter a área Compras — sob /estoque a guarda o barraria com 403.
+
+    Usa `compradores_reais()`, a MESMA derivação da tela do módulo. Usar o mapa cru da PCEMPR
+    trazia a folha inteira (vendedores incluídos) para um campo que pede comprador."""
     try:
-        from estoque.routes import _compradores_map
-        mapa = _compradores_map()
+        from estoque.routes import compradores_reais
+        lista = compradores_reais()
     except Exception as e:
         # Sem Power BI o Admin ainda tem que abrir; o campo só fica sem sugestões.
         print(f"[admin] compradores-map indisponível: {e}")
         return jsonify({'ok': True, 'compradores': {}, 'aviso': 'lista indisponível'})
-    return jsonify({'ok': True, 'compradores': {str(k): v for k, v in mapa.items()}})
+    return jsonify({'ok': True,
+                    'compradores': {str(c['codcomprador']): c['comprador'] for c in lista}})
 
 
 @app.route('/api/_internal/relatorios-estoque')

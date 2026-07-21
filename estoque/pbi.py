@@ -17,8 +17,10 @@ from concurrent.futures import ThreadPoolExecutor
 import requests
 from dotenv import load_dotenv
 
-# .env local (repo standalone)
-load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
+# .env da RAIZ do app (o módulo virou um subpacote na fusão; antes ele era a raiz do próprio
+# repo e o .env ficava ao lado). Rodando via server.py o env já está carregado, mas manter
+# isto correto permite importar/testar o módulo sozinho.
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 
 # Datasets do workspace (default; sobrescrevíveis via env)
 DATASET_ESTOQUE_DEFAULT = "32fb60e1-5ff1-47ae-9472-b7ce7049f2ce"

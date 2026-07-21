@@ -40,6 +40,19 @@
   .area-sw__item small { display: block; color: var(--text-dim, #94a3b8); font-size: .7rem; margin-top: 2px; }
   .area-sw__item.on { color: var(--accent, #38bdf8); }
   .area-sw__sep { height: 1px; background: var(--border, #1e293b); margin: 5px 4px; }
+
+  /* Bloco de conta — só no Compras, que não tinha nem Admin nem Sair no cabeçalho. */
+  .area-conta { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+  .area-conta__nome {
+    font-size: .72rem; color: var(--text-dim, #94a3b8);
+    font-family: 'JetBrains Mono', monospace; white-space: nowrap;
+  }
+  .area-conta a {
+    padding: 6px 11px; border-radius: 7px; font-size: .78rem; text-decoration: none;
+    background: var(--surface2, #1a2235); border: 1px solid var(--border, #1e293b);
+    color: var(--text, #e2e8f0); white-space: nowrap;
+  }
+  .area-conta a:hover { border-color: var(--accent, #38bdf8); color: var(--accent, #38bdf8); }
   `;
 
   function injetarCSS() {
@@ -91,15 +104,35 @@
     brand.insertAdjacentElement('afterend', wrap);
   }
 
+  /* O Compras nasceu como app standalone de senha única: o cabeçalho dele não tem Admin nem
+     Sair. Com conta nominal isso vira problema real — um usuário exclusivo de Compras não
+     teria como sair do sistema. Injetamos aqui em vez de colar no HTML para o bloco nascer
+     igual ao do Comercial e continuar assim. */
+  function montarConta(me) {
+    if (areaAtual() !== 'compras') return;              // o Comercial já tem os seus
+    const bar = document.querySelector('.topbar');
+    if (!bar || document.querySelector('.area-conta')) return;
+
+    const box = document.createElement('div');
+    box.className = 'area-conta';
+    const admin = me.role === 'admin'
+      ? '<a href="/admin" title="Administração de usuários">Admin</a>' : '';
+    box.innerHTML =
+      `<span class="area-conta__nome">${me.nome || ''}${me.role ? ' · ' + me.role : ''}</span>
+       ${admin}<a href="/logout">Sair</a>`;
+    bar.appendChild(box);
+  }
+
   function iniciar() {
     fetch('/api/me', { credentials: 'same-origin' })
       .then(r => (r.ok ? r.json() : null))
       .then(me => {
         if (!me || !me.ok) return;
         esconderModulosInativos(me.modulos || []);
+        injetarCSS();
+        montarConta(me);
         const efetivas = (me.areas || []).filter(a => AREAS[a]);
         if (efetivas.length < 2) return;   // 1 área → nada a trocar
-        injetarCSS();
         montar(efetivas);
       })
       .catch(() => { /* seletor é acessório: falha silenciosa não pode derrubar a página */ });

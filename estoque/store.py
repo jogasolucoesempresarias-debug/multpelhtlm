@@ -14,7 +14,8 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
+# .env da RAIZ do app — o módulo virou subpacote na fusão (ver nota igual em pbi.py).
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 
 
 def get_db():
