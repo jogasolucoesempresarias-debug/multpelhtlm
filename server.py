@@ -2431,6 +2431,31 @@ def carteira_page():
     return send_from_directory('.', 'carteira.html')
 
 
+# ─────────────── DEMO/APRESENTAÇÃO: apelidos fictícios de time (vend/superv) ───────────────
+# TEMPORÁRIO, só para apresentação: troca TODO nome de vendedor/supervisor por um nome fictício
+# determinístico (mesmo código → sempre o mesmo nome). NÃO afeta cálculo/RBAC (só o rótulo);
+# como quase tudo resolve o nome pelos dois mapas + os 2 pontos que leem NOME direto do DAX
+# (perfil e metas-por-time) também estão mascarados, a troca é consistente em todas as telas.
+# >>> REVERTER: TIME_DEMO = False + redeploy + LIMPAR O REDIS (o cache de payloads sobrevive
+#     ao redeploy; sem o flush os nomes reais ficam cacheados por até 24h). <<<
+TIME_DEMO = True
+_TDEMO_FIRST = ["Carlos", "Beatriz", "Rafael", "Fernanda", "Gustavo", "Patrícia", "André",
+                "Juliana", "Marcelo", "Renata", "Thiago", "Camila", "Bruno", "Larissa",
+                "Diego", "Vanessa"]
+_TDEMO_LAST = ["Andrade", "Lima", "Monteiro", "Rocha", "Teixeira", "Nunes", "Carvalho", "Prado",
+               "Fontes", "Barros", "Azevedo", "Duarte", "Siqueira", "Campos", "Ramalho", "Moraes"]
+
+
+def _demo_nome_time(codigo, sup=False):
+    """Nome fictício estável por código (256 combinações). `sup=True` desloca a sequência (+7)
+    p/ um supervisor e um vendedor de código igual não caírem no mesmo nome no drill de metas."""
+    try:
+        m = int(codigo) + (7 if sup else 0)
+    except (TypeError, ValueError):
+        return "Equipe Comercial"
+    return f"{_TDEMO_FIRST[m % len(_TDEMO_FIRST)]} {_TDEMO_LAST[(m // len(_TDEMO_LAST)) % len(_TDEMO_LAST)]}"
+
+
 def _carregar_supervisores_map():
     """Retorna {codsupervisor_str: {nome, tipo}} via PCSUPERV. Cache 24h.
     37 supervisores reais com nomes (pessoas + canais como DIRETORIA, TELEMARKETING, BALCÃO MULTPEL, etc)."""
@@ -2453,7 +2478,8 @@ SUMMARIZECOLUMNS(
         if cs is None:
             continue
         mapa[str(cs)] = {
-            'nome': r.get('NOME') or f'Time {cs}',
+            # DEMO: mascara o nome do time (ver bloco TIME_DEMO acima). Reverter = False.
+            'nome': _demo_nome_time(cs, sup=True) if TIME_DEMO else (r.get('NOME') or f'Time {cs}'),
             'tipo': r.get('TIPOSUPERVISOR'),
         }
     _cache_set(key, mapa, 'metadata')
@@ -2488,7 +2514,8 @@ SUMMARIZECOLUMNS(
         if codusur is None or codusur in VENDEDORES_TECNICOS:
             continue
         mapa[str(codusur)] = {
-            'nome':           r.get('NOME') or f'RCA {codusur}',
+            # DEMO: mascara o nome do vendedor (ver bloco TIME_DEMO acima). Reverter = False.
+            'nome':           _demo_nome_time(codusur) if TIME_DEMO else (r.get('NOME') or f'RCA {codusur}'),
             'codsupervisor':  r.get('CODSUPERVISOR'),
             'tipo':           r.get('TIPOVEND'),
             'cidade':         r.get('CIDADE'),
@@ -4925,7 +4952,8 @@ FILTER(PCUSUARI, PCUSUARI[CODUSUR] = {int(codusur)})"""
     r = rows[0]
     perfil = {
         'codusur':       r.get('CODUSUR'),
-        'nome':          r.get('NOME'),
+        # DEMO: mascara o nome no perfil/cockpit (ver bloco TIME_DEMO). Reverter = False.
+        'nome':          _demo_nome_time(r.get('CODUSUR')) if TIME_DEMO else r.get('NOME'),
         'cpf':           r.get('CPF'),
         'email':         r.get('EMAIL'),
         'telefone':      r.get('TELEFONE1') or r.get('CELULAR'),
@@ -7779,7 +7807,8 @@ def _carregar_metas_realizado(ano, mes, supervisores):
     por_supervisor = {}
     for cod, r in _mapa('por_sup', 'CODSUPERVISOR').items():
         por_supervisor[cod] = {
-            'nome': r.get('NOME') or f'Time {cod}',
+            # DEMO: não cacheia nome real aqui; None faz o consumidor resolver pelo mapa mascarado.
+            'nome': None if TIME_DEMO else (r.get('NOME') or f'Time {cod}'),
             'venda': r.get('venda') or 0, 'venda_sb': r.get('venda_sb') or 0,
             'rentabilidade': r.get('rentab') or 0,
             'clientes': r.get('cli') or 0, 'mix': r.get('mix') or 0,
