@@ -19,6 +19,9 @@ Sistema **JOGA** (a Multpel é a cliente) que une, num único Flask com um únic
 >   mundo antigo.
 > - 🚫 **NÃO** edite o repo `MultpelEstoque/` (congelado) nem publique em `:latest` sem intenção —
 >   `:latest` é a produção antiga que ainda está no ar.
+> - 📚 **Vai mexer no Compras especificamente?** Leia também **`docs/estoque/planilha_v3.md`** — é
+>   onde estão as fórmulas do estoque decodificadas em detalhe (giro, cobertura, sugestão de compra,
+>   vencidos, orçamento). Este README traz o resumo + as armadilhas; o `planilha_v3.md` traz o miolo.
 >
 > ### Estado atual do rollout (temporário — some quando as antigas forem desativadas)
 > | Domínio | O que roda | Imagem/tag | Banco |
