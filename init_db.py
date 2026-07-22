@@ -69,6 +69,8 @@ cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS codcomprador INT
 # Quais relatórios de compras o usuário recebe por email (lista de views: ["reposicao",...]).
 cur.execute("""ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS relatorios_estoque JSONB
                DEFAULT '[]'::jsonb;""")
+# Preferência de tema: 'escuro' (padrão — ninguém é surpreendido) | 'claro'.
+cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS tema VARCHAR(10) DEFAULT 'escuro';")
 
 # ── Proteção contra força bruta no login ──
 # Fonte de verdade no Postgres (e não só no Redis) de propósito: é o controle de segurança

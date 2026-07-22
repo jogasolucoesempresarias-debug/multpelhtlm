@@ -1535,6 +1535,24 @@ def set_area_padrao():
     return jsonify({'ok': True, 'area_padrao': valor})
 
 
+@app.route('/api/me/tema', methods=['PUT'])
+@login_required
+def set_tema():
+    """Preferência de tema do usuário: 'escuro' (padrão) ou 'claro'. Persistida no banco para
+    seguir a pessoa em qualquer máquina; o localStorage cuida da aplicação instantânea."""
+    valor = (request.get_json() or {}).get('tema', 'escuro')
+    if valor not in ('escuro', 'claro'):
+        return jsonify({'ok': False, 'error': 'Tema inválido'}), 400
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("UPDATE multpel_users SET tema = %s WHERE id = %s", (valor, session['user_id']))
+    conn.commit()
+    cur.close()
+    conn.close()
+    session['tema'] = valor
+    return jsonify({'ok': True, 'tema': valor})
+
+
 # ── Auth API ──
 @app.route('/api/login', methods=['POST'])
 def login_post():
@@ -1554,7 +1572,7 @@ def login_post():
     cur = conn.cursor()
     cur.execute(
         "SELECT id, nome, password_hash, role, ativo, codusur, codsupervisor, must_change_password, codsupervisores, "
-        "areas, area_padrao, codcomprador, bloqueado_ate "
+        "areas, area_padrao, codcomprador, bloqueado_ate, tema "
         "FROM multpel_users WHERE email = %s", (email,)
     )
     user = cur.fetchone()
@@ -1569,7 +1587,7 @@ def login_post():
         _log_login(None, email, ip, 'email_inexistente')
         return jsonify({'ok': False, 'error': 'E-mail ou senha inválidos'}), 401
     (uid, nome, pw_hash, role, ativo, codusur, codsupervisor, mcp, codsupervisores,
-     areas, area_padrao, codcomprador, bloqueado_ate) = user
+     areas, area_padrao, codcomprador, bloqueado_ate, tema) = user
     if not ativo:
         return jsonify({'ok': False, 'error': 'Conta desativada'}), 403
 
@@ -1603,6 +1621,7 @@ def login_post():
     session['areas']                = normalizar_areas(areas)
     session['area_padrao']          = area_padrao or 'portal'
     session['codcomprador']         = codcomprador   # filtro default do Compras (não é trava)
+    session['tema']                 = tema or 'escuro'
     if mcp:
         return jsonify({'ok': True, 'redirect': '/trocar-senha'})
     destino = destino_pos_login()
@@ -1659,6 +1678,7 @@ def me():
         'area_padrao': session.get('area_padrao') or 'portal',
         'codcomprador': session.get('codcomprador'),
         'modulos': MODULOS,
+        'tema': session.get('tema') or 'escuro',
     })
 
 

@@ -87,6 +87,13 @@
     color: var(--text, #e2e8f0); white-space: nowrap;
   }
   .area-conta a:hover { border-color: var(--accent, #38bdf8); color: var(--accent, #38bdf8); }
+
+  .tema-btn {
+    cursor: pointer; line-height: 1; font-size: .95rem;
+    padding: 6px 10px; border-radius: 7px;
+    background: var(--surface2, #1a2235); border: 1px solid var(--border, #1e293b);
+  }
+  .tema-btn:hover { border-color: var(--accent, #38bdf8); }
   `;
 
   function injetarCSS() {
@@ -198,6 +205,46 @@
     bar.appendChild(box);
   }
 
+  // ── Troca de tema ───────────────────────────────────────────────────────────────────────
+  // O anti-piscada no <head> já aplicou o tema salvo antes da 1ª pintura. Aqui só montamos o
+  // botão e reconciliamos com o banco (a escolha pode ter sido feita em outra máquina).
+  function temaAtual() {
+    return document.documentElement.dataset.tema === 'claro' ? 'claro' : 'escuro';
+  }
+
+  function aplicarTema(t) {
+    if (t === 'claro') document.documentElement.dataset.tema = 'claro';
+    else document.documentElement.removeAttribute('data-tema');   // ausência = escuro (default)
+    try { localStorage.setItem('joga:tema', t); } catch (e) { /* modo privado: sem persistência local */ }
+    if (window.aplicarTemaChart) window.aplicarTemaChart();       // gráficos futuros já saem no tom certo
+    const b = document.querySelector('.tema-btn');
+    if (b) b.textContent = t === 'claro' ? '🌙' : '☀️';           // mostra o que o clique VAI fazer
+  }
+
+  function montarToggleTema() {
+    if (document.querySelector('.tema-btn')) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tema-btn';
+    btn.title = 'Alternar tema claro/escuro';
+    btn.textContent = temaAtual() === 'claro' ? '🌙' : '☀️';
+    btn.addEventListener('click', () => {
+      const novo = temaAtual() === 'claro' ? 'escuro' : 'claro';
+      aplicarTema(novo);
+      // Persiste no banco para seguir a pessoa; falha de rede não desfaz a troca local.
+      fetch('/api/me/tema', {
+        method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tema: novo }),
+      }).catch(() => {});
+    });
+    // Encaixa junto dos controles de conta: antes do "Sair" no menu, ou no bloco de conta do Compras.
+    const sairNav = document.querySelector('.nav a[href="/logout"]');
+    const conta = document.querySelector('.area-conta');
+    if (sairNav) sairNav.insertAdjacentElement('beforebegin', btn);
+    else if (conta) conta.insertBefore(btn, conta.firstChild);
+    else (document.querySelector('.top-bar, .topbar') || document.body).appendChild(btn);
+  }
+
   // ── Ajustes dependentes do usuário ──────────────────────────────────────────────────────
   function aplicarPerfil(me) {
     const el = document.getElementById('userInfo');
@@ -237,6 +284,10 @@
         if (!me || !me.ok) return;
         aplicarPerfil(me);
         montarConta(me);
+        montarToggleTema();
+        // Reconcilia com o banco: se a pessoa trocou o tema em outra máquina, o banco vence.
+        // (Pode haver 1 flip visível aqui — só quando os dois discordam; depois fica alinhado.)
+        if (me.tema && me.tema !== temaAtual()) aplicarTema(me.tema);
         const efetivas = (me.areas || []).filter(a => AREAS[a]);
         // Com 1 área não há troca a fazer — exceto no Admin, onde o seletor é a única saída.
         if (efetivas.length < 2 && !emAdmin()) return;
