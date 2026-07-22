@@ -134,6 +134,20 @@ def giro_novo_item(serie_am, hoje, janela=6):
     return round(total / len(ativos)) if ativos else None
 
 
+def giro_mes_corrente(serie_am, hoje):
+    """Giro mensal = venda CRUA acumulada do MÊS CORRENTE (RCA). Último recurso quando não há
+    média-3m NEM meses fechados com venda — item que só começou a girar no mês em andamento.
+    Sem isto o giro fica 0, o item some do abastecimento e gera ruptura mesmo vendendo (decisão
+    do sócio 07/2026: 'trazer a venda do item no mês quando não tiver a média dos 3 meses').
+    NÃO anualiza — usa a venda do mês como está; o número sobe conforme o mês avança.
+    serie_am: {AnoMes: qtd}. None se o mês corrente ainda não teve venda."""
+    if not serie_am:
+        return None
+    am = hoje.year * 100 + hoje.month
+    q = _n(serie_am.get(am))
+    return round(q) if q > 0 else None
+
+
 def fatores_sazonais(serie_am, hoje, janela=24, min_meses=12):
     """Índices sazonais ano-a-ano a partir da venda mensal (RCA).
     media_mensal = média dos últimos `janela` meses (naturalmente dessazonalizada);
@@ -328,6 +342,11 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             gnovo = giro_novo_item(serie_am, hoje)
             if gnovo and gnovo > 0:
                 giro_mes, giro_fonte = gnovo, "novo_item"
+            else:
+                # ainda 0: item que só vendeu no mês corrente → usa a venda crua do mês (sócio 07/2026)
+                gmes = giro_mes_corrente(serie_am, hoje)
+                if gmes and gmes > 0:
+                    giro_mes, giro_fonte = gmes, "mes_corrente"
         giro_dia = giro_mes / 30.0
         serie = [_n(r.get("giro_m1")), _n(r.get("giro_m2")), _n(r.get("giro_m3"))]
         # série mensal (12 meses, ordem cronológica) p/ sparkline e gráfico do 360°.

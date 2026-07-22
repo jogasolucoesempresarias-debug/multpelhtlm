@@ -1240,16 +1240,22 @@ function renderProdutos(P){
     {key:'qtbloq',label:'Avaria',num:true,fmt:v=>v?int(v):'—'},
     {key:'qtd_ja_pedida',label:'Já ped.',num:true,fmt:v=>v>0?int(v):'—'},
     colGiroSpark,{key:'_giroCx',label:'Giro cx',num:true,fmt:v=>v==null?'—':int(v)},
-    {key:'cobertura',label:'Cob.',num:true,fmt:cob},
+    // Cob. = cobertura_dias oficial (igual às outras abas): item em ruptura mostra "0d" (não "∞"),
+    // batendo com o filtro local de cobertura ≤ X dias abaixo.
+    {key:'cobertura_dias',label:'Cob.',num:true,fmt:cobDiasFmt},
     {key:'dias_sem_venda',label:'Dias s/v',num:true,fmt:v=>v==null?'—':int(v)},
     {key:'venda',label:'Venda',num:true,fmt:money},colCresc,{key:'lucro',label:'Lucro',num:true,fmt:money},
     {key:'margem',label:'Margem',num:true,fmt:v=>v==null?'—':dec(v,1)+'%'},
     {key:'valor',label:'Estoque R$',num:true,fmt:money},{key:'status_abast',label:'Abast.',badge:true}];
-  // filtros LOCAIS desta aba (multi-seleção) — não afetam as outras abas
+  // filtros LOCAIS desta aba (não afetam as outras abas)
   const abn=S.cli.abast||[], mgn=S.cli.margem||[];
+  const cobMax=S.cli.cobMax, semPed=!!S.cli.semPed;
   let rows=P;
   if(abn.length) rows=rows.filter(p=>abn.includes(p.status_abast));
   if(mgn.length) rows=rows.filter(p=>mgn.includes(margemBucket(p)));
+  // cobertura ≤ X dias: usa cobertura_dias oficial → inclui ruptura (0d) e exclui sem-giro (9999)
+  if(cobMax!==''&&cobMax!=null&&!isNaN(+cobMax)) rows=rows.filter(p=>p.cobertura_dias!=null&&p.cobertura_dias<=+cobMax);
+  if(semPed) rows=rows.filter(p=>(p.qtd_ja_pedida||0)<=0);
   const abastCtl=`<div class="fb-group" style="margin:0"><label>Abastecimento</label>
       <details class="ms" id="pr-abast"><summary class="fb-control">${abastLabel(abn)}</summary>
         <div class="ms-menu">${Object.entries(ABAST_LABELS).map(([v,l])=>`<label><input type="checkbox" value="${v}" ${abn.includes(v)?'checked':''}>${l}</label>`).join('')}</div>
@@ -1258,11 +1264,19 @@ function renderProdutos(P){
       <details class="ms" id="pr-margem"><summary class="fb-control">${margemLabel(mgn)}</summary>
         <div class="ms-menu">${Object.entries(MARGEM_LABELS).map(([v,l])=>`<label><input type="checkbox" value="${v}" ${mgn.includes(v)?'checked':''}>${l}</label>`).join('')}</div>
       </details></div>`;
-  $('#v-produtos').innerHTML=head('Explorador de produtos','produtos')+`<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px">${abastCtl}${margemCtl}</div>`+renderTable(rows,cols,'produtos');
+  const cobCtl=`<div class="fb-group" style="margin:0"><label>Cobertura ≤ (dias)</label>
+      <input type="number" id="pr-cobmax" class="fb-control" min="0" placeholder="todos" value="${cobMax!=null?cobMax:''}" style="width:110px"></div>`;
+  const sempedCtl=`<div class="fb-group" style="margin:0"><label>Pedido</label>
+      <label style="display:flex;align-items:center;gap:7px;height:32px;cursor:pointer;color:var(--text)"><input type="checkbox" id="pr-semped" ${semPed?'checked':''}> Só sem pedido</label></div>`;
+  $('#v-produtos').innerHTML=head('Explorador de produtos','produtos')+`<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px">${abastCtl}${margemCtl}${cobCtl}${sempedCtl}</div>`+renderTable(rows,cols,'produtos');
   const d=$('#pr-abast');
   if(d) d.addEventListener('change',()=>{ S.cli.abast=[...d.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value); render(); });
   const dm=$('#pr-margem');
   if(dm) dm.addEventListener('change',()=>{ S.cli.margem=[...dm.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value); render(); });
+  const ci=$('#pr-cobmax');
+  if(ci) ci.onchange=()=>{ const v=ci.value.trim(); S.cli.cobMax = v===''?'':Math.max(0,+v||0); render(); };
+  const sp=$('#pr-semped');
+  if(sp) sp.onchange=()=>{ S.cli.semPed=sp.checked; render(); };
 }
 
 const STAT_LUCRO={alta:['Alta entrega',C.green],boa:['Boa entrega',C.accent],baixa:['Entrega baixa',C.dim],negativo:['Lucro negativo',C.red]};
@@ -1761,6 +1775,7 @@ async function openProduto(cod){
       ${p.giro_fonte==='forecast'?`<div class="count-line">Giro por <b>forecast (RCA, ${S.params.fcmeses}m)</b>: ${int(p.giro_forecast)}/mês · média 3m (oficial): ${int(p.giro_media3)}/mês</div>`:''}
       ${p.giro_fonte==='sazonal'?`<div class="count-line">Giro por <b>forecast sazonal (RCA, 24m)</b>: ${int(p.giro_mes)}/mês${p.fatores_sazonais?` · fator do mês ${dec(p.fatores_sazonais[new Date().getMonth()+1]||1,2)}×`:''} · média 3m (oficial): ${int(p.giro_media3)}/mês</div>`:''}
       ${p.giro_fonte==='novo_item'?`<div class="count-line">Giro por <b>item novo</b>: ${int(p.giro_mes)}/mês — média da venda real (RCA) desde o lançamento. Os 3 meses fechados do giro oficial ainda estão zerados (produto com menos de 3 meses de casa).</div>`:''}
+      ${p.giro_fonte==='mes_corrente'?`<div class="count-line">Giro pela <b>venda do mês corrente</b>: ${int(p.giro_mes)}/mês — o produto só começou a vender agora, então os 3 meses fechados do giro oficial estão zerados. Usa a venda crua do mês (sobe conforme o mês avança) p/ o item não sumir do abastecimento.</div>`:''}
       <div class="d-sec">Venda no período</div>
       <div class="lote-row"><span>Venda</span><span>${money(p.venda)}</span></div>
       <div class="lote-row"><span>Lucro</span><span>${money(p.lucro)} ${p.margem!=null?`<small class="muted">(${dec(p.margem,1)}%)</small>`:''}</span></div>
