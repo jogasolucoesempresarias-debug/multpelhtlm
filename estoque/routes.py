@@ -146,6 +146,15 @@ def _filiais_key(filiais):
 # Lojas (A&M/AC) e JID são autossuficientes. Filiais 1,2,6,10-13,15 excluídas; 8 sem estoque.
 NOMES_FILIAL = {"3": "Multpel Matriz", "4": "A&M", "5": "Deposito",
                 "7": "Telemarketing", "8": "Atacado", "9": "JID", "14": "AC"}
+
+
+def _nomes_filial_view():
+    """Nomes de filial p/ exibição. Com COMPRADOR_DEMO ligado, tira a marca 'Multpel' do rótulo
+    (ex.: 'Multpel Matriz' → 'Matriz') na linha do topo da apresentação. Reverte com o mesmo flag."""
+    if not COMPRADOR_DEMO:
+        return NOMES_FILIAL
+    return {k: (v.replace("Multpel ", "").replace("Multpel", "").strip() or v)
+            for k, v in NOMES_FILIAL.items()}
 UNIDADES = {
     "atacado": {"nome": "Atacado", "estoque": ["3", "5"],            "venda": ["3", "7", "8"]},
     "am":      {"nome": "A&M",     "estoque": ["4"],                 "venda": ["4"]},
@@ -530,7 +539,7 @@ def api_filtros():
                       "cod": "" if uid == "todas" else ",".join(sorted(set(u["estoque"] + u["venda"]), key=int))}
                      for uid, u in UNIDADES.items()],
         "unidade_padrao": UNIDADE_PADRAO,
-        "nomes_filial": NOMES_FILIAL,
+        "nomes_filial": _nomes_filial_view(),
         "deptos": deptos,
         "fornecedores": fornecedores,
         "compradores": compradores,
