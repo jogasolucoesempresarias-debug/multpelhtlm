@@ -91,6 +91,26 @@ def _filiais_disponiveis():
     return fs
 
 
+# ─────────────────── DEMO/APRESENTAÇÃO: apelidos fictícios de comprador ───────────────────
+# TEMPORÁRIO, só para apresentação: troca TODO nome de comprador por um nome fictício
+# determinístico (mesma matrícula → sempre o mesmo nome). NÃO afeta cálculo, só o rótulo, e
+# como todas as telas resolvem pelo _compradores_map(), a troca é consistente em todo lugar.
+# >>> REVERTER: basta COMPRADOR_DEMO = False e redeployar (o restart limpa o cache de 24h). <<<
+COMPRADOR_DEMO = True
+_DEMO_FIRST = ["Carlos", "Beatriz", "Rafael", "Fernanda", "Gustavo", "Patrícia", "André",
+               "Juliana", "Marcelo", "Renata", "Thiago", "Camila", "Bruno", "Larissa",
+               "Diego", "Vanessa"]
+_DEMO_LAST = ["Andrade", "Lima", "Monteiro", "Rocha", "Teixeira", "Nunes", "Carvalho", "Prado",
+              "Fontes", "Barros", "Azevedo", "Duarte", "Siqueira", "Campos", "Ramalho", "Moraes"]
+
+
+def _demo_nome(matricula):
+    """Nome fictício estável (256 combinações first×last) indexado pela matrícula — determinístico
+    e praticamente sem colisão entre os poucos compradores exibidos."""
+    m = int(matricula)
+    return f"{_DEMO_FIRST[m % len(_DEMO_FIRST)]} {_DEMO_LAST[(m // len(_DEMO_LAST)) % len(_DEMO_LAST)]}"
+
+
 @pbi.cached(ttl=86400, key_fn=lambda: "compradores")
 def _compradores_map():
     """{matricula: nome} — PCEMPR no dataset Estoque (fallback RCA)."""
@@ -101,7 +121,8 @@ def _compradores_map():
             m = {int(core._n(r["MATRICULA"])): r["NOME"]
                  for r in rows if r.get("MATRICULA") not in (None, "") and r.get("NOME")}
             if m:
-                return m
+                # DEMO: mascara os nomes reais (ver bloco COMPRADOR_DEMO acima). Reverter = False.
+                return {mat: _demo_nome(mat) for mat in m} if COMPRADOR_DEMO else m
         except Exception:
             continue
     return {}
