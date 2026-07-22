@@ -178,6 +178,26 @@ MULTPEL_EMPRESA = {
     "email": "fiscal@mutpelatacado.com.br",
 }
 
+# DEMO/APRESENTAÇÃO: emitente fictício SÓ para impressão no PDF do pedido. Reverte com COMPRADOR_DEMO.
+_EMITENTE_DEMO = {
+    "razao": "ATACADO EXEMPLO DISTRIBUIDORA LTDA",
+    "cnpj": "12.345.678/0001-90",
+    "ie": "123456789",
+    "endereco": "Av. das Nações, 1000",
+    "bairro": "Centro",
+    "cep": "00000-000",
+    "cidade": "São Paulo",
+    "uf": "SP",
+    "tel": "(11) 4000-0000",
+    "email": "compras@exemplo.com.br",
+}
+
+
+def _emitente_view():
+    """Emitente para IMPRESSÃO no PDF do pedido. Com COMPRADOR_DEMO, usa o fictício acima.
+    NÃO troca o MULTPEL_EMPRESA usado na LÓGICA (o cnpj_empresa do orçamento continua o real)."""
+    return _EMITENTE_DEMO if COMPRADOR_DEMO else MULTPEL_EMPRESA
+
 
 def _unidade():
     u = (request.args.get("unidade") or UNIDADE_PADRAO).lower()
@@ -1439,13 +1459,13 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
             ]))
             return t
 
-        E, F = MULTPEL_EMPRESA, (forn or {})
+        E, F = _emitente_view(), (forn or {})   # DEMO: emitente fictício quando COMPRADOR_DEMO
         # cabeçalho: logo Multpel + título/nº do pedido
         head_dir = Paragraph(
             f"<b>Pedido de Compra</b><br/><font size=9>Nº <b>{_e(pe.get('n_pedido') or pe.get('id') or '—')}</b> · "
             f"Emissão <b>{_d(pe.get('data_pedido'))}</b></font><br/>"
             f"<font size=7 color='#64748b'>Gerado em {date.today().strftime('%d/%m/%Y %H:%M')}</font>", titulo_style)
-        logo_path = _logo_cliente()
+        logo_path = None if COMPRADOR_DEMO else _logo_cliente()   # DEMO: sem logo do cliente
         try:
             head_row = Table([[Image(logo_path, width=2.3 * cm, height=2.3 * cm), head_dir]], colWidths=[2.7 * cm, 15.9 * cm])
         except Exception:
