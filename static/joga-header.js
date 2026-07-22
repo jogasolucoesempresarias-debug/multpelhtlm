@@ -212,11 +212,23 @@
     return document.documentElement.dataset.tema === 'claro' ? 'claro' : 'escuro';
   }
 
+  // A marca e o loader têm o hexágono claro (some no branco). No tema claro, trocamos pela
+  // versão de hexágono escuro (kit de marca da JOGA). O laranja é o mesmo nos dois.
+  function trocarArteDaMarca(claro) {
+    document.querySelectorAll('img[src*="joga-mark"]').forEach(img => {
+      img.src = claro ? '/static/joga-mark-claro.svg' : '/static/joga-mark.svg';
+    });
+    document.querySelectorAll('img[src*="joga-loader"]').forEach(img => {
+      img.src = claro ? '/static/joga-loader-claro.svg' : '/static/joga-loader.svg';
+    });
+  }
+
   function aplicarTema(t) {
     if (t === 'claro') document.documentElement.dataset.tema = 'claro';
     else document.documentElement.removeAttribute('data-tema');   // ausência = escuro (default)
     try { localStorage.setItem('joga:tema', t); } catch (e) { /* modo privado: sem persistência local */ }
     if (window.aplicarTemaChart) window.aplicarTemaChart();       // gráficos futuros já saem no tom certo
+    trocarArteDaMarca(t === 'claro');
     const b = document.querySelector('.tema-btn');
     if (b) b.textContent = t === 'claro' ? '🌙' : '☀️';           // mostra o que o clique VAI fazer
   }
@@ -277,6 +289,9 @@
     // script inline no fim do <body> executa ANTES de scripts deferidos.
     injetarCSS();
     montarEsqueleto();
+    // O anti-piscada já definiu data-tema; aplica a arte da marca no tom certo desde o load
+    // (senão a página que abre no claro mostraria a marca creme por um instante).
+    trocarArteDaMarca(temaAtual() === 'claro');
 
     fetch('/api/me', { credentials: 'same-origin' })
       .then(r => (r.ok ? r.json() : null))
