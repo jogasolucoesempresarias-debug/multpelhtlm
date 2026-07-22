@@ -75,6 +75,7 @@ input[type=text].search { width: 100%; min-width: 0; }
 .navgroup {
   padding: 8px 18px; border-radius: 10px; cursor: pointer; font-weight: 700;
   font-size: .82rem; color: var(--text-dim); border: 1px solid transparent; transition: all .12s;
+  user-select: none;  /* impede o caret (ex.: Caret Browsing/F7) de "pousar" no texto do botão */
 }
 .navgroup:hover { color: var(--text); background: var(--surface); }
 .navgroup.active { color: var(--accent); background: var(--surface); border-color: var(--border); }
@@ -87,7 +88,7 @@ body.booted .tabs { opacity: 1; }
 .tab {
   padding: 9px 16px; border-radius: 9px 9px 0 0; cursor: pointer; font-weight: 600;
   font-size: .82rem; color: var(--text-dim); border: 1px solid transparent; border-bottom: none;
-  transition: all .12s;
+  transition: all .12s; user-select: none;  /* idem .navgroup: sem caret sobre o botão */
 }
 .tab:hover { color: var(--text); }
 .tab.active { color: var(--accent); background: var(--surface); border-color: var(--border); }
@@ -156,7 +157,9 @@ thead th.num, td.num { text-align: right; font-family: 'JetBrains Mono', monospa
 tbody td { padding: 9px 9px; border-top: 1px solid var(--border); white-space: nowrap; }
 tbody tr { cursor: pointer; transition: background .1s; }
 tbody tr:hover { background: var(--surface2); }
-td .prod { max-width: 210px; overflow: hidden; text-overflow: ellipsis; display: inline-block; vertical-align: middle; }
+/* nome do produto/fornecedor: teto folgado (~46 char) mostra o nome inteiro em ~100% dos casos
+   do Winthor (DESCRICAO ~50 char), em 1 linha só; "…" fica só como rede p/ o nome patológico. */
+td .prod { max-width: 340px; overflow: hidden; text-overflow: ellipsis; display: inline-block; vertical-align: middle; }
 /* colunas congeladas (Cód + Produto) — não perde a referência ao rolar lateralmente (tabelas largas) */
 .tbl-wrap.freeze2 th, .tbl-wrap.freeze2 td { box-sizing: border-box; }
 .tbl-wrap.freeze2 th:first-child, .tbl-wrap.freeze2 td:first-child { position: sticky; left: 0; width: 70px; min-width: 70px; z-index: 3; }

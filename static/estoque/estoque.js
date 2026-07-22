@@ -1584,7 +1584,10 @@ function modalMeta(r){ openModal(`<h3>Meta de compras — ${r.mes}</h3>
 }
 // monta um item (snapshot) a partir de um produto
 function _prodItem(p,qtd){ return {codprod:p.codprod,descricao:p.descricao,qtdisp:p.qtdisp,cobertura:p.cobertura,
-  giro_mes:p.giro_mes,qtunitcx:p.qtunitcx,custo_unit:p.custo_unit,qtd:(qtd!=null?qtd:(p.sugestao_compra||0))}; }
+  // qtd do pedido é sempre em UNIDADES INTEIRAS: a sugestão crua pode ser fracionária (ex.: 0,3 un
+  // em item sem fator de caixa) — a tela ceila p/ "1 un", mas se guardar 0,3 o item_master faz
+  // round→0 e o Excel/PDF do Winthor PULA a linha (qtd<=0). Ceilar aqui alinha pedido↔tela↔export.
+  giro_mes:p.giro_mes,qtunitcx:p.qtunitcx,custo_unit:p.custo_unit,qtd:(qtd!=null?qtd:Math.ceil(p.sugestao_compra||0))}; }
 
 // Construtor de pedido com itens. opts: produto único (do 360°) | {fornecedor,codfornec,itens} (sugestão) | null (manual)
 // drill: itens comprados de um pedido REAL do Winthor (PCITEM)
@@ -1626,18 +1629,30 @@ function modalPedido(opts){
     <div id="pd-itens" style="margin-top:8px"></div>
     <div class="m-acts"><button class="btn" id="m-cancel">Cancelar</button><button class="btn primary" id="m-ok">Lançar</button></div>`, true);
   const total=()=>itens.reduce((s,x)=>s+((+x.qtd||0)*(+x.custo_unit||0)),0);
+  // atualiza só o rodapé + o campo Valor (sem reconstruir a tabela → não rouba o foco do input)
+  function refreshTotals(){
+    const cl=$('#pd-itens .count-line'); if(cl) cl.innerHTML=`Total: <b>${money(total())}</b> · ${itens.length} itens`;
+    const v=$('#pd-valor'); if(itens.length) v.value=total().toFixed(2);
+  }
   function draw(){
     $('#pd-itens').innerHTML = itens.length
       ? `<div class="tbl-wrap" style="max-height:240px"><table><thead><tr><th>Cód</th><th>Produto</th><th class="num">Qtd (un)</th><th class="num">Cx</th><th class="num">Custo</th><th class="num">Valor</th><th></th></tr></thead><tbody>`+
         itens.map((x,i)=>`<tr><td class="num">${x.codprod}</td><td><span class="prod">${esc(x.descricao||'')}</span></td>
-          <td class="num"><input type="number" data-qi="${i}" value="${int(x.qtd)}" min="0" style="width:74px;text-align:right"></td>
+          <td class="num"><input type="number" data-qi="${i}" value="${+x.qtd||0}" min="0" style="width:74px;text-align:right"></td>
           <td class="num">${x.qtunitcx>1?int(Math.ceil((+x.qtd||0)/x.qtunitcx))+' cx':'—'}</td>
           <td class="num"><input type="number" data-ci="${i}" value="${+x.custo_unit||0}" min="0" step="0.01" style="width:84px;text-align:right"></td><td class="num">${money((+x.qtd||0)*(+x.custo_unit||0))}</td>
           <td><button class="btn sm" data-ri="${i}">✕</button></td></tr>`).join('')+
         `</tbody></table></div><div class="count-line" style="text-align:right">Total: <b>${money(total())}</b> · ${itens.length} itens</div>`
       : `<div class="count-line">Nenhum item — adicione produtos acima${opts.itens?'':' (ou lance só com o valor)'}.</div>`;
     const v=$('#pd-valor'); if(itens.length){ v.value=total().toFixed(2); v.disabled=true; } else { v.disabled=false; }
-    $('#pd-itens').querySelectorAll('[data-qi]').forEach(inp=>inp.oninput=()=>{ itens[+inp.dataset.qi].qtd=+inp.value||0; draw(); });
+    $('#pd-itens').querySelectorAll('[data-qi]').forEach(inp=>inp.oninput=()=>{
+      // NÃO chamar draw() aqui: reconstruir a tabela a cada tecla destruía o input e roubava o
+      // foco (não dava pra digitar). Atualiza modelo + as células derivadas (Cx/Valor) na mão.
+      const i=+inp.dataset.qi, x=itens[i]; x.qtd=+inp.value||0; const tr=inp.closest('tr');
+      tr.children[3].textContent = x.qtunitcx>1 ? int(Math.ceil((+x.qtd||0)/x.qtunitcx))+' cx' : '—';
+      tr.children[5].textContent = money((+x.qtd||0)*(+x.custo_unit||0));
+      refreshTotals();
+    });
     $('#pd-itens').querySelectorAll('[data-ci]').forEach(inp=>inp.onchange=()=>{ itens[+inp.dataset.ci].custo_unit=+inp.value||0; draw(); });
     $('#pd-itens').querySelectorAll('[data-ri]').forEach(b=>b.onclick=()=>{ itens.splice(+b.dataset.ri,1); draw(); });
   }
@@ -1646,7 +1661,7 @@ function modalPedido(opts){
     const raw=($('#pd-prodadd').value||'').trim(); const cod=parseInt(raw,10);
     const p=(S.produtosAll||[]).find(x=>x.codprod===cod)||(S.produtosAll||[]).find(x=>(x.descricao||'').toLowerCase()===raw.toLowerCase());
     if(!p){ toast('Produto não encontrado',true); return; }
-    const qt=+$('#pd-prodqt').value||p.sugestao_compra||0;
+    const qt=+$('#pd-prodqt').value||Math.ceil(p.sugestao_compra||0);
     const ex=itens.find(x=>x.codprod===p.codprod); if(ex){ ex.qtd=(+ex.qtd||0)+qt; } else { itens.push(_prodItem(p,qt)); }
     if(!$('#pd-forn').value && p.fornecedor) $('#pd-forn').value=p.fornecedor;
     $('#pd-prodadd').value=''; $('#pd-prodqt').value=''; draw();
@@ -1663,7 +1678,8 @@ function modalPedido(opts){
     closeModal(); toast('Pedido lançado ✓'); if(S.view==='orcamento')renderOrcamento(); };
 }
 function modalPedidoFornecedor(gr){ // "Gerar pedido" da Reposição → construtor com itens pré-preenchidos editáveis
-  modalPedido({fornecedor:gr.forn, codfornec:gr.cod, itens:gr.itens.map(p=>_prodItem(p,p.sugestao_compra))});
+  // _prodItem(p) (sem qtd) usa a sugestão CEILADA em unidades — nunca fracionária (ver _prodItem)
+  modalPedido({fornecedor:gr.forn, codfornec:gr.cod, itens:gr.itens.map(p=>_prodItem(p))});
 }
 function modalPlano(it){
   const chave=it.chave||(it.tipo==='validade'?(it.cod+'|'+(it.lote?it.lote.dtval:it.dtval)):String(it.cod));

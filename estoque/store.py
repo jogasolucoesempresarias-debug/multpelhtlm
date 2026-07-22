@@ -116,6 +116,18 @@ def _rows(cur):
     return [dict(r) for r in cur.fetchall()]
 
 
+def _iso_dates(row):
+    """Serializa colunas DATE (data_pedido/dt_vencimento) em ISO 'YYYY-MM-DD'. Sem isto o
+    jsonify do Flask emite o objeto date como RFC 1123 ('Tue, 21 Jul 2026 00:00:00 GMT') e o
+    dt() do front (que espera ISO) mostra a string crua com horário/GMT."""
+    if row:
+        for k in ("data_pedido", "dt_vencimento"):
+            v = row.get(k)
+            if hasattr(v, "isoformat"):
+                row[k] = v.isoformat()
+    return row
+
+
 # ───────────────────────── orçamento + pedidos ─────────────────────────
 def orcamento_resumo(mes, comprador="TODOS"):
     """Meta do mês + total comprado (soma de pedidos) + saldo + % consumido."""
@@ -165,7 +177,7 @@ def pedidos_pendentes(mes, comprador=None):
                 cur.execute(base + " AND comprador=%s ORDER BY id DESC", (mes, comprador))
             else:
                 cur.execute(base + " ORDER BY id DESC", (mes,))
-            out = _rows(cur)
+            out = [_iso_dates(r) for r in _rows(cur)]
         conn.close()
         return out
     except Exception:
@@ -190,7 +202,7 @@ def pedidos_list(mes, comprador=None):
                         (mes, comprador))
         else:
             cur.execute("SELECT * FROM estoque_pedidos WHERE mes=%s ORDER BY data_pedido DESC, id DESC", (mes,))
-        out = _rows(cur)
+        out = [_iso_dates(r) for r in _rows(cur)]
     conn.close()
     return out
 
@@ -201,7 +213,7 @@ def pedido_get(pid):
         cur.execute("SELECT * FROM estoque_pedidos WHERE id=%s", (pid,))
         row = cur.fetchone()
     conn.close()
-    return dict(row) if row else None
+    return _iso_dates(dict(row)) if row else None
 
 
 def pedido_itens(pid):
