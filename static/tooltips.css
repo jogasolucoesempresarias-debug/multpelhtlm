@@ -6,26 +6,26 @@
 .ttip {
   display: inline-flex; align-items: center; justify-content: center;
   width: 14px; height: 14px; margin-left: 5px; flex: none; vertical-align: middle;
-  border-radius: 50%; border: 1px solid var(--text-mute, #64748b);
+  border-radius: 50%; border: 1px solid var(--text-mute, var(--text-mute));
   font-family: 'DM Sans', system-ui, sans-serif; font-size: 9px; font-weight: 700; font-style: normal;
-  line-height: 1; color: var(--text-mute, #64748b); background: transparent; cursor: help;
+  line-height: 1; color: var(--text-mute, var(--text-mute)); background: transparent; cursor: help;
   text-transform: none; letter-spacing: 0; user-select: none; transition: color .12s, border-color .12s;
 }
 /* glifo via ::before p/ NÃO poluir o textContent do título/cabeçalho */
 .ttip::before { content: 'i'; }
 th .ttip { position: relative; top: -1px; }
-.ttip:hover, .ttip:focus-visible { color: var(--accent, #38bdf8); border-color: var(--accent, #38bdf8); outline: none; }
-.ttip:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #38bdf8) 45%, transparent); }
+.ttip:hover, .ttip:focus-visible { color: var(--accent, var(--accent)); border-color: var(--accent, var(--accent)); outline: none; }
+.ttip:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, var(--accent)) 45%, transparent); }
 
 /* caixinha única, presa ao body via position:fixed → nunca cortada por overflow das tabelas */
 #tt-pop {
   position: fixed; z-index: 9000; max-width: 280px; pointer-events: none;
-  background: var(--surface2, #1a2235); color: var(--text, #e2e8f0);
-  border: 1px solid var(--border, #1e293b); border-radius: 9px;
+  background: var(--surface2, var(--surface2)); color: var(--text, var(--text));
+  border: 1px solid var(--border, var(--border)); border-radius: 9px;
   padding: 8px 11px; font-size: .78rem; font-weight: 400; line-height: 1.42;
   font-family: 'DM Sans', system-ui, sans-serif;
   text-transform: none; letter-spacing: 0; text-align: left; white-space: normal;
-  box-shadow: 0 10px 28px rgba(0,0,0,.45);
+  box-shadow: 0 10px 28px rgba(var(--sombra-rgb), .45);
   opacity: 0; visibility: hidden; transition: opacity .12s;
 }
 #tt-pop.on { opacity: 1; visibility: visible; }

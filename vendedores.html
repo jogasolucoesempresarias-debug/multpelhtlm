@@ -7,6 +7,7 @@
 <link rel="icon" href="/static/joga-mark.svg" type="image/svg+xml">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+<script src="/static/chart-tema.js"></script>
 <script src="/static/fetch-resiliente.js"></script>
 <link rel="stylesheet" href="/static/tooltips.css">
 <script defer src="/static/tooltips.js"></script>
@@ -22,13 +23,13 @@
   .dashboard { padding: 24px; max-width: 1600px; margin: 0 auto; animation: fadeUp 0.4s ease; }
   .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; flex-wrap: wrap; gap: 14px; }
   .top-bar .brand { display: flex; align-items: center; gap: 12px; }
-  .top-bar .brand .mark { width: 36px; height: 36px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--bg); font-size: 1.05rem; }
+  .top-bar .brand .mark { width: 36px; height: 36px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--sobre-accent); font-size: 1.05rem; }
   .top-bar h1 { font-size: 1.3rem; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
   .meta { font-size: 0.74rem; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; }
   .nav { display: flex; gap: 8px; flex-wrap: wrap; }
   .btn-sm { padding: 7px 14px; background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-weight: 500; font-size: 0.78rem; border-radius: 7px; cursor: pointer; transition: all 0.15s; text-decoration: none; display: inline-block; }
   .btn-sm:hover { border-color: var(--accent); color: var(--accent); }
-  .btn-sm.active { border-color: var(--accent); color: var(--accent); background: rgba(56,189,248,0.08); }
+  .btn-sm.active { border-color: var(--accent); color: var(--accent); background: rgba(var(--accent-rgb), 0.08); }
 
   .filtros-card { background: var(--surface); border: 1px solid var(--border); border-radius: 11px; padding: 12px 16px; margin-bottom: 14px; display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
   .ff label { display: block; font-size: 0.66rem; color: var(--text-dim); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
@@ -51,7 +52,7 @@
   thead th.num, td.num { text-align: right; }
   td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
   tbody tr { cursor: pointer; }
-  tbody tr:hover { background: rgba(56,189,248,0.05); }
+  tbody tr:hover { background: rgba(var(--accent-rgb), 0.05); }
   td.num { font-family: 'JetBrains Mono', monospace; }
   td a { color: var(--accent); text-decoration: none; font-weight: 600; }
   td a:hover { text-decoration: underline; }
@@ -168,8 +169,6 @@ const NUM = new Intl.NumberFormat('pt-BR');
 const PCT = (v) => (v == null ? '—' : (v * 100).toFixed(1).replace('.', ',') + '%');
 
 Chart.defaults.font.family = "'DM Sans', sans-serif";
-Chart.defaults.color = '#94a3b8';
-Chart.defaults.borderColor = '#1e293b';
 
 let _todos = [];
 let _ordem = { campo: 'rank', dir: 'asc' };

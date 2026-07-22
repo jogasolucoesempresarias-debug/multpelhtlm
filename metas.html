@@ -7,6 +7,7 @@
 <link rel="icon" href="/static/joga-mark.svg" type="image/svg+xml">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+<script src="/static/chart-tema.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
 <script src="/static/fetch-resiliente.js"></script>
 <link rel="stylesheet" href="/static/tooltips.css">
@@ -19,7 +20,7 @@
   .dashboard { padding: 24px; max-width: 1600px; margin: 0 auto; animation: fadeUp 0.4s ease; }
   .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }
   .top-bar .brand { display: flex; align-items: center; gap: 12px; }
-  .top-bar .brand .mark { width: 36px; height: 36px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--bg); font-size: 1.05rem; }
+  .top-bar .brand .mark { width: 36px; height: 36px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--sobre-accent); font-size: 1.05rem; }
   .top-bar h1 { font-size: 1.3rem; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
   .meta { font-size: 0.74rem; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; }
   .nav { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -35,7 +36,7 @@
   .tabs { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
   .tab { padding: 10px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; cursor: pointer; font-weight: 600; font-size: 0.9rem; transition: all .15s; }
   .tab:hover { border-color: var(--accent); }
-  .tab.active { background: linear-gradient(135deg, rgba(56,189,248,.15), rgba(129,140,248,.15)); border-color: var(--accent); color: var(--accent); }
+  .tab.active { background: linear-gradient(135deg, rgba(var(--accent-rgb), .15), rgba(var(--accent2-rgb), .15)); border-color: var(--accent); color: var(--accent); }
 
   .topo { display: grid; grid-template-columns: 320px 1fr; gap: 16px; margin-bottom: 16px; }
   @media (max-width: 900px){ .topo { grid-template-columns: 1fr; } }
@@ -56,23 +57,23 @@
   thead th { color: var(--text-dim); font-weight: 600; font-size: .72rem; text-transform: uppercase; letter-spacing:.03em; position: sticky; top: 0; background: var(--surface); }
   tbody tr.sup { cursor: pointer; }
   tbody tr.sup:hover { background: var(--surface2); }
-  tbody tr.total { font-weight: 700; background: rgba(56,189,248,.06); }
+  tbody tr.total { font-weight: 700; background: rgba(var(--accent-rgb), .06); }
   tbody tr.total td { border-top: 2px solid var(--border); }
-  tr.vend td { background: rgba(0,0,0,.18); font-size: .78rem; color: var(--text-dim); }
+  tr.vend td { background: rgba(var(--sombra-rgb), .18); font-size: .78rem; color: var(--text-dim); }
   tr.vend td:first-child { padding-left: 28px; }
   .mono { font-family: 'JetBrains Mono', monospace; }
   .badge { padding: 2px 8px; border-radius: 6px; font-size: .74rem; font-weight: 600; font-family: 'JetBrains Mono', monospace; }
-  .b-green { background: rgba(52,211,153,.15); color: var(--green); }
-  .b-yellow{ background: rgba(251,191,36,.15); color: var(--yellow); }
-  .b-orange{ background: rgba(251,146,60,.15); color: var(--orange); }
-  .b-red   { background: rgba(248,113,113,.15); color: var(--red); }
+  .b-green { background: rgba(var(--green-rgb), .15); color: var(--green); }
+  .b-yellow{ background: rgba(var(--yellow-rgb), .15); color: var(--yellow); }
+  .b-orange{ background: rgba(var(--orange-rgb), .15); color: var(--orange); }
+  .b-red   { background: rgba(var(--red-rgb), .15); color: var(--red); }
   .caret { display:inline-block; width: 14px; color: var(--text-dim); }
 
   .loading-screen { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; z-index: 1000; }
   .spinner { width: 42px; height: 42px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .banner-aviso { background: rgba(251,191,36,.1); border: 1px solid var(--yellow); color: var(--yellow); padding: 11px 16px; border-radius: 9px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-  .banner-aviso button { background: var(--yellow); color: var(--bg); border: none; padding: 6px 13px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+  .banner-aviso { background: rgba(var(--yellow-rgb), .1); border: 1px solid var(--yellow); color: var(--yellow); padding: 11px 16px; border-radius: 9px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .banner-aviso button { background: var(--yellow); color: var(--sobre-accent); border: none; padding: 6px 13px; border-radius: 6px; cursor: pointer; font-weight: 600; }
   .secao-titulo { font-size: .9rem; font-weight: 600; margin-bottom: 12px; color: var(--text-dim); }
 </style>
 </head>
@@ -145,7 +146,7 @@
 </div>
 
 <!-- Editor de metas (admin) -->
-<div id="editorBg" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:500;display:flex;align-items:center;justify-content:center;padding:20px;">
+<div id="editorBg" class="hidden" style="position:fixed;inset:0;background:rgba(var(--sombra-rgb), .6);z-index:500;display:flex;align-items:center;justify-content:center;padding:20px;">
   <div class="card" style="width:min(1000px,96vw);max-height:90vh;display:flex;flex-direction:column;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;">
       <div class="secao-titulo" id="editorTitulo" style="margin:0;">Editar metas</div>
@@ -187,7 +188,6 @@ const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL',
 const NUM = new Intl.NumberFormat('pt-BR');
 const PCT = (v) => (v == null ? '—' : (v * 100).toFixed(1).replace('.', ',') + '%');
 Chart.defaults.font.family = "'DM Sans', sans-serif";
-Chart.defaults.color = '#94a3b8';
 
 const METRICAS = [
   { id: 'venda',         nome: 'Venda',         moeda: true },

@@ -11,8 +11,8 @@
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
-  body::before { content: ''; position: fixed; inset: 0; background: radial-gradient(circle at 25% 0%, rgba(56,189,248,0.05), transparent 60%); pointer-events: none; z-index: -1; }
-  .topbar { padding: 14px 26px; display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--border); background: rgba(17,24,39,0.7); backdrop-filter: blur(6px); }
+  body::before { content: ''; position: fixed; inset: 0; background: radial-gradient(circle at 25% 0%, rgba(var(--accent-rgb), 0.05), transparent 60%); pointer-events: none; z-index: -1; }
+  .topbar { padding: 14px 26px; display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--border); background: rgba(var(--surface-rgb), 0.7); backdrop-filter: blur(6px); }
   .topbar a { color: var(--text-dim); text-decoration: none; font-size: 0.84rem; padding: 6px 10px; border-radius: 6px; transition: 0.15s; }
   .topbar a:hover { color: var(--text); background: var(--surface2); }
   .topbar a.active { color: var(--accent); background: var(--surface2); font-weight: 600; }
@@ -27,16 +27,16 @@
   th { color: var(--text-dim); font-weight: 600; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; background: var(--surface2); }
   tr:hover td { background: var(--surface2); }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
-  .b-admin    { background: rgba(56,189,248,0.15); color: var(--accent); }
-  .b-supervisor { background: rgba(251,146,60,0.15); color: var(--orange); }
-  .b-vendedor { background: rgba(52,211,153,0.15); color: var(--green); }
+  .b-admin    { background: rgba(var(--accent-rgb), 0.15); color: var(--accent); }
+  .b-supervisor { background: rgba(var(--orange-rgb), 0.15); color: var(--orange); }
+  .b-vendedor { background: rgba(var(--green-rgb), 0.15); color: var(--green); }
   .b-viewer   { background: var(--surface2); color: var(--text-dim); }
-  .b-inativo  { background: rgba(248,113,113,0.15); color: var(--red); }
+  .b-inativo  { background: rgba(var(--red-rgb), 0.15); color: var(--red); }
   .btn { padding: 6px 12px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); border-radius: 6px; cursor: pointer; font-size: 0.78rem; font-family: inherit; font-weight: 500; }
   .btn:hover { border-color: var(--accent); }
-  .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: var(--bg); border-color: transparent; font-weight: 700; }
-  .btn-danger { color: var(--red); border-color: rgba(248,113,113,0.3); }
-  .btn-success { color: var(--green); border-color: rgba(52,211,153,0.3); }
+  .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: var(--sobre-accent); border-color: transparent; font-weight: 700; }
+  .btn-danger { color: var(--red); border-color: rgba(var(--red-rgb), 0.3); }
+  .btn-success { color: var(--green); border-color: rgba(var(--green-rgb), 0.3); }
   .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .ff { display: flex; flex-direction: column; gap: 4px; }
   .ff label { font-size: 0.72rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
@@ -45,7 +45,7 @@
   .ff.full { grid-column: 1 / -1; }
   .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
   .toolbar .grow { flex: 1; }
-  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
+  .modal-bg { position: fixed; inset: 0; background: rgba(var(--sombra-rgb), 0.7); display: none; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
   .modal-bg.show { display: flex; }
   .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 22px; width: 100%; max-width: 600px; max-height: 90vh; overflow-y: auto; }
   .modal h3 { font-size: 1.1rem; margin-bottom: 14px; }

@@ -4,9 +4,14 @@
    precisa do prefixo — use '/estoque/api/...', nunca '/api/...', que cairia no módulo
    Comercial e devolveria 404. */
 
-Chart.defaults.color = '#94a3b8';
-Chart.defaults.font.family = 'DM Sans, sans-serif';
-Chart.defaults.borderColor = '#1e293b';
+// Eixo/grade dos gráficos leem do tema (antes '#94a3b8'/'#1e293b' cravados — ignoravam o tema
+// e ficariam escuros no claro). Fallback mantém o valor de antes se a variável não resolver.
+(function () {
+  const cor = (v, f) => getComputedStyle(document.documentElement).getPropertyValue(v).trim() || f;
+  Chart.defaults.color = cor('--text-dim', '#94a3b8');
+  Chart.defaults.borderColor = cor('--border', '#1e293b');
+  Chart.defaults.font.family = 'DM Sans, sans-serif';
+})();
 
 const C = { green:'#34d399', red:'#f87171', orange:'#fb923c', yellow:'#fbbf24',
             accent:'#38bdf8', accent2:'#818cf8', purple:'#c084fc', dim:'#64748b' };

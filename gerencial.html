@@ -7,6 +7,7 @@
 <link rel="icon" href="/static/joga-mark.svg" type="image/svg+xml">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+<script src="/static/chart-tema.js"></script>
 <script src="/static/fetch-resiliente.js"></script>
 <link rel="stylesheet" href="/static/tooltips.css">
 <script defer src="/static/tooltips.js"></script>
@@ -19,14 +20,14 @@
   .dashboard { padding:24px; max-width:1600px; margin:0 auto; animation:fadeUp .4s ease; }
   .top-bar { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; flex-wrap:wrap; gap:14px; }
   .brand { display:flex; align-items:center; gap:12px; }
-  .brand .mark { width:36px; height:36px; border-radius:8px; background:linear-gradient(135deg,var(--accent),var(--accent2)); display:flex; align-items:center; justify-content:center; font-weight:700; color:var(--bg); }
+  .brand .mark { width:36px; height:36px; border-radius:8px; background:linear-gradient(135deg,var(--accent),var(--accent2)); display:flex; align-items:center; justify-content:center; font-weight:700; color: var(--sobre-accent); }
   .top-bar h1 { font-size:1.3rem; font-weight:700; background:linear-gradient(135deg,var(--accent),var(--accent2)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
   .meta { font-size:.74rem; color:var(--text-dim); font-family:'JetBrains Mono',monospace; }
   .nav { display:flex; gap:8px; flex-wrap:wrap; }
   .btn-sm { padding:7px 14px; background:var(--surface2); border:1px solid var(--border); color:var(--text); font-weight:500; font-size:.78rem; border-radius:7px; cursor:pointer; transition:all .15s; text-decoration:none; display:inline-block; }
   .btn-sm:hover { border-color:var(--accent); color:var(--accent); }
-  .btn-sm.active { border-color:var(--accent); color:var(--accent); background:rgba(56,189,248,.08); }
-  .btn-export { padding:8px 14px; background:linear-gradient(135deg,var(--accent),var(--accent2)); color:var(--bg); border:none; border-radius:7px; cursor:pointer; font-weight:700; font-size:.8rem; font-family:inherit; }
+  .btn-sm.active { border-color:var(--accent); color:var(--accent); background:rgba(var(--accent-rgb), .08); }
+  .btn-export { padding:8px 14px; background:linear-gradient(135deg,var(--accent),var(--accent2)); color: var(--sobre-accent); border:none; border-radius:7px; cursor:pointer; font-weight:700; font-size:.8rem; font-family:inherit; }
 
   .bloco { margin-bottom:18px; }
   .bloco-titulo { font-size:.74rem; font-weight:700; color:var(--text-dim); text-transform:uppercase; letter-spacing:.08em; margin-bottom:10px; display:flex; align-items:center; gap:10px; }
@@ -35,11 +36,11 @@
   .controls { display:flex; gap:12px; flex-wrap:wrap; align-items:center; background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:12px 16px; margin-bottom:14px; }
   .seg { display:flex; gap:4px; }
   .seg button { padding:6px 12px; background:var(--surface2); border:1px solid var(--border); color:var(--text-dim); font-weight:600; font-size:.76rem; border-radius:6px; cursor:pointer; font-family:'JetBrains Mono',monospace; }
-  .seg button.on { border-color:var(--accent); color:var(--accent); background:rgba(56,189,248,.12); }
+  .seg button.on { border-color:var(--accent); color:var(--accent); background:rgba(var(--accent-rgb), .12); }
   .ctrl-label { font-size:.66rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.04em; font-weight:600; margin-right:2px; }
 
-  .banner { background:rgba(248,113,113,.1); border:1px solid rgba(248,113,113,.35); color:var(--red); padding:10px 16px; border-radius:9px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; gap:12px; font-size:.86rem; cursor:pointer; }
-  .banner.ok { background:rgba(52,211,153,.08); border-color:rgba(52,211,153,.3); color:var(--green); cursor:default; }
+  .banner { background:rgba(var(--red-rgb), .1); border:1px solid rgba(var(--red-rgb), .35); color:var(--red); padding:10px 16px; border-radius:9px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; gap:12px; font-size:.86rem; cursor:pointer; }
+  .banner.ok { background:rgba(var(--green-rgb), .08); border-color:rgba(var(--green-rgb), .3); color:var(--green); cursor:default; }
   .banner b { font-family:'JetBrains Mono',monospace; }
 
   .breadcrumb { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px; font-size:.9rem; }
@@ -61,7 +62,7 @@
 
   /* Barra de faixas empilhada */
   .faixa-bar { display:flex; height:34px; border-radius:8px; overflow:hidden; border:1px solid var(--border); margin-bottom:12px; }
-  .faixa-seg { display:flex; align-items:center; justify-content:center; font-size:.7rem; font-weight:700; color:#0a0e17; min-width:0; transition:flex .3s; overflow:hidden; white-space:nowrap; }
+  .faixa-seg { display:flex; align-items:center; justify-content:center; font-size:.7rem; font-weight:700; color:var(--bg); min-width:0; transition:flex .3s; overflow:hidden; white-space:nowrap; }
   .faixa-legend { display:flex; gap:14px; flex-wrap:wrap; font-size:.74rem; color:var(--text-dim); }
   .faixa-legend span { display:flex; align-items:center; gap:5px; }
   .dot { width:10px; height:10px; border-radius:3px; display:inline-block; }
@@ -72,11 +73,11 @@
   thead th.ctr, td.ctr { text-align:center; }
   td { padding:9px 10px; border-bottom:1px solid var(--border); }
   tbody tr.click { cursor:pointer; }
-  tbody tr.click:hover { background:rgba(56,189,248,.05); }
+  tbody tr.click:hover { background:rgba(var(--accent-rgb), .05); }
   td.num, td.ctr { font-family:'JetBrains Mono',monospace; }
   .rowflag { color:var(--red); font-weight:700; }
   .pill { padding:2px 8px; border-radius:10px; font-size:.68rem; font-weight:700; font-family:'JetBrains Mono',monospace; }
-  .pill.g { background:rgba(52,211,153,.15); color:var(--green);} .pill.y{ background:rgba(251,191,36,.15); color:var(--yellow);} .pill.r{ background:rgba(248,113,113,.15); color:var(--red);}
+  .pill.g { background:rgba(var(--green-rgb), .15); color:var(--green);} .pill.y{ background:rgba(var(--yellow-rgb), .15); color:var(--yellow);} .pill.r{ background:rgba(var(--red-rgb), .15); color:var(--red);}
   .small { font-size:.68rem; color:var(--text-dim); }
   /* Mini barra de cobertura na célula */
   .gauge { position:relative; height:8px; background:var(--surface2); border-radius:4px; overflow:hidden; margin-top:4px; }
@@ -109,7 +110,7 @@
     </div>
     <span class="small" id="limiarInfo" style="margin-left:auto;"></span>
     <button class="btn-export" onclick="exportar('csv')" title="Baixar CSV">⬇ CSV</button>
-    <button class="btn-export" onclick="exportar('pdf')" title="Baixar PDF" style="background:linear-gradient(135deg,#fb923c,#f87171);">📄 PDF</button>
+    <button class="btn-export" onclick="exportar('pdf')" title="Baixar PDF" style="background:linear-gradient(135deg,var(--orange),var(--red));">📄 PDF</button>
   </div>
 
   <div class="breadcrumb" id="breadcrumb"></div>

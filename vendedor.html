@@ -7,6 +7,7 @@
 <link rel="icon" href="/static/joga-mark.svg" type="image/svg+xml">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+<script src="/static/chart-tema.js"></script>
 <script src="/static/fetch-resiliente.js"></script>
 <link rel="stylesheet" href="/static/tooltips.css">
 <script defer src="/static/tooltips.js"></script>
@@ -21,7 +22,7 @@
   .dashboard { padding: 24px; max-width: 1600px; margin: 0 auto; animation: fadeUp 0.4s ease; }
   .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; flex-wrap: wrap; gap: 14px; }
   .top-bar .brand { display: flex; align-items: center; gap: 12px; }
-  .top-bar .brand .mark { width: 36px; height: 36px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--bg); font-size: 1.05rem; }
+  .top-bar .brand .mark { width: 36px; height: 36px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--sobre-accent); font-size: 1.05rem; }
   .top-bar h1 { font-size: 1.3rem; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
   .meta { font-size: 0.74rem; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; }
   .nav { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -78,17 +79,17 @@
   .chips { display: flex; gap: 4px; flex-wrap: wrap; }
   .chip { padding: 4px 9px; border-radius: 12px; border: 1px solid var(--border); cursor: pointer; font-size: 0.72rem; color: var(--text-dim); user-select: none; transition: all 0.12s; }
   .chip:hover { border-color: var(--accent); color: var(--text); }
-  .chip.active { background: var(--accent); color: var(--bg); font-weight: 600; border-color: var(--accent); }
+  .chip.active { background: var(--accent); color: var(--sobre-accent); font-weight: 600; border-color: var(--accent); }
   /* Chips de status régua removidos */
   .chip.g-champions.active          { background: var(--green);   border-color: var(--green); }
   .chip.g-loyal.active              { background: var(--accent);  border-color: var(--accent); }
   .chip.g-cant_lose.active          { background: var(--orange);  border-color: var(--orange); }
-  .chip.g-at_risk.active            { background: var(--yellow);  border-color: var(--yellow); color: #0a0e17; }
+  .chip.g-at_risk.active            { background: var(--yellow);  border-color: var(--yellow); color: var(--bg); }
   .chip.g-potential_loyalist.active { background: var(--accent2); border-color: var(--accent2); }
   .chip.g-new.active                { background: var(--purple);  border-color: var(--purple); }
   .chip.g-hibernating.active        { background: var(--gray);    border-color: var(--gray); }
   .chip.g-lost.active               { background: var(--red);     border-color: var(--red); }
-  .btn-export { padding: 7px 12px; background: linear-gradient(135deg, var(--accent), var(--accent2)); color: var(--bg); border: none; border-radius: 6px; cursor: pointer; font-weight: 700; font-size: 0.78rem; font-family: inherit; }
+  .btn-export { padding: 7px 12px; background: linear-gradient(135deg, var(--accent), var(--accent2)); color: var(--sobre-accent); border: none; border-radius: 6px; cursor: pointer; font-weight: 700; font-size: 0.78rem; font-family: inherit; }
   .table-scroll { overflow-x: auto; max-height: 60vh; overflow-y: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 0.8rem; white-space: nowrap; }
   thead th { position: sticky; top: 0; background: var(--surface2); padding: 9px 12px; text-align: left; font-weight: 600; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); border-bottom: 1px solid var(--border); z-index: 2; }
@@ -97,18 +98,18 @@
   thead th.th-sort:hover { color: var(--accent); }
   td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
   tbody tr { cursor: pointer; }
-  tbody tr:hover { background: rgba(56,189,248,0.05); }
+  tbody tr:hover { background: rgba(var(--accent-rgb), 0.05); }
   td.num { font-family: 'JetBrains Mono', monospace; }
   .badge { padding: 2px 7px; border-radius: 4px; font-size: 0.68rem; font-weight: 600; display: inline-block; background: var(--surface2); }
   /* Badges de status régua removidos */
-  .b-champions { background: rgba(52,211,153,0.15); color: var(--green); }
-  .b-loyal     { background: rgba(56,189,248,0.15); color: var(--accent); }
-  .b-at_risk   { background: rgba(251,191,36,0.15); color: var(--yellow); }
-  .b-lost      { background: rgba(248,113,113,0.15); color: var(--red); }
-  .b-cant_lose { background: rgba(251,146,60,0.15); color: var(--orange); }
-  .b-new       { background: rgba(167,139,250,0.15); color: var(--purple); }
-  .b-potential_loyalist { background: rgba(129,140,248,0.15); color: var(--accent2); }
-  .b-hibernating { background: rgba(71,85,105,0.25); color: var(--text-dim); }
+  .b-champions { background: rgba(var(--green-rgb), 0.15); color: var(--green); }
+  .b-loyal     { background: rgba(var(--accent-rgb), 0.15); color: var(--accent); }
+  .b-at_risk   { background: rgba(var(--yellow-rgb), 0.15); color: var(--yellow); }
+  .b-lost      { background: rgba(var(--red-rgb), 0.15); color: var(--red); }
+  .b-cant_lose { background: rgba(var(--orange-rgb), 0.15); color: var(--orange); }
+  .b-new       { background: rgba(var(--purple-rgb), 0.15); color: var(--purple); }
+  .b-potential_loyalist { background: rgba(var(--accent2-rgb), 0.15); color: var(--accent2); }
+  .b-hibernating { background: rgba(var(--gray-rgb), 0.25); color: var(--text-dim); }
 
   .loading-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; gap: 14px; }
   .spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
@@ -245,8 +246,6 @@ const COR_SEG = {
 window._modo = 'personalizada';  // legado — drill-cliente.js ainda lê (manter pra não quebrar)
 
 Chart.defaults.font.family = "'DM Sans', sans-serif";
-Chart.defaults.color = '#94a3b8';
-Chart.defaults.borderColor = '#1e293b';
 
 // codusur vem da URL: /vendedor/573
 const CODUSUR = parseInt(window.location.pathname.split('/').pop(), 10);

@@ -7,6 +7,7 @@
 <link rel="icon" href="/static/joga-mark.svg" type="image/svg+xml">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+<script src="/static/chart-tema.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
 <script src="/static/fetch-resiliente.js"></script>
 <link rel="stylesheet" href="/static/tooltips.css">
@@ -33,7 +34,7 @@
     width: 36px; height: 36px; border-radius: 8px;
     background: linear-gradient(135deg, var(--accent), var(--accent2));
     display: flex; align-items: center; justify-content: center;
-    font-weight: 700; color: var(--bg); font-size: 1.05rem;
+    font-weight: 700; color: var(--sobre-accent); font-size: 1.05rem;
   }
   .top-bar h1 {
     font-size: 1.3rem; font-weight: 700;
@@ -48,7 +49,7 @@
     cursor: pointer; transition: all 0.15s; text-decoration: none; display: inline-block;
   }
   .btn-sm:hover { border-color: var(--accent); color: var(--accent); }
-  .btn-sm.active { border-color: var(--accent); color: var(--accent); background: rgba(56,189,248,0.08); }
+  .btn-sm.active { border-color: var(--accent); color: var(--accent); background: rgba(var(--accent-rgb), 0.08); }
 
   /* Atalhos compactos pro filtro "dias sem comprar" */
   .btn-dias-shortcut {
@@ -57,7 +58,7 @@
     border-radius: 5px; cursor: pointer; transition: all 0.15s;
   }
   .btn-dias-shortcut:hover { border-color: var(--accent); color: var(--accent); }
-  .btn-dias-shortcut.active { border-color: var(--accent); color: var(--accent); background: rgba(56,189,248,0.12); }
+  .btn-dias-shortcut.active { border-color: var(--accent); color: var(--accent); background: rgba(var(--accent-rgb), 0.12); }
 
   /* Blocos */
   .bloco { margin-bottom: 18px; }
@@ -141,7 +142,7 @@
   }
   .chip:hover { border-color: var(--accent); color: var(--text); }
   .chip.active {
-    background: var(--accent); color: var(--bg); font-weight: 600; border-color: var(--accent);
+    background: var(--accent); color: var(--sobre-accent); font-weight: 600; border-color: var(--accent);
   }
   /* Cores específicas pros chips de status (matching badges) */
   /* Chips de status régua removidos */
@@ -149,7 +150,7 @@
   .chip.g-champions.active          { background: var(--green);   border-color: var(--green); }
   .chip.g-loyal.active              { background: var(--accent);  border-color: var(--accent); }
   .chip.g-cant_lose.active          { background: var(--orange);  border-color: var(--orange); }
-  .chip.g-at_risk.active            { background: var(--yellow);  border-color: var(--yellow); color: #0a0e17; }
+  .chip.g-at_risk.active            { background: var(--yellow);  border-color: var(--yellow); color: var(--bg); }
   .chip.g-potential_loyalist.active { background: var(--accent2); border-color: var(--accent2); }
   .chip.g-new.active                { background: var(--purple);  border-color: var(--purple); }
   .chip.g-hibernating.active        { background: var(--gray);    border-color: var(--gray); }
@@ -158,7 +159,7 @@
   input[list] { min-width: 200px; }
   .btn-export {
     padding: 8px 14px; background: linear-gradient(135deg, var(--accent), var(--accent2));
-    color: var(--bg); border: none; border-radius: 7px; cursor: pointer;
+    color: var(--sobre-accent); border: none; border-radius: 7px; cursor: pointer;
     font-weight: 700; font-size: 0.8rem; font-family: inherit;
   }
   .table-card {
@@ -185,14 +186,14 @@
   thead th.num, td.num { text-align: right; }
   td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
   tbody tr { cursor: pointer; }
-  tbody tr:hover { background: rgba(56,189,248,0.05); }
+  tbody tr:hover { background: rgba(var(--accent-rgb), 0.05); }
   td.num { font-family: 'JetBrains Mono', monospace; }
   .badge { padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; display: inline-block; }
   /* Badges b-ok/b-normal/b-atencao/b-urgente — reintroduzidos pra aba Próximo Pedido */
-  .badge.b-ok      { background: rgba(52,211,153,.15); color: #34d399; }
-  .badge.b-normal  { background: rgba(56,189,248,.15); color: #38bdf8; }
-  .badge.b-atencao { background: rgba(251,146,60,.15); color: #fb923c; }
-  .badge.b-urgente { background: rgba(248,113,113,.15); color: #f87171; }
+  .badge.b-ok      { background: rgba(var(--green-rgb), .15); color: var(--green); }
+  .badge.b-normal  { background: rgba(var(--accent-rgb), .15); color: var(--accent); }
+  .badge.b-atencao { background: rgba(var(--orange-rgb), .15); color: var(--orange); }
+  .badge.b-urgente { background: rgba(var(--red-rgb), .15); color: var(--red); }
   .pp-row:hover { background: var(--surface2, rgba(255,255,255,.03)); }
   .pp-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 12px; margin-bottom: 16px; }
   .pp-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 13px 15px; }
@@ -203,15 +204,15 @@
   .pp-card.pp-active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
   .pp-st { padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.72rem; cursor: pointer; background: var(--surface2); color: var(--text-dim); user-select: none; }
   .pp-st:hover { border-color: var(--accent); }
-  .pp-st.on { border-color: var(--accent); color: var(--accent); background: rgba(56,189,248,.12); }
-  .b-champions { background: rgba(52,211,153,0.15); color: var(--green); }
-  .b-loyal     { background: rgba(56,189,248,0.15); color: var(--accent); }
-  .b-at_risk   { background: rgba(251,191,36,0.15); color: var(--yellow); }
-  .b-lost      { background: rgba(248,113,113,0.15); color: var(--red); }
-  .b-cant_lose { background: rgba(251,146,60,0.15); color: var(--orange); }
-  .b-new       { background: rgba(167,139,250,0.15); color: var(--purple); }
-  .b-potential_loyalist { background: rgba(129,140,248,0.15); color: var(--accent2); }
-  .b-hibernating { background: rgba(71,85,105,0.25); color: var(--text-dim); }
+  .pp-st.on { border-color: var(--accent); color: var(--accent); background: rgba(var(--accent-rgb), .12); }
+  .b-champions { background: rgba(var(--green-rgb), 0.15); color: var(--green); }
+  .b-loyal     { background: rgba(var(--accent-rgb), 0.15); color: var(--accent); }
+  .b-at_risk   { background: rgba(var(--yellow-rgb), 0.15); color: var(--yellow); }
+  .b-lost      { background: rgba(var(--red-rgb), 0.15); color: var(--red); }
+  .b-cant_lose { background: rgba(var(--orange-rgb), 0.15); color: var(--orange); }
+  .b-new       { background: rgba(var(--purple-rgb), 0.15); color: var(--purple); }
+  .b-potential_loyalist { background: rgba(var(--accent2-rgb), 0.15); color: var(--accent2); }
+  .b-hibernating { background: rgba(var(--gray-rgb), 0.25); color: var(--text-dim); }
 
   /* (Drill 360° foi extraído pra /static/drill-cliente.css — incluído via <link> no head) */
 
@@ -220,11 +221,11 @@
   .spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .banner-aviso {
-    background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.3);
+    background: rgba(var(--yellow-rgb), 0.1); border: 1px solid rgba(var(--yellow-rgb), 0.3);
     color: var(--yellow); padding: 10px 14px; border-radius: 8px; margin-bottom: 12px;
     font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center;
   }
-  .banner-aviso button { background: var(--yellow); color: var(--bg); border: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.78rem; }
+  .banner-aviso button { background: var(--yellow); color: var(--sobre-accent); border: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.78rem; }
   .hidden { display: none !important; }
   /* .backdrop também extraída pra /static/drill-cliente.css */
 </style>
@@ -308,7 +309,7 @@
           </div>
           <div class="ff">
             <label>&nbsp;</label>
-            <button class="btn-export" onclick="exportarPDF()" title="Baixar como PDF" style="background:linear-gradient(135deg,#fb923c,#f87171);">📄 PDF</button>
+            <button class="btn-export" onclick="exportarPDF()" title="Baixar como PDF" style="background:linear-gradient(135deg,var(--orange),var(--red));">📄 PDF</button>
           </div>
         </div>
         <div class="filtros-card" style="margin-top: 0;">
@@ -456,7 +457,7 @@
         </div>
         <button class="btn-sm" onclick="limparProximo()">Limpar</button>
         <button class="btn-export" onclick="exportarProximoCSV()" title="Baixar lista do dia (CSV)">⬇ CSV</button>
-        <button class="btn-export" onclick="exportarProximoPDF()" title="Baixar lista do dia (PDF)" style="background:linear-gradient(135deg,#fb923c,#f87171);">📄 PDF</button>
+        <button class="btn-export" onclick="exportarProximoPDF()" title="Baixar lista do dia (PDF)" style="background:linear-gradient(135deg,var(--orange),var(--red));">📄 PDF</button>
       </div>
       <div id="ppCards" class="pp-cards"></div>
       <div class="table-card">
@@ -493,8 +494,6 @@ const PCT = (v) => (v == null ? '—' : (v * 100).toFixed(1).replace('.', ',') +
 const MESES = ['','Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
 
 Chart.defaults.font.family = "'DM Sans', sans-serif";
-Chart.defaults.color = '#94a3b8';
-Chart.defaults.borderColor = '#1e293b';
 // Plugin datalabels: desativado por padrão; habilitado individualmente no donut RFM
 if (window.ChartDataLabels) {
   Chart.defaults.plugins = Chart.defaults.plugins || {};

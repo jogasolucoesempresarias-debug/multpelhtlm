@@ -21,14 +21,14 @@
     background: var(--surface); border: 1px solid var(--border);
     border-radius: 16px; padding: 36px 32px;
     width: 100%; max-width: 420px;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+    box-shadow: 0 20px 60px rgba(var(--sombra-rgb), 0.4);
     animation: fadeUp 0.4s ease;
   }
   .logo {
     width: 52px; height: 52px; border-radius: 12px;
     background: linear-gradient(135deg, var(--accent), var(--accent2));
     display: flex; align-items: center; justify-content: center;
-    font-size: 1.6rem; font-weight: 700; color: var(--bg); margin: 0 auto 18px;
+    font-size: 1.6rem; font-weight: 700; color: var(--sobre-accent); margin: 0 auto 18px;
   }
   h1 {
     font-size: 1.3rem; font-weight: 700; text-align: center; margin-bottom: 4px;
@@ -37,8 +37,8 @@
   }
   .subtitle { text-align: center; color: var(--text-dim); font-size: 0.82rem; margin-bottom: 22px; }
   .aviso {
-    background: rgba(251,191,36,0.1);
-    border: 1px solid rgba(251,191,36,0.3);
+    background: rgba(var(--yellow-rgb), 0.1);
+    border: 1px solid rgba(var(--yellow-rgb), 0.3);
     color: var(--yellow);
     padding: 10px 12px; border-radius: 8px;
     font-size: 0.78rem; margin-bottom: 18px;
@@ -55,13 +55,13 @@
   .btn-primary {
     width: 100%; padding: 11px;
     background: linear-gradient(135deg, var(--accent), var(--accent2));
-    color: var(--bg); font-weight: 700; border: none; border-radius: 8px;
+    color: var(--sobre-accent); font-weight: 700; border: none; border-radius: 8px;
     cursor: pointer; font-size: 0.92rem; font-family: inherit;
     margin-top: 8px;
   }
   .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
-  .erro { background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.3); color: var(--red); padding: 9px 12px; border-radius: 8px; font-size: 0.82rem; margin-bottom: 14px; display: none; }
-  .ok { background: rgba(52,211,153,0.1); border: 1px solid rgba(52,211,153,0.3); color: var(--green); padding: 9px 12px; border-radius: 8px; font-size: 0.82rem; margin-bottom: 14px; display: none; }
+  .erro { background: rgba(var(--red-rgb), 0.1); border: 1px solid rgba(var(--red-rgb), 0.3); color: var(--red); padding: 9px 12px; border-radius: 8px; font-size: 0.82rem; margin-bottom: 14px; display: none; }
+  .ok { background: rgba(var(--green-rgb), 0.1); border: 1px solid rgba(var(--green-rgb), 0.3); color: var(--green); padding: 9px 12px; border-radius: 8px; font-size: 0.82rem; margin-bottom: 14px; display: none; }
   .show { display: block; }
 </style>
 </head>
