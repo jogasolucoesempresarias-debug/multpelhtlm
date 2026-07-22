@@ -466,7 +466,7 @@ function renderCockpit(P){
    </div>`;
   chart('ch-abc',{type:'bar',data:{labels:['A','B','C'],datasets:[{data:['A','B','C'].map(c=>S.abcLens==='estoque'?k.abc[c].valor:k.abc[c].venda),backgroundColor:[C.green,C.accent,C.dim],borderRadius:6}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+k.abc[['A','B','C'][c.dataIndex]].qt+' itens'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
   // rosca de participação dos itens por curva (quantidade) — cores fixas A/B/C (verde/azul/cinza), borda = surface p/ respiro
-  chart('ch-abc-itens',{type:'doughnut',data:{labels:['Curva A','Curva B','Curva C'],datasets:[{data:['A','B','C'].map(c=>k.abc[c].qt),backgroundColor:[C.green,C.accent,C.dim],borderColor:'#111827',borderWidth:2,hoverOffset:4}]},options:{cutout:'64%',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.label+': '+int(c.raw)+' itens ('+dec(totItens?c.raw/totItens*100:0,1)+'%)'}}}}});
+  chart('ch-abc-itens',{type:'doughnut',data:{labels:['Curva A','Curva B','Curva C'],datasets:[{data:['A','B','C'].map(c=>k.abc[c].qt),backgroundColor:[C.green,C.accent,C.dim],borderColor:getComputedStyle(document.documentElement).getPropertyValue('--surface').trim()||'#111827',borderWidth:2,hoverOffset:4}]},options:{cutout:'64%',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.label+': '+int(c.raw)+' itens ('+dec(totItens?c.raw/totItens*100:0,1)+'%)'}}}}});
   const _abcLeg=$('#abc-itens-leg'); if(_abcLeg) _abcLeg.innerHTML=['A','B','C'].map((c,i)=>`<div style="display:flex;align-items:center;gap:8px;font-size:.82rem;white-space:nowrap"><span style="width:11px;height:11px;border-radius:3px;background:${[C.green,C.accent,C.dim][i]};flex:none"></span><b>Curva ${c}</b> <span style="color:var(--text-dim)">${int(k.abc[c].qt)} · ${dec(k.abc[c].qt/totItens*100,0)}%</span></div>`).join('');
   document.querySelectorAll('[data-abclens]').forEach(b=>b.onclick=()=>{S.abcLens=b.dataset.abclens;render();});
   const topPar=P.filter(p=>p.status_parado).sort((a,b)=>b.valor-a.valor).slice(0,6);
@@ -1507,7 +1507,7 @@ async function injectResumos(sel){
       </div>
     </div>
     <div class="count-line">Comprado = pedido real do Winthor (pode divergir do manual da planilha). Cobertura/ruptura no escopo de produtos de revenda; números acompanham o estoque ao vivo.</div>`;
-  chart('gg-ideal',{type:'doughnut',data:{labels:[`Ideal (≥${int(lim)}d)`,`Em risco (<${int(lim)}d)`],datasets:[{data:[iId.n||0,iRis.n||0],backgroundColor:[C.green,C.red],borderColor:'#111827',borderWidth:2,hoverOffset:4}]},
+  chart('gg-ideal',{type:'doughnut',data:{labels:[`Ideal (≥${int(lim)}d)`,`Em risco (<${int(lim)}d)`],datasets:[{data:[iId.n||0,iRis.n||0],backgroundColor:[C.green,C.red],borderColor:getComputedStyle(document.documentElement).getPropertyValue('--surface').trim()||'#111827',borderWidth:2,hoverOffset:4}]},
     options:{cutout:'66%',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.label+': '+int(c.raw)+' SKUs'}}}}});
 }
 
