@@ -332,6 +332,13 @@ function lotesFiltrados(){
     const cods=new Set(S.produtosAll.filter(p=>String(p.codcomprador)===f.comprador).map(p=>p.codprod));
     L=L.filter(l=>cods.has(l.codprod));
   }
+  // fornecedor = o PRINCIPAL do cadastro (PCPRODUT.CODFORNEC), mesma semântica do filtered()
+  // das outras abas. Faltava aqui: a tela ignorava o filtro enquanto o export já aplicava
+  // (reclamação do diretor 07/2026 — tela e Excel discordavam).
+  if(f.fornec){
+    const cods=new Set(S.produtosAll.filter(p=>String(p.codfornec)===f.fornec).map(p=>p.codprod));
+    L=L.filter(l=>cods.has(l.codprod));
+  }
   if(b) L=L.filter(l=>String(l.codprod).includes(b)||(l.descricao||'').toLowerCase().includes(b));
   return L;
 }
