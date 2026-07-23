@@ -28,6 +28,7 @@ const S = {
   charts:{}, sort:{}, valFaixa:null,
   vencidos:null, vencidosQS:'', venMes:null, venPer:'2026',   // aba Vencidos: cache por QS, mês selecionado, período (2026|12m|tudo)
   leadtime:null, ltMin:5, ltOpen:new Set(), ltDet:{},   // aba Lead time: cache, mín. pedidos, drills abertos/carregados
+  verbas:null, vbOpen:new Set(), vbDet:{},              // aba Verbas: cache + drills abertos/carregados
 };
 
 /* ───────── helpers ───────── */
@@ -54,7 +55,7 @@ const sugCxN = p => { if(!(p.sugestao_cx>0)) return '—';
 const embCell = p => { const e=esc(p.embalagem_caixa||''); const cx=p.caixa||1;
   return cx>1 ? `${e||'cx'} <small class="muted">· ${int(cx)} un/cx</small>` : `<span class="muted">${e||'avulso'} · 1 un</span>`; };
 // navegação em 2 níveis: grupo → telas
-const NAV={visao:['cockpit','gerencial','meta_ruptura'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento'],estoque:['ruptura','parado','validade','vencidos','ruptura_comprador','ocupacao'],analise:['desempenho','comprasvendas','fornecedores','leadtime','abcxyz','produtos','qualidade']};
+const NAV={visao:['cockpit','gerencial','meta_ruptura'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento'],estoque:['ruptura','parado','validade','vencidos','ruptura_comprador','ocupacao'],analise:['desempenho','comprasvendas','fornecedores','leadtime','verbas','abcxyz','produtos','qualidade']};
 // aba 'logistica' oculta a pedido do diretor (não usa p/ análise) — reversível: re-adicionar em pedidos
 const GROUP_OF=v=>Object.keys(NAV).find(g=>NAV[g].includes(v))||'visao';
 // filtro Curva (global, topo) = MULTI-seleção (ex.: ver ruptura de B+C juntas)
@@ -227,6 +228,18 @@ const TIPS = {
     'Prazo manual':'PRAZOENTREGA cadastrado hoje no fornecedor (preenchido à mão) — é o que a sugestão de compra usa.',
     'Δ':'Prazo manual − lead real. Positivo = cadastro inflado (estoque de segurança além do necessário, capital parado). Negativo = prazo otimista (risco de ruptura).',
     'Situação':'Cadastro OK, inflado, otimista, ou "sem lead confiável" (quase tudo digitado na hora — o prazo manual segue valendo).',
+  },
+  verbas:{
+    _title:'Verbas/bonificações negociadas com fornecedores (rotina 1801 do Winthor): quanto foi negociado, quanto já virou abatimento e quanto está parado sem aplicar.',
+    'Verbas 12m':'Nº de verbas emitidas nos últimos 12 meses (canceladas fora).',
+    'Negociado':'Valor das verbas emitidas nos últimos 12 meses.',
+    'Aplicado':'Quanto dessas verbas já virou abatimento de fato (estornos fora).',
+    'Saldo aberto':'Posição ATUAL: valor negociado que ainda não foi aplicado — qualquer data de emissão (saldo antigo não some daqui).',
+    'Idade':'Há quantos dias o saldo mais antigo do fornecedor está parado sem aplicar.',
+    'Compra 12m':'Volume comprado do fornecedor nos últimos 12 meses (transferência entre filiais fora).',
+    '% V/C':'Verba negociada ÷ compra no mesmo período — a "taxa de devolução" do fornecedor. Compare fornecedores parecidos: é o argumento de negociação.',
+    'Lead':'Lead time real do fornecedor (mediana ≥2d, da aba Lead time) — fecha o tripé: quanto compro · quanto demora · quanto devolve.',
+    'Situação':'Aplicada (sem saldo), saldo em aberto, ou saldo PARADO (aberto há mais de 120 dias).',
   },
   fornecedores:{
     _title:'Compara quanto o fornecedor vende com quanto pesa em estoque.',
@@ -1475,6 +1488,144 @@ function ltDetRow(cod){
   return wrap(chips+`<div class="row" style="align-items:flex-start;gap:22px">${blocoTri}${blocoFaixas}${blocoProm}</div>`+tbl);
 }
 
+/* ── Verbas por fornecedor (rotina 1801: negociado × aplicado × saldo) ──
+   Fecha o TRIPÉ do fornecedor: quanto compro (12m) · quanto demora (lead real) · quanto
+   devolve em verba (%V/C). Saldo em aberto é POSIÇÃO (qualquer emissão); negociado/aplicado
+   do placar são 12m (casam com a compra do %V/C). Base própria (/api/verbas); respeita os
+   filtros GLOBAIS de comprador e fornecedor do topo. */
+async function renderVerbas(){
+  const el=$('#v-verbas');
+  if(!S.verbas){
+    el.innerHTML=`<div class="loader"><div class="spinner"></div>Calculando verbas dos fornecedores…</div>`;
+    try{ S.verbas=await getJSON('/estoque/api/verbas'); }
+    catch(e){ el.innerHTML=`<div class="empty">Falha ao carregar verbas: ${esc(e.message)}</div>`; return; }
+  }
+  const J=S.verbas, R=J.resumo||{};
+  let rows=(J.fornecedores||[]);
+  let grandes=(J.grandes_sem_verba||[]);
+  if(S.cli.comprador){ rows=rows.filter(f=>String(f.codcomprador)===S.cli.comprador);
+    grandes=grandes.filter(f=>String(f.codcomprador)===S.cli.comprador); }
+  if(S.cli.fornec){ rows=rows.filter(f=>String(f.codfornec)===S.cli.fornec);
+    grandes=grandes.filter(f=>String(f.codfornec)===S.cli.fornec); }
+
+  const sitKey=f=>f.saldo>0?((f.idade_saldo||0)>120?'parado':'aberto'):'ok';
+  const SIT={parado:['Saldo PARADO',C.red],aberto:['Saldo em aberto',C.orange],ok:['Aplicada',C.green]};
+  const sitCell=k=>{const s=SIT[k];return `<span class="badge" style="background:${s[1]}22;color:${s[1]}">${s[0]}</span>`;};
+  const pctCell=v=>v==null?'<span class="muted">—</span>':`<b style="color:${v>=10?C.green:(v>=3?'inherit':C.orange)}">${dec(v,1)}%</b>`;
+  const saldoCell=f=>f.saldo>0?`<span style="color:${(f.idade_saldo||0)>120?C.red:C.orange};font-weight:600">${money(f.saldo)}</span>`:'<span class="muted">—</span>';
+
+  const ck=[{k:'fornecedor',label:'Fornecedor'},{k:'comprador',label:'Comprador'},{k:'n_verbas',label:'Verbas 12m',num:1},
+    {k:'negociado',label:'Negociado',num:1},{k:'aplicado',label:'Aplicado',num:1},{k:'saldo',label:'Saldo aberto',num:1},
+    {k:'idade_saldo',label:'Idade',num:1},{k:'compra_12m',label:'Compra 12m',num:1},{k:'pct_vc',label:'% V/C',num:1},
+    {k:'lead_real',label:'Lead',num:1},{k:'sit',label:'Situação'}];
+  const sk=S.sort['verbas']||{key:'negociado',dir:-1};
+  const sorted=_sortArr(rows.map(f=>({...f,sit:sitKey(f)})),sk);
+
+  el.innerHTML=head('Verbas por fornecedor — negociado × aplicado × saldo','verbas')+
+    `<div class="count-line">Rotina <b>1801</b> do Winthor · negociado/aplicado = últimos <b>12 meses</b> · saldo em aberto = posição atual (qualquer emissão) · canceladas e estornos fora · alinhado ao extrato <b>1826</b>.</div>
+    <div class="kpi-grid" style="grid-template-columns:repeat(5,1fr)">
+      ${kpi('Saldo a aplicar',money(R.saldo_aberto),`${int(R.n_abertas)} verbas em aberto`,C.orange)}
+      ${kpi('Idade do saldo',R.idade_mediana!=null?dec(R.idade_mediana,0)+'d':'—',`mediana · mais antiga ${int(R.idade_max)}d`,C.red)}
+      ${kpi('Negociado 12m',money(R.negociado_12m),`${int(R.n_verbas_12m)} verbas`,C.accent)}
+      ${kpi('Aplicado 12m',money(R.aplicado_12m),'abatimentos efetivados',C.green)}
+      ${kpi('Compram sem dar verba',int(R.n_grandes_sem_verba),`compra 12m > ${moneyK(R.compra_min_alerta)}`,C.purple)}</div>
+    <div class="row" style="align-items:flex-start">
+      <div class="panel grow"><h3><span>Negociado × aplicado por mês${tipT('Barras azuis = verbas emitidas no mês; verdes = valor aplicado no mês. Aplicação abaixo da negociação por vários meses = saldo acumulando.')}</span></h3>
+        <div class="chart-box sm" style="height:190px"><canvas id="ch-verbas"></canvas></div></div>
+      <div class="panel" style="flex:0 0 340px;max-width:340px" id="vb-contas"></div>
+    </div>
+    <div class="panel" id="vb-grandes"></div>
+    <div class="tbl-wrap"><table><thead><tr>${sortTh(ck,sk)}</tr></thead>
+    <tbody>${sorted.map(f=>{const open=S.vbOpen.has(f.codfornec);
+      return `<tr class="vb-row" data-cod="${f.codfornec}" style="cursor:pointer${open?';background:var(--surface3)':''}">
+      <td><span class="muted" style="display:inline-block;width:1em">${open?'▾':'▸'}</span><span class="prod" title="${esc(f.fornecedor)}">${esc(f.fornecedor)}</span> <small class="muted">· ${f.codfornec}</small></td>
+      <td>${esc(f.comprador||'—')}</td>
+      <td class="num">${int(f.n_verbas)}</td>
+      <td class="num">${money(f.negociado)}</td>
+      <td class="num">${money(f.aplicado)}</td>
+      <td class="num">${saldoCell(f)}</td>
+      <td class="num">${f.idade_saldo!=null?int(f.idade_saldo)+'d':'<span class="muted">—</span>'}</td>
+      <td class="num">${moneyK(f.compra_12m)}</td>
+      <td class="num">${pctCell(f.pct_vc)}</td>
+      <td class="num">${f.lead_real!=null?dec(f.lead_real,0)+'d':'<span class="muted">—</span>'}</td>
+      <td>${sitCell(f.sit)}</td></tr>`+(open?vbDetRow(f.codfornec):'');}).join('')
+      ||'<tr><td colspan="11" class="muted">Nenhum fornecedor com verba no recorte (confira PCVERBA/PCAPLICVERBA no dataset).</td></tr>'}</tbody></table></div>
+    <div class="count-line">${sorted.length} fornecedores · clique na linha para <b>auditar</b> as verbas uma a uma · <b>% V/C</b> = verba ÷ compra (compare pares: é o argumento de negociação) · o tripé completo: compra × lead × verba.</div>`;
+
+  // gráfico mensal: 2 séries → legenda presente; cores fixas por entidade (negociado/aplicado)
+  const ms=J.meses||[];
+  chart('ch-verbas',{type:'bar',
+    data:{labels:ms.map(m=>m.mes.slice(2)),
+      datasets:[
+        {label:'Negociado',data:ms.map(m=>m.negociado),backgroundColor:C.accent,borderRadius:4,maxBarThickness:26},
+        {label:'Aplicado',data:ms.map(m=>m.aplicado),backgroundColor:C.green,borderRadius:4,maxBarThickness:26}]},
+    options:{maintainAspectRatio:false,plugins:{legend:{display:true,position:'bottom'},
+      tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${money(c.parsed.y)}`}}},
+      scales:{y:{beginAtZero:true,ticks:{callback:v=>moneyK(v)}}}}});
+
+  // painel: por conta (a "campanha")
+  const cts=J.contas||[], ctMax=Math.max(1,...cts.map(c=>c.negociado));
+  $('#vb-contas').innerHTML=`<h3><span>Por conta (tipo de verba)${tipT('250009 = rebaixa de custo · 250008 = conta corrente (é onde o saldo encalha) · 200013 = premiações e campanhas.')}</span></h3>
+    ${cts.map(c=>`<div style="margin:7px 0;font-size:.85em">
+      <div style="display:flex;justify-content:space-between"><span>${esc(c.conta)} <small class="muted">· ${int(c.n)}</small></span><b>${moneyK(c.negociado)}</b></div>
+      <span style="display:block;height:8px;background:var(--surface3);border-radius:4px;margin-top:3px"><span style="display:block;height:8px;width:${Math.round(100*c.negociado/ctMax)}%;background:${C.accent};border-radius:4px"></span></span>
+      ${c.saldo>0?`<small style="color:${C.orange}">saldo em aberto: ${money(c.saldo)}</small>`:''}</div>`).join('')||'<div class="muted">—</div>'}`;
+
+  // painel: grandes compradores sem verba (o argumento de negociação)
+  $('#vb-grandes').innerHTML=`<h3><span>⚠️ Compram muito e não dão verba${tipT('Fornecedores com compra 12m relevante e NENHUMA verba registrada. Se pagassem o % dos pares, é dinheiro deixado na mesa — leve esta lista pra negociação.')}</span>
+      <small class="muted">· nenhuma verba em 12m nem saldo anterior</small></h3>`+
+    (grandes.length?`<div class="tbl-wrap" style="max-height:180px;overflow:auto"><table style="font-size:.85em">
+      <thead><tr><th>Fornecedor</th><th>Comprador</th><th class="num">Compra 12m</th><th class="num">Se pagasse 2% · 4%</th></tr></thead>
+      <tbody>${grandes.map(g=>`<tr><td><span class="prod">${esc(g.fornecedor)}</span> <small class="muted">· ${g.codfornec}</small></td>
+        <td>${esc(g.comprador||'—')}</td>
+        <td class="num"><b>${money(g.compra_12m)}</b></td>
+        <td class="num" style="color:${C.green}">${moneyK(g.compra_12m*0.02)} · ${moneyK(g.compra_12m*0.04)}</td></tr>`).join('')}</tbody></table></div>`
+      :'<div class="muted" style="padding:6px 0">Nenhum no recorte atual.</div>');
+
+  wireSortTbl(el,'verbas',render);
+  el.querySelectorAll('tr.vb-row').forEach(tr=>tr.onclick=async()=>{
+    const cod=parseInt(tr.dataset.cod,10);
+    if(S.vbOpen.has(cod)){ S.vbOpen.delete(cod); render(); return; }
+    S.vbOpen.add(cod);
+    render();
+    if(!S.vbDet[cod]){
+      try{ S.vbDet[cod]=await getJSON('/estoque/api/verbas/detalhe?fornec='+cod); }
+      catch(e){ S.vbDet[cod]={ok:false,error:e.message}; }
+      if(S.view==='verbas') render();
+    }
+  });
+}
+
+/* linha expandida da auditoria de UM fornecedor (drill das Verbas) */
+function vbDetRow(cod){
+  const d=S.vbDet[cod];
+  const wrap=inner=>`<tr class="vb-det"><td colspan="11" style="background:var(--surface2);padding:14px 18px">${inner}</td></tr>`;
+  if(!d) return wrap(`<div class="loader" style="padding:8px"><div class="spinner"></div>Carregando verbas do fornecedor…</div>`);
+  if(d.ok===false) return wrap(`<div class="empty">Falha ao carregar o detalhe: ${esc(d.error||'?')}</div>`);
+  const st=d.stats||{}, vs=(d.verbas||[]);
+  const chip=(l,v)=>`<span style="margin-right:16px"><span class="muted">${l}</span> <b>${v}</b></span>`;
+  const stBadge=v=>{
+    if(v.saldo<=0) return `<span class="badge" style="background:${C.green}22;color:${C.green}">✓ aplicada</span>`;
+    const parado=(v.idade_saldo||0)>120;
+    return `<span class="badge" style="background:${(parado?C.red:C.orange)}22;color:${parado?C.red:C.orange}">saldo ${money(v.saldo)} · ${int(v.idade_saldo)}d${parado?' · PARADO':''}</span>`;};
+  return wrap(
+    `<div style="margin-bottom:10px">
+      ${chip('Verbas (2024+):',int(st.n_verbas))}${chip('Negociado:',money(st.negociado))}
+      ${chip('Aplicado:',money(st.aplicado))}${chip('Saldo em aberto:',st.saldo>0?`<span style="color:${C.orange}">${money(st.saldo)}</span>`:'R$ 0')}
+      ${chip('Em aberto:',int(st.n_abertas))}</div>
+    <div class="tbl-wrap" style="max-height:300px;overflow:auto"><table style="font-size:.85em">
+    <thead><tr><th>Verba</th><th>Emissão</th><th>Venc.</th><th>Conta</th><th>Campanha (texto da 1801)</th><th>Pgto</th>
+      <th class="num">Valor</th><th class="num">Aplicado</th><th class="num">Aplicações</th><th>Status</th></tr></thead>
+    <tbody>${vs.map(v=>`<tr>
+      <td class="num">${v.numverba}</td><td>${dt(v.emissao)}</td><td>${dt(v.venc)}</td>
+      <td><small>${esc(v.conta)}</small></td>
+      <td><span class="prod" title="${esc(v.campanha||'')}">${esc((v.campanha||'—').slice(0,38))}</span></td>
+      <td>${v.formapgto==='M'?'Mercad.':(v.formapgto==='D'?'Dinheiro':esc(v.formapgto||'—'))}</td>
+      <td class="num"><b>${money(v.valor)}</b></td><td class="num">${money(v.aplicado)}</td>
+      <td class="num">${v.n_aplic?`${int(v.n_aplic)}× <small class="muted">últ. ${dt(v.ult_aplic)}</small>`:'<span class="muted">—</span>'}</td>
+      <td>${stBadge(v)}</td></tr>`).join('')||'<tr><td colspan="10" class="muted">Sem verbas (2024+).</td></tr>'}</tbody></table></div>`);
+}
+
 function renderComprasVendas(P){
   const dim=S.cvDim, el=$('#v-comprasvendas');
   const seg=`<div class="seg" id="cv-seg">
@@ -2179,6 +2330,7 @@ function render(){
   if(S.view==='plano'){ renderPlano(); savePrefs(); return; }
   if(S.view==='desempenho'){ renderDesempenho(); savePrefs(); return; }
   if(S.view==='leadtime'){ renderLeadtime(); savePrefs(); return; }   // base própria (12m de pedidos), não usa filtered()
+  if(S.view==='verbas'){ renderVerbas(); savePrefs(); return; }       // base própria (PCVERBA), não usa filtered()
   if(S.view==='vencidos'){ renderVencidos(); savePrefs(); return; }
   if(S.view==='meta_ruptura'){ renderMetaRuptura(); savePrefs(); return; }   // base própria (90d), não usa filtered()
   const P=filtered();

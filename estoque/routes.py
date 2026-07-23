@@ -312,6 +312,55 @@ def _leadtime_raw(hoje):
     return raw
 
 
+# ───────────────────────── verbas (aba Análise → Verbas) ─────────────────────────
+def _verbas_raw(hoje):
+    """Linhas cruas de PCVERBA + PCAPLICVERBA (2024+ na origem). Cache 30min."""
+    key = f"verbas:raw:{hoje.isoformat()}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    raw = {"verbas": pbi.run_dax(Q.q_verbas()),
+           "aplics": pbi.run_dax(Q.q_verba_aplic())}
+    pbi._CACHE.set(key, raw, 1800)
+    return raw
+
+
+def _compras_12m_map(hoje):
+    """{codfornec: Σ VLTOTAL dos pedidos 12m} — REUSA o cab do lead time (nenhuma query
+    nova); transferência entre filiais (raiz de CNPJ) fica fora, igual ao orçamento."""
+    forn_map = _cadastro_fornecedores()
+    raiz = core._cnpj_raiz(MULTPEL_EMPRESA["cnpj"])
+    out = {}
+    for r in _leadtime_raw(hoje)["cab"]:
+        cod = int(core._n(r.get("CODFORNEC")))
+        if raiz and core._cnpj_raiz((forn_map.get(cod) or {}).get("CGC")) == raiz:
+            continue
+        out[cod] = out.get(cod, 0.0) + core._n(r.get("VLTOTAL"))
+    return out
+
+
+def _verbas_res(hoje):
+    """Agregado da aba Verbas (core.verbas_fornecedores) — fecha o TRIPÉ cruzando com a
+    compra 12m e o lead real já calculados. Degrada p/ vazio se o BI cair. Cache 30min."""
+    key = f"verbas:{hoje.isoformat()}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    res = {"resumo": {}, "contas": [], "meses": [], "fornecedores": [], "grandes_sem_verba": []}
+    try:
+        raw = _verbas_raw(hoje)
+        lead_map = {f["codfornec"]: f.get("lead_real")
+                    for f in _leadtime_res(hoje).get("fornecedores", [])}
+        res = core.verbas_fornecedores(raw["verbas"], raw["aplics"], _cadastro_fornecedores(),
+                                       _compradores_map(), compras_map=_compras_12m_map(hoje),
+                                       lead_map=lead_map, hoje=hoje,
+                                       cnpj_empresa=MULTPEL_EMPRESA["cnpj"])
+    except Exception as e:
+        print(f"[verbas] indisponível ({e}).")
+    pbi._CACHE.set(key, res, 1800)
+    return res
+
+
 def _leadtime_res(hoje):
     """Agregado da aba Lead time (core.leadtime_fornecedores sobre o raw acima).
     Degrada p/ vazio se o BI estiver fora. Cache 30min."""
@@ -641,6 +690,33 @@ def api_leadtime():
     res = _leadtime_res(_hoje())
     return jsonify({"ok": True, "gerado_em": date.today().isoformat(),
                     "bi_refresh": pbi.get_dataset_refresh(), **res})
+
+
+@bp.route("/api/verbas")
+def api_verbas():
+    """Verbas de fornecedor (rotina 1801): negociado × aplicado × saldo + tripé com
+    compra 12m e lead time — ver core.verbas_fornecedores."""
+    res = _verbas_res(_hoje())
+    return jsonify({"ok": True, "gerado_em": date.today().isoformat(),
+                    "bi_refresh": pbi.get_dataset_refresh(), **res})
+
+
+@bp.route("/api/verbas/detalhe")
+def api_verbas_detalhe():
+    """Drill da aba Verbas: as verbas de UM fornecedor (?fornec=cod), uma a uma."""
+    try:
+        cod = int(request.args.get("fornec") or 0)
+    except ValueError:
+        cod = 0
+    if not cod:
+        return jsonify({"ok": False, "error": "fornec obrigatório"}), 400
+    try:
+        raw = _verbas_raw(_hoje())
+    except Exception as e:
+        print(f"[verbas] drill indisponível ({e}).")
+        return jsonify({"ok": False, "error": "BI indisponível"}), 503
+    det = core.verbas_detalhe(raw["verbas"], raw["aplics"], cod, hoje=_hoje())
+    return jsonify({"ok": True, **det})
 
 
 @bp.route("/api/leadtime/pedidos")
@@ -1068,6 +1144,17 @@ def _export_data(view):
             linhas = [l for l in linhas if (l.get("n") or 0) >= lt_min]
         cols = ["codfornec", "fornecedor", "comprador", "n", "na_hora", "pct_na_hora",
                 "lead_todos", "lead_real", "prazo_manual", "delta", "situacao"]
+    elif view == "verbas":
+        # espelha a tela: filtros globais de comprador/fornecedor
+        linhas = _verbas_res(_hoje())["fornecedores"]
+        cc = request.args.get("comprador_cod")
+        if cc:
+            linhas = [l for l in linhas if str(l.get("codcomprador")) == cc]
+        fn = request.args.get("fornec")
+        if fn:
+            linhas = [l for l in linhas if str(l.get("codfornec")) == fn]
+        cols = ["codfornec", "fornecedor", "comprador", "n_verbas", "negociado", "aplicado",
+                "saldo", "idade_saldo", "compra_12m", "pct_vc", "lead_real"]
     elif view == "vencidos":
         # perda por validade (conta 200042). Não passa por _aplicar_filtros_cliente: o grão é
         # item-da-nota (evento histórico), não produto — os filtros de estoque não se aplicam.
@@ -1234,6 +1321,12 @@ _PDF_COLS = {
                  ("lead_todos", "Lead médio todos (d)", "num"), ("lead_real", "Lead real (d)", "num"),
                  ("prazo_manual", "Prazo manual (d)", "int"), ("delta", "Δ (d)", "num"),
                  ("situacao", "Situação", "text")],
+    "verbas": [("codfornec", "Cód", "text"), ("fornecedor", "Fornecedor", "text", 30),
+               ("comprador", "Comprador", "text", 16), ("n_verbas", "Verbas 12m", "int"),
+               ("negociado", "Negociado 12m", "money"), ("aplicado", "Aplicado", "money"),
+               ("saldo", "Saldo aberto", "money"), ("idade_saldo", "Idade (d)", "int"),
+               ("compra_12m", "Compra 12m", "money"), ("pct_vc", "% Verba/Compra", "pct"),
+               ("lead_real", "Lead (d)", "num")],
     # espelha a planilha VENCIDOS do diretor (+ qtdisp: o que ainda está na casa)
     "vencidos": [("dtsaida", "Data", "date"), ("numnota", "Nota", "text"),
                  ("fornecedor", "Fornecedor", "text", 24), ("codprod", "Cód", "text"),
@@ -1246,7 +1339,8 @@ _PDF_TITULO = {"produtos": "Produtos", "comprasvendas": "Compras × Vendas", "re
                "fornecedores": "Fornecedores", "compradores": "Compradores", "estoque_zero": "Estoque zerado",
                "ruptura_comprador": "Ruptura por comprador", "desempenho": "Desempenho comercial",
                "vencidos": "Vencidos — perda por validade",
-               "leadtime": "Lead time por fornecedor"}
+               "leadtime": "Lead time por fornecedor",
+               "verbas": "Verbas por fornecedor"}
 
 
 def _fmt_pdf(v, kind, maxlen=None):

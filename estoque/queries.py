@@ -144,6 +144,41 @@ FILTER(
 )"""
 
 
+def q_verbas():
+    """Verbas de fornecedor (PCVERBA, publicada do Oracle desde 2024) — aba Verbas.
+    Rotina Winthor 1801 (Incluir Verba/Bonif.Fornecedor). REFERENCIA = texto livre da
+    campanha (PCTIPOVERBA está vazia nesta base); CODCONTA: 250009 = rebaixa de custo,
+    250008 = conta corrente, 200013 = premiações. DTCANCEL preenchida = cancelada
+    (regra aplicada no core, não aqui — dado cru de propósito)."""
+    return """EVALUATE
+SELECTCOLUMNS(PCVERBA,
+    "NUMVERBA",     PCVERBA[NUMVERBA],
+    "CODFILIAL",    PCVERBA[CODFILIAL],
+    "CODFORNEC",    PCVERBA[CODFORNEC],
+    "CODCOMPRADOR", PCVERBA[CODCOMPRADOR],
+    "VALOR",        PCVERBA[VALOR],
+    "TIPO",         PCVERBA[TIPO],
+    "FORMAPGTO",    PCVERBA[FORMAPGTO],
+    "REFERENCIA",   PCVERBA[REFERENCIA],
+    "CODCONTA",     PCVERBA[CODCONTA],
+    "DTEMISSAO",    PCVERBA[DTEMISSAO],
+    "DTVENC",       PCVERBA[DTVENC],
+    "DTCANCEL",     PCVERBA[DTCANCEL]
+)"""
+
+
+def q_verba_aplic():
+    """Aplicações de verba (PCAPLICVERBA): quanto de cada NUMVERBA já baixou, quando e
+    em qual entrada (NUMTRANSENT). DTESTORNO preenchida = aplicação estornada (fora)."""
+    return """EVALUATE
+SELECTCOLUMNS(PCAPLICVERBA,
+    "NUMVERBA",  PCAPLICVERBA[NUMVERBA],
+    "VLAPLIC",   PCAPLICVERBA[VLAPLIC],
+    "DTAPLIC",   PCAPLICVERBA[DTAPLIC],
+    "DTESTORNO", PCAPLICVERBA[DTESTORNO]
+)"""
+
+
 def q_pedido_entrada():
     """Ponte NUMPED → data da 1ª ENTRADA da NF no estoque (aba Lead time).
 

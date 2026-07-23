@@ -1306,6 +1306,217 @@ def leadtime_detalhe(cab, entrada_rows, codfornec, forn_map, comp_map, hoje=None
             "promessa": promessa}
 
 
+# ───────────────────────── verbas de fornecedor (rotina 1801) ─────────────────────────
+# Nomes das contas do 1826 (o PCCONTA do dataset é escopado na 200042 e não cobre estas).
+CONTAS_VERBA = {250009: "Rebaixa de custo", 250008: "Conta corrente",
+                200013: "Premiações e campanhas", 200042: "Perda validade"}
+_VERBA_COMPRA_MIN_ALERTA = 300000   # compra 12m acima disso sem verba nenhuma → alerta
+_VERBA_IDADE_PARADA = 120           # saldo em aberto há mais que isso = "parado" (crítico)
+
+
+def _verbas_prep(verbas, aplic_rows):
+    """Normaliza: exclui canceladas (DTCANCEL) e estornos (DTESTORNO); calcula aplicado e
+    saldo por verba. Devolve (válidas, n_cancel, aplicações_válidas, n_estornos)."""
+    apl_por_verba = {}
+    apl_validas = []
+    n_estornos = 0
+    for a in aplic_rows or []:
+        if a.get("DTESTORNO"):
+            n_estornos += 1
+            continue
+        nv = int(_n(a.get("NUMVERBA")))
+        apl_por_verba[nv] = apl_por_verba.get(nv, 0.0) + _n(a.get("VLAPLIC"))
+        apl_validas.append(a)
+    out = []
+    n_cancel = 0
+    for v in verbas or []:
+        if v.get("DTCANCEL"):
+            n_cancel += 1
+            continue
+        nv = int(_n(v.get("NUMVERBA")))
+        valor = _n(v.get("VALOR"))
+        aplicado = apl_por_verba.get(nv, 0.0)
+        out.append({**v, "_nv": nv, "_valor": valor, "_aplicado": aplicado,
+                    "_saldo": valor - aplicado,
+                    "_emis": _parse_dt(v.get("DTEMISSAO")),
+                    "_venc": _parse_dt(v.get("DTVENC")),
+                    "_forn": int(_n(v.get("CODFORNEC")))})
+    return out, n_cancel, apl_validas, n_estornos
+
+
+def verbas_fornecedores(verbas, aplic_rows, forn_map, comp_map, compras_map=None,
+                        lead_map=None, hoje=None, cnpj_empresa=None,
+                        compra_min_alerta=_VERBA_COMPRA_MIN_ALERTA):
+    """Visão Verbas: negociado × aplicado × saldo por fornecedor + consolidados.
+
+    verbas/aplic_rows: linhas cruas de PCVERBA/PCAPLICVERBA (2024+); compras_map:
+    {codfornec: compra_12m} (do cab de pedidos do lead time, transferências já fora);
+    lead_map: {codfornec: lead_real} — fecha o TRIPÉ (compra × lead × verba).
+
+    Regras (validadas contra o relatório 1826, BOMBRIL centavo a centavo no recorte 2024+):
+    - cancelada (DTCANCEL) e estorno (DTESTORNO) ficam fora;
+    - saldo a aplicar = VALOR − Σ aplicações (posição ATUAL, qualquer emissão — saldo é
+      estoque, não fluxo; DTQUITACAO é campo morto nesta base, o status vem do saldo);
+    - negociado/aplicado do placar = últimos 12 MESES (casa com a compra 12m do %V/C);
+    - fornecedor entra no placar se tem verba 12m OU saldo em aberto (saldo antigo não some);
+    - compra alta sem verba nenhuma → lista de alerta (o argumento de negociação)."""
+    hoje = hoje or date.today()
+    corte_12m = hoje - timedelta(days=365)
+    raiz_empresa = _cnpj_raiz(cnpj_empresa)
+    V, n_cancel, apl_validas, n_estornos = _verbas_prep(verbas, aplic_rows)
+    V = [v for v in V if not (raiz_empresa
+                              and _cnpj_raiz((forn_map.get(v["_forn"]) or {}).get("CGC")) == raiz_empresa)]
+
+    # por fornecedor
+    agg = {}
+    for v in V:
+        a = agg.setdefault(v["_forn"], {"n": 0, "neg": 0.0, "apl": 0.0,
+                                        "saldo": 0.0, "idade_max": None})
+        if v["_emis"] and v["_emis"] >= corte_12m:
+            a["n"] += 1
+            a["neg"] += v["_valor"]
+            a["apl"] += min(v["_aplicado"], v["_valor"]) if v["_valor"] else v["_aplicado"]
+        if v["_saldo"] > 0.01:
+            a["saldo"] += v["_saldo"]
+            if v["_emis"]:
+                idade = (hoje - v["_emis"]).days
+                a["idade_max"] = max(a["idade_max"] or 0, idade)
+
+    compras_map = compras_map or {}
+    lead_map = lead_map or {}
+    linhas = []
+    for cod, a in agg.items():
+        if a["n"] == 0 and a["saldo"] <= 0.01:
+            continue
+        f = forn_map.get(cod) or {}
+        codcomp = int(_n(f.get("CODCOMPRADOR"))) or None
+        compra = _n(compras_map.get(cod))
+        linhas.append({
+            "codfornec": cod,
+            "fornecedor": f.get("FORNECEDOR") or f"FORN {cod}",
+            "codcomprador": codcomp,
+            "comprador": comp_map.get(codcomp) if codcomp else None,
+            "n_verbas": a["n"],
+            "negociado": _round(a["neg"]),
+            "aplicado": _round(a["apl"]),
+            "saldo": _round(a["saldo"]),
+            "idade_saldo": a["idade_max"],
+            "compra_12m": _round(compra),
+            "pct_vc": _round(100.0 * a["neg"] / compra, 1) if (compra > 0 and a["neg"] > 0) else None,
+            "lead_real": lead_map.get(cod),
+        })
+    linhas.sort(key=lambda x: -x["negociado"])
+
+    # grandes compradores sem verba nenhuma (nem 12m, nem saldo)
+    com_verba = set(agg)
+    grandes = []
+    for cod, compra in compras_map.items():
+        if cod in com_verba or _n(compra) < compra_min_alerta:
+            continue
+        f = forn_map.get(cod) or {}
+        codcomp = int(_n(f.get("CODCOMPRADOR"))) or None
+        grandes.append({"codfornec": cod, "fornecedor": f.get("FORNECEDOR") or f"FORN {cod}",
+                        "codcomprador": codcomp,
+                        "comprador": comp_map.get(codcomp) if codcomp else None,
+                        "compra_12m": _round(_n(compra))})
+    grandes.sort(key=lambda x: -x["compra_12m"])
+
+    # por conta (2024+) e evolução mensal (14 meses)
+    por_conta = {}
+    for v in V:
+        c = int(_n(v.get("CODCONTA")))
+        pc = por_conta.setdefault(c, {"codconta": c, "conta": CONTAS_VERBA.get(c, f"Conta {c}"),
+                                      "n": 0, "negociado": 0.0, "saldo": 0.0})
+        pc["n"] += 1
+        pc["negociado"] += v["_valor"]
+        pc["saldo"] += v["_saldo"] if v["_saldo"] > 0.01 else 0.0
+    contas = sorted(({**c, "negociado": _round(c["negociado"]), "saldo": _round(c["saldo"])}
+                     for c in por_conta.values()), key=lambda x: -x["negociado"])
+    neg_mes, apl_mes = {}, {}
+    for v in V:
+        if v["_emis"]:
+            m = v["_emis"].strftime("%Y-%m")
+            neg_mes[m] = neg_mes.get(m, 0.0) + v["_valor"]
+    for a in apl_validas:
+        d = _parse_dt(a.get("DTAPLIC"))
+        if d:
+            m = d.strftime("%Y-%m")
+            apl_mes[m] = apl_mes.get(m, 0.0) + _n(a.get("VLAPLIC"))
+    meses = [{"mes": m, "negociado": _round(neg_mes.get(m, 0.0)), "aplicado": _round(apl_mes.get(m, 0.0))}
+             for m in sorted(set(neg_mes) | set(apl_mes))[-14:]]
+
+    abertas = [v for v in V if v["_saldo"] > 0.01]
+    idades = [(hoje - v["_emis"]).days for v in abertas if v["_emis"]]
+    neg_12m = sum(v["_valor"] for v in V if v["_emis"] and v["_emis"] >= corte_12m)
+    apl_12m = sum(_n(a.get("VLAPLIC")) for a in apl_validas
+                  if (_parse_dt(a.get("DTAPLIC")) or date.min) >= corte_12m)
+    resumo = {
+        "saldo_aberto": _round(sum(v["_saldo"] for v in abertas)),
+        "n_abertas": len(abertas),
+        "saldo_vencido": _round(sum(v["_saldo"] for v in abertas
+                                    if v["_venc"] and v["_venc"] < hoje)),
+        "idade_mediana": _round(statistics.median(idades), 0) if idades else None,
+        "idade_max": max(idades) if idades else None,
+        "negociado_12m": _round(neg_12m),
+        "aplicado_12m": _round(apl_12m),
+        "n_verbas_12m": sum(1 for v in V if v["_emis"] and v["_emis"] >= corte_12m),
+        "n_cancel": n_cancel,
+        "n_estornos": n_estornos,
+        "n_fornec": len(linhas),
+        "n_grandes_sem_verba": len(grandes),
+        "compra_min_alerta": compra_min_alerta,
+    }
+    return {"resumo": resumo, "contas": contas, "meses": meses,
+            "fornecedores": linhas, "grandes_sem_verba": grandes[:10]}
+
+
+def verbas_detalhe(verbas, aplic_rows, codfornec, hoje=None):
+    """Drill da aba Verbas: as verbas de UM fornecedor, uma a uma (auditoria) — número,
+    campanha (REFERENCIA), conta, valor × aplicado × saldo, idade e aplicações."""
+    hoje = hoje or date.today()
+    codfornec = int(codfornec)
+    V, _, apl_validas, _ = _verbas_prep(verbas, aplic_rows)
+    apls = {}
+    for a in apl_validas:
+        nv = int(_n(a.get("NUMVERBA")))
+        d = _parse_dt(a.get("DTAPLIC"))
+        st = apls.setdefault(nv, {"n": 0, "ult": None})
+        st["n"] += 1
+        if d and (st["ult"] is None or d > st["ult"]):
+            st["ult"] = d
+    linhas = []
+    tot_neg = tot_apl = tot_saldo = 0.0
+    for v in V:
+        if v["_forn"] != codfornec:
+            continue
+        saldo = v["_saldo"] if v["_saldo"] > 0.01 else 0.0
+        tot_neg += v["_valor"]
+        tot_apl += min(v["_aplicado"], v["_valor"]) if v["_valor"] else v["_aplicado"]
+        tot_saldo += saldo
+        ap = apls.get(v["_nv"], {"n": 0, "ult": None})
+        c = int(_n(v.get("CODCONTA")))
+        linhas.append({
+            "numverba": v["_nv"],
+            "emissao": v["_emis"].isoformat() if v["_emis"] else None,
+            "venc": v["_venc"].isoformat() if v["_venc"] else None,
+            "codconta": c, "conta": CONTAS_VERBA.get(c, f"Conta {c}"),
+            "campanha": (v.get("REFERENCIA") or "").strip() or None,
+            "formapgto": v.get("FORMAPGTO"),
+            "valor": _round(v["_valor"]),
+            "aplicado": _round(v["_aplicado"]),
+            "saldo": _round(saldo),
+            "idade_saldo": (hoje - v["_emis"]).days if (saldo > 0 and v["_emis"]) else None,
+            "n_aplic": ap["n"],
+            "ult_aplic": ap["ult"].isoformat() if ap["ult"] else None,
+        })
+    linhas.sort(key=lambda x: x["emissao"] or "", reverse=True)
+    stats = {"codfornec": codfornec, "n_verbas": len(linhas),
+             "negociado": _round(tot_neg), "aplicado": _round(tot_apl),
+             "saldo": _round(tot_saldo),
+             "n_abertas": sum(1 for l in linhas if l["saldo"] > 0)}
+    return {"stats": stats, "verbas": linhas}
+
+
 # ───────────────────────── resumos gerenciais (painel do diretor) ─────────────────────────
 _FX_VALIDADE = [("0 a 15 dias", 0, 15, "URGENTE"), ("16 a 30 dias", 16, 30, "ALTO"),
                 ("31 a 60 dias", 31, 60, "ATENCAO"), ("61 a 90 dias", 61, 90, "BAIXO"),
