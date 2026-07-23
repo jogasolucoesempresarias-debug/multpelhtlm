@@ -6,12 +6,36 @@
 
 // Eixo/grade dos gráficos leem do tema (antes '#94a3b8'/'#1e293b' cravados — ignoravam o tema
 // e ficariam escuros no claro). Fallback mantém o valor de antes se a variável não resolver.
-(function () {
+// Mesma estratégia do chart-tema.js do Comercial: além dos defaults (valem p/ gráficos
+// futuros), REPINTA os já renderizados na troca de tema ao vivo. O SPA do estoque não carrega
+// o chart-tema.js, então expomos window.aplicarTemaChart aqui — o joga-header.js chama essa
+// função no toggle. Sem isto, quem abria no escuro e trocava p/ claro ficava com a grade
+// escura (linhas de grade pesadas no branco).
+window.aplicarTemaChart = function () {
+  if (typeof Chart === 'undefined') return;
   const cor = (v, f) => getComputedStyle(document.documentElement).getPropertyValue(v).trim() || f;
-  Chart.defaults.color = cor('--text-dim', '#94a3b8');
-  Chart.defaults.borderColor = cor('--border', '#1e293b');
+  const txt = cor('--text-dim', '#94a3b8');
+  const grade = cor('--border', '#1e293b');
+  Chart.defaults.color = txt;
+  Chart.defaults.borderColor = grade;
   Chart.defaults.font.family = 'DM Sans, sans-serif';
-})();
+  const insts = Chart.instances || {};
+  Object.keys(insts).forEach(function (id) {
+    const c = insts[id];
+    if (!c || !c.options) return;
+    try {
+      const scales = c.options.scales || {};
+      Object.keys(scales).forEach(function (k) {
+        const s = scales[k];
+        if (!s) return;
+        if (s.grid) s.grid.color = grade;
+        if (s.ticks) s.ticks.color = txt;
+      });
+      c.update('none');
+    } catch (e) { /* um chart problemático não pode travar os outros */ }
+  });
+};
+window.aplicarTemaChart();
 
 const C = { green:'#34d399', red:'#f87171', orange:'#fb923c', yellow:'#fbbf24',
             accent:'#38bdf8', accent2:'#818cf8', purple:'#c084fc', dim:'#64748b' };
