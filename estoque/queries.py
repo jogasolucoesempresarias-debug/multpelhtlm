@@ -144,6 +144,22 @@ FILTER(
 )"""
 
 
+def q_pedido_entrada():
+    """Ponte NUMPED → data da 1ª ENTRADA da NF no estoque (aba Lead time).
+
+    A tabela PEDIDO_ENTRADA é publicada no dataset a partir do Oracle
+    (PCMOV×PCNFENT: MIN(DTENT) por NUMPED) porque nenhuma tabela nativa do modelo
+    tem essa data: PCPEDIDO[DTENTRADAESTOQUE] é 100% nulo nesta base (validado
+    07/2026 — 4.629 pedidos, zero preenchidos) e o PCMOV do dataset vem escopado
+    na conta 200042 (só perda por validade). ⚠️ Não confundir DTENTRADA (entrada
+    física da NF) com DTEMISSAO (digitação do pedido)."""
+    return """EVALUATE
+SELECTCOLUMNS(PEDIDO_ENTRADA,
+    "NUMPED",    PEDIDO_ENTRADA[NUMPED],
+    "DTENTRADA", PEDIDO_ENTRADA[DTENTRADA]
+)"""
+
+
 # ───────────────────────── embalagem / cubagem (PCEMBALAGEM) ────────────────────
 def q_embalagem():
     """Por CODPROD: caixa (MAX QTUNIT) + cubagem (VOLUME/dimensões) + peso.

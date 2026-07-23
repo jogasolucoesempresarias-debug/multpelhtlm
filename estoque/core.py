@@ -1065,6 +1065,247 @@ def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS
     return {"resumo": resumo, "pedidos": pedidos, "abertos": abertos, "por_comprador": por_comprador}
 
 
+# ───────────────────────── lead time por fornecedor (pedido → entrada) ─────────────────────────
+# Faixas do histograma da aba. "0–1 dia" = pedido DIGITADO NA HORA da entrega (o pedido real
+# nasceu fora do ERP — telefone/WhatsApp — e foi lançado junto com a NF). Decisão do diretor
+# 07/2026: NÃO esconder esses pedidos; a aba mostra os DOIS lead times lado a lado e o
+# % na hora vira o medidor do "serviço errado" caindo ao longo do tempo.
+FAIXAS_LEADTIME = [("0-1", 0, 1), ("2-3", 2, 3), ("4-7", 4, 7),
+                   ("8-15", 8, 15), ("16-30", 16, 30), ("31+", 31, 10**9)]
+_LEAD_REAL_MIN = 2      # lead >= 2 dias = pedido digitado ANTES da entrega (lead "real")
+_LEAD_MIN_PED = 5       # mínimo de pedidos reais p/ a mediana ser confiável
+
+
+def leadtime_fornecedores(cab, entrada_rows, forn_map, comp_map, hoje=None,
+                          min_ped=_LEAD_MIN_PED, cnpj_empresa=None):
+    """Lead time por fornecedor: 1º recebimento (PEDIDO_ENTRADA) − emissão (PCPEDIDO).
+
+    cab: linhas do q_pedido_cab (12m); entrada_rows: linhas do q_pedido_entrada
+    (ponte NUMPED→DTENTRADA); forn_map: {codfornec: row PCFORNEC}; comp_map: {matricula: nome}.
+
+    Dois lead times por fornecedor (validado com o diretor 07/2026):
+    - lead_todos = MÉDIA de TODOS os pedidos recebidos (inclui digitado na hora). Média, não
+      mediana: com >50% de pedidos "na hora" a mediana colapsa pra 0 e vira número binário;
+      a média pondera cada pedido e a distância até o lead_real mede a distorção do processo.
+    - lead_real  = MEDIANA só dos pedidos com lead >= 2d (>= min_ped pedidos, senão None
+      = "sem lead confiável" e o PRAZOENTREGA manual segue valendo como fallback). Mediana
+      aqui de propósito: é o número de planejamento, imune às caudas de 100+ dias.
+    Transferência entre filiais (raiz de CNPJ da empresa) fica fora — não é fornecedor.
+    Lead negativo (NF antes do pedido) é descartado das medianas e contado no resumo."""
+    hoje = hoje or date.today()
+    raiz_empresa = _cnpj_raiz(cnpj_empresa)
+    entrada = {}
+    for r in entrada_rows or []:
+        numped = int(_n(r.get("NUMPED")))
+        dt = _parse_dt(r.get("DTENTRADA"))
+        if numped and dt:
+            entrada[numped] = dt
+
+    por_forn = {}                     # {codfornec: [lead, ...]}
+    n_analisados = n_transfer = n_sem_entrada = n_negativos = 0
+    faixas = {nome: 0 for nome, *_ in FAIXAS_LEADTIME}
+    for r in cab:
+        cod = int(_n(r.get("CODFORNEC")))
+        forn = forn_map.get(cod)
+        if raiz_empresa and _cnpj_raiz((forn or {}).get("CGC")) == raiz_empresa:
+            n_transfer += 1
+            continue
+        emis = _parse_dt(r.get("DTEMISSAO"))
+        ent = entrada.get(int(_n(r.get("NUMPED"))))
+        if not emis or not ent:
+            n_sem_entrada += 1        # aberto (ainda sem NF) ou fora da ponte
+            continue
+        lead = (ent - emis).days
+        if lead < 0:
+            n_negativos += 1
+            continue
+        n_analisados += 1
+        por_forn.setdefault(cod, []).append(lead)
+        for nome, lo, hi in FAIXAS_LEADTIME:
+            if lo <= lead <= hi:
+                faixas[nome] += 1
+                break
+
+    linhas = []
+    for cod, leads in por_forn.items():
+        forn = forn_map.get(cod) or {}
+        reais = [l for l in leads if l >= _LEAD_REAL_MIN]
+        confiavel = len(reais) >= int(min_ped)
+        lead_real = _round(statistics.median(reais), 1) if confiavel else None
+        prazo = _n(forn.get("PRAZOENTREGA"))
+        prazo = int(prazo) if prazo > 0 else None
+        codcomp = int(_n(forn.get("CODCOMPRADOR"))) or None
+        na_hora = sum(1 for l in leads if l < _LEAD_REAL_MIN)
+        linhas.append({
+            "codfornec": cod,
+            "fornecedor": forn.get("FORNECEDOR") or f"FORN {cod}",
+            "codcomprador": codcomp,
+            "comprador": comp_map.get(codcomp) if codcomp else None,
+            "n": len(leads),
+            "na_hora": na_hora,
+            "pct_na_hora": _round(100.0 * na_hora / len(leads), 1),
+            "lead_todos": _round(statistics.mean(leads), 1),
+            "lead_real": lead_real,
+            "n_reais": len(reais),
+            "confiavel": confiavel,
+            "prazo_manual": prazo,
+            # Δ = manual − real: positivo grande = cadastro inflado (estoque de segurança
+            # desnecessário / capital parado); negativo = prazo otimista (risco de ruptura).
+            "delta": _round(prazo - lead_real, 1) if (prazo is not None and lead_real is not None) else None,
+        })
+    linhas.sort(key=lambda x: -x["n"])
+
+    todos_leads = [l for ls in por_forn.values() for l in ls]
+    reais_glob = [l for l in todos_leads if l >= _LEAD_REAL_MIN]
+    resumo = {
+        "n_pedidos": n_analisados,
+        "n_sem_entrada": n_sem_entrada,
+        "n_transfer": n_transfer,
+        "n_negativos": n_negativos,
+        "pct_na_hora": _round(100.0 * sum(1 for l in todos_leads if l < _LEAD_REAL_MIN)
+                              / len(todos_leads), 1) if todos_leads else None,
+        "media_todos": _round(statistics.mean(todos_leads), 1) if todos_leads else None,
+        "mediana_real": _round(statistics.median(reais_glob), 1) if reais_glob else None,
+        "n_fornec": len(linhas),
+        "n_confiavel": sum(1 for l in linhas if l["confiavel"]),
+        # cadastro defasado = |Δ| >= 3 dias entre o prazo manual e o lead real
+        "n_defasados": sum(1 for l in linhas if l["delta"] is not None and abs(l["delta"]) >= 3),
+    }
+    return {"resumo": resumo,
+            "faixas": [{"faixa": nome, "qtd": faixas[nome]} for nome, *_ in FAIXAS_LEADTIME],
+            "fornecedores": linhas}
+
+
+def _trimestre(d):
+    return f"{d.year}-T{(d.month - 1) // 3 + 1}"
+
+
+def leadtime_detalhe(cab, entrada_rows, codfornec, forn_map, comp_map, hoje=None,
+                     min_ped=_LEAD_MIN_PED):
+    """Drill da aba Lead time: TUDO que compõe o número de UM fornecedor (auditoria).
+
+    Devolve: stats (o resumo da linha + p90/min/max/valores), pedidos (um a um, com as
+    duas datas, lead, valor e se contou na mediana — inclui os ABERTOS e os negativos,
+    nada escondido), trimestres (lead real + % na hora ao longo do tempo — o medidor do
+    processo melhorando), faixas (histograma local) e promessa (DTPREVENT × entrada real,
+    mesma regra híbrida do Orçamento: só conta previsão REAL, posterior à emissão —
+    quando o Winthor repete emissão+1 é preenchimento automático, não promessa)."""
+    hoje = hoje or date.today()
+    codfornec = int(codfornec)
+    forn = forn_map.get(codfornec) or {}
+    entrada = {}
+    for r in entrada_rows or []:
+        numped = int(_n(r.get("NUMPED")))
+        dt = _parse_dt(r.get("DTENTRADA"))
+        if numped and dt:
+            entrada[numped] = dt
+
+    pedidos = []
+    leads = []                      # só os válidos (>= 0), p/ stats
+    tri_agg = {}                    # {tri: [leads]}
+    faixas = {nome: 0 for nome, *_ in FAIXAS_LEADTIME}
+    prom_aval = prom_prazo = prom_auto = 0
+    atrasos_prom = []
+    valor_12m = valor_aberto = 0.0
+    for r in cab:
+        if int(_n(r.get("CODFORNEC"))) != codfornec:
+            continue
+        emis = _parse_dt(r.get("DTEMISSAO"))
+        if not emis:
+            continue
+        numped = int(_n(r.get("NUMPED")))
+        ent = entrada.get(numped)
+        vlt = _n(r.get("VLTOTAL"))
+        vle = _n(r.get("VLENTREGUE"))
+        valor_12m += vlt
+        dtprev = _parse_dt(r.get("DTPREVENT"))
+        # promessa de verdade = mais de 1 dia após a emissão. Mais rígido que o híbrido do
+        # Orçamento (> emissão) de propósito: nesta base o Winthor preenche DTPREVENT
+        # automaticamente com emissão+1 (validado 07/2026), o que não é promessa nenhuma.
+        prev_real = bool(dtprev and (dtprev - emis).days > 1)
+        p = {"numped": numped,
+             "codfilial": str(r.get("CODFILIAL") or "").strip() or None,
+             "emissao": emis.isoformat(),
+             "entrada": ent.isoformat() if ent else None,
+             "lead": None, "valor": _round(vlt),
+             "dtprevent": dtprev.isoformat() if prev_real else None,
+             "atraso_promessa": None}
+        if not ent:
+            aberto_val = max(0.0, vlt - vle)
+            valor_aberto += aberto_val
+            p["tipo"] = "aberto"
+            p["dias_aberto"] = (hoje - emis).days
+            p["atrasado"] = bool(prev_real and hoje > dtprev)
+        else:
+            lead = (ent - emis).days
+            p["lead"] = lead
+            if lead < 0:
+                p["tipo"] = "negativo"               # NF antes do pedido — dado sujo, fora da mediana
+            else:
+                p["tipo"] = "real" if lead >= _LEAD_REAL_MIN else "na_hora"
+                leads.append(lead)
+                tri_agg.setdefault(_trimestre(emis), []).append(lead)
+                for nome, lo, hi in FAIXAS_LEADTIME:
+                    if lo <= lead <= hi:
+                        faixas[nome] += 1
+                        break
+                if prev_real:
+                    prom_aval += 1
+                    if ent <= dtprev:
+                        prom_prazo += 1
+                    else:
+                        atrasos_prom.append((ent - dtprev).days)
+                        p["atraso_promessa"] = (ent - dtprev).days
+                elif dtprev:
+                    prom_auto += 1
+        pedidos.append(p)
+    pedidos.sort(key=lambda p: p["emissao"], reverse=True)
+
+    reais = sorted(l for l in leads if l >= _LEAD_REAL_MIN)
+    confiavel = len(reais) >= int(min_ped)
+    lead_real = _round(statistics.median(reais), 1) if confiavel else None
+    prazo = _n(forn.get("PRAZOENTREGA"))
+    prazo = int(prazo) if prazo > 0 else None
+    codcomp = int(_n(forn.get("CODCOMPRADOR"))) or None
+    na_hora = sum(1 for l in leads if l < _LEAD_REAL_MIN)
+    stats = {
+        "codfornec": codfornec,
+        "fornecedor": forn.get("FORNECEDOR") or f"FORN {codfornec}",
+        "comprador": comp_map.get(codcomp) if codcomp else None,
+        "n": len(leads), "na_hora": na_hora,
+        "pct_na_hora": _round(100.0 * na_hora / len(leads), 1) if leads else None,
+        "lead_todos": _round(statistics.mean(leads), 1) if leads else None,   # média (regra da aba)
+        "lead_real": lead_real, "n_reais": len(reais), "confiavel": confiavel,
+        "prazo_manual": prazo,
+        "delta": _round(prazo - lead_real, 1) if (prazo is not None and lead_real is not None) else None,
+        "lead_min": reais[0] if reais else None,
+        "lead_max": reais[-1] if reais else None,
+        "lead_p90": reais[int(len(reais) * 0.9)] if len(reais) > 3 else (reais[-1] if reais else None),
+        "valor_12m": _round(valor_12m),
+        "n_abertos": sum(1 for p in pedidos if p["tipo"] == "aberto"),
+        "valor_aberto": _round(valor_aberto),
+        "n_negativos": sum(1 for p in pedidos if p["tipo"] == "negativo"),
+    }
+    trimestres = []
+    for tri in sorted(tri_agg):
+        ls = tri_agg[tri]
+        rs = [l for l in ls if l >= _LEAD_REAL_MIN]
+        trimestres.append({
+            "tri": tri, "n": len(ls),
+            "pct_na_hora": _round(100.0 * sum(1 for l in ls if l < _LEAD_REAL_MIN) / len(ls), 1),
+            "lead_real": _round(statistics.median(rs), 1) if rs else None,
+        })
+    promessa = {
+        "n_avaliaveis": prom_aval,                   # entregues COM promessa real de data
+        "n_auto": prom_auto,                         # DTPREVENT automática (emissão+1) — fora
+        "pct_no_prazo": _round(100.0 * prom_prazo / prom_aval, 1) if prom_aval else None,
+        "atraso_medio": _round(sum(atrasos_prom) / len(atrasos_prom), 1) if atrasos_prom else None,
+    }
+    return {"stats": stats, "pedidos": pedidos, "trimestres": trimestres,
+            "faixas": [{"faixa": nome, "qtd": faixas[nome]} for nome, *_ in FAIXAS_LEADTIME],
+            "promessa": promessa}
+
+
 # ───────────────────────── resumos gerenciais (painel do diretor) ─────────────────────────
 _FX_VALIDADE = [("0 a 15 dias", 0, 15, "URGENTE"), ("16 a 30 dias", 16, 30, "ALTO"),
                 ("31 a 60 dias", 31, 60, "ATENCAO"), ("61 a 90 dias", 61, 90, "BAIXO"),

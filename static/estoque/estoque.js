@@ -27,6 +27,7 @@ const S = {
   params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1,metaA:2,metaBC:5},
   charts:{}, sort:{}, valFaixa:null,
   vencidos:null, vencidosQS:'', venMes:null, venPer:'2026',   // aba Vencidos: cache por QS, mês selecionado, período (2026|12m|tudo)
+  leadtime:null, ltMin:5, ltOpen:new Set(), ltDet:{},   // aba Lead time: cache, mín. pedidos, drills abertos/carregados
 };
 
 /* ───────── helpers ───────── */
@@ -53,7 +54,7 @@ const sugCxN = p => { if(!(p.sugestao_cx>0)) return '—';
 const embCell = p => { const e=esc(p.embalagem_caixa||''); const cx=p.caixa||1;
   return cx>1 ? `${e||'cx'} <small class="muted">· ${int(cx)} un/cx</small>` : `<span class="muted">${e||'avulso'} · 1 un</span>`; };
 // navegação em 2 níveis: grupo → telas
-const NAV={visao:['cockpit','gerencial','meta_ruptura'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento'],estoque:['ruptura','parado','validade','vencidos','ruptura_comprador','ocupacao'],analise:['desempenho','comprasvendas','fornecedores','abcxyz','produtos','qualidade']};
+const NAV={visao:['cockpit','gerencial','meta_ruptura'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento'],estoque:['ruptura','parado','validade','vencidos','ruptura_comprador','ocupacao'],analise:['desempenho','comprasvendas','fornecedores','leadtime','abcxyz','produtos','qualidade']};
 // aba 'logistica' oculta a pedido do diretor (não usa p/ análise) — reversível: re-adicionar em pedidos
 const GROUP_OF=v=>Object.keys(NAV).find(g=>NAV[g].includes(v))||'visao';
 // filtro Curva (global, topo) = MULTI-seleção (ex.: ver ruptura de B+C juntas)
@@ -216,6 +217,16 @@ const TIPS = {
     'Ruptura':'Nº de itens em ruptura (estoque ≤ 0 e giro > 0).',
     '% Rupt.':'Itens em ruptura ÷ total de itens do grupo.',
     'Parado R$':'Valor de estoque parado a custo.',
+  },
+  leadtime:{
+    _title:'Quanto tempo cada fornecedor demora entre o pedido ser emitido e a NF entrar no estoque (últimos 12 meses).',
+    'Pedidos':'Nº de pedidos do fornecedor já recebidos nos últimos 12 meses (transferência entre filiais fica fora).',
+    '% na hora':'Pedidos digitados junto com a entrega (lead 0–1 dia): o pedido real nasceu fora do ERP e foi lançado na hora da NF. Quanto menor, melhor o processo.',
+    'Lead todos':'MÉDIA de TODOS os pedidos recebidos, incluindo os digitados na hora — a visão "como está no sistema". Quanto mais perto do Lead real, mais limpo o processo.',
+    'Lead real':'Mediana só dos pedidos emitidos ANTES da entrega (lead ≥ 2 dias) — o tempo de resposta real do fornecedor. Precisa de ≥ 5 pedidos para ser confiável.',
+    'Prazo manual':'PRAZOENTREGA cadastrado hoje no fornecedor (preenchido à mão) — é o que a sugestão de compra usa.',
+    'Δ':'Prazo manual − lead real. Positivo = cadastro inflado (estoque de segurança além do necessário, capital parado). Negativo = prazo otimista (risco de ruptura).',
+    'Situação':'Cadastro OK, inflado, otimista, ou "sem lead confiável" (quase tudo digitado na hora — o prazo manual segue valendo).',
   },
   fornecedores:{
     _title:'Compara quanto o fornecedor vende com quanto pesa em estoque.',
@@ -395,6 +406,7 @@ function exportQS(){
   if(f.depto) p.set('depto',f.depto);
   if(f.abast.length && S.view==='produtos') p.set('abast',f.abast.join(','));
   if(S.view==='vencidos'){ if(S.venMes) p.set('ven_mes',S.venMes); if(S.venPer&&S.venPer!=='tudo') p.set('ven_per',S.venPer); }
+  if(S.view==='leadtime'&&S.ltMin) p.set('lt_min',S.ltMin);
   if(f.valDias && S.view==='validade') p.set('val_dias',f.valDias);
   if(S.valFaixa && S.view==='validade'){ p.set('val_faixa_lo',S.valFaixa[0]); p.set('val_faixa_hi',S.valFaixa[1]); }
   if((f.busca||'').trim()) p.set('busca',f.busca.trim());
@@ -1318,6 +1330,151 @@ async function renderDesempenho(){
   el.querySelectorAll('thead th[data-k]').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort['desempenho']||{};S.sort['desempenho']={key:k,dir:cur.key===k?-cur.dir:-1};render();});
 }
 
+/* ── Lead time por fornecedor (pedido → 1ª entrada da NF) ──
+   DOIS leads lado a lado (decisão do diretor 07/2026): "todos" inclui os pedidos digitados
+   na hora da entrega (lead 0–1d: o pedido real nasceu fora do ERP e foi lançado junto com a
+   NF); "real" = mediana só dos ≥2d. O % na hora é o medidor do processo melhorando.
+   Base própria (/api/leadtime, 12m de PCPEDIDO × ponte PEDIDO_ENTRADA) — não usa filtered();
+   respeita os filtros GLOBAIS de comprador e fornecedor do topo. */
+async function renderLeadtime(){
+  const el=$('#v-leadtime');
+  if(!S.leadtime){
+    el.innerHTML=`<div class="loader"><div class="spinner"></div>Calculando lead time dos fornecedores…</div>`;
+    try{ S.leadtime=await getJSON('/estoque/api/leadtime'); }
+    catch(e){ el.innerHTML=`<div class="empty">Falha ao carregar lead time: ${esc(e.message)}</div>`; return; }
+  }
+  const J=S.leadtime, R=J.resumo||{};
+  const minPed=S.ltMin||5;
+  let rows=(J.fornecedores||[]);
+  if(S.cli.comprador) rows=rows.filter(f=>String(f.codcomprador)===S.cli.comprador);
+  if(S.cli.fornec)    rows=rows.filter(f=>String(f.codfornec)===S.cli.fornec);
+  rows=rows.filter(f=>(f.n||0)>=minPed);
+
+  // situação do cadastro: Δ = prazo manual − lead real (cores de STATUS, com rótulo — nunca só cor)
+  const SIT={inflado:['Cadastro inflado',C.orange],otimista:['Prazo otimista',C.red],ok:['Cadastro OK',C.green],
+             sem_manual:['Sem prazo no cadastro',C.yellow],sem_lead:['Sem lead confiável',C.dim]};
+  const sitKey=f=>!f.confiavel?'sem_lead':(f.prazo_manual==null?'sem_manual':(f.delta>=3?'inflado':(f.delta<=-3?'otimista':'ok')));
+  const sitCell=k=>{const s=SIT[k];return `<span class="badge" style="background:${s[1]}22;color:${s[1]}">${s[0]}</span>`;};
+  const naHoraCell=v=>{const c=v>=60?C.red:(v>=30?C.orange:C.dim);return `<span style="color:${c};font-weight:600">${dec(v,0)}%</span>`;};
+  const dCell=v=>v==null?'<span class="muted">—</span>':`<b>${dec(v,v%1?1:0)}d</b>`;
+  const deltaCell=v=>v==null?'<span class="muted">—</span>':`<span style="color:${v>=3?C.orange:(v<=-3?C.red:C.green)};font-weight:600">${v>0?'+':''}${dec(v,v%1?1:0)}d</span>`;
+
+  const ck=[{k:'fornecedor',label:'Fornecedor'},{k:'comprador',label:'Comprador'},{k:'n',label:'Pedidos',num:1},
+    {k:'pct_na_hora',label:'% na hora',num:1},{k:'lead_todos',label:'Lead todos',num:1},
+    {k:'lead_real',label:'Lead real',num:1},{k:'prazo_manual',label:'Prazo manual',num:1},
+    {k:'delta',label:'Δ',num:1},{k:'sit',label:'Situação'}];
+  const sk=S.sort['leadtime']||{key:'n',dir:-1};
+  const sorted=_sortArr(rows.map(f=>({...f,sit:sitKey(f)})),sk);
+
+  el.innerHTML=head('Lead time por fornecedor — pedido → entrada','leadtime')+
+    `<div class="count-line">Últimos <b>12 meses</b> de pedidos recebidos · lead = 1ª entrada da NF − emissão do pedido · <b>mediana</b> (imune a extremos) · transferências entre filiais fora do cálculo.</div>
+    <div class="kpi-grid" style="grid-template-columns:repeat(5,1fr)">
+      ${kpi('Lead real (mediana)',R.mediana_real!=null?dec(R.mediana_real,0)+' dias':'—','pedidos emitidos antes da entrega',C.accent)}
+      ${kpi('Digitado na hora',R.pct_na_hora!=null?dec(R.pct_na_hora,0)+'%':'—','pedido lançado junto com a NF',C.orange)}
+      ${kpi('Pedidos analisados',int(R.n_pedidos),`+ ${int(R.n_sem_entrada)} abertos/sem entrada`,C.accent2)}
+      ${kpi('Fornecedores',`${int(R.n_confiavel)} / ${int(R.n_fornec)}`,'com lead confiável (≥5 pedidos reais)',C.green)}
+      ${kpi('Cadastros defasados',int(R.n_defasados),'|Δ| ≥ 3 dias vs. prazo manual',C.red)}</div>
+    <div class="panel"><h3><span>Distribuição do lead — nº de pedidos por faixa${tipT('Quantos pedidos caem em cada faixa de lead. A barra 0–1 dia são os pedidos digitados na hora da entrega — a meta é ela encolher com o tempo.')}</span>
+      <small class="muted">· <span style="color:${C.orange}">■</span> 0–1d = digitado na hora · <span style="color:${C.accent}">■</span> pedido emitido antes da entrega</small></h3>
+      <div class="chart-box sm" style="height:170px"><canvas id="ch-leadtime"></canvas></div></div>
+    <div class="count-line" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+      <span>Mín. de pedidos no período: <select id="lt-min" class="fb-control" style="width:auto">${[3,5,10,20].map(v=>`<option value="${v}" ${v===minPed?'selected':''}>${v}</option>`).join('')}</select></span>
+      <span class="muted">Use os filtros de <b>Comprador</b> e <b>Fornecedor</b> do topo para recortar a tabela.</span></div>
+    <div class="tbl-wrap"><table><thead><tr>${sortTh(ck,sk)}</tr></thead>
+    <tbody>${sorted.map(f=>{const open=S.ltOpen.has(f.codfornec);
+      return `<tr class="lt-row" data-cod="${f.codfornec}" style="cursor:pointer${open?';background:var(--surface3)':''}">
+      <td><span class="muted" style="display:inline-block;width:1em">${open?'▾':'▸'}</span><span class="prod" title="${esc(f.fornecedor)}">${esc(f.fornecedor)}</span> <small class="muted">· ${f.codfornec}</small></td>
+      <td>${esc((f.comprador||'—'))}</td>
+      <td class="num">${int(f.n)}</td>
+      <td class="num">${naHoraCell(f.pct_na_hora)}</td>
+      <td class="num">${dCell(f.lead_todos)}</td>
+      <td class="num">${dCell(f.lead_real)}</td>
+      <td class="num">${f.prazo_manual==null?'<span class="muted">—</span>':dec(f.prazo_manual,0)+'d'}</td>
+      <td class="num">${deltaCell(f.delta)}</td>
+      <td>${sitCell(f.sit)}</td></tr>`+(open?ltDetRow(f.codfornec):'');}).join('')
+      ||`<tr><td colspan="9" class="muted">Nenhum fornecedor com ≥ ${minPed} pedidos recebidos no período — reduza o mínimo acima (ou confira a ponte PEDIDO_ENTRADA no dataset).</td></tr>`}</tbody></table></div>
+    <div class="count-line">${sorted.length} fornecedores · clique na linha para <b>auditar</b> os pedidos que compõem o número · "Lead todos" = <b>média</b> com os digitados na hora; "Lead real" = <b>mediana</b> dos emitidos antes (≥2d) · <b style="color:${C.orange}">Δ positivo</b> = prazo manual acima do real (capital parado) · <b style="color:${C.red}">Δ negativo</b> = prazo otimista (risco de ruptura).</div>`;
+
+  // histograma: série única de magnitude → 1 matiz (accent); a faixa 0–1d usa cor de STATUS
+  // (laranja) porque é outra coisa — digitação na entrega — e está nomeada no rótulo e no h3.
+  const fx=J.faixas||[];
+  chart('ch-leadtime',{type:'bar',
+    data:{labels:fx.map(f=>f.faixa==='0-1'?'0–1d (na hora)':f.faixa+'d'),
+      datasets:[{data:fx.map(f=>f.qtd),backgroundColor:fx.map(f=>f.faixa==='0-1'?C.orange:C.accent),
+        borderRadius:4,maxBarThickness:46}]},
+    options:{maintainAspectRatio:false,plugins:{legend:{display:false},
+      tooltip:{callbacks:{label:c=>` ${int(c.parsed.y)} pedidos`}}},
+      scales:{y:{beginAtZero:true,ticks:{precision:0}}}}});
+
+  wireSortTbl(el,'leadtime',render);
+  $('#lt-min').onchange=e=>{S.ltMin=parseInt(e.target.value,10)||5;render();};
+  // drill: clique na linha abre/fecha a auditoria do fornecedor (fetch preguiçoso, cacheado)
+  el.querySelectorAll('tr.lt-row').forEach(tr=>tr.onclick=async()=>{
+    const cod=parseInt(tr.dataset.cod,10);
+    if(S.ltOpen.has(cod)){ S.ltOpen.delete(cod); render(); return; }
+    S.ltOpen.add(cod);
+    render();                                  // mostra o loader da linha já aberta
+    if(!S.ltDet[cod]){
+      try{ S.ltDet[cod]=await getJSON('/estoque/api/leadtime/pedidos?fornec='+cod); }
+      catch(e){ S.ltDet[cod]={ok:false,error:e.message}; }
+      if(S.view==='leadtime') render();
+    }
+  });
+}
+
+/* linha expandida da auditoria de UM fornecedor (drill do Lead time) */
+function ltDetRow(cod){
+  const d=S.ltDet[cod];
+  const wrap=inner=>`<tr class="lt-det"><td colspan="9" style="background:var(--surface2);padding:14px 18px">${inner}</td></tr>`;
+  if(!d) return wrap(`<div class="loader" style="padding:8px"><div class="spinner"></div>Carregando pedidos do fornecedor…</div>`);
+  if(d.ok===false) return wrap(`<div class="empty">Falha ao carregar o detalhe: ${esc(d.error||'?')}</div>`);
+  const st=d.stats||{}, tris=d.trimestres||[], fx=d.faixas||[], pr=d.promessa||{};
+  const chip=(l,v)=>`<span style="margin-right:16px"><span class="muted">${l}</span> <b>${v}</b></span>`;
+  const chips=`<div style="margin-bottom:10px">
+    ${chip('Lead real (mín–p90–máx):',st.lead_real!=null?`${dec(st.lead_min,0)} – ${dec(st.lead_p90,0)} – ${dec(st.lead_max,0)}d`:'—')}
+    ${chip('Comprado 12m:',moneyK(st.valor_12m))}
+    ${chip('Abertos:',st.n_abertos?`${int(st.n_abertos)} (${moneyK(st.valor_aberto)})`:'0')}
+    ${st.n_negativos?chip('<span style="color:'+C.red+'">NF antes do pedido:</span>',int(st.n_negativos)):''}
+  </div>`;
+  // barras CSS (série única, sem canvas por linha): trilho surface + preenchimento por valor
+  const bar=(v,max,cor)=>`<span style="display:inline-block;width:90px;height:8px;background:var(--surface3);border-radius:4px;vertical-align:middle"><span style="display:block;height:8px;width:${max?Math.round(100*v/max):0}%;background:${cor};border-radius:4px"></span></span>`;
+  const fxMax=Math.max(1,...fx.map(f=>f.qtd));
+  const blocoFaixas=`<div class="grow"><h4 style="margin:0 0 6px">Distribuição do lead</h4>
+    ${fx.map(f=>`<div style="display:flex;gap:8px;align-items:center;margin:3px 0;font-size:.85em">
+      <span style="width:88px" class="${f.faixa==='0-1'?'':'muted'}">${f.faixa==='0-1'?'0–1d (na hora)':f.faixa+'d'}</span>
+      ${bar(f.qtd,fxMax,f.faixa==='0-1'?C.orange:C.accent)}<span class="num">${int(f.qtd)}</span></div>`).join('')}</div>`;
+  const triMax=Math.max(1,...tris.map(t=>t.lead_real||0));
+  const blocoTri=`<div class="grow"><h4 style="margin:0 0 6px">Evolução por trimestre <small class="muted">· o processo está melhorando?</small></h4>
+    <table style="font-size:.85em"><thead><tr><th>Tri</th><th class="num">Pedidos</th><th class="num">% na hora</th><th class="num">Lead real</th><th></th></tr></thead>
+    <tbody>${tris.map(t=>`<tr><td>${esc(t.tri)}</td><td class="num">${int(t.n)}</td>
+      <td class="num" style="color:${t.pct_na_hora>=60?C.red:(t.pct_na_hora>=30?C.orange:'inherit')}">${dec(t.pct_na_hora,0)}%</td>
+      <td class="num">${t.lead_real==null?'—':dec(t.lead_real,0)+'d'}</td>
+      <td>${t.lead_real==null?'':bar(t.lead_real,triMax,C.accent)}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">—</td></tr>'}</tbody></table></div>`;
+  const blocoProm=`<div class="grow"><h4 style="margin:0 0 6px">Promessa de entrega <small class="muted">· DTPREVENT real × entrada</small></h4>
+    ${pr.n_avaliaveis?`<div style="font-size:.9em">
+      <div>Entregou na data prometida: <b style="color:${(pr.pct_no_prazo||0)>=80?C.green:((pr.pct_no_prazo||0)>=50?C.orange:C.red)}">${dec(pr.pct_no_prazo,0)}%</b> <span class="muted">de ${int(pr.n_avaliaveis)} pedidos com promessa</span></div>
+      ${pr.atraso_medio!=null?`<div>Atraso médio quando falha: <b style="color:${C.red}">${dec(pr.atraso_medio,1)}d</b></div>`:''}
+      ${pr.n_auto?`<div class="muted" style="margin-top:4px">${int(pr.n_auto)} pedidos com previsão automática (emissão+1) ficaram fora.</div>`:''}
+    </div>`:`<div class="muted" style="font-size:.9em">Sem pedidos com promessa real de data no período${pr.n_auto?` (${int(pr.n_auto)} só com a previsão automática emissão+1)`:''}.</div>`}</div>`;
+  const stBadge=p=>{
+    if(p.tipo==='real')     return `<span class="badge" style="background:${C.green}22;color:${C.green}">✓ conta na mediana</span>`;
+    if(p.tipo==='na_hora')  return `<span class="badge" style="background:${C.orange}22;color:${C.orange}">digitado na hora</span>`;
+    if(p.tipo==='negativo') return `<span class="badge" style="background:${C.red}22;color:${C.red}">NF antes do pedido</span>`;
+    return `<span class="badge" style="background:${(p.atrasado?C.red:C.dim)}22;color:${p.atrasado?C.red:C.dim}">aberto há ${int(p.dias_aberto)}d${p.atrasado?' · atrasado':''}</span>`;};
+  const peds=(d.pedidos||[]);
+  const tbl=`<div style="margin-top:12px"><h4 style="margin:0 0 6px">Pedidos do período <small class="muted">· ${int(peds.length)} pedidos, do mais recente ao mais antigo — a prova do número</small></h4>
+    <div class="tbl-wrap" style="max-height:280px;overflow:auto"><table style="font-size:.85em">
+    <thead><tr><th>Pedido</th><th>Filial</th><th>Emissão</th><th>Entrada</th><th class="num">Lead</th><th class="num">Valor</th><th>Promessa</th><th>Status</th></tr></thead>
+    <tbody>${peds.map(p=>`<tr>
+      <td class="num">${p.numped}</td><td>${esc(p.codfilial||'—')}</td>
+      <td>${dt(p.emissao)}</td><td>${p.entrada?dt(p.entrada):'<span class="muted">—</span>'}</td>
+      <td class="num">${p.lead==null?'<span class="muted">—</span>':`<b>${int(p.lead)}d</b>`}</td>
+      <td class="num">${moneyK(p.valor)}</td>
+      <td>${p.dtprevent?`${dt(p.dtprevent)}${p.atraso_promessa?` <small style="color:${C.red}">+${int(p.atraso_promessa)}d</small>`:''}`:'<span class="muted">—</span>'}</td>
+      <td>${stBadge(p)}</td></tr>`).join('')||'<tr><td colspan="8" class="muted">—</td></tr>'}</tbody></table></div></div>`;
+  return wrap(chips+`<div class="row" style="align-items:flex-start;gap:22px">${blocoTri}${blocoFaixas}${blocoProm}</div>`+tbl);
+}
+
 function renderComprasVendas(P){
   const dim=S.cvDim, el=$('#v-comprasvendas');
   const seg=`<div class="seg" id="cv-seg">
@@ -2021,6 +2178,7 @@ function render(){
   if(S.view==='logistica'){ renderLogistica(); savePrefs(); return; }
   if(S.view==='plano'){ renderPlano(); savePrefs(); return; }
   if(S.view==='desempenho'){ renderDesempenho(); savePrefs(); return; }
+  if(S.view==='leadtime'){ renderLeadtime(); savePrefs(); return; }   // base própria (12m de pedidos), não usa filtered()
   if(S.view==='vencidos'){ renderVencidos(); savePrefs(); return; }
   if(S.view==='meta_ruptura'){ renderMetaRuptura(); savePrefs(); return; }   // base própria (90d), não usa filtered()
   const P=filtered();

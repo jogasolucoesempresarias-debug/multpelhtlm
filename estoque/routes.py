@@ -296,6 +296,41 @@ def _hoje():
     return date.today()
 
 
+# ───────────────────────── lead time (aba Análise → Lead time) ─────────────────────────
+def _leadtime_raw(hoje):
+    """Linhas cruas do lead time: cabeçalho de pedidos 12m (PCPEDIDO) + ponte de entrada
+    (PEDIDO_ENTRADA). Cache próprio p/ o drill por fornecedor reusar sem novo fetch.
+    SEM recorte de filial de propósito: lead time é característica do FORNECEDOR, não da
+    filial — e assim o cache é um só. Cache 30min."""
+    key = f"leadtime:raw:{hoje.isoformat()}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    raw = {"cab": pbi.run_dax(Q.q_pedido_cab(hoje - timedelta(days=365), filiais=None)),
+           "entradas": pbi.run_dax(Q.q_pedido_entrada())}
+    pbi._CACHE.set(key, raw, 1800)
+    return raw
+
+
+def _leadtime_res(hoje):
+    """Agregado da aba Lead time (core.leadtime_fornecedores sobre o raw acima).
+    Degrada p/ vazio se o BI estiver fora. Cache 30min."""
+    key = f"leadtime:{hoje.isoformat()}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    res = {"resumo": {}, "faixas": [], "fornecedores": []}
+    try:
+        raw = _leadtime_raw(hoje)
+        res = core.leadtime_fornecedores(raw["cab"], raw["entradas"], _cadastro_fornecedores(),
+                                         _compradores_map(), hoje=hoje,
+                                         cnpj_empresa=MULTPEL_EMPRESA["cnpj"])
+    except Exception as e:
+        print(f"[leadtime] indisponível ({e}).")
+    pbi._CACHE.set(key, res, 1800)
+    return res
+
+
 # ───────────────────────── venda real (dataset RCA, cache 30min) ─────────────────────────
 def _venda_datas(periodo, hoje):
     if periodo == "30d":
@@ -597,6 +632,36 @@ def api_desempenho():
     d = _desempenho_data(periodo, _hoje(), _filiais_venda())
     return jsonify({"ok": True, "periodo": periodo,
                     "resumo": d["resumo"], "compradores": d["compradores"]})
+
+
+@bp.route("/api/leadtime")
+def api_leadtime():
+    """Lead time por fornecedor (12m): 1º recebimento (PEDIDO_ENTRADA) − emissão (PCPEDIDO).
+    Devolve os DOIS leads (com/sem 'digitado na hora') — ver core.leadtime_fornecedores."""
+    res = _leadtime_res(_hoje())
+    return jsonify({"ok": True, "gerado_em": date.today().isoformat(),
+                    "bi_refresh": pbi.get_dataset_refresh(), **res})
+
+
+@bp.route("/api/leadtime/pedidos")
+def api_leadtime_pedidos():
+    """Drill da aba Lead time: tudo que compõe o número de UM fornecedor (?fornec=cod) —
+    pedidos um a um (incl. abertos/negativos), evolução trimestral, faixas e promessa
+    (DTPREVENT real × entrada). Reusa o cache raw do /api/leadtime — nenhuma query nova."""
+    try:
+        cod = int(request.args.get("fornec") or 0)
+    except ValueError:
+        cod = 0
+    if not cod:
+        return jsonify({"ok": False, "error": "fornec obrigatório"}), 400
+    try:
+        raw = _leadtime_raw(_hoje())
+    except Exception as e:
+        print(f"[leadtime] drill indisponível ({e}).")
+        return jsonify({"ok": False, "error": "BI indisponível"}), 503
+    det = core.leadtime_detalhe(raw["cab"], raw["entradas"], cod,
+                                _cadastro_fornecedores(), _compradores_map(), hoje=_hoje())
+    return jsonify({"ok": True, **det})
 
 
 @bp.route("/api/validade")
@@ -985,6 +1050,24 @@ def _export_data(view):
         cols = ["ranking", "comprador", "fornecedores", "clientes_pos", "venda_liquida",
                 "lucro_bruto", "margem", "devolucao", "part_receita", "part_lucro",
                 "yoy", "yoy_lucro", "status_lucro"]
+    elif view == "leadtime":
+        # espelha a tela: filtros globais de comprador e fornecedor + mín. de pedidos (lt_min)
+        linhas = [dict(l, situacao=("ok" if l.get("confiavel") else "sem lead confiável"))
+                  for l in _leadtime_res(_hoje())["fornecedores"]]
+        cc = request.args.get("comprador_cod")
+        if cc:
+            linhas = [l for l in linhas if str(l.get("codcomprador")) == cc]
+        fn = request.args.get("fornec")
+        if fn:
+            linhas = [l for l in linhas if str(l.get("codfornec")) == fn]
+        try:
+            lt_min = int(request.args.get("lt_min") or 0)
+        except ValueError:
+            lt_min = 0
+        if lt_min:
+            linhas = [l for l in linhas if (l.get("n") or 0) >= lt_min]
+        cols = ["codfornec", "fornecedor", "comprador", "n", "na_hora", "pct_na_hora",
+                "lead_todos", "lead_real", "prazo_manual", "delta", "situacao"]
     elif view == "vencidos":
         # perda por validade (conta 200042). Não passa por _aplicar_filtros_cliente: o grão é
         # item-da-nota (evento histórico), não produto — os filtros de estoque não se aplicam.
@@ -1145,6 +1228,12 @@ _PDF_COLS = {
                    ("lucro_bruto", "Lucro bruto", "money"), ("margem", "Margem", "pct"),
                    ("devolucao", "Devolução", "money"), ("part_lucro", "% Lucro", "num"),
                    ("yoy", "AA Venda", "pct"), ("yoy_lucro", "AA Lucro", "pct")],
+    "leadtime": [("codfornec", "Cód", "text"), ("fornecedor", "Fornecedor", "text", 32),
+                 ("comprador", "Comprador", "text", 18), ("n", "Pedidos", "int"),
+                 ("na_hora", "Na hora", "int"), ("pct_na_hora", "% na hora", "pct"),
+                 ("lead_todos", "Lead médio todos (d)", "num"), ("lead_real", "Lead real (d)", "num"),
+                 ("prazo_manual", "Prazo manual (d)", "int"), ("delta", "Δ (d)", "num"),
+                 ("situacao", "Situação", "text")],
     # espelha a planilha VENCIDOS do diretor (+ qtdisp: o que ainda está na casa)
     "vencidos": [("dtsaida", "Data", "date"), ("numnota", "Nota", "text"),
                  ("fornecedor", "Fornecedor", "text", 24), ("codprod", "Cód", "text"),
@@ -1156,7 +1245,8 @@ _PDF_TITULO = {"produtos": "Produtos", "comprasvendas": "Compras × Vendas", "re
                "parado": "Estoque parado", "ruptura": "Cobertura de estoque", "validade": "Validade / FEFO",
                "fornecedores": "Fornecedores", "compradores": "Compradores", "estoque_zero": "Estoque zerado",
                "ruptura_comprador": "Ruptura por comprador", "desempenho": "Desempenho comercial",
-               "vencidos": "Vencidos — perda por validade"}
+               "vencidos": "Vencidos — perda por validade",
+               "leadtime": "Lead time por fornecedor"}
 
 
 def _fmt_pdf(v, kind, maxlen=None):
