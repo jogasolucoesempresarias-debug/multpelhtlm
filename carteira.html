@@ -268,12 +268,15 @@
         <div class="filtros-card">
           <div class="ff">
             <label>Time (supervisor)</label>
-            <input list="lista_times" id="filt_time" placeholder="Todos · digite pra filtrar" onchange="aplicarFiltros()">
+            <!-- autocomplete=off: desliga o HISTÓRICO do navegador (não a datalist). Sem isto o
+                 Chrome mistura nomes que você já digitou antes — parecia "vendedor de outro time"
+                 na lista, mas era autofill do browser, não a lista filtrada do app. -->
+            <input list="lista_times" id="filt_time" autocomplete="off" placeholder="Todos · digite pra filtrar" onchange="aplicarFiltros()">
             <datalist id="lista_times"></datalist>
           </div>
           <div class="ff">
             <label>Vendedor</label>
-            <input list="lista_vendedores" id="filt_vendedor" placeholder="Todos · digite pra filtrar" onchange="aplicarFiltros()">
+            <input list="lista_vendedores" id="filt_vendedor" autocomplete="off" placeholder="Todos · digite pra filtrar" onchange="aplicarFiltros()">
             <datalist id="lista_vendedores"></datalist>
           </div>
           <div class="ff">
@@ -282,7 +285,7 @@
           </div>
           <div class="ff">
             <label>Cidade</label>
-            <input list="lista_cidades" id="filt_cidade" placeholder="Todas · digite pra filtrar" onchange="aplicarFiltros()">
+            <input list="lista_cidades" id="filt_cidade" autocomplete="off" placeholder="Todas · digite pra filtrar" onchange="aplicarFiltros()">
             <datalist id="lista_cidades"></datalist>
           </div>
           <div class="ff grow">
@@ -448,10 +451,10 @@
           </select>
         </div>
         <div class="ff"><label>Time</label>
-          <input list="lista_times" id="ppTime" placeholder="Todos" oninput="debouncedProximo()">
+          <input list="lista_times" id="ppTime" autocomplete="off" placeholder="Todos" oninput="debouncedProximo()">
         </div>
         <div class="ff"><label>Vendedor</label>
-          <input list="lista_vendedores" id="ppVend" placeholder="Todos" oninput="debouncedProximo()">
+          <input list="lista_vendedores" id="ppVend" autocomplete="off" placeholder="Todos" oninput="debouncedProximo()">
         </div>
         <div class="ff"><label>Buscar</label>
           <input id="ppBusca" placeholder="cliente, cidade, 12345" oninput="debouncedProximo()">
