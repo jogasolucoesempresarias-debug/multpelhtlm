@@ -96,7 +96,7 @@ def _filiais_disponiveis():
 # determinístico (mesma matrícula → sempre o mesmo nome). NÃO afeta cálculo, só o rótulo, e
 # como todas as telas resolvem pelo _compradores_map(), a troca é consistente em todo lugar.
 # >>> REVERTER: basta COMPRADOR_DEMO = False e redeployar (o restart limpa o cache de 24h). <<<
-COMPRADOR_DEMO = True
+COMPRADOR_DEMO = False
 _DEMO_FIRST = ["Carlos", "Beatriz", "Rafael", "Fernanda", "Gustavo", "Patrícia", "André",
                "Juliana", "Marcelo", "Renata", "Thiago", "Camila", "Bruno", "Larissa",
                "Diego", "Vanessa"]

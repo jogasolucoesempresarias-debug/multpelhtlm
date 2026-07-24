@@ -2438,7 +2438,7 @@ def carteira_page():
 # (perfil e metas-por-time) também estão mascarados, a troca é consistente em todas as telas.
 # >>> REVERTER: TIME_DEMO = False + redeploy + LIMPAR O REDIS (o cache de payloads sobrevive
 #     ao redeploy; sem o flush os nomes reais ficam cacheados por até 24h). <<<
-TIME_DEMO = True
+TIME_DEMO = False
 _TDEMO_FIRST = ["Carlos", "Beatriz", "Rafael", "Fernanda", "Gustavo", "Patrícia", "André",
                 "Juliana", "Marcelo", "Renata", "Thiago", "Camila", "Bruno", "Larissa",
                 "Diego", "Vanessa"]
