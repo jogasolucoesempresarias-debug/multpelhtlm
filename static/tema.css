@@ -90,8 +90,11 @@
   --border: #d5dce6;
 
   --text: #0f172a;
-  --text-dim: #576179;
-  --text-mute: #78839a;
+  /* Secundário/terciário ESCURECIDOS no claro (pedido do diretor 07/2026: no branco o
+     cinza-médio ficava lavado). Quase-preto, mantendo só uma leve hierarquia; contraste
+     sobe (segue WCAG AA). Dim ~13:1, mute ~8:1 sobre o branco. */
+  --text-dim: #1e293b;
+  --text-mute: #475569;
 
   --accent: #0369a1;    /* azul-céu escurecido: como link/texto sobre branco passa em contraste */
   --accent2: #5457e5;
@@ -120,7 +123,7 @@
   --purple-rgb: 124, 58, 237;
   --purple-compras-rgb: 147, 51, 234;
   --gray-rgb: 100, 116, 139;
-  --text-dim-rgb: 87, 97, 121;
+  --text-dim-rgb: 30, 41, 59;
   /* Sombra no claro: cinza-ardósia em vez de preto puro, mais suave sobre fundo claro. */
   --sombra-rgb: 15, 23, 42;
 
