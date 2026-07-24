@@ -821,28 +821,43 @@ def por_comprador(produtos):
     return saida
 
 
+def _valor_sugerido_compra(p):
+    """Valor da sugestão de compra de um item, IGUAL à aba Comprar→Abastecimento:
+    valor_sugerido_liq (caixa fechada × custo) dos itens a comprar (sugestao_cx>0, giro>0,
+    não suspensos). Já embute Lead time + Cobertura alvo (via est_alvo). Fonte única p/ o
+    número não divergir entre as duas telas."""
+    if (p.get("sugestao_cx") or 0) > 0 and (p.get("giro_dia") or 0) > 0 and not p.get("compra_suspensa"):
+        return p.get("valor_sugerido_liq") or 0.0
+    return 0.0
+
+
 def ruptura_por_comprador(produtos):
     """Ruptura agregada por comprador (a mais rica). Ruptura = estoque ≤ 0 e giro > 0.
     n_sem_pedido = ruptura ainda sem pedido de compra em aberto (risco real);
     venda_perdida = Σ giro_mes × custo (venda potencial/mês não atendida);
-    custo_reposicao = Σ sugestao_compra × custo (o que custa repor até o alvo)."""
+    sugestao_compra_valor = Σ valor_sugerido_liq de TODOS os itens a comprar do comprador —
+    exatamente o total da aba Comprar→Abastecimento (decisão do diretor 07/2026: o card e a
+    coluna passam a mostrar a SUGESTÃO DE COMPRA completa, não só o custo dos itens zerados).
+    Mantém `custo_reposicao` como alias para não quebrar exports/consumidores antigos."""
     grupos = {}
     for p in produtos:
         cc = p.get("codcomprador")
         g = grupos.setdefault(cc if cc is not None else 0, {
             "codcomprador": cc, "comprador": p.get("comprador") or "Sem comprador",
             "n_produtos": 0, "n_ruptura": 0, "n_sem_pedido": 0,
-            "venda_perdida": 0.0, "custo_reposicao": 0.0,
+            "venda_perdida": 0.0, "sugestao_compra_valor": 0.0,
         })
         g["n_produtos"] += 1
+        # sugestão de compra (Abastecimento) — TODO item a comprar do comprador, não só os em ruptura
+        g["sugestao_compra_valor"] += _valor_sugerido_compra(p)
         if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0:
             g["n_ruptura"] += 1
             if (p.get("qtd_ja_pedida") or 0) <= 0:
                 g["n_sem_pedido"] += 1
             g["venda_perdida"] += (p.get("venda_perdida") or 0)   # acumulada na ruptura, a preço de venda
-            g["custo_reposicao"] += (p.get("sugestao_compra") or 0) * (p.get("custo_unit") or 0)
     saida = []
     for g in grupos.values():
+        sug = _round(g["sugestao_compra_valor"])
         saida.append({
             **g,
             "pct_ruptura": _round(g["n_ruptura"] / g["n_produtos"] * 100, 1) if g["n_produtos"] else 0,
@@ -850,7 +865,8 @@ def ruptura_por_comprador(produtos):
             # todo item do comprador conta, não só os em ruptura). Complementa o pct_ruptura.
             "pct_sem_pedido": _round(g["n_sem_pedido"] / g["n_produtos"] * 100, 1) if g["n_produtos"] else 0,
             "venda_perdida": _round(g["venda_perdida"]),
-            "custo_reposicao": _round(g["custo_reposicao"]),
+            "sugestao_compra_valor": sug,
+            "custo_reposicao": sug,   # alias retrocompatível (export/consumidores antigos)
         })
     saida.sort(key=lambda x: x["n_ruptura"], reverse=True)
     return saida

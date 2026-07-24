@@ -47,7 +47,7 @@ const S = {
   filiaisAll:[], filiaisSel:new Set(), base:'gerencial', vperiodo:'mes', cvDim:'comprador', abcLens:'venda',
   unidade:'atacado', unidadeNome:'Atacado', nomesFilial:{},
   compradorNome:'',
-  cli:{comprador:'',curva:[],xyz:'',fornec:'',depto:'',busca:'',abast:[],margem:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]},
+  cli:{comprador:'',curva:[],xyz:[],fornec:'',depto:'',busca:'',abast:[],margem:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]},
   params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1,metaA:2,metaBC:5},
   charts:{}, sort:{}, valFaixa:null,
   vencidos:null, vencidosQS:'', venMes:null, venPer:'2026',   // aba Vencidos: cache por QS, mês selecionado, período (2026|12m|tudo)
@@ -84,8 +84,12 @@ const NAV={visao:['cockpit','gerencial','meta_ruptura'],comprar:['reposicao','es
 const GROUP_OF=v=>Object.keys(NAV).find(g=>NAV[g].includes(v))||'visao';
 // filtro Curva (global, topo) = MULTI-seleção (ex.: ver ruptura de B+C juntas)
 const CURVA_LABEL=arr=>(!arr||!arr.length||arr.length===3)?'Todas':arr.slice().sort().join(' · ');
+const XYZ_LABEL=arr=>(!arr||!arr.length||arr.length===3)?'Todas':arr.slice().sort().join(' · ');
 function syncCurvaUI(){ const d=$('#f-curva'); if(!d) return; const arr=S.cli.curva||[];
   const sum=d.querySelector('summary'); if(sum) sum.textContent=CURVA_LABEL(arr);
+  d.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=arr.includes(c.value)); }
+function syncXyzUI(){ const d=$('#f-xyz'); if(!d) return; const arr=S.cli.xyz||[];
+  const sum=d.querySelector('summary'); if(sum) sum.textContent=XYZ_LABEL(arr);
   d.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=arr.includes(c.value)); }
 // filtro Abast. multi-seleção — agora LOCAL da aba Produtos (não é mais global)
 const ABAST_LABELS={urgente:'Urgente',alta:'Alta',atencao:'Atenção',excesso:'Excesso',ok:'OK',sem_giro:'Sem giro'};
@@ -207,14 +211,14 @@ const TIPS = {
     '% venda':'Perda por validade ÷ venda líquida do comprador (all-time; aparece só em “Tudo”).',
   },
   ruptura_comprador:{
-    _title:'Ruptura (estoque ≤ 0 e giro > 0) agregada por comprador: itens sem pedido, venda perdida e custo de reposição.',
+    _title:'Ruptura (estoque ≤ 0 e giro > 0) agregada por comprador: itens sem pedido, venda perdida e sugestão de compra.',
     'Em ruptura':'Nº de itens do comprador em ruptura (estoque ≤ 0 e giro > 0).',
     '% Rupt.':'Itens em ruptura ÷ total de produtos do comprador.',
     'Dias rupt. méd':'Média de dias sem venda dos itens em ruptura (há quanto tempo, em média, estão zerados).',
     'Sem pedido':'Itens em ruptura ainda sem pedido de compra em aberto (risco real).',
     '% s/ ped.':'Itens sem pedido ÷ total de produtos do comprador (base da meta — todo item conta, não só os em ruptura).',
     'Venda perdida':'Dias em ruptura (desde a última venda, teto 60) × giro/dia × preço de venda (realizado 3m).',
-    'Custo reposição':'Sugestão de compra × custo — o que falta comprar até o alvo.',
+    'Sugestão de compra':'MESMO valor da aba Comprar → Abastecimento: soma da compra sugerida (caixa fechada × custo) de TODOS os itens a comprar do comprador — não só os zerados. Considera Lead time + Cobertura alvo dos ⚙ Parâmetros.',
   },
   ocupacao:{
     _title:'Ocupação das posições do depósito segundo o WMS (bate com a consulta 1772 do Winthor).',
@@ -340,7 +344,7 @@ function filtered(skipCurva){
   return S.produtosAll.filter(p=>{
     if(f.comprador && String(p.codcomprador)!==f.comprador) return false;
     if(!skipCurva && f.curva.length && !f.curva.includes(p.curva_abc)) return false;
-    if(f.xyz && p.xyz!==f.xyz) return false;
+    if(f.xyz.length && !f.xyz.includes(p.xyz)) return false;
     if(f.fornec && String(p.codfornec)!==f.fornec) return false;
     if(f.depto && String(p.codepto)!==f.depto) return false;
     if(f.parado && p.status_parado!==f.parado) return false;
@@ -434,7 +438,7 @@ function filtrosQS(){
   const p=new URLSearchParams(serverQS()), f=S.cli;
   if(f.comprador) p.set('comprador_cod',f.comprador);
   if(f.curva&&f.curva.length) p.set('curva',f.curva.join(','));
-  if(f.xyz) p.set('xyz',f.xyz);
+  if(f.xyz && f.xyz.length) p.set('xyz',f.xyz.join(','));
   if(f.fornec) p.set('fornec',f.fornec);
   if(f.depto) p.set('depto',f.depto);
   if((f.busca||'').trim()) p.set('busca',f.busca.trim());
@@ -445,7 +449,7 @@ function exportQS(){
   const p=new URLSearchParams(serverQS()), f=S.cli;
   if(f.comprador) p.set('comprador_cod',f.comprador);
   if(f.curva && f.curva.length) p.set('curva',f.curva.join(','));
-  if(f.xyz) p.set('xyz',f.xyz);
+  if(f.xyz && f.xyz.length) p.set('xyz',f.xyz.join(','));
   if(f.fornec) p.set('fornec',f.fornec);
   if(f.depto) p.set('depto',f.depto);
   if(f.abast.length && S.view==='produtos') p.set('abast',f.abast.join(','));
@@ -1109,7 +1113,7 @@ function renderABCXYZ(P){
       <div class="panel grow" style="flex:1 1 300px"><h3><span>Estratégia por zona${tipT('O que fazer em cada zona: automatizar (nunca faltar), monitorar (estoque de segurança) ou tirar de linha.')}</span></h3>${leg}
         <h3 style="margin-top:18px">Leitura</h3>${read}</div>
     </div>`;
-  $('#v-abcxyz').querySelectorAll('.axm-cell[data-key]').forEach(c=>c.onclick=()=>{const k=c.dataset.key;S.cli.curva=[k[0]];S.cli.xyz=k[1];syncCurvaUI();$('#f-xyz').value=k[1];goView('produtos',{});});
+  $('#v-abcxyz').querySelectorAll('.axm-cell[data-key]').forEach(c=>c.onclick=()=>{const k=c.dataset.key;S.cli.curva=[k[0]];S.cli.xyz=[k[1]];syncCurvaUI();syncXyzUI();goView('produtos',{});});
 }
 
 function renderFornecedores(P){
@@ -1159,13 +1163,16 @@ function renderRupturaComprador(P){
     const g={};
     P.forEach(p=>{const kk=keyFn(p); const o=g[kk]=g[kk]||{k:kk,nome:nomeFn(p,kk),n:0,rupt:0,semped:0,perdida:0,repor:0,diasSum:0,diasN:0};
       o.n++;
+      // sugestão de compra = MESMA da aba Abastecimento: valor_sugerido_liq (caixa fechada) de
+      // TODO item a comprar (sugestao_cx>0, giro>0, não suspenso), não só os zerados.
+      if((p.sugestao_cx||0)>0&&(p.giro_dia||0)>0&&!p.compra_suspensa) o.repor+=(p.valor_sugerido_liq||0);
       if((p.qtdisp||0)<=0&&(p.giro_dia||0)>0){o.rupt++; if((p.qtd_ja_pedida||0)<=0)o.semped++;
-        o.perdida+=(p.venda_perdida||0); o.repor+=(p.sugestao_compra||0)*(p.custo_unit||0);
+        o.perdida+=(p.venda_perdida||0);
         if(p.dias_sem_venda!=null){o.diasSum+=p.dias_sem_venda; o.diasN++;}}});
     return Object.values(g).map(o=>({...o,pct:o.n?o.rupt/o.n*100:0,pctSemPed:o.n?o.semped/o.n*100:0,diasrup:o.diasN?Math.round(o.diasSum/o.diasN):0})).filter(o=>o.n>0);
   }
   const ckBase=[{k:'n',label:'Produtos',num:1},{k:'rupt',label:'Em ruptura',num:1},{k:'pct',label:'% Rupt.',num:1},
-    {k:'diasrup',label:'Dias rupt. méd',num:1},{k:'semped',label:'Sem pedido',num:1},{k:'pctSemPed',label:'% s/ ped.',num:1},{k:'perdida',label:'Venda perdida',num:1},{k:'repor',label:'Custo reposição',num:1}];
+    {k:'diasrup',label:'Dias rupt. méd',num:1},{k:'semped',label:'Sem pedido',num:1},{k:'pctSemPed',label:'% s/ ped.',num:1},{k:'perdida',label:'Venda perdida',num:1},{k:'repor',label:'Sugestão de compra',num:1}];
   function tabela(rows0,skk,lbl0,nav){
     const sk=S.sort[skk]||{key:'rupt',dir:-1};
     const rows=_sortArr(rows0,sk);
@@ -1183,10 +1190,10 @@ function renderRupturaComprador(P){
     `<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
        ${kpi('Itens em ruptura',int(totR),int(totSem)+' sem pedido',C.red)}
        ${kpi('Venda perdida (ruptura)',money(totP),'acumulada · a preço de venda',C.orange)}
-       ${kpi('Custo de reposição',money(totC),'p/ atingir o alvo',C.accent)}
+       ${kpi('Sugestão de compra',money(totC),'igual à aba Abastecimento',C.accent)}
        ${kpi('Compradores',int(porComp.length),'',C.accent2)}
      </div>
-     <div class="count-line">Ruptura = estoque ≤ 0 e giro > 0. <b>"Dias rupt. méd"</b> = média de dias sem venda dos itens em ruptura (há quanto tempo, em média, estão zerados). "Sem pedido" = ainda sem pedido de compra em aberto (risco real); <b>"% s/ ped."</b> = sem pedido ÷ total de produtos do comprador (base da meta — todo item conta). <b>"Venda perdida"</b> = dias em ruptura (desde a última venda, teto 60d) × giro/dia × <b>preço de venda</b> (realizado 3m) — o que se deixou de vender no período parado. "Custo reposição" = sugestão × <b>custo</b> (o que falta comprar até o alvo).</div>
+     <div class="count-line">Ruptura = estoque ≤ 0 e giro > 0. <b>"Dias rupt. méd"</b> = média de dias sem venda dos itens em ruptura (há quanto tempo, em média, estão zerados). "Sem pedido" = ainda sem pedido de compra em aberto (risco real); <b>"% s/ ped."</b> = sem pedido ÷ total de produtos do comprador (base da meta — todo item conta). <b>"Venda perdida"</b> = dias em ruptura (desde a última venda, teto 60d) × giro/dia × <b>preço de venda</b> (realizado 3m) — o que se deixou de vender no período parado. <b>"Sugestão de compra"</b> = mesmo valor da aba <b>Comprar → Abastecimento</b> (caixa fechada × custo de todos os itens a comprar), considerando Lead time + Cobertura alvo.</div>
      <div class="panel" id="rc-comp"><h3>Por comprador</h3>${tabela(porComp,'ruptcomp','Comprador')}</div>
      <div class="panel" id="rc-curva"><h3>Por curva ABC <small class="muted">· quanto da ruptura está em cada curva de venda (A = campeões) · clique p/ ver os itens</small></h3>${tabela(porCurva,'ruptcurva','Curva ABC',true)}</div>`;
   wireSortTbl($('#rc-comp'),'ruptcomp',render);
@@ -2414,7 +2421,7 @@ async function init(){
   $('#f-unidade').onchange=e=>{S.unidade=e.target.value; S.cli.comprador=''; $('#f-comprador').value=''; S.compradorNome=''; loadData();};
   $('#f-vperiodo').value=S.vperiodo; $('#f-vperiodo').onchange=e=>{S.vperiodo=e.target.value;loadData();};
   { const fc=$('#f-curva'); if(fc) fc.addEventListener('change',()=>{ S.cli.curva=[...fc.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value); syncCurvaUI(); render(); }); }
-  $('#f-xyz').onchange=e=>{S.cli.xyz=e.target.value;render();};
+  { const fx=$('#f-xyz'); if(fx) fx.addEventListener('change',()=>{ S.cli.xyz=[...fx.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value); syncXyzUI(); render(); }); }
   $('#f-fornec').onchange=e=>{
     const raw=(e.target.value||'').trim(), low=raw.toLowerCase(), L=S.fornecedores||[];
     const cod=(raw.match(/^\s*(\d+)/)||[])[1];                     // código à esquerda ("708 · NOME") ou digitado puro
@@ -2431,10 +2438,10 @@ async function init(){
   let bt; $('#f-busca').oninput=e=>{clearTimeout(bt);bt=setTimeout(()=>{S.cli.busca=e.target.value;render();},250);};
   $('#btn-params').onclick=()=>{const p=$('#params-panel');p.style.display=p.style.display==='none'?'block':'none';};
   $('#btn-limpar').onclick=()=>{
-    S.cli={comprador:'',curva:[],xyz:'',fornec:'',depto:'',busca:'',abast:[],margem:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]};
+    S.cli={comprador:'',curva:[],xyz:[],fornec:'',depto:'',busca:'',abast:[],margem:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]};
     S.compradorNome='';
-    ['#f-comprador','#f-xyz','#f-fornec','#f-depto'].forEach(s=>{const e=$(s);if(e)e.value='';});
-    $('#f-busca').value=''; syncCurvaUI();
+    ['#f-comprador','#f-fornec','#f-depto'].forEach(s=>{const e=$(s);if(e)e.value='';});
+    $('#f-busca').value=''; syncCurvaUI(); syncXyzUI();
     render();
   };
   // meta aceita 0 (tolerância zero), então não dá p/ usar `||default` — vazio/inválido cai no default

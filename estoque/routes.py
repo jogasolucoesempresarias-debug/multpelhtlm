@@ -1005,7 +1005,8 @@ def _aplicar_filtros_cliente(produtos, skip=()):
         _cv = {x for x in g("curva").split(",") if x}   # multi-seleção de curva (A/B/C)
         out = [p for p in out if p.get("curva_abc") in _cv]
     if g("xyz"):
-        out = [p for p in out if p.get("xyz") == g("xyz")]
+        _xy = {x for x in g("xyz").split(",") if x}   # multi-seleção de XYZ (X/Y/Z)
+        out = [p for p in out if p.get("xyz") in _xy]
     if g("fornec"):
         out = [p for p in out if str(p.get("codfornec")) == g("fornec")]
     if g("depto"):
@@ -1309,7 +1310,7 @@ _PDF_COLS = {
                           ("n_ruptura", "Em ruptura", "int"), ("pct_ruptura", "% Rupt.", "num"),
                           ("n_sem_pedido", "Sem pedido", "int"), ("pct_sem_pedido", "% s/ ped.", "num"),
                           ("venda_perdida", "Venda perdida/mês", "money"),
-                          ("custo_reposicao", "Custo reposição", "money")],
+                          ("custo_reposicao", "Sugestão de compra", "money")],
     "desempenho": [("ranking", "#", "int"), ("comprador", "Comprador", "text", 28),
                    ("clientes_pos", "Positivação", "int"), ("venda_liquida", "Venda líq.", "money"),
                    ("lucro_bruto", "Lucro bruto", "money"), ("margem", "Margem", "pct"),

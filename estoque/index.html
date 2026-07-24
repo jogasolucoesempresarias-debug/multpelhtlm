@@ -41,9 +41,14 @@
         <label><input type="checkbox" value="C">C</label>
       </div></details></div>
   <div class="fb-group"><label>XYZ</label>
-    <!-- value SEMPRE explícito (X/Y/Z): é ele que o filtro compara com p.xyz e que o clique na
-         matriz ABC-XYZ escreve de volta. Sem value, o rótulo viraria o valor e o filtro quebraria. -->
-    <select id="f-xyz" class="fb-control"><option value="">Todas</option><option value="X">X - Estável</option><option value="Y">Y - Variável</option><option value="Z">Z - Errático</option></select></div>
+    <!-- multi-seleção igual à Curva: value SEMPRE explícito (X/Y/Z) — é ele que o filtro compara
+         com p.xyz e que o clique na matriz ABC-XYZ escreve de volta. -->
+    <details class="ms" id="f-xyz"><summary class="fb-control" style="width:auto">Todas</summary>
+      <div class="ms-menu">
+        <label><input type="checkbox" value="X">X - Estável</label>
+        <label><input type="checkbox" value="Y">Y - Variável</label>
+        <label><input type="checkbox" value="Z">Z - Errático</label>
+      </div></details></div>
   <div class="fb-group"><label>Fornecedor</label>
     <input type="text" id="f-fornec" class="fb-control" list="f-fornec-dl" autocomplete="off" placeholder="Cód. ou razão social…" style="width:240px">
     <datalist id="f-fornec-dl"></datalist></div>
