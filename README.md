@@ -95,9 +95,10 @@ Doc completa das fórmulas em **`docs/estoque/planilha_v3.md`**.
 - **Duas réguas de valor (IPI/ST).** O Orçamento mede o realizado por `PCPEDIDO[VLTOTAL]`, que é a
   **NF cheia** (mercadoria + IPI + ST). Então a sugestão de compra sai nas duas: `valor_sugerido_liq`
   (mercadoria — é ela que vira **preço na planilha do Winthor**) e **`valor_sugerido_nf`** (o que
-  consome a meta). As alíquotas saem do **pedido real** por `(fornecedor, produto)`
-  (`core.montar_tributacao`), com cascata `pedido_real → perfil_fornecedor → cadastro → 0` e a
-  **fonte** visível na tela. Detalhe em **🧾 Tributação do pedido**.
+  consome a meta). As alíquotas saem da **tributação de ENTRADA do ERP** (`TRIB_ENTRADA`, rotina
+  212) por `produto × filial × UF de origem × tipo de fornecedor`, com cascata
+  `isento_cadastro → trib_entrada → cadastro → histórico → 0`. A **fonte** e a **confiança**
+  (`trib_firme`) viajam até a tela. Detalhe em **🧾 Tributação do pedido**.
 - **Comprador vinculado** ao usuário no Admin é **filtro inicial**, não trava — ele pode ver os outros.
 - **Lista de compradores** ≠ folha inteira: deriva da base (`compradores_reais()` — fornecedor com produto de revenda → `CODCOMPRADOR`). Usar `PCEMPR` cru traz vendedores/financeiro.
 
