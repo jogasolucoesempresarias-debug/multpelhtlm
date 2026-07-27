@@ -92,6 +92,12 @@ Doc completa das fórmulas em **`docs/estoque/planilha_v3.md`**.
 - **Giro** = média 3 meses (`QTVENDMES1..3`/3), toggle p/ forecast (RCA). **Custo** = `CUSTOFIN`. **Comprador** = `PCFORNEC.CODCOMPRADOR → PCEMPR.NOME`.
 - **Sugestão de compra** desconta o **pedido REAL em aberto** (PCPEDIDO/PCITEM, últimos 180d) e sai **em caixas** (`QTUNIT`/PCEMBALAGEM); sem fator de caixa → em unidades (pendências em `estoque/itens_sem_fator_caixa.csv`).
 - **Orçamento** = meta `65% da venda líq. 30d` por comprador × realizado do Winthor. **Transferência entre filiais NÃO é compra**: pedido cujo fornecedor tem a **mesma raiz de CNPJ** (8 díg., contra `MULTPEL_EMPRESA`) fica fora do orçamento.
+- **Duas réguas de valor (IPI/ST).** O Orçamento mede o realizado por `PCPEDIDO[VLTOTAL]`, que é a
+  **NF cheia** (mercadoria + IPI + ST). Então a sugestão de compra sai nas duas: `valor_sugerido_liq`
+  (mercadoria — é ela que vira **preço na planilha do Winthor**) e **`valor_sugerido_nf`** (o que
+  consome a meta). As alíquotas saem do **pedido real** por `(fornecedor, produto)`
+  (`core.montar_tributacao`), com cascata `pedido_real → perfil_fornecedor → cadastro → 0` e a
+  **fonte** visível na tela. Detalhe em **🧾 Tributação do pedido**.
 - **Comprador vinculado** ao usuário no Admin é **filtro inicial**, não trava — ele pode ver os outros.
 - **Lista de compradores** ≠ folha inteira: deriva da base (`compradores_reais()` — fornecedor com produto de revenda → `CODCOMPRADOR`). Usar `PCEMPR` cru traz vendedores/financeiro.
 
@@ -100,6 +106,46 @@ Doc completa das fórmulas em **`docs/estoque/planilha_v3.md`**.
 - ⚠️ **ABC-XYZ: as `<option>` do `#f-xyz` precisam de `value` explícito (`X`/`Y`/`Z`).** Sem ele o filtro casa nada e devolve **zero produtos em silêncio**.
 - ⚠️ **Pedido de compra: o preço converte JUNTO com a quantidade** (o Winthor faz `B×C` literal). Converter só a qtd colocaria o pedido no ERP com valor ~50× menor. Fonte única `core.item_master` (PDF + planilha).
 - ⚠️ **Cobertura ideal:** fronteira **≥45d inclusiva** (`core.resumo_estoque_ideal`); `limiar_dias=45` está fixo, não ligado ao "Cobertura alvo" do ⚙ Parâmetros.
+- ⚠️ **A planilha de importação leva o preço LÍQUIDO — nunca com IPI.** O Winthor calcula o imposto
+  sozinho na importação (foi assim que 132,05/caixa virou NF de R$ 44.982,01). Mandar preço com
+  imposto faria o ERP aplicar **IPI sobre IPI**: pedido ~15% inflado e custo de entrada errado.
+  Gate: `test_planilha_winthor_leva_preco_LIQUIDO_sem_imposto`.
+- ⚠️ **Valor da sugestão usa o custo arredondado a 4 casas** (`_round(custofin, 4)`), o mesmo que
+  vira preço no documento. Somar o `custofin` cru fazia a tela divergir do PDF em centavos
+  (R$ 39.536,38 × R$ 39.536,28 num pedido de 49 itens) — e quem bate com o ERP é o PDF.
+
+### 🧾 Tributação do pedido (IPI/ST) — por que existe e onde NÃO mexer
+
+**O problema (07/2026, achado pelo diretor):** o comprador olhava a sugestão (R$ 39.536,38 no card
+da GALVANOTEK), gerava o pedido, e o Winthor registrava **R$ 44.982,01**. Não era erro de conta —
+o JOGA mostrava **mercadoria** e o ERP mostra a **NF**. Como o Orçamento lê `VLTOTAL` (NF cheia),
+ele planejava numa régua e consumia a meta em outra.
+
+| Fonte da alíquota | Como se obtém | Uso |
+|---|---|---|
+| `pedido_real` | `(fornecedor, produto)` no PCITEM dos últimos 180d | ~72% das linhas |
+| `perfil_fornecedor` | **moda** das linhas daquele fornecedor | ~11% |
+| `cadastro` | `PCPRODUT[PERCIPI]` | ~9% |
+| `sem_dado` | zero — nunca inventa imposto | ~7% |
+
+- ⚠️ **NÃO use `PCPRODUT[PERCIPI]` como fonte primária.** O IPI efetivo depende do **FORNECEDOR**
+  (industrial recolhe, distribuidor não). Medido em 3.532 linhas reais: o cadastro **diverge do
+  praticado em 23%** delas, e **7 fornecedores** têm alíquota no cadastro mas cobram **zero** —
+  usar o cadastro cru superestima o imposto e faz o comprador comprar menos do que podia.
+- **ST sai como fator efetivo sobre a mercadoria** (`VLST ÷ preço`), não como `PERCST`: no
+  fornecedor 113 o efetivo é **20,71%** contra `PERCST` 20,05% — a diferença é a majoração da base
+  (MVA), que o fator já embute. Evita reconstruir MVA/base reduzida/crédito de ICMS.
+- `PCITEM[VLIPI]`/`[VLST]` são **UNITÁRIOS** e `PCITEM[PTABELA]` vem **vazio** nesta base — por isso
+  o preço se deriva de `VLIPI ÷ (PERIPI/100)`. Validado no 211 do pedido 565684:
+  `Σ QTPEDIDA×VLIPI = 5.445,73`, o IPI impresso.
+- **Custo zero de query:** as colunas entraram na `q_pedido_itens` que o já-pedido **já carregava**.
+- **Alíquota do par = MODA** das ocorrências na janela, não a do último pedido: a alíquota do
+  mesmo produto **oscila** (a GALVANOTEK alterna 9,75% e 15% no cód. 42334 entre pedidos da mesma
+  semana — 9,75% = 15% × 0,65, redução de base). Medido em 1.487 linhas fora da amostra: moda
+  acerta **86,4%** × 85,7% do "último vence". Empate → **o maior** (subestimar a meta é o erro caro).
+- **Backtest temporal** (mapa até D-60 prevendo 301 pedidos que ele nunca viu): desvio agregado
+  **0,02%**, erro mediano por pedido **0,00%**, p90 2,32%, 96% dos pedidos < 5%. A régua antiga
+  errava **8,05%**.
 
 ### O que a FUSÃO mudou no Compras (vs. o README antigo standalone)
 - **Sem login próprio.** A senha única `ESTOQUE_SENHA` foi **removida** — usa a autenticação/sessão/RBAC do app principal.
@@ -145,7 +191,7 @@ ANALYTICS_DB_NAME=joga_demo   # banco analítico (ANALYTICS_DB_* faz fallback pr
 > demo **não envelhece** sem regenerar. O default powerbi usa `TODAY()` normal.
 
 **Gates:** `tests/test_provider_*.py` (Dashboard, Comercial, Metas, Mix, Radar, Estoque, RBAC) +
-`test_medida_compat.py`. Baseline **216 passam / 3 falham** (as 3 conhecidas de fixture de data).
+`test_medida_compat.py`. Baseline **235 passam / 3 falham** (as 3 conhecidas de fixture de data).
 
 ---
 
@@ -200,7 +246,7 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 ├── estoque/provider_sql.py         # 🆕 modo postgres do Compras
 ├── docker-compose.demo.yml         # 🆕 stack da instância DEMO (Portainer)
 ├── _seed_demo/                     # 🆕 base sintética reprodutível (joga_demo) + bootstrap + seeder
-└── tests/                          # pytest (216 passam; 3 falham por fixture de data — não é regressão)
+└── tests/                          # pytest (235 passam; 3 falham por fixture de data — não é regressão)
 ```
 
 ---
@@ -212,7 +258,7 @@ cp .env.example .env        # preencher (ver variáveis abaixo)
 docker compose -f docker-compose.dev.yml up -d redis
 python -X utf8 init_db.py   # cria/migra schema + admin default (admin@multpel.com.br / admin123)
 python -X utf8 server.py    # http://localhost:5000
-pytest -q                   # 216 passam, 3 falham (fixture de data — não é regressão)
+pytest -q                   # 235 passam, 3 falham (fixture de data — não é regressão)
 ```
 
 Variáveis novas da fusão no `.env` (além das do Power BI/DB/Redis/Resend):
@@ -354,7 +400,7 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 5. **Checagem de API usa `'/api/' in path`, não `startswith`** — por causa de `/estoque/api/...`.
 6. **Não editar `MultpelEstoque/`** (repo congelado) nem publicar em `:latest` sem intenção.
 7. **3 testes falham por fixture de data** (radar/mix/cohort) — pré-existentes, **não** são regressão.
-   O baseline é **216 passam / 3 falham**.
+   O baseline é **235 passam / 3 falham**.
 8. **Verificação visual de tema não confia em captura** das telas de dados (Power BI muda o conteúdo
    entre capturas) — comparar cor computada (`getComputedStyle`), não pixels.
 9. **Base nova ganha `areas=["comercial"]` por default** — libere `compras` no Admin (ou via UPDATE),
@@ -397,7 +443,7 @@ mesmo código (`DATA_SOURCE`/`MEDIDAS`), providers `provider_sql.py`/`estoque/pr
 espelhando o DAX (Comercial + Compras + drills + exports), reconstrução das medidas RCA
 (`medidas_dax.py`), rede de segurança contra vazamento, base sintética `joga_demo` + stack DEMO
 auto-contida. Zero regressão na Multpel **provada centavo-a-centavo** no BI real (antes×depois idêntico);
-2 sweeps HTTP (100% dos endpoints branchados); baseline 216 testes.
+2 sweeps HTTP (100% dos endpoints branchados); baseline 235 testes.
 
 ---
 

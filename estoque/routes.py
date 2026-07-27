@@ -300,7 +300,10 @@ def _pedidos_data(filiais, hoje):
             itens = (PS.pedido_itens(numped_min) if _pg
                      else pbi.run_dax(Q.q_pedido_itens(numped_min)))
             data = {"cab": cab, "itens": itens,
-                    "ja_pedida": core.montar_ja_pedida(cab, itens, hoje=hoje, dias=180)}
+                    "ja_pedida": core.montar_ja_pedida(cab, itens, hoje=hoje, dias=180),
+                    # IPI/ST efetivos praticados por (fornecedor, produto) — mesma matéria-prima
+                    # do já-pedido, NENHUMA query a mais. Alimenta o valor sugerido na régua da NF.
+                    "tributacao": core.montar_tributacao(cab, itens, hoje=hoje, dias=180)}
     except Exception as e:
         print(f"[pedidos] Winthor indisponível ({e}). Pedido real desabilitado.")
     pbi._CACHE.set(key, data, 1800)
@@ -611,7 +614,8 @@ def _build_produtos():
                                           profundo=bool(params.get("forecast_sazonal")), filiais=filiais_v)
     else:
         venda_mensal = _vendas_mensal_map(12, _hoje(), filiais=filiais_v)
-    ja_pedida = _pedidos_data(filiais_e, _hoje())["ja_pedida"]
+    _peddata = _pedidos_data(filiais_e, _hoje())
+    ja_pedida = _peddata["ja_pedida"]
     embalagem = _embalagem_map()
     preco_venda = _preco_venda_map(filiais_v)
     # crescimento (YoY): venda líquida do MESMO período no ano anterior, por produto.
@@ -620,7 +624,8 @@ def _build_produtos():
     produtos = core.construir_produtos(snap, end_map, prod_map, forn_map, comp_map, venda_map, params,
                                        hoje=_hoje(), venda_mensal_map=venda_mensal,
                                        ja_pedida_map=ja_pedida, embalagem_map=embalagem,
-                                       preco_venda_map=preco_venda, venda_ant_map=venda_ant)
+                                       preco_venda_map=preco_venda, venda_ant_map=venda_ant,
+                                       tributacao_map=_peddata.get("tributacao"))
     # ocupação WMS: nº de posições por item + volume endereçado (m³) + flag "espaço morto".
     pos_map = _posicoes_map(filiais_e)
     for p in produtos:
@@ -1738,9 +1743,14 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
 
         header = ["Cód", "Descrição", "Embalagem", "Un", "Cód.Fab", "Qtde", "Custo un.", "IPI %", "Vlr. Total"]
         data = [header]
-        total = 0.0; total_kg = 0.0
+        total = 0.0; total_kg = 0.0; total_ipi = 0.0; total_st = 0.0
         for it in itens:
-            total += core._n(it.get("valor"))
+            _vl = core._n(it.get("valor"))
+            total += _vl
+            # IPI/ST da linha: o Winthor calcula assim na importação (é o que produziu a NF de
+            # R$ 44.982,01 sobre R$ 39.536,28 de mercadoria no pedido 565684).
+            total_ipi += _vl * core._n(it.get("percipi")) / 100.0
+            total_st += _vl * core._n(it.get("percst")) / 100.0
             # MESMA conversão da planilha do Winthor (core.item_master) — os dois documentos
             # precisam bater linha a linha. `custo_master` é o preço da CAIXA nas linhas CX,
             # senão "Qtde × Custo un." não fecharia com o "Vlr. Total" impresso ao lado.
@@ -1755,36 +1765,58 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
                          Paragraph(_e(it.get("codfab") or "—"), cel_cod),
                          qtde, _m(custo_master),
                          (f"{ipi:.1f}".replace('.', ',') + "%" if ipi > 0 else "—"), _m(it.get("valor"))])
-        data.append(["", "", "", "", "", "", "", "TOTAL", _m(total)])
+        # Totalização espelhando o rodapé do relatório 211: mercadoria, impostos e o TOTAL DA NF —
+        # que é o número com que o Winthor vai receber o pedido e o que o Orçamento mede.
+        data.append(["", "", "", "", "", "", "", "PRODUTOS", _m(total)])
+        _linhas_tot = 1
+        if total_ipi > 0:
+            data.append(["", "", "", "", "", "", "", "IPI", _m(total_ipi)]); _linhas_tot += 1
+        if total_st > 0:
+            data.append(["", "", "", "", "", "", "", "ST", _m(total_st)]); _linhas_tot += 1
+        total_nf = total + total_ipi + total_st
+        if _linhas_tot > 1:
+            data.append(["", "", "", "", "", "", "", "TOTAL NF", _m(total_nf)]); _linhas_tot += 1
         # Larguras dimensionadas pelo CONTEÚDO REAL (medido com pdfmetrics), não no olho:
         # Cód.Fab chega a 23 chars no cadastro (ex.: "ET40401TRB/SB1,5P20MBAI") e precisa de
         # 3,26cm — com os 1,8cm antigos o texto VAZAVA por cima da coluna Qtde (string em
         # célula do ReportLab não quebra nem corta). Redistribuí a folga das demais colunas;
         # a fonte segue 6,5pt (legibilidade — o pedido é impresso e vai ao fornecedor) e a
-        # Descrição ainda GANHOU espaço. IPI % = 1,00cm porque a linha "TOTAL" mora nela (0,98).
-        col_w = [1.10 * cm, 6.45 * cm, 1.85 * cm, 0.60 * cm, 3.40 * cm,
-                 0.85 * cm, 1.55 * cm, 1.00 * cm, 1.80 * cm]   # soma = 18,60cm (útil do A4)
+        # Descrição ainda GANHOU espaço. IPI % = 1,30cm porque os rótulos de totalização moram
+        # nela ("PRODUTOS"/"TOTAL NF" a 6,5pt bold ≈ 1,22cm; o antigo 1,00cm cortava).
+        col_w = [1.10 * cm, 6.15 * cm, 1.85 * cm, 0.60 * cm, 3.40 * cm,
+                 0.85 * cm, 1.55 * cm, 1.30 * cm, 1.80 * cm]   # soma = 18,60cm (útil do A4)
         tbl = Table(data, repeatRows=1, colWidths=col_w)
-        tbl.setStyle(TableStyle([
+        _r0 = len(data) - _linhas_tot        # 1ª linha do bloco de totais
+        estilo = [
             ('BACKGROUND', (0, 0), (-1, 0), azul),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
             ('FONTSIZE', (0, 0), (-1, -1), 6.5),
             ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#cbd5e1')),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, colors.HexColor('#f4f7fb')]),
+            ('ROWBACKGROUNDS', (0, 1), (_r0 - 1, -1), [colors.white, colors.HexColor('#f4f7fb')]),
             ('ALIGN', (5, 0), (-1, -1), 'RIGHT'),
             ('ALIGN', (3, 0), (3, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('LEFTPADDING', (0, 0), (-1, -1), 3), ('RIGHTPADDING', (0, 0), (-1, -1), 3),
             ('TOPPADDING', (0, 0), (-1, -1), 2.5), ('BOTTOMPADDING', (0, 0), (-1, -1), 2.5),
-            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#e2e8f0')),
-            ('SPAN', (0, -1), (6, -1)),
-        ]))
+            ('FONTNAME', (0, _r0), (-1, -1), 'Helvetica-Bold'),
+            ('BACKGROUND', (0, _r0), (-1, -1), colors.HexColor('#eef2f7')),
+        ]
+        # cada linha de totalização vaza o rótulo pelas colunas 0..6
+        # (nome _lin, não _i: `_i` é o helper de formatação de inteiro deste módulo)
+        for _lin in range(_r0, len(data)):
+            estilo.append(('SPAN', (0, _lin), (6, _lin)))
+        # o TOTAL DA NF (última, quando há imposto) é o número que vale — destacado
+        estilo.append(('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#e2e8f0')))
+        tbl.setStyle(TableStyle(estilo))
         story.append(tbl)
         story.append(Spacer(1, 0.2 * cm))
         _kg = f" &nbsp;·&nbsp; Peso total estimado: <b>{_i(total_kg)} kg</b>" if total_kg > 0 else ""
-        story.append(Paragraph(f"Total do pedido: <b>{_m(total)}</b> &nbsp;·&nbsp; {len(itens)} itens{_kg}", info_style))
+        # o total que o comprador confere contra o ERP é o da NF; a mercadoria fica ao lado
+        # porque é ela que vira preço na planilha de importação.
+        _tot = (f"Total da NF: <b>{_m(total_nf)}</b> &nbsp;·&nbsp; mercadoria {_m(total)}"
+                if total_nf > total else f"Total do pedido: <b>{_m(total)}</b>")
+        story.append(Paragraph(f"{_tot} &nbsp;·&nbsp; {len(itens)} itens{_kg}", info_style))
         doc.build(story, canvasmaker=_NumCanvas)
     else:
         doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.6 * cm, rightMargin=1.6 * cm,
@@ -1870,7 +1902,10 @@ def api_pedido_pdf(pid):
             cod = int(core._n(it.get("codprod")))
             c = cad.get(cod) or {}
             it["codfab"] = c.get("CODFAB")
-            it["percipi"] = c.get("PERCIPI")
+            # % gravado no pedido (o praticado pelo FORNECEDOR na emissão) manda; o cadastro só
+            # atende item sem snapshot (pedido anterior à migração) — ver DDL em store.py.
+            it["percipi"] = it["perc_ipi"] if it.get("perc_ipi") is not None else c.get("PERCIPI")
+            it["percst"] = it.get("perc_st") or 0
             # embalagem = a da CAIXA (PCEMBALAGEM, igual à tela do Abastecimento); fallback no cadastro
             it["embalagem"] = (emb_map.get(cod) or {}).get("embalagem") or c.get("EMBALAGEM")
             it["peso_caixa"] = (emb_map.get(cod) or {}).get("pesobruto")

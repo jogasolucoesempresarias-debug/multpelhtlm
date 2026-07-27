@@ -119,13 +119,23 @@ SELECTCOLUMNS(
 
 def q_pedido_itens(numped_min):
     """Itens (PCITEM) dos pedidos com NUMPED >= numped_min (limita o volume sem depender de
-    relacionamento). Agrega por (NUMPED, CODPROD): qtd pedida e qtd já entregue."""
+    relacionamento). Agrega por (NUMPED, CODPROD): qtd pedida, qtd já entregue e a TRIBUTAÇÃO
+    praticada na linha (IPI/ST), que alimenta `core.montar_tributacao`.
+
+    ⚠️ `VLIPI`/`VLST` são UNITÁRIOS (por unidade do item, não da linha) — validado contra o
+    relatório 211 do pedido 565684: Σ QTPEDIDA×VLIPI = 5.445,73, o IPI impresso. Por isso
+    entram com MAX (é atributo da linha, não valor a somar). `PCITEM[PTABELA]` está vazio nesta
+    base, então o preço unitário se deriva de VLIPI÷(PERIPI/100) — ver montar_tributacao."""
     return f"""EVALUATE
 CALCULATETABLE(
     ADDCOLUMNS(
         SUMMARIZE(PCITEM, PCITEM[NUMPED], PCITEM[CODPROD]),
         "qtped",      CALCULATE(SUM(PCITEM[QTPEDIDA])),
-        "qtentregue", CALCULATE(SUM(PCITEM[QTENTREGUE]))
+        "qtentregue", CALCULATE(SUM(PCITEM[QTENTREGUE])),
+        "periipi",    CALCULATE(MAX(PCITEM[PERIPI])),
+        "vlipi",      CALCULATE(MAX(PCITEM[VLIPI])),
+        "percst",     CALCULATE(MAX(PCITEM[PERCST])),
+        "vlst",       CALCULATE(MAX(PCITEM[VLST]))
     ),
     PCITEM[NUMPED] >= {int(numped_min)}
 )"""

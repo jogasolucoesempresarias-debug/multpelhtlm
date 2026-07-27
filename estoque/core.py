@@ -273,15 +273,123 @@ def montar_ja_pedida(cab_rows, item_rows, hoje=None, dias=180):
     return out
 
 
+# ───────────────────────── tributação prevista do pedido ─────────────────────────
+# O Orçamento mede o realizado por PCPEDIDO[VLTOTAL], que é a NF CHEIA (mercadoria + IPI + ST) —
+# validado no pedido 565684: VLTOTAL 44.982,01 = 39.536,28 de mercadoria + 5.445,73 de IPI.
+# A sugestão de compra saía só em mercadoria, então o comprador planejava numa régua e consumia
+# a meta em outra (7,1% no agregado de 120d; 13,8% num fornecedor com IPI cheio).
+#
+# ⚠️ Por que NÃO usar PCPRODUT[PERCIPI] (cadastro) como fonte: o IPI efetivo depende do
+# FORNECEDOR (industrial recolhe, distribuidor não), não só do produto. Medido em 3.532 linhas
+# de pedido real: o cadastro DIVERGE do praticado em 23% delas, e 7 fornecedores têm alíquota no
+# cadastro mas cobram ZERO no pedido — usar o cadastro cru SUPERESTIMA o imposto. O histórico
+# real por (fornecedor, produto) é estável em 92% dos pares (97,4% no ST), então é ele a fonte
+# primária; o cadastro fica como último fallback antes do zero.
+def montar_tributacao(cab_rows, item_rows, hoje=None, dias=180):
+    """Alíquotas EFETIVAS de IPI/ST praticadas, extraídas do pedido de compra REAL
+    (PCPEDIDO×PCITEM — os mesmos dados que o já-pedido já carrega, sem query nova).
+
+    `VLIPI`/`VLST` do PCITEM são UNITÁRIOS (validado: Σ QTPEDIDA×VLIPI = 5.445,73 = o IPI do
+    relatório 211 do pedido 565684). Como `PCITEM[PTABELA]` vem vazio nesta base, o preço
+    unitário é derivado de `VLIPI ÷ (PERIPI/100)` — e com ele sai o **ST efetivo sobre a
+    mercadoria** (`VLST ÷ preço`), que é o que a sugestão precisa: evita reconstruir MVA/base
+    reduzida/crédito de ICMS. Medido no fornecedor 113: VLST/preço = 20,71% constante em todas
+    as linhas, contra PERCST=20,05% (a diferença é a majoração da base, que o fator já embute).
+
+    Retorna {"par": {(codfornec, codprod): {ipi, st, fonte}}, "forn": {codfornec: {ipi, st}}},
+    com as alíquotas em % (15.0 = 15%). Alíquota do par = MODA das ocorrências na janela."""
+    hoje = hoje or date.today()
+    corte = hoje - timedelta(days=int(dias))
+    # NUMPED é sequencial → serve de desempate "mais recente" sem depender da data do item
+    forn_de, emissao_de = {}, {}
+    for r in cab_rows:
+        dt = _parse_dt(r.get("DTEMISSAO")) or date.min
+        if dt < corte:
+            continue
+        n = int(_n(r.get("NUMPED")))
+        forn_de[n] = int(_n(r.get("CODFORNEC")))
+        emissao_de[n] = dt
+
+    par, forn_acc = {}, {}
+    for r in item_rows:
+        n = int(_n(r.get("NUMPED")))
+        if n not in forn_de:
+            continue
+        ipi = _n(r.get("periipi"))
+        st_perc = _n(r.get("percst"))
+        vlipi, vlst = _n(r.get("vlipi")), _n(r.get("vlst"))
+        # ST efetivo sobre a mercadoria: só dá pra derivar o preço quando a linha tem IPI.
+        # Sem isso, cai no PERCST cru (aproximação — subestima um pouco, não inventa imposto).
+        if vlst > 0 and ipi > 0 and vlipi > 0:
+            st = vlst / (vlipi / (ipi / 100.0)) * 100.0
+        elif vlst > 0:
+            st = st_perc
+        else:
+            st = 0.0
+        cod = int(_n(r.get("CODPROD")))
+        f = forn_de[n]
+        par.setdefault((f, cod), {"ipi": [], "st": []})
+        par[(f, cod)]["ipi"].append(ipi)
+        par[(f, cod)]["st"].append(st)
+        a = forn_acc.setdefault(f, {"ipi": [], "st": []})
+        a["ipi"].append(ipi)
+        a["st"].append(st)
+
+    # MODA das ocorrências do par, não a do último pedido: medindo 1.487 linhas fora da amostra,
+    # a moda acerta 86,4% contra 85,7% do "último vence" e é mais estável — a alíquota do MESMO
+    # produto oscila (a GALVANOTEK alterna 9,75% e 15% no cód. 42334 entre pedidos da mesma
+    # semana), então o último pedido pode ser o atípico.
+    par = {k: {"ipi": _moda(a["ipi"]), "st": _moda(a["st"]), "fonte": "pedido_real"}
+           for k, a in par.items()}
+    # perfil do fornecedor = MODA das linhas (não a média): o fornecedor que nunca cobra IPI
+    # tem de projetar 0 mesmo tendo um item atípico, e o que cobra sempre tem de projetar a
+    # alíquota cheia mesmo com uma linha isenta no meio.
+    forn = {}
+    for f, a in forn_acc.items():
+        forn[f] = {"ipi": _moda(a["ipi"]), "st": _moda(a["st"]), "n": len(a["ipi"])}
+    return {"par": par, "forn": forn}
+
+
+def _moda(vals):
+    """Valor mais frequente (arredondado a 2 casas); 0.0 se vazio. Empate → o maior."""
+    if not vals:
+        return 0.0
+    cont = {}
+    for v in vals:
+        k = round(float(v or 0), 2)
+        cont[k] = cont.get(k, 0) + 1
+    return max(cont.items(), key=lambda kv: (kv[1], kv[0]))[0]
+
+
+def tributacao_de(trib_map, codfornec, codprod, percipi_cadastro=None):
+    """(ipi%, st%, fonte) para um item que ainda NÃO foi pedido. Cascata de fallback:
+    par (fornecedor,produto) do pedido real → perfil do fornecedor → cadastro → zero.
+    A `fonte` viaja até a tela: o comprador precisa saber se o imposto é praticado ou estimado."""
+    if not trib_map:
+        cad = _n(percipi_cadastro)
+        return (cad, 0.0, "cadastro" if cad else "sem_dado")
+    f, c = int(_n(codfornec)), int(_n(codprod))
+    hit = (trib_map.get("par") or {}).get((f, c))
+    if hit:
+        return (hit["ipi"], hit["st"], "pedido_real")
+    pf = (trib_map.get("forn") or {}).get(f)
+    if pf:
+        return (pf["ipi"], pf["st"], "perfil_fornecedor")
+    cad = _n(percipi_cadastro)
+    return (cad, 0.0, "cadastro" if cad else "sem_dado")
+
+
 # ───────────────────────── produtos ─────────────────────────
 def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, venda_map, params,
                        hoje=None, venda_mensal_map=None, ja_pedida_map=None, embalagem_map=None,
-                       preco_venda_map=None, venda_ant_map=None, venda_mensal_rs_map=None):
+                       preco_venda_map=None, venda_ant_map=None, venda_mensal_rs_map=None,
+                       tributacao_map=None):
     """snapshot: linhas do PCEST; end_map: {cod: qt_end}; prod_map/forn_map: cadastro;
     comprador_map: {matricula: nome}; venda_map: {cod:{venda,custo,qtd}} líquido do RCA.
     venda_mensal_map: {cod:{AnoMes:qtd}} p/ forecast (opcional; só quando forecast ligado).
     ja_pedida_map: {cod: qt} pedido de compra REAL em ABERTO (Winthor, qtped−entregue, 180d).
     embalagem_map: {cod: {qtunit, volume, ...}} caixa/cubagem do PCEMBALAGEM.
+    tributacao_map: saída de `montar_tributacao` — IPI/ST efetivos p/ o valor sugerido c/ NF.
     Mantém só produtos do cadastro (revenda/não-FL)."""
     hoje = hoje or date.today()
     base = params["base_estoque"]
@@ -495,8 +603,20 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             sugestao_cx = math.ceil(sugestao)           # sem fator: unidades (o front mostra "un")
         if arred_cx and caixa > 1 and sugestao > 0:
             sugestao = sugestao_cx * caixa  # sugestão em unidades, arredondada p/ caixa fechada
-        # valor da compra líquida sugerida (caixa fechada × custo, ou unidades × custo se sem fator)
-        valor_sugerido_liq = (sugestao_cx * caixa * custofin) if caixa > 1 else (sugestao_cx * custofin)
+        # valor da compra líquida sugerida (caixa fechada × custo, ou unidades × custo se sem fator).
+        # ⚠️ Usa o custo JÁ ARREDONDADO a 4 casas — o mesmo que sai em `custo_unit` e vai virar
+        # preço no pedido/PDF/planilha. Com o `custofin` cru, a tela somava numa precisão e o
+        # documento em outra: no pedido 45 (GALVANOTEK, 49 itens) a tela dizia R$ 39.536,38 e o
+        # PDF R$ 39.536,28 — e quem bate com o Winthor é o PDF, porque é o preço arredondado que
+        # a planilha de importação entrega ao ERP.
+        custo_doc = _round(custofin, 4)
+        valor_sugerido_liq = (sugestao_cx * caixa * custo_doc) if caixa > 1 else (sugestao_cx * custo_doc)
+        # régua da NF (= a do Orçamento, que lê PCPEDIDO[VLTOTAL]): mercadoria + IPI + ST previstos
+        perc_ipi, perc_st, trib_fonte = tributacao_de(tributacao_map, cad.get("CODFORNEC"), cod,
+                                                      cad.get("PERCIPI"))
+        vl_ipi = valor_sugerido_liq * perc_ipi / 100.0
+        vl_st = valor_sugerido_liq * perc_st / 100.0
+        valor_sugerido_nf = valor_sugerido_liq + vl_ipi + vl_st
 
         # cubagem da caixa: PCEMBALAGEM[VOLUME] (oficial); se faltar (muito item sem cadastro
         # na embalagem), deriva do PCPRODUT[VOLUME] (unitário × fator de caixa) — mesma fonte
@@ -585,6 +705,10 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "estoque_projetado": _round(estoque_projetado),
             "cobertura_proj": _round(cobertura_proj, 1) if cobertura_proj is not None else None,
             "valor_sugerido_liq": _round(valor_sugerido_liq),
+            # régua da NF — é ESTA que consome a meta do Orçamento (PCPEDIDO[VLTOTAL])
+            "valor_sugerido_nf": _round(valor_sugerido_nf),
+            "vl_ipi_sug": _round(vl_ipi), "vl_st_sug": _round(vl_st),
+            "perc_ipi": perc_ipi, "perc_st": perc_st, "trib_fonte": trib_fonte,
             "status_exec": status_exec, "acao_rec": acao_rec,
             "cubagem_caixa_m3": _round(cub_caixa, 5) if cub_caixa else None,
             "peso_caixa_kg": _round(_n(emb.get("pesobruto")), 3) if emb.get("pesobruto") else None,
@@ -709,6 +833,10 @@ def cockpit(produtos):
             "n_repor": len(repor),
             "qt_sugerida": _round(sum(p["sugestao_compra"] or 0 for p in repor)),
             "valor_sugerido": _round(sum((p["sugestao_compra"] or 0) * (p["custo_unit"] or 0) for p in repor)),
+            # o mesmo total na régua da NF (mercadoria + IPI + ST), p/ confrontar com o Orçamento
+            "valor_sugerido_nf": _round(sum((p["sugestao_compra"] or 0) * (p["custo_unit"] or 0)
+                                            * (1 + ((p.get("perc_ipi") or 0) + (p.get("perc_st") or 0)) / 100)
+                                            for p in repor)),
             "n_suspensos": len(suspensos),
             "valor_suspenso": _round(sum((p["sugestao_compra"] or 0) * (p["custo_unit"] or 0) for p in suspensos)),
         },
@@ -821,13 +949,15 @@ def por_comprador(produtos):
     return saida
 
 
-def _valor_sugerido_compra(p):
+def _valor_sugerido_compra(p, campo="valor_sugerido_liq"):
     """Valor da sugestão de compra de um item, IGUAL à aba Comprar→Abastecimento:
     valor_sugerido_liq (caixa fechada × custo) dos itens a comprar (sugestao_cx>0, giro>0,
     não suspensos). Já embute Lead time + Cobertura alvo (via est_alvo). Fonte única p/ o
-    número não divergir entre as duas telas."""
+    número não divergir entre as duas telas.
+    `campo="valor_sugerido_nf"` devolve a mesma coisa na régua da NF (com IPI/ST) — a que se
+    compara com o saldo do Orçamento."""
     if (p.get("sugestao_cx") or 0) > 0 and (p.get("giro_dia") or 0) > 0 and not p.get("compra_suspensa"):
-        return p.get("valor_sugerido_liq") or 0.0
+        return p.get(campo) or p.get("valor_sugerido_liq") or 0.0
     return 0.0
 
 
@@ -845,11 +975,13 @@ def ruptura_por_comprador(produtos):
         g = grupos.setdefault(cc if cc is not None else 0, {
             "codcomprador": cc, "comprador": p.get("comprador") or "Sem comprador",
             "n_produtos": 0, "n_ruptura": 0, "n_sem_pedido": 0,
-            "venda_perdida": 0.0, "sugestao_compra_valor": 0.0,
+            "venda_perdida": 0.0, "sugestao_compra_valor": 0.0, "sugestao_compra_nf": 0.0,
         })
         g["n_produtos"] += 1
         # sugestão de compra (Abastecimento) — TODO item a comprar do comprador, não só os em ruptura
         g["sugestao_compra_valor"] += _valor_sugerido_compra(p)
+        # mesma sugestão na régua da NF (c/ IPI e ST): é a que se compara com o saldo do Orçamento
+        g["sugestao_compra_nf"] += _valor_sugerido_compra(p, "valor_sugerido_nf")
         if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0:
             g["n_ruptura"] += 1
             if (p.get("qtd_ja_pedida") or 0) <= 0:
@@ -866,6 +998,7 @@ def ruptura_por_comprador(produtos):
             "pct_sem_pedido": _round(g["n_sem_pedido"] / g["n_produtos"] * 100, 1) if g["n_produtos"] else 0,
             "venda_perdida": _round(g["venda_perdida"]),
             "sugestao_compra_valor": sug,
+            "sugestao_compra_nf": _round(g["sugestao_compra_nf"]),
             "custo_reposicao": sug,   # alias retrocompatível (export/consumidores antigos)
         })
     saida.sort(key=lambda x: x["n_ruptura"], reverse=True)

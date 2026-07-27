@@ -83,6 +83,17 @@ CREATE TABLE IF NOT EXISTS estoque_planos_acao (
 ALTER TABLE estoque_pedidos ADD COLUMN IF NOT EXISTS origem TEXT DEFAULT 'NOSSO_SISTEMA';
 ALTER TABLE estoque_pedidos ADD COLUMN IF NOT EXISTS sincronizado_winthor BOOLEAN DEFAULT false;
 ALTER TABLE estoque_pedidos ADD COLUMN IF NOT EXISTS numped_winthor TEXT;
+-- migração: pedido passa a guardar as DUAS réguas. `valor` continua sendo a MERCADORIA (é ele
+-- que vira preço na planilha de importação — o Winthor calcula o imposto sozinho no cadastro);
+-- `valor_nf` é mercadoria+IPI+ST, a régua do Orçamento (PCPEDIDO[VLTOTAL]). Alíquotas ficam
+-- gravadas por item porque o pedido é um SNAPSHOT: reimprimir meses depois não pode mudar o
+-- documento se a tributação do fornecedor tiver mudado nesse meio-tempo.
+ALTER TABLE estoque_pedidos ADD COLUMN IF NOT EXISTS valor_nf NUMERIC;
+-- SEM default: NULL = item gravado antes desta migração (o PDF cai no % do cadastro, como
+-- sempre fez) e 0 = alíquota zero REALMENTE praticada pelo fornecedor. Um DEFAULT 0 apagaria
+-- essa diferença e faria pedido antigo imprimir "sem IPI".
+ALTER TABLE estoque_pedido_itens ADD COLUMN IF NOT EXISTS perc_ipi NUMERIC;
+ALTER TABLE estoque_pedido_itens ADD COLUMN IF NOT EXISTS perc_st NUMERIC;
 """
 
 _disponivel = None  # cache do teste de conexão (True/False)
@@ -230,16 +241,17 @@ def pedido_add(d):
     conn = get_db()
     with conn, conn.cursor() as cur:
         cur.execute("""INSERT INTO estoque_pedidos
-            (data_pedido, mes, comprador, codfornec, fornecedor, n_pedido, valor, prazo_dias, dt_vencimento, status, forma_pgto, obs)
-            VALUES (%(data_pedido)s,%(mes)s,%(comprador)s,%(codfornec)s,%(fornecedor)s,%(n_pedido)s,%(valor)s,%(prazo_dias)s,%(dt_vencimento)s,%(status)s,%(forma_pgto)s,%(obs)s)
+            (data_pedido, mes, comprador, codfornec, fornecedor, n_pedido, valor, valor_nf, prazo_dias, dt_vencimento, status, forma_pgto, obs)
+            VALUES (%(data_pedido)s,%(mes)s,%(comprador)s,%(codfornec)s,%(fornecedor)s,%(n_pedido)s,%(valor)s,%(valor_nf)s,%(prazo_dias)s,%(dt_vencimento)s,%(status)s,%(forma_pgto)s,%(obs)s)
             RETURNING id""", _ped_defaults(d))
         new_id = cur.fetchone()[0]
         for it in (d.get("itens") or []):
             cur.execute("""INSERT INTO estoque_pedido_itens
-                (pedido_id, codprod, descricao, qtdisp, cobertura, giro_mes, qtunitcx, qtd, custo_unit, valor)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (pedido_id, codprod, descricao, qtdisp, cobertura, giro_mes, qtunitcx, qtd, custo_unit, valor, perc_ipi, perc_st)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (new_id, it.get("codprod"), it.get("descricao"), it.get("qtdisp"), it.get("cobertura"),
-                 it.get("giro_mes"), it.get("qtunitcx"), it.get("qtd"), it.get("custo_unit"), it.get("valor")))
+                 it.get("giro_mes"), it.get("qtunitcx"), it.get("qtd"), it.get("custo_unit"), it.get("valor"),
+                 it.get("perc_ipi"), it.get("perc_st")))
     conn.close()
     return new_id
 
@@ -267,7 +279,8 @@ def _ped_defaults(d):
     return {
         "data_pedido": d.get("data_pedido"), "mes": d.get("mes"), "comprador": d.get("comprador"),
         "codfornec": d.get("codfornec"), "fornecedor": d.get("fornecedor"), "n_pedido": d.get("n_pedido"),
-        "valor": d.get("valor") or 0, "prazo_dias": d.get("prazo_dias"),
+        "valor": d.get("valor") or 0, "valor_nf": d.get("valor_nf") or d.get("valor") or 0,
+        "prazo_dias": d.get("prazo_dias"),
         "dt_vencimento": d.get("dt_vencimento"), "status": d.get("status") or "ABERTO",
         "forma_pgto": d.get("forma_pgto"), "obs": d.get("obs"),
     }

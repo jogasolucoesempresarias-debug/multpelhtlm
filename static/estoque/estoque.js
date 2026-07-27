@@ -157,7 +157,8 @@ const TIPS = {
     'Embalagem':'Embalagem da caixa e o fator de conversão unidade↔caixa (un/cx).',
     'Cob.proj':'Cobertura projetada em dias = (disponível + já pedido) ÷ giro diário.',
     'm³':'Cubagem do pedido sugerido (caixas sugeridas × volume da caixa).',
-    'Valor sug.':'Valor da compra sugerida a custo (caixas sugeridas × custo).',
+    'Valor sug.':'Valor da compra sugerida a custo de MERCADORIA (caixas sugeridas × custo) — é este preço que vai na planilha de importação do Winthor, sem imposto (o ERP calcula o dele).',
+    'Imp.':'IPI + ICMS-ST previstos para a linha, na alíquota que ESTE fornecedor pratica (tirada dos pedidos reais dele; sem histórico, cai no cadastro do produto). O total do fornecedor já sai com estes impostos — é a régua da NF, a mesma que o Orçamento mede.',
     'Status':'Situação executiva do item (compra urgente, no prazo, ruptura, pedido cobre…).',
     'Sugeria':'Quanto a regra sugeriria comprar — mostrado só para conferência (o item parou de vender).',
     'Dias s/ venda':'Dias desde a última venda do produto.',
@@ -678,17 +679,27 @@ function renderReposicao(P){
   // agrupa por fornecedor (+ cubagem do pedido sugerido = Σ caixas sugeridas × volume da caixa)
   const cubItem=p=>(p.sugestao_cx||0)*(p.cubagem_caixa_m3||0);
   const pesoItem=p=>(p.sugestao_cx||0)*(p.peso_caixa_kg||0);
-  const g={}; rep.forEach(p=>{(g[p.codfornec]=g[p.codfornec]||{cod:p.codfornec,forn:p.fornecedor||('Forn '+p.codfornec),itens:[],valor:0,cub:0,peso:0}); g[p.codfornec].itens.push(p); g[p.codfornec].valor+=(p.valor_sugerido_liq||0); g[p.codfornec].cub+=cubItem(p); g[p.codfornec].peso+=pesoItem(p);});
-  const grupos=Object.values(g).sort((a,b)=>b.valor-a.valor);
+  // IPI+ST previstos da linha. O title revela a FONTE: alíquota tirada do pedido real daquele
+  // fornecedor (confiável) x perfil do fornecedor x cadastro (estimativa) — o comprador precisa
+  // saber quando o número é praticado e quando é palpite.
+  const FONTE_IMP={pedido_real:'praticado no pedido real deste fornecedor',perfil_fornecedor:'perfil deste fornecedor (média das compras)',cadastro:'cadastro do produto — estimativa',sem_dado:'sem histórico'};
+  const impCell=p=>{const t=(p.perc_ipi||0)+(p.perc_st||0); if(t<=0) return '—';
+    const det=[(p.perc_ipi>0?`IPI ${dec(p.perc_ipi,2)}%`:''),(p.perc_st>0?`ST ${dec(p.perc_st,2)}%`:'')].filter(Boolean).join(' + ');
+    return `<span title="${det} · ${FONTE_IMP[p.trib_fonte]||''}"${p.trib_fonte==='cadastro'?' class="muted"':''}>${dec(t,1)}%</span>`;};
+  // duas réguas: `valor` = mercadoria (vira preço na planilha do Winthor) e `valorNF` =
+  // mercadoria + IPI + ST previstos, que é o que o Orçamento mede (PCPEDIDO[VLTOTAL]).
+  // O card mostra a NF em destaque: era aí que o comprador planejava R$ 39,5k e consumia R$ 45,0k.
+  const g={}; rep.forEach(p=>{(g[p.codfornec]=g[p.codfornec]||{cod:p.codfornec,forn:p.fornecedor||('Forn '+p.codfornec),itens:[],valor:0,valorNF:0,cub:0,peso:0}); g[p.codfornec].itens.push(p); g[p.codfornec].valor+=(p.valor_sugerido_liq||0); g[p.codfornec].valorNF+=(p.valor_sugerido_nf||p.valor_sugerido_liq||0); g[p.codfornec].cub+=cubItem(p); g[p.codfornec].peso+=pesoItem(p);});
+  const grupos=Object.values(g).sort((a,b)=>b.valorNF-a.valorNF);
   const el=$('#v-reposicao');
   el.innerHTML=head('Abastecimento — o que comprar (por fornecedor)','reposicao')+
-    `<div class="count-line">Sugestão líquida = estoque-alvo (giro/dia × (lead + ${int(S.params.cob)}d)) − estoque projetado (disponível + <b>pedido real em aberto</b>), arredondada em <b>caixas</b>. <b>m³</b> = cubagem do pedido sugerido (caixas × volume da caixa). O <b>lead</b> entra na conta (o estoque cai até a mercadoria chegar) e usa o prazo do fornecedor quando houver.</div>`+
+    `<div class="count-line">Sugestão líquida = estoque-alvo (giro/dia × (lead + ${int(S.params.cob)}d)) − estoque projetado (disponível + <b>pedido real em aberto</b>), arredondada em <b>caixas</b>. <b>m³</b> = cubagem do pedido sugerido (caixas × volume da caixa). O <b>lead</b> entra na conta (o estoque cai até a mercadoria chegar) e usa o prazo do fornecedor quando houver. O total do fornecedor sai <b>com impostos (IPI/ST)</b> — é a mesma régua do Orçamento, que lê o valor da NF do Winthor; a coluna <b>Valor sug.</b> segue em mercadoria, que é o preço que vai na planilha de importação.</div>`+
     grupos.slice(0,40).map(gr=>`
       <div class="panel forn-grp">
         <h3><span>${esc(gr.forn)} <small class="muted">· ${gr.itens.length} itens${gr.cub>0?` · ${dec(gr.cub,2)} m³`:''}${gr.peso>0?` · ${dec(gr.peso,1)} kg`:''}</small></span>
-          <span>${money(gr.valor)} <button class="btn sm primary rowact" data-fornped="${gr.cod}">Gerar pedido</button></span></h3>
-        <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Embalagem${tip('reposicao','Embalagem')}</th><th class="num">Disp.${tip('reposicao','Disp.')}</th><th class="num">Já ped.${tip('reposicao','Já ped.')}</th><th class="num">Cob.proj${tip('reposicao','Cob.proj')}</th><th class="num">Giro/mês${tip('reposicao','Giro/mês')}</th><th class="num">Sugerido (cx)${tip('reposicao','Sugerido (cx)')}</th><th class="num">m³${tip('reposicao','m³')}</th><th class="num">Valor sug.${tip('reposicao','Valor sug.')}</th><th>Status${tip('reposicao','Status')}</th></tr></thead>
-        <tbody>${gr.itens.sort((a,b)=>(a.cobertura_proj||0)-(b.cobertura_proj||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td>${embCell(p)}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida):'—'}</td><td class="num">${cob(p.cobertura_proj)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${sugCxN(p)}</td><td class="num">${cubItem(p)>0?dec(cubItem(p),3):'—'}</td><td class="num">${money(p.valor_sugerido_liq)}</td><td>${statExec(p.status_exec)}</td></tr>`).join('')}</tbody></table></div>
+          <span>${gr.valorNF>gr.valor+0.005?`${money(gr.valorNF)} <small class="muted">c/ impostos · merc. ${money(gr.valor)}</small>`:money(gr.valor)} <button class="btn sm primary rowact" data-fornped="${gr.cod}">Gerar pedido</button></span></h3>
+        <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Embalagem${tip('reposicao','Embalagem')}</th><th class="num">Disp.${tip('reposicao','Disp.')}</th><th class="num">Já ped.${tip('reposicao','Já ped.')}</th><th class="num">Cob.proj${tip('reposicao','Cob.proj')}</th><th class="num">Giro/mês${tip('reposicao','Giro/mês')}</th><th class="num">Sugerido (cx)${tip('reposicao','Sugerido (cx)')}</th><th class="num">m³${tip('reposicao','m³')}</th><th class="num">Valor sug.${tip('reposicao','Valor sug.')}</th><th class="num">Imp.${tip('reposicao','Imp.')}</th><th>Status${tip('reposicao','Status')}</th></tr></thead>
+        <tbody>${gr.itens.sort((a,b)=>(a.cobertura_proj||0)-(b.cobertura_proj||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td>${embCell(p)}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida):'—'}</td><td class="num">${cob(p.cobertura_proj)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${sugCxN(p)}</td><td class="num">${cubItem(p)>0?dec(cubItem(p),3):'—'}</td><td class="num">${money(p.valor_sugerido_liq)}</td><td class="num">${impCell(p)}</td><td>${statExec(p.status_exec)}</td></tr>`).join('')}</tbody></table></div>
       </div>`).join('')+
     (suspensos.length?`<div class="panel" style="border-color:var(--orange)">
       <h3><span>⚠ Rever antes de comprar — pararam de vender (${suspensos.length})${tipT('Itens com giro na média de 3 meses mas sem venda há 60 dias ou mais — confira antes de pedir (o giro pode estar “preso” no histórico).')}</span></h3>
@@ -1766,7 +1777,7 @@ async function renderOrcamento(useCache){
     </div>
     ${manuais.length?`<div class="panel" id="orc-manuais" style="border-color:var(--accent2)"><h3><span>Pedidos da nossa plataforma${tipT('Pedidos lançados aqui, pendentes de envio ao Winthor — não somam no realizado até voltarem da base oficial.')}</span> <small class="muted">· pendentes de envio ao Winthor</small></h3>
       <div class="tbl-wrap"><table><thead><tr>${sortTh(colsM,skM||{})}<th></th></tr></thead>
-      <tbody>${manuaisS.map(pe=>`<tr><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc(pe.n_pedido||'')}</td><td class="num">${money(+pe.valor)}</td><td><a class="btn sm" href="/estoque/api/pedidos/${pe.id}.xlsx" title="Planilha de importação do Winthor (cód · preço · qtd)">⬇ Excel</a> <a class="btn sm" href="/estoque/api/pedidos/${pe.id}.pdf">⬇ PDF</a> <button class="btn sm" data-delped="${pe.id}">✕</button></td></tr>`).join('')}</tbody></table></div>
+      <tbody>${manuaisS.map(pe=>`<tr><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc(pe.n_pedido||'')}</td><td class="num" title="${+pe.valor_nf>+pe.valor?`mercadoria ${money(+pe.valor)} + impostos ${money(+pe.valor_nf-+pe.valor)}`:'sem imposto previsto'}">${money(+pe.valor_nf||+pe.valor)}</td><td><a class="btn sm" href="/estoque/api/pedidos/${pe.id}.xlsx" title="Planilha de importação do Winthor (cód · preço · qtd)">⬇ Excel</a> <a class="btn sm" href="/estoque/api/pedidos/${pe.id}.pdf">⬇ PDF</a> <button class="btn sm" data-delped="${pe.id}">✕</button></td></tr>`).join('')}</tbody></table></div>
       <div class="count-line">Não somam no realizado — entram quando voltarem da base oficial (Winthor). <b>⬇ Excel</b> = planilha de importação de pedido do Winthor (v26+): código · preço unitário · quantidade (un).</div></div>`:''}`;
   $('#btn-pedido').onclick=()=>modalPedido(null);
   wireSortTbl($('#orc-comp'),'orc_comp',()=>renderOrcamento(true));
@@ -1947,7 +1958,10 @@ function _prodItem(p,qtd){ return {codprod:p.codprod,descricao:p.descricao,qtdis
   // qtd do pedido é sempre em UNIDADES INTEIRAS: a sugestão crua pode ser fracionária (ex.: 0,3 un
   // em item sem fator de caixa) — a tela ceila p/ "1 un", mas se guardar 0,3 o item_master faz
   // round→0 e o Excel/PDF do Winthor PULA a linha (qtd<=0). Ceilar aqui alinha pedido↔tela↔export.
-  giro_mes:p.giro_mes,qtunitcx:p.qtunitcx,custo_unit:p.custo_unit,qtd:(qtd!=null?qtd:Math.ceil(p.sugestao_compra||0))}; }
+  giro_mes:p.giro_mes,qtunitcx:p.qtunitcx,custo_unit:p.custo_unit,
+  // alíquotas efetivas do par (fornecedor, produto) — viajam com o item até o banco/PDF
+  perc_ipi:p.perc_ipi,perc_st:p.perc_st,trib_fonte:p.trib_fonte,
+  qtd:(qtd!=null?qtd:Math.ceil(p.sugestao_compra||0))}; }
 
 // Construtor de pedido com itens. opts: produto único (do 360°) | {fornecedor,codfornec,itens} (sugestão) | null (manual)
 // drill: itens comprados de um pedido REAL do Winthor (PCITEM)
@@ -1989,9 +2003,17 @@ function modalPedido(opts){
     <div id="pd-itens" style="margin-top:8px"></div>
     <div class="m-acts"><button class="btn" id="m-cancel">Cancelar</button><button class="btn primary" id="m-ok">Lançar</button></div>`, true);
   const total=()=>itens.reduce((s,x)=>s+((+x.qtd||0)*(+x.custo_unit||0)),0);
+  // mercadoria + IPI + ST — a régua da NF (a que o Orçamento mede). O campo "Valor" do pedido
+  // continua guardando a MERCADORIA; o valor_nf vai separado no payload.
+  const linhaNF=x=>(+x.qtd||0)*(+x.custo_unit||0)*(1+((+x.perc_ipi||0)+(+x.perc_st||0))/100);
+  const totalNF=()=>itens.reduce((s,x)=>s+linhaNF(x),0);
+  const rodape=()=>{const t=total(),nf=totalNF();
+    return nf>t+0.005
+      ? `Mercadoria: <b>${money(t)}</b> · impostos ${money(nf-t)} · <b>Total da NF ${money(nf)}</b> · ${itens.length} itens`
+      : `Total: <b>${money(t)}</b> · ${itens.length} itens`;};
   // atualiza só o rodapé + o campo Valor (sem reconstruir a tabela → não rouba o foco do input)
   function refreshTotals(){
-    const cl=$('#pd-itens .count-line'); if(cl) cl.innerHTML=`Total: <b>${money(total())}</b> · ${itens.length} itens`;
+    const cl=$('#pd-itens .count-line'); if(cl) cl.innerHTML=rodape();
     const v=$('#pd-valor'); if(itens.length) v.value=total().toFixed(2);
   }
   function draw(){
@@ -2002,7 +2024,7 @@ function modalPedido(opts){
           <td class="num">${x.qtunitcx>1?int(Math.ceil((+x.qtd||0)/x.qtunitcx))+' cx':'—'}</td>
           <td class="num"><input type="number" data-ci="${i}" value="${+x.custo_unit||0}" min="0" step="0.01" style="width:84px;text-align:right"></td><td class="num">${money((+x.qtd||0)*(+x.custo_unit||0))}</td>
           <td><button class="btn sm" data-ri="${i}">✕</button></td></tr>`).join('')+
-        `</tbody></table></div><div class="count-line" style="text-align:right">Total: <b>${money(total())}</b> · ${itens.length} itens</div>`
+        `</tbody></table></div><div class="count-line" style="text-align:right">${rodape()}</div>`
       : `<div class="count-line">Nenhum item — adicione produtos acima${opts.itens?'':' (ou lance só com o valor)'}.</div>`;
     const v=$('#pd-valor'); if(itens.length){ v.value=total().toFixed(2); v.disabled=true; } else { v.disabled=false; }
     $('#pd-itens').querySelectorAll('[data-qi]').forEach(inp=>inp.oninput=()=>{
@@ -2031,10 +2053,13 @@ function modalPedido(opts){
     const nome=($('#pd-forn').value||'').trim();
     const match=(S.fornecedores||[]).find(x=>(x.fornecedor||'').toLowerCase()===nome.toLowerCase());
     const itensPayload=itens.map(x=>({codprod:x.codprod,descricao:x.descricao,qtdisp:x.qtdisp,cobertura:x.cobertura,
-      giro_mes:x.giro_mes,qtunitcx:x.qtunitcx,qtd:+x.qtd||0,custo_unit:x.custo_unit,valor:(+x.qtd||0)*(+x.custo_unit||0)}));
+      giro_mes:x.giro_mes,qtunitcx:x.qtunitcx,qtd:+x.qtd||0,custo_unit:x.custo_unit,valor:(+x.qtd||0)*(+x.custo_unit||0),
+      // snapshot da tributação praticada: o PDF reimpresso meses depois tem de sair igual
+      perc_ipi:x.perc_ipi==null?null:+x.perc_ipi, perc_st:x.perc_st==null?null:+x.perc_st}));
     const valor=itens.length?total():(+$('#pd-valor').value||0);
+    const valor_nf=itens.length?totalNF():valor;
     await postJSON('/estoque/api/pedidos',{data_pedido:$('#pd-data').value,comprador:comp,codfornec:match?match.codfornec:(opts.codfornec||null),
-      fornecedor:match?match.fornecedor:nome,n_pedido:$('#pd-num').value,valor,prazo_dias:+$('#pd-prazo').value||null,itens:itensPayload});
+      fornecedor:match?match.fornecedor:nome,n_pedido:$('#pd-num').value,valor,valor_nf,prazo_dias:+$('#pd-prazo').value||null,itens:itensPayload});
     closeModal(); toast('Pedido lançado ✓'); if(S.view==='orcamento')renderOrcamento(); };
 }
 function modalPedidoFornecedor(gr){ // "Gerar pedido" da Reposição → construtor com itens pré-preenchidos editáveis
