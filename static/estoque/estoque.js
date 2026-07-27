@@ -682,10 +682,18 @@ function renderReposicao(P){
   // IPI+ST previstos da linha. O title revela a FONTE: alíquota tirada do pedido real daquele
   // fornecedor (confiável) x perfil do fornecedor x cadastro (estimativa) — o comprador precisa
   // saber quando o número é praticado e quando é palpite.
-  const FONTE_IMP={pedido_real:'praticado no pedido real deste fornecedor',perfil_fornecedor:'perfil deste fornecedor (média das compras)',cadastro:'cadastro do produto — estimativa',sem_dado:'sem histórico'};
-  const impCell=p=>{const t=(p.perc_ipi||0)+(p.perc_st||0); if(t<=0) return '—';
+  const FONTE_IMP={trib_entrada:'tributação de entrada do Winthor (rotina 212) — é a alíquota que o ERP vai aplicar',
+    isento_cadastro:'produto isento de IPI no cadastro',
+    cadastro:'ESTIMATIVA — este produto não tem regra fiscal cadastrada para a UF deste fornecedor; usando o % do cadastro',
+    pedido_real:'ESTIMATIVA — sem regra fiscal; usando o praticado nas últimas compras deste fornecedor',
+    perfil_fornecedor:'ESTIMATIVA — sem regra fiscal; usando o perfil deste fornecedor',
+    sem_dado:'sem informação fiscal'};
+  const impCell=p=>{const t=(p.perc_ipi||0)+(p.perc_st||0);
+    if(t<=0) return p.trib_fonte==='isento_cadastro'?`<span class="muted" title="${FONTE_IMP.isento_cadastro}">isento</span>`:'—';
     const det=[(p.perc_ipi>0?`IPI ${dec(p.perc_ipi,2)}%`:''),(p.perc_st>0?`ST ${dec(p.perc_st,2)}%`:'')].filter(Boolean).join(' + ');
-    return `<span title="${det} · ${FONTE_IMP[p.trib_fonte]||''}"${p.trib_fonte==='cadastro'?' class="muted"':''}>${dec(t,1)}%</span>`;};
+    // estimativa fica marcada: é nela que mora praticamente todo o erro residual (~5% dos itens)
+    const fraca=p.trib_firme===false;
+    return `<span title="${det} · ${FONTE_IMP[p.trib_fonte]||''}"${fraca?' class="muted"':''}>${dec(t,1)}%${fraca?' <b title="estimativa — confira antes de pedir">≈</b>':''}</span>`;};
   // duas réguas: `valor` = mercadoria (vira preço na planilha do Winthor) e `valorNF` =
   // mercadoria + IPI + ST previstos, que é o que o Orçamento mede (PCPEDIDO[VLTOTAL]).
   // O card mostra a NF em destaque: era aí que o comprador planejava R$ 39,5k e consumia R$ 45,0k.
@@ -1960,7 +1968,7 @@ function _prodItem(p,qtd){ return {codprod:p.codprod,descricao:p.descricao,qtdis
   // round→0 e o Excel/PDF do Winthor PULA a linha (qtd<=0). Ceilar aqui alinha pedido↔tela↔export.
   giro_mes:p.giro_mes,qtunitcx:p.qtunitcx,custo_unit:p.custo_unit,
   // alíquotas efetivas do par (fornecedor, produto) — viajam com o item até o banco/PDF
-  perc_ipi:p.perc_ipi,perc_st:p.perc_st,trib_fonte:p.trib_fonte,
+  perc_ipi:p.perc_ipi,perc_st:p.perc_st,trib_fonte:p.trib_fonte,trib_firme:p.trib_firme,
   qtd:(qtd!=null?qtd:Math.ceil(p.sugestao_compra||0))}; }
 
 // Construtor de pedido com itens. opts: produto único (do 360°) | {fornecedor,codfornec,itens} (sugestão) | null (manual)
@@ -2018,11 +2026,13 @@ function modalPedido(opts){
   }
   function draw(){
     $('#pd-itens').innerHTML = itens.length
-      ? `<div class="tbl-wrap" style="max-height:240px"><table><thead><tr><th>Cód</th><th>Produto</th><th class="num">Qtd (un)</th><th class="num">Cx</th><th class="num">Custo</th><th class="num">Valor</th><th></th></tr></thead><tbody>`+
+      ? `<div class="tbl-wrap" style="max-height:240px"><table><thead><tr><th>Cód</th><th>Produto</th><th class="num">Qtd (un)</th><th class="num">Cx</th><th class="num">Custo</th><th class="num">IPI %${tipT('Alíquota que o Winthor deve aplicar na entrada. Vem da tributação de entrada do ERP; quando o item não tem regra fiscal para a UF do fornecedor, é ESTIMATIVA (marcada com ≈) — confira e corrija aqui, o total da NF recalcula.')}</th><th class="num">Valor NF</th><th></th></tr></thead><tbody>`+
         itens.map((x,i)=>`<tr><td class="num">${x.codprod}</td><td><span class="prod">${esc(x.descricao||'')}</span></td>
           <td class="num"><input type="number" data-qi="${i}" value="${+x.qtd||0}" min="0" style="width:74px;text-align:right"></td>
           <td class="num">${x.qtunitcx>1?int(Math.ceil((+x.qtd||0)/x.qtunitcx))+' cx':'—'}</td>
-          <td class="num"><input type="number" data-ci="${i}" value="${+x.custo_unit||0}" min="0" step="0.01" style="width:84px;text-align:right"></td><td class="num">${money((+x.qtd||0)*(+x.custo_unit||0))}</td>
+          <td class="num"><input type="number" data-ci="${i}" value="${+x.custo_unit||0}" min="0" step="0.01" style="width:84px;text-align:right"></td>
+          <td class="num"><input type="number" data-ipi="${i}" value="${+x.perc_ipi||0}" min="0" max="100" step="0.01" style="width:70px;text-align:right"${x.trib_firme===false?' title="estimativa — o item não tem regra fiscal para esta origem"':''}>${x.trib_firme===false?' ≈':''}</td>
+          <td class="num">${money(linhaNF(x))}</td>
           <td><button class="btn sm" data-ri="${i}">✕</button></td></tr>`).join('')+
         `</tbody></table></div><div class="count-line" style="text-align:right">${rodape()}</div>`
       : `<div class="count-line">Nenhum item — adicione produtos acima${opts.itens?'':' (ou lance só com o valor)'}.</div>`;
@@ -2032,10 +2042,16 @@ function modalPedido(opts){
       // foco (não dava pra digitar). Atualiza modelo + as células derivadas (Cx/Valor) na mão.
       const i=+inp.dataset.qi, x=itens[i]; x.qtd=+inp.value||0; const tr=inp.closest('tr');
       tr.children[3].textContent = x.qtunitcx>1 ? int(Math.ceil((+x.qtd||0)/x.qtunitcx))+' cx' : '—';
-      tr.children[5].textContent = money((+x.qtd||0)*(+x.custo_unit||0));
+      tr.children[6].textContent = money(linhaNF(x));
       refreshTotals();
     });
     $('#pd-itens').querySelectorAll('[data-ci]').forEach(inp=>inp.onchange=()=>{ itens[+inp.dataset.ci].custo_unit=+inp.value||0; draw(); });
+    // IPI corrigido na mão: vira snapshot do pedido (grava no banco e sai no PDF). É a saída
+    // para os ~5% de itens sem regra fiscal, onde a previsão é estimativa.
+    $('#pd-itens').querySelectorAll('[data-ipi]').forEach(inp=>inp.onchange=()=>{
+      const i=+inp.dataset.ipi, x=itens[i]; x.perc_ipi=+inp.value||0; x.trib_fonte='manual'; x.trib_firme=true;
+      inp.closest('tr').children[6].textContent = money(linhaNF(x)); refreshTotals();
+    });
     $('#pd-itens').querySelectorAll('[data-ri]').forEach(b=>b.onclick=()=>{ itens.splice(+b.dataset.ri,1); draw(); });
   }
   draw();

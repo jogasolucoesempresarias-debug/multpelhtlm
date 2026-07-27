@@ -163,6 +163,13 @@ def pedido_cab(desde, filiais=None):
                 for (np, dte, cfil, cfor, ccomp, vt, ve, dv, dee, dp) in cur.fetchall()]
 
 
+def trib_entrada():
+    """Espelha q_trib_entrada. A base sintética não tem a tributação de entrada do ERP (é
+    cadastro fiscal do cliente), então devolve vazio e a cascata degrada para cadastro/histórico
+    — mesmo caminho de uma instância cujo TI ainda não publicou a TRIB_ENTRADA."""
+    return []
+
+
 _TRIB_COLS = ("periipi", "vlipi", "percst", "vlst")
 
 

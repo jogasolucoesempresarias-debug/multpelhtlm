@@ -121,17 +121,32 @@ da GALVANOTEK), gerava o pedido, e o Winthor registrava **R$ 44.982,01**. Não e
 o JOGA mostrava **mercadoria** e o ERP mostra a **NF**. Como o Orçamento lê `VLTOTAL` (NF cheia),
 ele planejava numa régua e consumia a meta em outra.
 
-| Fonte da alíquota | Como se obtém | Uso |
-|---|---|---|
-| `pedido_real` | `(fornecedor, produto)` no PCITEM dos últimos 180d | ~72% das linhas |
-| `perfil_fornecedor` | **moda** das linhas daquele fornecedor | ~11% |
-| `cadastro` | `PCPRODUT[PERCIPI]` | ~9% |
-| `sem_dado` | zero — nunca inventa imposto | ~7% |
+**A fonte é a tributação de ENTRADA do próprio ERP** (rotina 212), publicada no dataset como
+**`TRIB_ENTRADA`** (join `PCTRIBENTPROD × PCTRIBFIGURA`, filiais 3/5 + revenda, ~36k linhas).
+Chave: **produto × filial × UF de origem × tipo de fornecedor** → figura → `PERIPI`/`PERCST`.
 
-- ⚠️ **NÃO use `PCPRODUT[PERCIPI]` como fonte primária.** O IPI efetivo depende do **FORNECEDOR**
-  (industrial recolhe, distribuidor não). Medido em 3.532 linhas reais: o cadastro **diverge do
-  praticado em 23%** delas, e **7 fornecedores** têm alíquota no cadastro mas cobram **zero** —
-  usar o cadastro cru superestima o imposto e faz o comprador comprar menos do que podia.
+| # | Degrau da cascata | Cobertura | Acerto |
+|---|---|---|---|
+| 1 | `isento_cadastro` — `PCPRODUT[PERCIPI]` = 0 | 41% | 97% |
+| 2 | **`trib_entrada`** — a figura do ERP | **54%** | **100%** |
+| 3 | `cadastro` — item sem figura p/ aquela UF | 5% | 20% ⚠️ |
+| 4 | `pedido_real` / `perfil_fornecedor` — histórico | resto | — |
+| 5 | `sem_dado` → zero (nunca inventa imposto) | — | — |
+
+**Total: 94,6% das linhas / 96,9% do valor** (medido nos pedidos reais pós-virada; era **53%**
+com o histórico como primária). Os degraus 3-5 saem com **`trib_firme=False`** → a tela marca
+com `≈` e o **% fica editável no pedido**: é ali que mora todo o erro residual.
+
+- ⚠️ **`PCPRODUT[PERCIPI]` é o IPI de VENDA** (rotina 271), não o de compra — por isso ele diverge
+  (dizia 6,75% num item que o ERP cobrou 10%). Serve só para os dois papéis em que é bom: dizer
+  quem é **isento** (alíquota 0) e cobrir item sem figura.
+- ⚠️ **Não volte a usar o histórico de `PCITEM[PERIPI]` como primária.** Ele parecia bom em janela
+  de 30d (82%), mas isso mede o passado: quando o **redutor de 35% do IPI caiu (21/07/2026** —
+  `9,75 = 15 × 0,65`), o histórico seguiu prevendo a alíquota velha por semanas e o acerto para o
+  próximo pedido caiu a **53%**. Cadastro fiscal muda **antes** do histórico; é por isso que a
+  figura ganha. Reprovadas também: `PCEST[PERCIPIULTENT]` (66%), pedido anterior (55%),
+  `PCTRIBUTNCM`/`PCIMPORTTRIBUT`/`PCTABTRIBENT`/`PCEXCECAOIPI` (**vazias**), `PCTRIBUTCOMPRA`
+  (não existe nesta base), `PCFIGURATRIBIPI` (só CST), `PCTRIBUT`/`PCNCM` (só ICMS).
 - **ST sai como fator efetivo sobre a mercadoria** (`VLST ÷ preço`), não como `PERCST`: no
   fornecedor 113 o efetivo é **20,71%** contra `PERCST` 20,05% — a diferença é a majoração da base
   (MVA), que o fator já embute. Evita reconstruir MVA/base reduzida/crédito de ICMS.
@@ -139,10 +154,10 @@ ele planejava numa régua e consumia a meta em outra.
   o preço se deriva de `VLIPI ÷ (PERIPI/100)`. Validado no 211 do pedido 565684:
   `Σ QTPEDIDA×VLIPI = 5.445,73`, o IPI impresso.
 - **Custo zero de query:** as colunas entraram na `q_pedido_itens` que o já-pedido **já carregava**.
-- **Alíquota do par = MODA** das ocorrências na janela, não a do último pedido: a alíquota do
-  mesmo produto **oscila** (a GALVANOTEK alterna 9,75% e 15% no cód. 42334 entre pedidos da mesma
-  semana — 9,75% = 15% × 0,65, redução de base). Medido em 1.487 linhas fora da amostra: moda
-  acerta **86,4%** × 85,7% do "último vence". Empate → **o maior** (subestimar a meta é o erro caro).
+- **No fallback histórico, a alíquota do par é a MODA** da janela (não a do último pedido): ela
+  oscila entre pedidos da mesma semana. Medido em 1.487 linhas: moda 86,4% × 85,7%. Empate → o maior.
+- **`TRIB_ENTRADA` é publicada sob demanda** (como a `PEDIDO_ENTRADA`). Instância sem ela degrada
+  para cadastro/histórico — tudo marcado como estimativa. Para publicar, ver `q_trib_entrada()`.
 - **Backtest temporal** (mapa até D-60 prevendo 301 pedidos que ele nunca viu): desvio agregado
   **0,02%**, erro mediano por pedido **0,00%**, p90 2,32%, 96% dos pedidos < 5%. A régua antiga
   errava **8,05%**.
@@ -191,7 +206,7 @@ ANALYTICS_DB_NAME=joga_demo   # banco analítico (ANALYTICS_DB_* faz fallback pr
 > demo **não envelhece** sem regenerar. O default powerbi usa `TODAY()` normal.
 
 **Gates:** `tests/test_provider_*.py` (Dashboard, Comercial, Metas, Mix, Radar, Estoque, RBAC) +
-`test_medida_compat.py`. Baseline **235 passam / 3 falham** (as 3 conhecidas de fixture de data).
+`test_medida_compat.py`. Baseline **242 passam / 3 falham** (as 3 conhecidas de fixture de data).
 
 ---
 
@@ -246,7 +261,7 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 ├── estoque/provider_sql.py         # 🆕 modo postgres do Compras
 ├── docker-compose.demo.yml         # 🆕 stack da instância DEMO (Portainer)
 ├── _seed_demo/                     # 🆕 base sintética reprodutível (joga_demo) + bootstrap + seeder
-└── tests/                          # pytest (235 passam; 3 falham por fixture de data — não é regressão)
+└── tests/                          # pytest (242 passam; 3 falham por fixture de data — não é regressão)
 ```
 
 ---
@@ -258,7 +273,7 @@ cp .env.example .env        # preencher (ver variáveis abaixo)
 docker compose -f docker-compose.dev.yml up -d redis
 python -X utf8 init_db.py   # cria/migra schema + admin default (admin@multpel.com.br / admin123)
 python -X utf8 server.py    # http://localhost:5000
-pytest -q                   # 235 passam, 3 falham (fixture de data — não é regressão)
+pytest -q                   # 242 passam, 3 falham (fixture de data — não é regressão)
 ```
 
 Variáveis novas da fusão no `.env` (além das do Power BI/DB/Redis/Resend):
@@ -400,7 +415,7 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 5. **Checagem de API usa `'/api/' in path`, não `startswith`** — por causa de `/estoque/api/...`.
 6. **Não editar `MultpelEstoque/`** (repo congelado) nem publicar em `:latest` sem intenção.
 7. **3 testes falham por fixture de data** (radar/mix/cohort) — pré-existentes, **não** são regressão.
-   O baseline é **235 passam / 3 falham**.
+   O baseline é **242 passam / 3 falham**.
 8. **Verificação visual de tema não confia em captura** das telas de dados (Power BI muda o conteúdo
    entre capturas) — comparar cor computada (`getComputedStyle`), não pixels.
 9. **Base nova ganha `areas=["comercial"]` por default** — libere `compras` no Admin (ou via UPDATE),
@@ -443,7 +458,7 @@ mesmo código (`DATA_SOURCE`/`MEDIDAS`), providers `provider_sql.py`/`estoque/pr
 espelhando o DAX (Comercial + Compras + drills + exports), reconstrução das medidas RCA
 (`medidas_dax.py`), rede de segurança contra vazamento, base sintética `joga_demo` + stack DEMO
 auto-contida. Zero regressão na Multpel **provada centavo-a-centavo** no BI real (antes×depois idêntico);
-2 sweeps HTTP (100% dos endpoints branchados); baseline 235 testes.
+2 sweeps HTTP (100% dos endpoints branchados); baseline 242 testes.
 
 ---
 

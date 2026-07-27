@@ -58,12 +58,16 @@ def test_sem_ipi_na_linha_o_st_cai_no_percst_declarado():
     assert st == 18.0
 
 
-def test_cadastro_nao_sobrepoe_fornecedor_que_nao_cobra_ipi():
-    """A armadilha que motivou o desenho: 7 fornecedores têm IPI no CADASTRO e cobram ZERO no
-    pedido real (23% das 3.532 linhas medidas divergem). O praticado tem de vencer o cadastro,
-    senão a sugestão superestima o imposto e o comprador compra menos do que podia."""
+def test_historico_so_manda_quando_nao_ha_figura_nem_cadastro():
+    """O histórico foi REBAIXADO na cascata (era a fonte primária) — decisão por medição.
+
+    Ele parecia bom em janelas de 30d (82%), mas isso media o passado: quando o redutor de 35%
+    do IPI caiu em 21/07/2026, o histórico seguiu prevendo a alíquota velha (9,75 em vez de 15)
+    por semanas, e o acerto real para o PRÓXIMO pedido despencou para 53%. A tributação de
+    entrada do ERP muda antes do histórico — por isso ela é a primária e o histórico virou o
+    último degrau antes do zero, para item sem figura e sem cadastro."""
     trib = core.montar_tributacao([_cab(10, 9745)], [_item(10, 777, periipi=0.0)])
-    ipi, _, fonte = core.tributacao_de(trib, 9745, 777, percipi_cadastro=15.0)
+    ipi, _, fonte = core.tributacao_de(trib, 9745, 777, percipi_cadastro=None)
     assert ipi == 0.0 and fonte == "pedido_real"
 
 
@@ -233,3 +237,80 @@ def test_pdf_com_st_imprime_as_quatro_linhas():
     _, txt = _pdf_texto([_item_pdf(42248, 1000, 1.7325, percipi=3.25, percst=20.71)])
     for rotulo in ("PRODUTOS", "IPI", "ST", "TOTAL NF"):
         assert rotulo in txt
+
+
+# ─────────── cascata com a TRIBUTAÇÃO DE ENTRADA do ERP (fonte primária) ───────────
+# Os números vêm da tributação real medida no Oracle da Multpel (rotina 212):
+#   52485 (CRISTALCOPO/SC) figura 88 -> IPI 10%   · cadastro dizia 6,75 (IPI de VENDA)
+#   42315 (GALVANOTEK/RS)  figura 91 -> IPI 15%
+#   42313 (GALVANOTEK/RS)  isento no cadastro     · a figura 91 diria 15, mas o ERP cobra 0
+def _te():
+    return core.montar_trib_entrada([
+        {"CODPROD": 52485, "CODFILIAL": "3", "UFORIGEM": "SC", "TIPOFORNEC": "I",
+         "PERIPI": 10.0, "PERCST": 0.0},
+        {"CODPROD": 42315, "CODFILIAL": "3", "UFORIGEM": "RS", "TIPOFORNEC": "I",
+         "PERIPI": 15.0, "PERCST": 0.0},
+        {"CODPROD": 42313, "CODFILIAL": "3", "UFORIGEM": "RS", "TIPOFORNEC": "I",
+         "PERIPI": 15.0, "PERCST": 0.0},
+    ])
+
+
+def test_trib_entrada_vence_o_cadastro_defasado():
+    """O caso que originou tudo: cadastro 6,75 (IPI de venda) x ERP cobrou 10 (figura 88)."""
+    ipi, st, fonte = core.tributacao_de(None, 10393, 52485, 6.75, trib_entrada=_te(),
+                                        uf_fornec="SC")
+    assert (ipi, fonte) == (10.0, "trib_entrada")
+
+
+def test_isento_no_cadastro_vence_a_figura():
+    """42313 e 42315 são do MESMO fornecedor, mesma UF e mesma figura (91 = 15%), mas o 42313
+    saiu com IPI 0 no pedido real. Quem sabe disso é o cadastro: alíquota 0 = isento de fato
+    (acerto de 97% nessa leitura). Por isso o isento é o 1º degrau, antes da figura."""
+    assert core.tributacao_de(None, 8579, 42313, 0.0, trib_entrada=_te(), uf_fornec="RS") \
+        == (0.0, 0.0, "isento_cadastro")
+    assert core.tributacao_de(None, 8579, 42315, 15.0, trib_entrada=_te(), uf_fornec="RS")[0] == 15.0
+
+
+def test_aliquota_muda_com_a_UF_DE_ORIGEM_do_fornecedor():
+    """O mesmo produto tem figuras diferentes por origem (medido: cód. 42313 de SP → figura 91
+    = 15%, de SC → figura 33 = 0%). Prever sem a UF do fornecedor erra por construção."""
+    te = core.montar_trib_entrada([
+        {"CODPROD": 777, "CODFILIAL": "3", "UFORIGEM": "SP", "TIPOFORNEC": "I", "PERIPI": 15.0, "PERCST": 0},
+        {"CODPROD": 777, "CODFILIAL": "3", "UFORIGEM": "SC", "TIPOFORNEC": "I", "PERIPI": 5.0, "PERCST": 0},
+    ])
+    assert core.tributacao_de(None, 1, 777, 15.0, trib_entrada=te, uf_fornec="SP")[0] == 15.0
+    assert core.tributacao_de(None, 1, 777, 15.0, trib_entrada=te, uf_fornec="SC")[0] == 5.0
+
+
+def test_sem_figura_para_a_origem_cai_no_cadastro_e_marca_estimativa():
+    """~5% dos itens não têm regra fiscal para aquela UF — é onde mora todo o erro residual.
+    Tem de sair marcado como estimativa (trib_firme=False) p/ a tela avisar e o comprador
+    poder corrigir o % antes de gerar o pedido."""
+    ipi, _, fonte = core.tributacao_de(None, 8579, 99999, 6.5, trib_entrada=_te(), uf_fornec="MG")
+    assert (ipi, fonte) == (6.5, "cadastro")
+    assert fonte not in core.TRIB_FONTES_FIRMES
+
+
+def test_fontes_firmes_sao_so_figura_e_isento():
+    assert set(core.TRIB_FONTES_FIRMES) == {"isento_cadastro", "trib_entrada"}
+
+
+def test_sem_trib_entrada_publicada_degrada_sem_quebrar():
+    """Instância cujo TI ainda não publicou a TRIB_ENTRADA (ou a demo): a cascata continua
+    entregando número pelo cadastro/histórico, só que marcado como estimativa."""
+    trib = core.montar_tributacao([_cab(1, 8579)], [_item(1, 45017, periipi=15.0, vlipi=0.19)])
+    ipi, _, fonte = core.tributacao_de(trib, 8579, 45017, None, trib_entrada={}, uf_fornec="RS")
+    assert ipi == 15.0 and fonte == "pedido_real"
+
+
+def test_produto_marca_a_confianca_da_aliquota():
+    """`trib_firme` viaja até a tela e o modal do pedido."""
+    snap = [{"CODPROD": 52485, "codfilial": "3", "qtestger": 0, "qtbloq": 0, "qtreserv": 0,
+             "giro_m1": 300, "giro_m2": 300, "giro_m3": 300, "custofin": 1.0}]
+    cad = {52485: {"CODPROD": 52485, "DESCRICAO": "POTE", "CODFORNEC": 10393,
+                   "QTUNITCX": 100, "PERCIPI": 6.75}}
+    forn = {10393: {"CODFORNEC": 10393, "ESTADO": "SC", "TIPOFORNEC": "I"}}
+    p = core.construir_produtos(snap, {}, cad, forn, {}, {}, core.merge_params({}),
+                                trib_entrada_map=_te())[0]
+    assert p["perc_ipi"] == 10.0 and p["trib_fonte"] == "trib_entrada" and p["trib_firme"] is True
+    assert p["valor_sugerido_nf"] == pytest.approx(p["valor_sugerido_liq"] * 1.10, abs=0.02)

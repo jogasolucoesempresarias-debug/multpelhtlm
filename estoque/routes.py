@@ -310,6 +310,24 @@ def _pedidos_data(filiais, hoje):
     return data
 
 
+def _trib_entrada_map():
+    """{(codprod, filial, uf, tipofornec): {ipi, st}} — tributação de entrada do ERP (rotina 212).
+    Cache 6h: é cadastro fiscal, muda pouco (mas muda ANTES do histórico — é por isso que ela é
+    a fonte primária). Ausente (instância sem a tabela publicada) → {} e a cascata degrada."""
+    key = "tribentrada:v1"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    out = {}
+    try:
+        rows = PS.trib_entrada() if pbi.CONFIG["data_source"] == "postgres" else pbi.run_dax(Q.q_trib_entrada())
+        out = core.montar_trib_entrada(rows)
+    except Exception as e:
+        print(f"[tributacao] TRIB_ENTRADA indisponível ({e}). Cascata cai no cadastro/histórico.")
+    pbi._CACHE.set(key, out, 21600)
+    return out
+
+
 def _hoje():
     h = request.args.get("hoje")
     if h:
@@ -625,7 +643,8 @@ def _build_produtos():
                                        hoje=_hoje(), venda_mensal_map=venda_mensal,
                                        ja_pedida_map=ja_pedida, embalagem_map=embalagem,
                                        preco_venda_map=preco_venda, venda_ant_map=venda_ant,
-                                       tributacao_map=_peddata.get("tributacao"))
+                                       tributacao_map=_peddata.get("tributacao"),
+                                       trib_entrada_map=_trib_entrada_map())
     # ocupação WMS: nº de posições por item + volume endereçado (m³) + flag "espaço morto".
     pos_map = _posicoes_map(filiais_e)
     for p in produtos:

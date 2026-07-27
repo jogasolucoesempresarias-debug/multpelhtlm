@@ -61,6 +61,7 @@ SELECTCOLUMNS(PCFORNEC,
     "FORNECEDOR",     PCFORNEC[FORNECEDOR],
     "FANTASIA",       PCFORNEC[FANTASIA],
     "CODCOMPRADOR",   PCFORNEC[CODCOMPRADOR],
+    "TIPOFORNEC",     PCFORNEC[TIPOFORNEC],
     "PRAZOENTREGA",   PCFORNEC[PRAZOENTREGA],
     "VLMINPEDCOMPRA", PCFORNEC[VLMINPEDCOMPRA],
     "CGC",            PCFORNEC[CGC],
@@ -151,6 +152,27 @@ FILTER(
         "qtentregue", CALCULATE(SUM(PCITEM[QTENTREGUE]))
     ),
     PCITEM[NUMPED] = {int(numped)}
+)"""
+
+
+def q_trib_entrada():
+    """Tributação de ENTRADA do ERP (rotina 212) — `TRIB_ENTRADA`, publicada no dataset com o
+    join `PCTRIBENTPROD × PCTRIBFIGURA` já resolvido e filtrada nas filiais 3/5 + revenda.
+
+    É a **fonte primária** da alíquota de IPI/ST da sugestão de compra: mede 100% de acerto nas
+    linhas em que a figura existe. A chave é produto × filial × UF de origem × tipo de fornecedor
+    — o mesmo produto muda de alíquota conforme de onde vem (ver `core.montar_trib_entrada`).
+
+    ⚠️ Tabela publicada sob demanda (como a PEDIDO_ENTRADA). Instância sem ela degrada para o
+    cadastro/histórico — por isso o loader trata a ausência como aviso, não erro."""
+    return """EVALUATE
+SELECTCOLUMNS(TRIB_ENTRADA,
+    "CODPROD",    TRIB_ENTRADA[CODPROD],
+    "CODFILIAL",  TRIB_ENTRADA[CODFILIAL],
+    "UFORIGEM",   TRIB_ENTRADA[UFORIGEM],
+    "TIPOFORNEC", TRIB_ENTRADA[TIPOFORNEC],
+    "PERIPI",     TRIB_ENTRADA[PERIPI],
+    "PERCST",     TRIB_ENTRADA[PERCST]
 )"""
 
 
