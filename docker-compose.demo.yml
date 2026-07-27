@@ -58,6 +58,10 @@ services:
   demo-seed:
     image: ghcr.io/jogasolucoesempresarias-debug/multpelhtlm:multi-fonte
     command: ["bash", "_seed_demo/bootstrap_demo.sh"]
+    # Job one-shot NÃO serve /health → o HEALTHCHECK herdado do Dockerfile marcava "unhealthy"
+    # e o Swarm matava o seed (exit 137) no meio do fato. Desligar aqui.
+    healthcheck:
+      disable: true
     networks:
       - demo-internal
     environment:
