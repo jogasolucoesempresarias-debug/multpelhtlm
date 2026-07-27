@@ -1,0 +1,110 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Stack DEMO — demo.jogasolucoes.com.br  (Portainer / Docker Swarm + Traefik)
+#
+# MESMA imagem da produção. A ÚNICA diferença é ENV: DATA_SOURCE=postgres → o app lê
+# a base sintética `joga_demo`, NUNCA o Power BI do cliente. Um código, muitas instâncias.
+#
+# Auto-contido: traz o próprio Postgres (volume) + Redis + um serviço `demo-seed` que, no
+# 1º deploy, MONTA a base sintética sozinho (idempotente — redeploys pulam). Nada na mão.
+# Primeiro boot leva ~3–4 min (gera ~1,17M linhas). Depois é instantâneo.
+#
+# ⚠️ A imagem `:multi-fonte` precisa conter o commit da produtização (build/push da branch
+#    feat/multi-fonte, ou troque a tag pela que seu CI gerar). Login da demo: admin@multpel.com.br / admin123.
+#
+# 🔒 SEM POWERBI_* de propósito: a demo não tem como tocar o BI do cliente (defesa em
+#    profundidade). SECRET_KEY e a senha do Postgres são exclusivas da demo (isoladas da produção).
+# ─────────────────────────────────────────────────────────────────────────────
+version: "3.8"
+
+services:
+  demo-app:
+    image: ghcr.io/jogasolucoesempresarias-debug/multpelhtlm:multi-fonte
+    networks:
+      - proxy
+      - demo-internal
+    environment:
+      FLASK_ENV: "production"
+      TZ: "America/Sao_Paulo"
+      SECRET_KEY: "95f0c08f955b3d6a5a4f65c8679a3668d147d629044d23c6474c711e92264fda"
+      MODULOS: "comercial,compras"
+      # >>> O INTERRUPTOR <<<  lê o banco sintético, não o Power BI
+      DATA_SOURCE: "postgres"
+      ANALYTICS_DB_NAME: "joga_demo"
+      # analytics + auth vivem no MESMO banco joga_demo (tabelas não colidem)
+      DB_HOST: "demo-postgres"
+      DB_PORT: "5432"
+      DB_NAME: "joga_demo"
+      DB_USER: "demo"
+      DB_PASSWORD: "3g3mF_I0yMbquxwgjjLGl2Ob8SB_PMfD"
+      REDIS_HOST: "demo-redis"
+      REDIS_PORT: "6379"
+      CRON_HABILITADO: "false"
+      # (opcional) fixa o "hoje"; sem isto ancora sozinho no max(dtsaida) da base:
+      # ANALYTICS_HOJE: "2026-07-24"
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=proxy"
+        - "traefik.http.routers.demo.rule=Host(`demo.jogasolucoes.com.br`)"
+        - "traefik.http.routers.demo.entrypoints=websecure"
+        - "traefik.http.routers.demo.tls.certresolver=le"
+        - "traefik.http.services.demo.loadbalancer.server.port=5000"
+
+  # Monta a base sintética no 1º deploy e sai (idempotente).
+  demo-seed:
+    image: ghcr.io/jogasolucoesempresarias-debug/multpelhtlm:multi-fonte
+    command: ["bash", "_seed_demo/bootstrap_demo.sh"]
+    networks:
+      - demo-internal
+    environment:
+      TZ: "America/Sao_Paulo"
+      DB_HOST: "demo-postgres"
+      DB_PORT: "5432"
+      DB_NAME: "joga_demo"
+      ANALYTICS_DB_NAME: "joga_demo"
+      DB_USER: "demo"
+      DB_PASSWORD: "3g3mF_I0yMbquxwgjjLGl2Ob8SB_PMfD"
+      DEMO_SEED: "1"
+      REDIS_HOST: "demo-redis"
+      REDIS_PORT: "6379"
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: none
+
+  demo-redis:
+    image: redis:7-alpine
+    networks:
+      - demo-internal
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+  demo-postgres:
+    image: postgres:16-alpine
+    networks:
+      - demo-internal
+    environment:
+      POSTGRES_DB: "joga_demo"
+      POSTGRES_USER: "demo"
+      POSTGRES_PASSWORD: "3g3mF_I0yMbquxwgjjLGl2Ob8SB_PMfD"
+    volumes:
+      - demo-pgdata:/var/lib/postgresql/data
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+networks:
+  proxy:
+    external: true
+  demo-internal:
+    driver: overlay
+
+volumes:
+  demo-pgdata:
