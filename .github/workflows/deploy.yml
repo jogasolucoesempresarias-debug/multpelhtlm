@@ -2,7 +2,7 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches: [main, feat/fusao-estoque]
+    branches: [main, feat/fusao-estoque, feat/multi-fonte]
   workflow_dispatch:
 
 jobs:
@@ -29,12 +29,15 @@ jobs:
 
       # Só a main move a tag :latest. A produção da Multpel puxa :latest — se uma branch de
       # trabalho publicasse nela, o próximo redeploy levaria código não validado ao cliente.
-      # Branch de fusão publica em :teste-fusao, consumida só pela stack de teste do JOGA.
+      # Branch de fusão publica em :teste-fusao (stack de teste do JOGA);
+      # feat/multi-fonte publica em :multi-fonte (consumida pela stack DEMO — docker-compose.demo.yml).
       - name: Definir tag conforme a branch
         id: tag
         run: |
           if [ "${GITHUB_REF_NAME}" = "main" ]; then
             echo "movel=latest" >> "$GITHUB_OUTPUT"
+          elif [ "${GITHUB_REF_NAME}" = "feat/multi-fonte" ]; then
+            echo "movel=multi-fonte" >> "$GITHUB_OUTPUT"
           else
             echo "movel=teste-fusao" >> "$GITHUB_OUTPUT"
           fi
