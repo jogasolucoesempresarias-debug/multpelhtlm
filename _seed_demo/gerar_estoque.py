@@ -153,12 +153,24 @@ def gen_compras():
         if not prods:
             continue
         sel = rng.sample(prods, min(len(prods), rng.randint(5, 25)))
+        # Perfil tributário do FORNECEDOR (não do produto) — é assim na base real: medindo 155
+        # fornecedores, 44 cobram IPI em todas as linhas, 78 em nenhuma e 33 são mistos; ST
+        # aparece em ~7% deles. Determinístico pelo código p/ a base continuar reprodutível.
+        perfil = forn[0] % 10
+        ipi_forn = 0.0 if perfil < 5 else (15.0 if perfil < 8 else 6.5)
+        st_forn = 20.0 if perfil == 9 else 0.0
         vtot = 0.0
         for p in sel:
             qtped = round(rng.uniform(20, 500))
             qtent = 0 if aberto else qtped
-            vtot += qtped * p["custo"]
-            itens.append((nump, p["codprod"], qtped, qtent))
+            # fornecedor "misto" (perfil 7): parte dos itens sai isenta
+            ipi = 0.0 if (perfil == 7 and p["codprod"] % 3 == 0) else ipi_forn
+            vl_ipi = round(p["custo"] * ipi / 100, 6)
+            vl_st = round(p["custo"] * st_forn / 100, 6)
+            # VLTOTAL do Winthor é a NF CHEIA (mercadoria + IPI + ST) — a demo precisa espelhar
+            # isso, senão o Orçamento dela mede numa régua e a sugestão em outra (o bug real).
+            vtot += qtped * (p["custo"] + vl_ipi + vl_st)
+            itens.append((nump, p["codprod"], qtped, qtent, ipi, vl_ipi, st_forn, vl_st))
         dtent = None if aberto else (dtemis + timedelta(days=rng.randint(2, prazo + 10)))
         peds.append((nump, dtemis.isoformat(), f, forn[0], forn[3], round(vtot, 2),
                      0.0 if aberto else round(vtot, 2), (dtemis + timedelta(days=30)).isoformat(),
@@ -246,7 +258,8 @@ if __name__ == "__main__":
         cnt["pcpedido"] = copy_stream(cur, "pcpedido",
             ["numped", "dtemissao", "codfilial", "codfornec", "codcomprador", "vltotal",
              "vlentregue", "dtvenc", "dtentradaestoque", "dtprevent"], peds)
-        cnt["pcitem"] = copy_stream(cur, "pcitem", ["numped", "codprod", "qtpedida", "qtentregue"], itens)
+        cnt["pcitem"] = copy_stream(cur, "pcitem", ["numped", "codprod", "qtpedida", "qtentregue",
+                                                   "periipi", "vlipi", "percst", "vlst"], itens)
         cnt["pedido_entrada"] = copy_stream(cur, "pedido_entrada", ["numped", "dtentrada"], entradas)
 
         verbas, aplic = gen_verbas()

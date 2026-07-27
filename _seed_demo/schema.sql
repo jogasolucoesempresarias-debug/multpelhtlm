@@ -279,8 +279,20 @@ CREATE TABLE IF NOT EXISTS pcitem (
     codprod     INTEGER,
     qtpedida    NUMERIC(14,3),
     qtentregue  NUMERIC(14,3),
+    -- tributação PRATICADA na linha (espelha PCITEM do Winthor). vlipi/vlst são UNITÁRIOS —
+    -- é assim no ERP, e é o que `core.montar_tributacao` espera p/ derivar o ST efetivo.
+    periipi     NUMERIC(6,2),
+    vlipi       NUMERIC(14,6),
+    percst      NUMERIC(6,2),
+    vlst        NUMERIC(14,6),
     PRIMARY KEY (numped, codprod)
 );
+-- base semeada antes da v4 não tem as colunas de tributação (o provider faz probe, mas quem
+-- rodar o schema por cima ganha as colunas sem precisar regerar 1,17M linhas)
+ALTER TABLE pcitem ADD COLUMN IF NOT EXISTS periipi NUMERIC(6,2);
+ALTER TABLE pcitem ADD COLUMN IF NOT EXISTS vlipi   NUMERIC(14,6);
+ALTER TABLE pcitem ADD COLUMN IF NOT EXISTS percst  NUMERIC(6,2);
+ALTER TABLE pcitem ADD COLUMN IF NOT EXISTS vlst    NUMERIC(14,6);
 
 -- Verbas de fornecedor (rotina 1801)
 CREATE TABLE IF NOT EXISTS pcverba (

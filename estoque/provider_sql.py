@@ -163,16 +163,37 @@ def pedido_cab(desde, filiais=None):
                 for (np, dte, cfil, cfor, ccomp, vt, ve, dv, dee, dp) in cur.fetchall()]
 
 
+_TRIB_COLS = ("periipi", "vlipi", "percst", "vlst")
+
+
+def _pcitem_tem_tributacao(cur):
+    """`pcitem` do joga_demo só ganhou as colunas de IPI/ST na v4 — uma base semeada antes
+    não as tem. Sem este probe, o SELECT quebraria e derrubaria TAMBÉM o já-pedido (que vem
+    da mesma query). Ausente → devolve sem tributação e o core cai no fallback do cadastro."""
+    cur.execute("""SELECT count(*) FROM information_schema.columns
+                   WHERE table_name = 'pcitem' AND column_name = ANY(%s)""", (list(_TRIB_COLS),))
+    return cur.fetchone()[0] == len(_TRIB_COLS)
+
+
 def pedido_itens(numped_min):
-    """Espelha q_pedido_itens: itens dos pedidos com NUMPED >= numped_min, agregados por (NUMPED, CODPROD)."""
+    """Espelha q_pedido_itens: itens dos pedidos com NUMPED >= numped_min, agregados por
+    (NUMPED, CODPROD) — inclusive a tributação praticada na linha (MAX, atributo não somável)."""
     with analytics_conn() as c:
         cur = c.cursor()
-        cur.execute("""
-            SELECT numped, codprod, sum(qtpedida), sum(qtentregue)
+        trib = _pcitem_tem_tributacao(cur)
+        extra = ", max(periipi), max(vlipi), max(percst), max(vlst)" if trib else ""
+        cur.execute(f"""
+            SELECT numped, codprod, sum(qtpedida), sum(qtentregue){extra}
             FROM pcitem WHERE numped >= %s GROUP BY numped, codprod
         """, (int(numped_min),))
-        return [{"NUMPED": np, "CODPROD": cod, "qtped": _f(qp), "qtentregue": _f(qe)}
-                for (np, cod, qp, qe) in cur.fetchall()]
+        out = []
+        for row in cur.fetchall():
+            np, cod, qp, qe = row[:4]
+            d = {"NUMPED": np, "CODPROD": cod, "qtped": _f(qp), "qtentregue": _f(qe)}
+            if trib:
+                d.update(dict(zip(_TRIB_COLS, (_f(v) for v in row[4:8]))))
+            out.append(d)
+        return out
 
 
 def pedido_itens_um(numped):
