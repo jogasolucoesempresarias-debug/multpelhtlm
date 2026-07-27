@@ -12,7 +12,7 @@ Produção segue intacta: `analytics.jogasolucoes.com.br` (Comercial) e
 git push -u origin feat/fusao-estoque
 ```
 
-A Action builda e publica **`ghcr.io/jogasolucoesempresarias-debug/multpelhtlm:teste-fusao`**.
+A Action builda e publica **`ghcr.io/jogasolucoesempresarias-debug/multpelhtlm:latest`** (a `main`).
 
 > A tag `:latest` **não é tocada** — só a `main` a move. É o que impede um deploy de branch
 > escorregar para a produção da Multpel.

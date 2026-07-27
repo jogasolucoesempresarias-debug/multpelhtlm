@@ -8,8 +8,8 @@
 # 1º deploy, MONTA a base sintética sozinho (idempotente — redeploys pulam). Nada na mão.
 # Primeiro boot leva ~3–4 min (gera ~1,17M linhas). Depois é instantâneo.
 #
-# ⚠️ A imagem `:multi-fonte` precisa conter o commit da produtização (build/push da branch
-#    feat/multi-fonte, ou troque a tag pela que seu CI gerar). Login da demo: admin@multpel.com.br / admin123.
+# ⚠️ Usa a MESMA imagem `:latest` da produção — não existe imagem "de demo". O que faz esta
+#    instância ser demo é o DATA_SOURCE=postgres abaixo. Login: admin@multpel.com.br / admin123.
 #
 # 🔒 SEM POWERBI_* de propósito: a demo não tem como tocar o BI do cliente (defesa em
 #    profundidade). SECRET_KEY e a senha do Postgres são exclusivas da demo (isoladas da produção).
@@ -18,7 +18,7 @@ version: "3.8"
 
 services:
   demo-app:
-    image: ghcr.io/jogasolucoesempresarias-debug/multpelhtlm:multi-fonte
+    image: ghcr.io/jogasolucoesempresarias-debug/multpelhtlm:latest
     networks:
       - proxy
       - demo-internal
@@ -56,7 +56,7 @@ services:
 
   # Monta a base sintética no 1º deploy e sai (idempotente).
   demo-seed:
-    image: ghcr.io/jogasolucoesempresarias-debug/multpelhtlm:multi-fonte
+    image: ghcr.io/jogasolucoesempresarias-debug/multpelhtlm:latest
     command: ["bash", "_seed_demo/bootstrap_demo.sh"]
     # Job one-shot NÃO serve /health → o HEALTHCHECK herdado do Dockerfile marcava "unhealthy"
     # e o Swarm matava o seed (exit 137) no meio do fato. Desligar aqui.

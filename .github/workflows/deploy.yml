@@ -2,7 +2,7 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches: [main, feat/fusao-estoque, feat/multi-fonte]
+    branches: [main, "feat/**"]
   workflow_dispatch:
 
 jobs:
@@ -27,19 +27,18 @@ jobs:
         id: repo
         run: echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-      # Só a main move a tag :latest. A produção da Multpel puxa :latest — se uma branch de
-      # trabalho publicasse nela, o próximo redeploy levaria código não validado ao cliente.
-      # Branch de fusão publica em :teste-fusao (stack de teste do JOGA);
-      # feat/multi-fonte publica em :multi-fonte (consumida pela stack DEMO — docker-compose.demo.yml).
+      # UMA base, UMA imagem: a `main` move `:latest`, que serve TODAS as instâncias (painel de
+      # produção e demo) — o que muda entre elas é só env var (DATA_SOURCE/MODULOS), nunca o
+      # código. Qualquer `feat/**` publica em `:teste`, para validar antes de mergear.
+      # ⚠️ Não volte a criar tag por branch: foi assim que a produção ficou presa numa feature
+      # branch e uma correção teve de ser cherry-picked entre duas linhas.
       - name: Definir tag conforme a branch
         id: tag
         run: |
           if [ "${GITHUB_REF_NAME}" = "main" ]; then
             echo "movel=latest" >> "$GITHUB_OUTPUT"
-          elif [ "${GITHUB_REF_NAME}" = "feat/multi-fonte" ]; then
-            echo "movel=multi-fonte" >> "$GITHUB_OUTPUT"
           else
-            echo "movel=teste-fusao" >> "$GITHUB_OUTPUT"
+            echo "movel=teste" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Set up Docker Buildx

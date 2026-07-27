@@ -14,28 +14,29 @@ Sistema **JOGA** (a Multpel é a cliente) que une, num único Flask com um únic
 >   **blueprint em `/estoque`** dentro deste app. Todo aquele "repo separado / servidor separado /
 >   senha única / nunca juntar com o Multpel" do README antigo do estoque **está OBSOLETO** — foi
 >   exatamente o que a fusão desfez (o cliente adquiriu o Compras).
-> - **Trabalho ativo:** branch **`feat/fusao-estoque`**, que builda a imagem **`:teste-fusao`** e
->   roda em **`painel.jogasolucoes.com.br`** (stack de validação). A `main` ainda descreve/serve o
->   mundo antigo.
-> - **🔀 Produtização multi-fonte:** branch **`feat/multi-fonte`** (builda **`:multi-fonte`**) faz o
->   app rodar de **Power BI OU Postgres** com o mesmo código (env `DATA_SOURCE`). É o que permite a
->   **instância DEMO** (`demo.jogasolucoes.com.br`, dados sintéticos). Ver a seção **🔀 Multi-fonte**.
-> - 🚫 **NÃO** edite o repo `MultpelEstoque/` (congelado) nem publique em `:latest` sem intenção —
->   `:latest` é a produção antiga que ainda está no ar.
+> - **UMA branch, UMA imagem.** Todo o trabalho vive na **`main`**, que builda **`:latest`** e serve
+>   **todas** as instâncias. O que muda entre elas é **env var**, nunca código (`DATA_SOURCE`,
+>   `MODULOS`). Branch `feat/**` publica em **`:teste`** — valide lá e mergeie na `main`.
+> - **🔀 Multi-fonte:** o app roda de **Power BI OU Postgres** com o mesmo código (`DATA_SOURCE`).
+>   É o que permite a **DEMO** (dados sintéticos). Ver a seção **🔀 Multi-fonte**.
+> - 🚫 **NÃO** edite o repo `MultpelEstoque/` (congelado).
+> - 🗄️ *Histórico:* até 07/2026 existiam as branches `feat/fusao-estoque` (`:teste-fusao`) e
+>   `feat/multi-fonte` (`:multi-fonte`). Foram unificadas na `main` — a produção tinha ficado presa
+>   numa feature branch e uma correção precisou de cherry-pick entre as duas linhas. As tags velhas
+>   seguem no GHCR só para rollback.
 > - 📚 **Vai mexer no Compras especificamente?** Leia também **`docs/estoque/planilha_v3.md`** — é
 >   onde estão as fórmulas do estoque decodificadas em detalhe (giro, cobertura, sugestão de compra,
 >   vencidos, orçamento). Este README traz o resumo + as armadilhas; o `planilha_v3.md` traz o miolo.
 >
 > ### Estado atual do rollout (temporário — some quando as antigas forem desativadas)
-> | Domínio | O que roda | Imagem/tag | Banco |
+> ### Instâncias no ar — mesma imagem `:latest`, o que muda é env
+> | Domínio | Papel | Env que a diferencia | Banco |
 > |---|---|---|---|
-> | `analytics.jogasolucoes.com.br` | app ANTIGO (Comercial) | `multpelhtlm:latest` | `multpel_db` |
-> | `estoque.jogasolucoes.com.br` | app ANTIGO (Compras) | `multpel-estoque:latest` | `estoque_db` |
-> | `painel.jogasolucoes.com.br` | **app FUNDIDO (validação)** | `multpelhtlm:teste-fusao` | `painel_db` |
-> | `demo.jogasolucoes.com.br` | **app DEMO (multi-fonte)** | `multpelhtlm:multi-fonte` | `joga_demo` (sintético) |
+> | `painel.jogasolucoes.com.br` | **PRODUÇÃO** (Multpel) | *(sem `DATA_SOURCE`)* → Power BI | `painel_db` |
+> | `demo.jogasolucoes.com.br` | demo comercial | `DATA_SOURCE=postgres` | `joga_demo` (sintético) |
 >
-> O `painel` substituirá os dois de cima após a validação do sócio. Enquanto isso, coexistem.
-> A `demo` roda **dados sintéticos** (`DATA_SOURCE=postgres`), pra apresentações — **não toca o BI do cliente**.
+> As stacks antigas (`analytics` / `estoque`, apps pré-fusão) foram **desativadas** em 07/2026.
+> A `demo` roda **dados sintéticos** — **não toca o BI do cliente**.
 
 ---
 
@@ -295,12 +296,12 @@ CLIENTE_LOGO=               # opcional: logo do cliente no PDF de pedido (fallba
 ## 🚀 Deploy
 
 Fluxo: `git push` na branch → GitHub Action builda e publica no GHCR → redeploy no servidor.
-**A branch publica em `:teste-fusao`** (a `main` moveria `:latest`, que é a produção antiga).
+**A `main` publica em `:latest`**, que é a imagem de TODAS as instâncias (produção e demo).
 
 ```bash
 # 1) redeploy da stack de validação (painel)
 docker service update \
-  --image ghcr.io/jogasolucoesempresarias-debug/multpelhtlm:teste-fusao \
+  --image ghcr.io/jogasolucoesempresarias-debug/multpelhtlm:latest \
   --with-registry-auth --force painel-teste_painel-app
 
 # 2) migration — OBRIGATÓRIA (o login quebra sem as colunas novas, ex.: tema)
@@ -324,7 +325,7 @@ muitas instâncias; as env vars são o interruptor.
   Postgres + Redis + volume** e um serviço **`demo-seed`** que, no **1º deploy, monta a base sintética
   sozinho** (`_seed_demo/bootstrap_demo.sh`: schema → gera ~1,17M linhas → `init_db` → metas → libera
   admin → limpa o cache). **Idempotente** (redeploys pulam; ~3–4 min só no 1º boot).
-- **Imagem `:multi-fonte`** — o CI (`deploy.yml`) builda a branch `feat/multi-fonte` nessa tag.
+- **Imagem `:latest`** — a mesma da produção. A demo não tem imagem própria: o que a torna demo é o `DATA_SOURCE=postgres`.
 - **SEM `POWERBI_*` de propósito** (a demo não tem como tocar o BI do cliente). `CRON_HABILITADO=false`
   (sem emails). `SECRET_KEY` e senha do Postgres **exclusivas** da demo. **1 banco** `joga_demo` serve
   analytics **e** auth (as tabelas não colidem).
@@ -333,7 +334,7 @@ muitas instâncias; as env vars são o interruptor.
 - Base reprodutível (SEED=42) em `_seed_demo/`; runbook local (fumaça no navegador) em
   **`_seed_demo/FUMACA_DEMO.md`**; seeder de metas com **trava** (`DEMO_SEED=1` + recusa `multpel_db`).
 
-⚠️ **Deploy antes do build terminar** → serviços em erro de *pull* de `:multi-fonte`. Espere o
+⚠️ **Deploy antes do build terminar** → serviços em erro de *pull* de `:latest`. Espere o
 GitHub Actions ficar verde e dê **Update/Re-pull** na stack.
 
 ---
