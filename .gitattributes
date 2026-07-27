@@ -1,0 +1,2 @@
+# Scripts de shell SEMPRE em LF — bash no Linux (imagem Docker) quebra com CRLF.
+*.sh text eol=lf
