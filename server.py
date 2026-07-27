@@ -75,12 +75,17 @@ def _sessao_expira():
 CORS(app, supports_credentials=True)
 
 # ── Config Power BI ──
+from medidas_dax import reconstruir_medidas  # reconstrução das medidas RCA quando MEDIDAS=joga
+import provider_sql  # modo DATA_SOURCE=postgres (lê os dados do banco analítico, não do Power BI)
 CONFIG = {
     'tenant_id':     os.getenv('POWERBI_TENANT_ID', ''),
     'client_id':     os.getenv('POWERBI_CLIENT_ID', ''),
     'client_secret': os.getenv('POWERBI_CLIENT_SECRET', ''),
     'dataset_id':    os.getenv('POWERBI_DATASET_ID', ''),
     'group_id':      os.getenv('POWERBI_GROUP_ID', ''),
+    # ── multi-fonte (produtização) ──
+    'data_source':   os.getenv('DATA_SOURCE', 'powerbi'),   # powerbi | postgres
+    'medidas':       os.getenv('MEDIDAS', 'cliente'),       # cliente | joga (reconstrução própria)
 }
 
 # ── Redis (cache compartilhado entre workers) ──
@@ -395,6 +400,13 @@ def get_token_cached():
 
 
 def execute_dax(token, query, dataset_id=None):
+    # Rede de segurança da produtização: em modo BD, NENHUMA query deve chegar ao Power BI. Um
+    # endpoint ainda não branchado (ex.: drill de cliente) falha ALTO aqui e degrada pra vazio via
+    # o try/except do chamador — em vez de vazar dado REAL do cliente numa instância de demo.
+    if CONFIG['data_source'] == 'postgres':
+        raise RuntimeError('execute_dax em modo postgres — endpoint não branchado (não bater no BI do cliente)')
+    if CONFIG['medidas'] == 'joga':          # cliente sem medidas no BI → traz a reconstrução JOGA
+        query = reconstruir_medidas(query)
     ds = dataset_id or CONFIG['dataset_id']
     url = (
         f"https://api.powerbi.com/v1.0/myorg/groups/"
@@ -570,6 +582,12 @@ def aplicar_rbac_dax():
     if session.get('codusur'):
         return f"FATURAMENTO_VENDAS[CODUSUR] = {int(session['codusur'])}"
     return _frag_supervisores('FATURAMENTO_VENDAS', _session_supervisores())
+
+
+def _rbac_sql():
+    """RBAC atual como dict pro provider_sql (modo DATA_SOURCE=postgres). Espelha aplicar_rbac_dax."""
+    return {'role': session.get('role'), 'codusur': session.get('codusur'),
+            'supervisores': _session_supervisores()}
 
 
 def rbac_devol_dax():
@@ -1762,6 +1780,8 @@ def _meta_refresh_tag():
     """Identificador que muda a cada refresh do dataset META. Entra na chave de cache do
     realizado de metas: quando o BI atualiza, a chave muda e o realizado/projeção voltam a bater
     com o BI na hora (sem esperar o TTL). Sem refresh history disponível → bucket de 30min."""
+    if CONFIG['data_source'] == 'postgres':          # modo BD: sem dataset PBI → tag estática
+        return 'postgres'
     r = _get_meta_refresh()
     if r and r.get('end'):
         return str(r['end'])
@@ -1978,6 +1998,11 @@ def api_dashboard_kpis():
     if cached:
         return jsonify(cached)
 
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        resp = provider_sql.dashboard_kpis(_rbac_sql())
+        _cache_set(key, resp, 'dax_agregado')
+        return jsonify(resp)
+
     f_atual = _construir_filtro('mes_atual', sup)
     # Patch G.2: VL e LUCRO alinhados RCA c/ RBAC nas 3 tabelas (vendedor/supervisor logado).
     # MARGEM e TICKET MEDIO recalculados em Python a partir do VL alinhado.
@@ -2055,6 +2080,12 @@ def api_dashboard_serie():
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)
+
+    if CONFIG['data_source'] == 'postgres':
+        rows = provider_sql.serie_mensal(_rbac_sql(), *provider_sql.periodo_sql(periodo))
+        resp = {'ok': True, 'rows': rows}
+        _cache_set(key, resp, 'dax_agregado')
+        return jsonify(resp)
 
     # Patch G.2: 3 queries paralelas (vendas + devolução + devolução avulsa)
     # com RBAC nas 3 tabelas, merge por AnoMes em Python. Alinha RCA.
@@ -2138,6 +2169,11 @@ def api_dashboard_yoy():
     if cached:
         return jsonify(cached)
 
+    if CONFIG['data_source'] == 'postgres':
+        resp = {'ok': True, 'yoy': provider_sql.yoy_dashboard(_rbac_sql())}
+        _cache_set(key, resp, 'dax_agregado')
+        return jsonify(resp)
+
     token = get_token_cached()
     payload = retry_dax(execute_dax)(token, _yoy_query(sup))
     row = _primeira_linha(payload)
@@ -2159,6 +2195,12 @@ def api_dashboard_pareto():
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)
+
+    if CONFIG['data_source'] == 'postgres':
+        rows = provider_sql.pareto_clientes(_rbac_sql(), top)
+        resp = {'ok': True, 'rows': rows, 'top': top}
+        _cache_set(key, resp, 'dax_agregado')
+        return jsonify(resp)
 
     # Patch G.2: 2 queries paralelas (bruta + devoluções por CODCLI), merge em Python.
     f_v, f_d, f_da = _construir_filtro_3tabelas('12m', sup)
@@ -2234,6 +2276,12 @@ def _carregar_sazonalidade(role='admin', codusur=None, codsupervisor=None, super
     cached = _cache_get(key)
     if cached:
         return cached
+
+    if CONFIG['data_source'] == 'postgres':
+        resp = {'ok': True, 'rows': provider_sql.sazonalidade(
+            {'role': role, 'codusur': codusur, 'supervisores': rbac_sups})}
+        _cache_set(key, resp, 'dax_agregado')
+        return resp
 
     # Patch G.2: RBAC nas 3 tabelas. Aceita params explícitos (prewarm sem session).
     def _rbac_frag(tabela, col):
@@ -2342,6 +2390,12 @@ def api_dashboard_top_clientes():
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)
+
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        rows = provider_sql.top_clientes(_rbac_sql(), metrica, limit)
+        resp = {'ok': True, 'rows': rows, 'metrica': metrica}
+        _cache_set(key, resp, 'dax_agregado')
+        return jsonify(resp)
 
     # Patch G.2: 2 queries paralelas (vendas + devoluções por CODCLI), merge em Python.
     f_v, f_d, f_da = _construir_filtro_3tabelas('12m', sup)
@@ -2463,6 +2517,10 @@ def _carregar_supervisores_map():
     cached = _cache_get(key)
     if cached:
         return cached
+    if CONFIG['data_source'] == 'postgres':
+        mapa = provider_sql.supervisores_map()
+        _cache_set(key, mapa, 'metadata')
+        return mapa
     query = """EVALUATE
 SUMMARIZECOLUMNS(
     PCSUPERV[CODSUPERVISOR],
@@ -2495,6 +2553,10 @@ def _carregar_vendedores_map():
     cached = _cache_get(key)
     if cached:
         return cached
+    if CONFIG['data_source'] == 'postgres':
+        mapa = provider_sql.vendedores_map(VENDEDORES_TECNICOS)
+        _cache_set(key, mapa, 'metadata')
+        return mapa
     query = """EVALUATE
 SUMMARIZECOLUMNS(
     PCUSUARI[CODUSUR],
@@ -2747,6 +2809,38 @@ def _normalizar_cidades(clientes):
     return mapping
 
 
+def _finalizar_carteira(clientes, key):
+    """Enriquece a carteira (vendedor/time), normaliza cidades, cacheia e devolve.
+    Compartilhado pelos caminhos DAX e postgres."""
+    vendedores = _carregar_vendedores_map()
+    supervisores = _carregar_supervisores_map()
+    for c in clientes:
+        cu = c.get('codusur')
+        if cu is not None:
+            v = vendedores.get(str(cu))
+            if v:
+                c['vendedor'] = v.get('nome') or f'RCA {cu}'
+                cs = v.get('codsupervisor')
+                c['codsupervisor'] = cs
+                sup = supervisores.get(str(cs)) if cs is not None else None
+                c['time'] = (sup.get('nome') if sup else f'Time {cs}') if cs is not None else None
+            else:
+                c['vendedor'] = f'RCA {cu}'
+                c['codsupervisor'] = None
+                c['time'] = None
+        else:
+            c['vendedor'] = None
+            c['codsupervisor'] = None
+            c['time'] = None
+
+    norm_map = _normalizar_cidades(clientes)
+    if norm_map:
+        print(f"[CARTEIRA] Normalizou {len(norm_map)} cidades: {list(norm_map.items())[:5]}...")
+
+    _cache_set(key, clientes, 'dax_agregado')
+    return clientes
+
+
 def _carregar_carteira_full():
     """Roda 6 queries DAX em paralelo, processa via rfm.calcular_clientes(),
     retorna a carteira GLOBAL (todos os clientes, métricas TOTAIS — sem filtro de venda).
@@ -2758,6 +2852,11 @@ def _carregar_carteira_full():
     cached = _cache_get(key)
     if cached:
         return cached
+
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        snap, datas, meta = provider_sql.carteira_dados()
+        clientes = rfm.calcular_clientes(snap, datas, meta)
+        return _finalizar_carteira(clientes, key)
 
     # Carteira global: sem RBAC de venda. Isolamento é por cadastro em _carteira_no_escopo().
     rbac_frag = ""
@@ -2869,35 +2968,7 @@ SELECTCOLUMNS(
     # Enriquece via módulo puro rfm.py
     clientes = rfm.calcular_clientes(snapshot_rows, datas_por_cliente, meta_por_cliente)
 
-    # Enriquece com vendedor + time (supervisor) via lookups
-    vendedores = _carregar_vendedores_map()
-    supervisores = _carregar_supervisores_map()
-    for c in clientes:
-        cu = c.get('codusur')
-        if cu is not None:
-            v = vendedores.get(str(cu))
-            if v:
-                c['vendedor'] = v.get('nome') or f'RCA {cu}'
-                cs = v.get('codsupervisor')
-                c['codsupervisor'] = cs
-                sup = supervisores.get(str(cs)) if cs is not None else None
-                c['time'] = (sup.get('nome') if sup else f'Time {cs}') if cs is not None else None
-            else:
-                c['vendedor'] = f'RCA {cu}'
-                c['codsupervisor'] = None
-                c['time'] = None
-        else:
-            c['vendedor'] = None
-            c['codsupervisor'] = None
-            c['time'] = None
-
-    # Normaliza cidades duplicadas/truncadas (PCCLIENT.MUNICENT vem inconsistente)
-    norm_map = _normalizar_cidades(clientes)
-    if norm_map:
-        print(f"[CARTEIRA] Normalizou {len(norm_map)} cidades: {list(norm_map.items())[:5]}...")
-
-    _cache_set(key, clientes, 'dax_agregado')
-    return clientes
+    return _finalizar_carteira(clientes, key)
 
 
 def _carteira_no_escopo():
@@ -3029,6 +3100,11 @@ def _carregar_venda_mensal_por_cliente(role=None, codusur=None, codsupervisor=No
         return {int(cc): {int(am): v for am, v in meses.items()}
                 for cc, meses in cached.items()}
 
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        por_cliente = provider_sql.venda_mensal_por_cliente()
+        _cache_set(key, por_cliente, 'dax_agregado')
+        return por_cliente
+
     rbac_frag = ""  # global: sem filtro de venda
 
     # Janela 24m (em vez de 12m) cobre comparativo YoY do drill mensal sem nova query.
@@ -3069,6 +3145,11 @@ def _carregar_devolucao_mensal_por_cliente(role=None, codusur=None, codsuperviso
     if cached:
         return {int(cc): {int(am): v for am, v in meses.items()}
                 for cc, meses in cached.items()}
+
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        por_cliente = provider_sql.devolucao_mensal_por_cliente()
+        _cache_set(key, por_cliente, 'dax_agregado')
+        return por_cliente
 
     rbac_dev = ""    # global: sem filtro de venda
     rbac_devav = ""
@@ -3366,6 +3447,10 @@ def api_carteira_mes(anomes):
     if cached:
         return jsonify(cached)
 
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        return _carteira_mes_postgres(anomes, codclis_filtrados if filtros_aplicados else None,
+                                      filtros_aplicados, key)
+
     ano = anomes // 100
     mes = anomes % 100
     rbac = aplicar_rbac_dax()
@@ -3634,6 +3719,56 @@ ORDER BY [Venda] DESC""",
     return jsonify(resp)
 
 
+def _carteira_mes_postgres(anomes, codclis, filtros_aplicados, key):
+    """Drill de 1 mês em modo BD: peças do provider (VB-based) + mesma enriquecimento do caminho DAX."""
+    d = provider_sql.carteira_mes(anomes, codclis, _rbac_sql())
+    ano, mes = anomes // 100, anomes % 100
+    resumo = d['resumo']
+
+    def _pct(a, b):
+        return ((a - b) / b) if (b and b > 0) else None
+
+    comparativo = {
+        'venda_vs_mes_anterior_pct':    _pct(resumo['venda_total'], d['venda_ma']),
+        'clientes_vs_mes_anterior_pct': _pct(resumo['clientes_unicos'], d['cli_ma']),
+        'venda_vs_ano_anterior_pct':    _pct(resumo['venda_total'], d['venda_ya']),
+        'clientes_vs_ano_anterior_pct': _pct(resumo['clientes_unicos'], d['cli_ya']),
+        'venda_mes_anterior':           d['venda_ma'],
+        'venda_ano_anterior':           d['venda_ya'],
+    }
+    vendedores = _carregar_vendedores_map()
+    top_clientes = []
+    for r in d['top_clientes']:
+        cu = r.get('CODUSUR')
+        vm = vendedores.get(str(cu)) if cu is not None else None
+        top_clientes.append({
+            'codcli': r.get('CODCLI'), 'cliente': r.get('CLIENTE'), 'uf': r.get('UF'), 'codusur': cu,
+            'vendedor': (vm.get('nome') if vm else None) or (f'RCA {cu}' if cu else '—'),
+            'venda': r.get('Venda') or 0, 'lucro': r.get('Lucro') or 0,
+        })
+    deptos_map = _carregar_deptos_map().get('deptos', {})
+    tv = resumo['venda_total'] or 1
+    top_deptos = [{'codepto': r.get('CODEPTO'),
+                   'nome': deptos_map.get(str(r.get('CODEPTO')), f"Depto {r.get('CODEPTO')}" if r.get('CODEPTO') else '—'),
+                   'venda': r.get('Venda') or 0, 'share_pct': (r.get('Venda') or 0) / tv if tv else 0}
+                  for r in d['top_deptos']]
+    top_produtos = [{'codprod': r.get('CODPROD'),
+                     'descricao': r.get('DESCRICAO') or (f"Produto {r.get('CODPROD')}" if r.get('CODPROD') else '—'),
+                     'venda': r.get('Venda') or 0, 'quantidade': r.get('QtVenda') or 0,
+                     'share_pct': (r.get('Venda') or 0) / tv if tv else 0}
+                    for r in d['top_produtos']]
+    MESES_PT = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+    resp = {
+        'ok': True, 'anomes': anomes, 'nome_mes': f"{MESES_PT[mes-1]}/{str(ano)[2:]}",
+        'resumo': resumo, 'comparativo': comparativo, 'top_clientes': top_clientes,
+        'top_deptos': top_deptos, 'top_produtos': top_produtos,
+        'filtros_aplicados': filtros_aplicados,
+        'codclis_no_filtro': len(codclis) if (filtros_aplicados and codclis) else None,
+    }
+    _cache_set(key, resp, 'dax_agregado')
+    return jsonify(resp)
+
+
 def _filtrar_carteira(clientes, args, vendedor_forcado=None):
     """Filtra/ordena/pagina lista de clientes. Função pura — sem Flask.
 
@@ -3874,6 +4009,10 @@ def _top_produtos_cliente(codcli, limit=10):
     cached = _cache_get(key)
     if cached is not None:
         return cached
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        out = provider_sql.top_produtos_cliente(codcli, limit)
+        _cache_set(key, out, 'dax_lista')
+        return out
     q = f"""EVALUATE
 TOPN({limit},
     SUMMARIZECOLUMNS(
@@ -3973,6 +4112,10 @@ def api_carteira_cliente(codcli):
     if not cliente:
         return jsonify({'ok': False, 'error': 'Cliente não encontrado na sua carteira'}), 404
 
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        historico, deptos_rows = provider_sql.carteira_cliente_detalhe(codcli)
+        return _finalizar_carteira_cliente(codcli, cliente, historico, deptos_rows, key)
+
     # Histórico do drill = TOTAL do cliente (sem filtro de venda) — coerente com a
     # carteira por cadastro: o cliente é meu, mostro tudo dele.
     rbac_frag = ""
@@ -4063,9 +4206,13 @@ TOPN(5,
         lucro = round(vl - (d['ct'] - d['cdv'] - d['cdva']), 2)
         historico.append({'AnoMes': am, 'VendaLiquida': vl, 'LucroTotal': lucro})
 
-    # Enriquece com nome textual do depto
-    mapa = _carregar_deptos_map()
-    deptos_nomes = mapa['deptos']
+    return _finalizar_carteira_cliente(codcli, cliente, historico, deptos_rows, key)
+
+
+def _finalizar_carteira_cliente(codcli, cliente, historico, deptos_rows, key):
+    """Pós-processamento compartilhado do drill 360° (DAX e postgres): enriquece deptos com nome
+    textual, monta a resposta e cacheia. `deptos_rows` = [{CODEPTO, VendaLiquida, LucroTotal}]."""
+    deptos_nomes = _carregar_deptos_map()['deptos']
     deptos = []
     for r in deptos_rows:
         cd = r.get('CODEPTO')
@@ -4077,7 +4224,6 @@ TOPN(5,
             'VendaLiquida': r.get('VendaLiquida') or 0,
             'LucroTotal':   r.get('LucroTotal') or 0,
         })
-
     resp = {
         'ok':         True,
         'cliente':    cliente,
@@ -4498,10 +4644,12 @@ def api_carteira_evolucao():
     if cached:
         return jsonify(cached)
 
-    rbac = aplicar_rbac_dax()
-    rbac_frag = f" && {rbac}" if rbac else ""
-
-    query = f"""EVALUATE
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        rows = provider_sql.carteira_evolucao(meses, _rbac_sql())
+    else:
+        rbac = aplicar_rbac_dax()
+        rbac_frag = f" && {rbac}" if rbac else ""
+        query = f"""EVALUATE
 SUMMARIZECOLUMNS(
     CALENDARIO[AnoMes],
     FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -{meses}){rbac_frag}),
@@ -4509,9 +4657,9 @@ SUMMARIZECOLUMNS(
     "Compras",        DISTINCTCOUNT(FATURAMENTO_VENDAS[NUMNOTA])
 )
 ORDER BY CALENDARIO[AnoMes]"""
-    token = get_token_cached()
-    payload = retry_dax(execute_dax)(token, query)
-    rows = clean_rows(_todas_linhas(payload))
+        token = get_token_cached()
+        payload = retry_dax(execute_dax)(token, query)
+        rows = clean_rows(_todas_linhas(payload))
     resp = {'ok': True, 'rows': rows}
     _cache_set(key, resp, 'dax_agregado')
     return jsonify(resp)
@@ -4771,6 +4919,57 @@ def vendedor_page(codusur):
     return send_from_directory('.', 'vendedor.html')
 
 
+def _montar_ranking_vendedores(atual, anterior_idx, metricas_idx, carteira_idx, key):
+    """Monta a lista de vendedores (KPIs+YoY+rank) a partir dos 4 conjuntos.
+    Compartilhado pelos caminhos DAX e postgres."""
+    vmap = _carregar_vendedores_map()
+
+    out = []
+    for r in atual:
+        cu = r.get('CODUSUR')
+        if cu is None or cu in VENDEDORES_TECNICOS:
+            continue
+        v_meta = vmap.get(str(cu))
+        if not v_meta:
+            continue  # vendedor sem cadastro em PCUSUARI ou bloqueado pelos técnicos
+        if v_meta.get('bloqueio') == 'S':
+            continue
+        venda_atual = r.get('VendaLiq') or 0
+        venda_ant = (anterior_idx.get(cu, {}).get('VendaLiqAnt')) or 0
+        yoy = None
+        if venda_ant > 0:
+            yoy = (venda_atual - venda_ant) / venda_ant
+        m = metricas_idx.get(cu, {})
+        clientes_12m = m.get('ClientesUnicos') or 0
+        carteira_oficial = (carteira_idx.get(cu, {}).get('CarteiraOficial')) or 0
+        # Patch L: taxa de positivação = clientes que compraram 12m / carteira oficial (PCCLIENT.CODUSUR1)
+        # Substitui a medida [TAXA POSITIVACAO CLIENTE] do PBI (que estava bugada retornando 0-3%)
+        taxa_positivacao = (clientes_12m / carteira_oficial) if carteira_oficial else 0
+        out.append({
+            'codusur':          cu,
+            'nome':             v_meta.get('nome'),
+            'tipo':             v_meta.get('tipo'),
+            'codsupervisor':    v_meta.get('codsupervisor'),
+            'cidade':           v_meta.get('cidade'),
+            'estado':           v_meta.get('estado'),
+            'venda_liq':        venda_atual,
+            'lucro':            r.get('LucroTotal') or 0,
+            'venda_anterior':   venda_ant,
+            'ticket_medio':     m.get('TicketMedio') or 0,
+            'taxa_positivacao': taxa_positivacao,
+            'clientes_unicos':  clientes_12m,
+            'carteira_oficial': carteira_oficial,
+            'yoy_receita':      yoy,
+        })
+
+    out.sort(key=lambda v: v['lucro'] or 0, reverse=True)
+    for idx, v in enumerate(out, start=1):
+        v['rank'] = idx
+
+    _cache_set(key, out, 'dax_agregado')
+    return out
+
+
 def _carregar_ranking_vendedores(role=None, codusur=None, codsupervisor=None):
     """Roda 3 queries DAX em paralelo (vendas 12m atual + vendas 12m anterior + metricas),
     monta lista de vendedores com KPIs+YoY+rank. Cache 1h (chave inclui RBAC do user).
@@ -4794,6 +4993,11 @@ def _carregar_ranking_vendedores(role=None, codusur=None, codsupervisor=None):
     cached = _cache_get(key)
     if cached:
         return cached
+
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        dados = provider_sql.ranking_vendedores_dados(
+            {'role': role, 'codusur': codusur, 'supervisores': rbac_sups})
+        return _montar_ranking_vendedores(*dados, key)
 
     if role == 'admin':
         rbac = ''
@@ -4845,52 +5049,7 @@ SUMMARIZECOLUMNS(
     anterior_idx = {r['CODUSUR']: r for r in clean_rows(_todas_linhas(resultados['vendas_anterior'])) if r.get('CODUSUR') is not None}
     metricas_idx = {r['CODUSUR']: r for r in clean_rows(_todas_linhas(resultados['metricas'])) if r.get('CODUSUR') is not None}
     carteira_idx = {r['CODUSUR1']: r for r in clean_rows(_todas_linhas(resultados['carteira_oficial'])) if r.get('CODUSUR1') is not None}
-    vmap = _carregar_vendedores_map()
-
-    out = []
-    for r in atual:
-        cu = r.get('CODUSUR')
-        if cu is None or cu in VENDEDORES_TECNICOS:
-            continue
-        v_meta = vmap.get(str(cu))
-        if not v_meta:
-            continue  # vendedor sem cadastro em PCUSUARI ou bloqueado pelos técnicos
-        if v_meta.get('bloqueio') == 'S':
-            continue
-        venda_atual = r.get('VendaLiq') or 0
-        venda_ant = (anterior_idx.get(cu, {}).get('VendaLiqAnt')) or 0
-        yoy = None
-        if venda_ant > 0:
-            yoy = (venda_atual - venda_ant) / venda_ant
-        m = metricas_idx.get(cu, {})
-        clientes_12m = m.get('ClientesUnicos') or 0
-        carteira_oficial = (carteira_idx.get(cu, {}).get('CarteiraOficial')) or 0
-        # Patch L: taxa de positivação = clientes que compraram 12m / carteira oficial (PCCLIENT.CODUSUR1)
-        # Substitui a medida [TAXA POSITIVACAO CLIENTE] do PBI (que estava bugada retornando 0-3%)
-        taxa_positivacao = (clientes_12m / carteira_oficial) if carteira_oficial else 0
-        out.append({
-            'codusur':          cu,
-            'nome':             v_meta.get('nome'),
-            'tipo':             v_meta.get('tipo'),
-            'codsupervisor':    v_meta.get('codsupervisor'),
-            'cidade':           v_meta.get('cidade'),
-            'estado':           v_meta.get('estado'),
-            'venda_liq':        venda_atual,
-            'lucro':            r.get('LucroTotal') or 0,
-            'venda_anterior':   venda_ant,
-            'ticket_medio':     m.get('TicketMedio') or 0,
-            'taxa_positivacao': taxa_positivacao,
-            'clientes_unicos':  clientes_12m,
-            'carteira_oficial': carteira_oficial,
-            'yoy_receita':      yoy,
-        })
-
-    out.sort(key=lambda v: v['lucro'] or 0, reverse=True)
-    for idx, v in enumerate(out, start=1):
-        v['rank'] = idx
-
-    _cache_set(key, out, 'dax_agregado')
-    return out
+    return _montar_ranking_vendedores(atual, anterior_idx, metricas_idx, carteira_idx, key)
 
 
 @app.route('/api/vendedores')
@@ -4942,11 +5101,15 @@ def _carregar_perfil_vendedor(codusur):
     cached = _cache_get(key)
     if cached:
         return cached
-    query = f"""EVALUATE
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        _r0 = provider_sql.perfil_vendedor_row(codusur)
+        rows = [_r0] if _r0 else []
+    else:
+        query = f"""EVALUATE
 FILTER(PCUSUARI, PCUSUARI[CODUSUR] = {int(codusur)})"""
-    token = get_token_cached()
-    payload = retry_dax(execute_dax)(token, query)
-    rows = clean_rows(_todas_linhas(payload))
+        token = get_token_cached()
+        payload = retry_dax(execute_dax)(token, query)
+        rows = clean_rows(_todas_linhas(payload))
     if not rows:
         return None
     r = rows[0]
@@ -5096,13 +5259,16 @@ def api_vendedor_serie(codusur):
     if cached:
         return jsonify(cached)
 
-    f_temp = filtro_periodo(periodo)
-    rbac = aplicar_rbac_dax()
-    filtro = f"FATURAMENTO_VENDAS[CODUSUR] = {int(codusur)} && {f_temp}"
-    if rbac:
-        filtro += f" && {rbac}"
-
-    query = f"""EVALUATE
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        d0, d1 = provider_sql.periodo_sql(periodo)
+        rows = provider_sql.vendedor_serie(codusur, d0, d1, _rbac_sql())
+    else:
+        f_temp = filtro_periodo(periodo)
+        rbac = aplicar_rbac_dax()
+        filtro = f"FATURAMENTO_VENDAS[CODUSUR] = {int(codusur)} && {f_temp}"
+        if rbac:
+            filtro += f" && {rbac}"
+        query = f"""EVALUATE
 SUMMARIZECOLUMNS(
     CALENDARIO[AnoMes],
     FILTER(FATURAMENTO_VENDAS, {filtro}),
@@ -5110,9 +5276,9 @@ SUMMARIZECOLUMNS(
     "LucroTotal",   [LUCRO TOTAL]
 )
 ORDER BY CALENDARIO[AnoMes]"""
-    token = get_token_cached()
-    payload = retry_dax(execute_dax)(token, query)
-    rows = clean_rows(_todas_linhas(payload))
+        token = get_token_cached()
+        payload = retry_dax(execute_dax)(token, query)
+        rows = clean_rows(_todas_linhas(payload))
     resp = {'ok': True, 'rows': rows}
     _cache_set(key, resp, 'dax_agregado')
     return jsonify(resp)
@@ -5211,6 +5377,11 @@ def _carregar_deptos_map():
     if cached:
         return cached
 
+    if CONFIG['data_source'] == 'postgres':
+        mapa = provider_sql.deptos_map_sintetico()   # nomes temáticos p/ a demo (não vêm da fonte)
+        _cache_set(key, mapa, 'metadata')
+        return mapa
+
     queries = {
         'deptos': """EVALUATE
 SUMMARIZECOLUMNS(
@@ -5256,22 +5427,28 @@ def api_categorias():
     if cached:
         return jsonify(cached)
 
-    # Carteira por CADASTRO: admin agrega tudo (+ override ?supervisor= do dashboard);
-    # supervisor/vendedor restringem aos codclis do cadastro (sem RBAC de venda).
-    if session.get('role') in ('admin', 'viewer'):
-        rbac_frag = ''
-        sup_frag = _frag_supervisores('FATURAMENTO_VENDAS', sup)
-        if sup_frag:
-            rbac_frag = f" && {sup_frag}"
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        cod = None
+        if session.get('role') not in ('admin', 'viewer'):
+            cod = {c['codcli'] for c in _carteira_no_escopo() if c.get('codcli') is not None}
+        rows = provider_sql.categorias_dados({'role': 'admin'}, codclis=cod)
     else:
-        frag, ok = _frag_codcli_cadastro()
-        if ok:
-            rbac_frag = frag
-        else:  # escopo enorme: fallback seguro mantendo RBAC de venda
-            r = aplicar_rbac_dax()
-            rbac_frag = f" && {r}" if r else ''
+        # Carteira por CADASTRO: admin agrega tudo (+ override ?supervisor= do dashboard);
+        # supervisor/vendedor restringem aos codclis do cadastro (sem RBAC de venda).
+        if session.get('role') in ('admin', 'viewer'):
+            rbac_frag = ''
+            sup_frag = _frag_supervisores('FATURAMENTO_VENDAS', sup)
+            if sup_frag:
+                rbac_frag = f" && {sup_frag}"
+        else:
+            frag, ok = _frag_codcli_cadastro()
+            if ok:
+                rbac_frag = frag
+            else:  # escopo enorme: fallback seguro mantendo RBAC de venda
+                r = aplicar_rbac_dax()
+                rbac_frag = f" && {r}" if r else ''
 
-    query = f"""EVALUATE
+        query = f"""EVALUATE
 SUMMARIZECOLUMNS(
     FATURAMENTO_VENDAS[CODEPTO],
     FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12){rbac_frag}),
@@ -5281,9 +5458,9 @@ SUMMARIZECOLUMNS(
     "ProdutosUnicos", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODPROD])
 )
 ORDER BY [VendaLiquida] DESC"""
-    token = get_token_cached()
-    payload = retry_dax(execute_dax)(token, query)
-    rows = clean_rows(_todas_linhas(payload))
+        token = get_token_cached()
+        payload = retry_dax(execute_dax)(token, query)
+        rows = clean_rows(_todas_linhas(payload))
 
     mapa = _carregar_deptos_map()
     deptos_nomes = mapa['deptos']
@@ -5328,6 +5505,12 @@ def api_categoria_clientes(codepto):
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)
+
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        rows = provider_sql.categoria_clientes(codepto, limit, _rbac_sql())
+        resp = {'ok': True, 'codepto': codepto, 'rows': rows}
+        _cache_set(key, resp, 'dax_agregado')
+        return jsonify(resp)
 
     # Cadastro: admin sem restrição (+ override dashboard); supervisor/vendedor por codcli.
     if session.get('role') in ('admin', 'viewer'):
@@ -5388,10 +5571,12 @@ def api_marcas():
     if cached:
         return jsonify(cached)
 
-    rbac = aplicar_rbac_dax()
-    rbac_frag = f" && {rbac}" if rbac else ""
-
-    query = f"""EVALUATE
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        rows = provider_sql.marcas_top(top, _rbac_sql())
+    else:
+        rbac = aplicar_rbac_dax()
+        rbac_frag = f" && {rbac}" if rbac else ""
+        query = f"""EVALUATE
 TOPN({top},
     SUMMARIZECOLUMNS(
         FATURAMENTO_VENDAS[CODMARCA],
@@ -5401,9 +5586,9 @@ TOPN({top},
     ),
     [VendaLiquida], DESC
 )"""
-    token = get_token_cached()
-    payload = retry_dax(execute_dax)(token, query)
-    rows = clean_rows(_todas_linhas(payload))
+        token = get_token_cached()
+        payload = retry_dax(execute_dax)(token, query)
+        rows = clean_rows(_todas_linhas(payload))
 
     out = []
     for r in rows:
@@ -5432,10 +5617,12 @@ def api_fornecedores():
     if cached:
         return jsonify(cached)
 
-    rbac = aplicar_rbac_dax()
-    rbac_frag = f" && {rbac}" if rbac else ""
-
-    query = f"""EVALUATE
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        rows = provider_sql.fornecedores_top(top, _rbac_sql())
+    else:
+        rbac = aplicar_rbac_dax()
+        rbac_frag = f" && {rbac}" if rbac else ""
+        query = f"""EVALUATE
 TOPN({top},
     SUMMARIZECOLUMNS(
         FATURAMENTO_VENDAS[CODFORNECPRINC],
@@ -5446,9 +5633,9 @@ TOPN({top},
     ),
     [VendaLiquida], DESC
 )"""
-    token = get_token_cached()
-    payload = retry_dax(execute_dax)(token, query)
-    rows = clean_rows(_todas_linhas(payload))
+        token = get_token_cached()
+        payload = retry_dax(execute_dax)(token, query)
+        rows = clean_rows(_todas_linhas(payload))
     out = [{
         'codfornec': r.get('CODFORNECPRINC'),
         'nome':      r.get('FORNECPRINC') or f'Fornec {r.get("CODFORNECPRINC")}',
@@ -5486,12 +5673,15 @@ SUMMARIZECOLUMNS(
     "VendaCat12m",  [VENDA LIQUIDA],
     "LucroCat12m",  [LUCRO TOTAL]
 )"""
-    token = get_token_cached()
-    payload = retry_dax(execute_dax)(token, query)
-    rows = clean_rows(_todas_linhas(payload))
-
     from datetime import date as _date
-    hoje = _date.today()
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        rows = provider_sql.mix_abandonado_raw(codepto, fornecedor)
+        hoje = provider_sql.hoje_analitico()
+    else:
+        token = get_token_cached()
+        payload = retry_dax(execute_dax)(token, query)
+        rows = clean_rows(_todas_linhas(payload))
+        hoje = _date.today()
     deptos_nomes = _carregar_deptos_map()['deptos']
     carteira_idx = {c['codcli']: c for c in _carteira_no_escopo()}
 
@@ -5592,12 +5782,15 @@ SUMMARIZECOLUMNS(
     "VendaCat12m",  [VENDA LIQUIDA],
     "LucroCat12m",  [LUCRO TOTAL]
 )"""
-    token = get_token_cached()
-    payload = retry_dax(execute_dax)(token, query)
-    rows = clean_rows(_todas_linhas(payload))
-
     from datetime import date as _date
-    hoje = _date.today()
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        rows = provider_sql.mix_cliente_deptos_raw(codcli)
+        hoje = provider_sql.hoje_analitico()
+    else:
+        token = get_token_cached()
+        payload = retry_dax(execute_dax)(token, query)
+        rows = clean_rows(_todas_linhas(payload))
+        hoje = _date.today()
     deptos_nomes = _carregar_deptos_map()['deptos']
     out = []
     for r in rows:
@@ -5656,11 +5849,14 @@ SUMMARIZECOLUMNS(
     "VendaCat12m",  [VENDA LIQUIDA],
     "LucroCat12m",  [LUCRO TOTAL]
 )"""
-    token = get_token_cached()
-    payload = retry_dax(execute_dax)(token, query)
-    rows = clean_rows(_todas_linhas(payload))
-
-    hoje = _date.today()
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        rows = provider_sql.mix_cliente_fornecedores_raw(codcli)
+        hoje = provider_sql.hoje_analitico()
+    else:
+        token = get_token_cached()
+        payload = retry_dax(execute_dax)(token, query)
+        rows = clean_rows(_todas_linhas(payload))
+        hoje = _date.today()
     out = []
     for r in rows:
         cf = r.get('CODFORNECPRINC')
@@ -5844,6 +6040,10 @@ def _carregar_fornecedores_map():
     cached = _cache_get(key)
     if cached:
         return cached
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        mapa = provider_sql.fornecedores_map()
+        _cache_set(key, mapa, 'metadata')
+        return mapa
     query = """EVALUATE
 SUMMARIZECOLUMNS(
     FATURAMENTO_VENDAS[CODFORNECPRINC],
@@ -6124,6 +6324,11 @@ def _carregar_produtos_map():
     if cached:
         return cached
 
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        idx = provider_sql.produtos_map()
+        _cache_set(key, idx, 'metadata')
+        return idx
+
     query = """EVALUATE
 SUMMARIZECOLUMNS(
     FATURAMENTO_VENDAS[CODPROD],
@@ -6294,20 +6499,24 @@ SUMMARIZECOLUMNS(
         && FATURAMENTO_VENDAS[CODPROD] <> {int(codprod)}
         && FATURAMENTO_VENDAS[DTSAIDA] >= TODAY() - {dias})
 )"""
-    resultados = _executar_dax_paralelo_n(queries, max_workers=4)
-
-    rec_idx = {r['CODCLI']: r for r in clean_rows(_todas_linhas(resultados['rec'])) if r.get('CODCLI') is not None}
-    ant_idx = {r['CODCLI']: r for r in clean_rows(_todas_linhas(resultados['ant'])) if r.get('CODCLI') is not None}
-    canib = set()
-    if 'canib' in resultados:
-        canib = {r['CODCLI'] for r in clean_rows(_todas_linhas(resultados['canib'])) if r.get('CODCLI') is not None}
-
-    hoje = _date.today()
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        _det = provider_sql.radar_produto_detalhe(codprod, dias, codepto)
+        cli_rows, rec_idx, ant_idx, canib = _det['cli'], _det['rec'], _det['ant'], _det['canib']
+        hoje = provider_sql.hoje_analitico()
+    else:
+        resultados = _executar_dax_paralelo_n(queries, max_workers=4)
+        rec_idx = {r['CODCLI']: r for r in clean_rows(_todas_linhas(resultados['rec'])) if r.get('CODCLI') is not None}
+        ant_idx = {r['CODCLI']: r for r in clean_rows(_todas_linhas(resultados['ant'])) if r.get('CODCLI') is not None}
+        canib = set()
+        if 'canib' in resultados:
+            canib = {r['CODCLI'] for r in clean_rows(_todas_linhas(resultados['canib'])) if r.get('CODCLI') is not None}
+        cli_rows = clean_rows(_todas_linhas(resultados['cli']))
+        hoje = _date.today()
     carteira_idx = {c['codcli']: c for c in _carteira_no_escopo()}   # recorte por cadastro
     carteira_idx = _radar_filtrar_carteira_idx(carteira_idx)         # +filtro supervisor/vendedor (admin)
 
     linhas = []
-    for r in clean_rows(_todas_linhas(resultados['cli'])):
+    for r in cli_rows:
         cc = r.get('CODCLI')
         if cc is None or cc not in carteira_idx:   # fora do escopo do usuário
             continue
@@ -6433,15 +6642,25 @@ def _radar_board_full(dias):
         frag, ok = _frag_codcli_cadastro()
         rbac_frag = frag if ok else ((f" && {aplicar_rbac_dax()}") if aplicar_rbac_dax() else '')
 
-    queries = {
-        'rec': f"""EVALUATE
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        # Escopo por CODCLI (espelha o rbac_frag: admin/viewer sem filtro → empresa toda = None;
+        # com filtro de vendedor/supervisor OU não-admin → clientes do escopo/cadastro).
+        if session.get('role') in ('admin', 'viewer') and vend is None and not sup:
+            codclis = None
+        else:
+            _idx = _radar_filtrar_carteira_idx({c['codcli']: c for c in _carteira_no_escopo()})
+            codclis = list(_idx.keys())
+        rec, ant = provider_sql.radar_board(dias, None, codclis)
+    else:
+        queries = {
+            'rec': f"""EVALUATE
 SUMMARIZECOLUMNS(
     FATURAMENTO_VENDAS[CODPROD],
     FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[DTSAIDA] >= TODAY() - {dias}{rbac_frag}),
     "VendaRec", [VENDA LIQUIDA],
     "CliRec",   DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI])
 )""",
-        'ant': f"""EVALUATE
+            'ant': f"""EVALUATE
 SUMMARIZECOLUMNS(
     FATURAMENTO_VENDAS[CODPROD],
     FILTER(FATURAMENTO_VENDAS,
@@ -6450,11 +6669,11 @@ SUMMARIZECOLUMNS(
     "VendaAnt", [VENDA LIQUIDA],
     "CliAnt",   DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI])
 )""",
-    }
-    resultados = _executar_dax_paralelo_n(queries, max_workers=2)
+        }
+        resultados = _executar_dax_paralelo_n(queries, max_workers=2)
 
-    rec = {r['CODPROD']: r for r in clean_rows(_todas_linhas(resultados['rec'])) if r.get('CODPROD') is not None}
-    ant = {r['CODPROD']: r for r in clean_rows(_todas_linhas(resultados['ant'])) if r.get('CODPROD') is not None}
+        rec = {r['CODPROD']: r for r in clean_rows(_todas_linhas(resultados['rec'])) if r.get('CODPROD') is not None}
+        ant = {r['CODPROD']: r for r in clean_rows(_todas_linhas(resultados['ant'])) if r.get('CODPROD') is not None}
 
     prod_idx = _carregar_produtos_map()
     deptos_nomes = _carregar_deptos_map()['deptos']
@@ -6892,10 +7111,13 @@ SUMMARIZECOLUMNS(
     "Venda", [VENDA LIQUIDA],
     "Qt",    SUM(FATURAMENTO_VENDAS[QT])
 )"""
-    token = get_token_cached()
-    payload = retry_dax(execute_dax)(token, query)
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        raw = provider_sql.radar_produto_cliente_serie(codprod, codcli)
+    else:
+        token = get_token_cached()
+        raw = clean_rows(_todas_linhas(retry_dax(execute_dax)(token, query)))
     rows = []
-    for r in clean_rows(_todas_linhas(payload)):
+    for r in raw:
         am = r.get('AnoMes')
         if am is None:
             continue
@@ -6951,17 +7173,22 @@ SUMMARIZECOLUMNS(
     "QtAnt",    SUM(FATURAMENTO_VENDAS[QT])
 )""",
     }
-    resultados = _executar_dax_paralelo_n(queries, max_workers=3)
-
-    rec_idx = {r['CODPROD']: r for r in clean_rows(_todas_linhas(resultados['rec'])) if r.get('CODPROD') is not None}
-    ant_idx = {r['CODPROD']: r for r in clean_rows(_todas_linhas(resultados['ant'])) if r.get('CODPROD') is not None}
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        _rc = provider_sql.radar_cliente_raw(codcli, dias)
+        prod_rows, rec_idx, ant_idx = _rc['prod'], _rc['rec'], _rc['ant']
+        hoje = provider_sql.hoje_analitico()
+    else:
+        resultados = _executar_dax_paralelo_n(queries, max_workers=3)
+        rec_idx = {r['CODPROD']: r for r in clean_rows(_todas_linhas(resultados['rec'])) if r.get('CODPROD') is not None}
+        ant_idx = {r['CODPROD']: r for r in clean_rows(_todas_linhas(resultados['ant'])) if r.get('CODPROD') is not None}
+        prod_rows = clean_rows(_todas_linhas(resultados['prod']))
+        hoje = _date.today()
 
     prod_map = _carregar_produtos_map()
     deptos_nomes = _carregar_deptos_map()['deptos']
-    hoje = _date.today()
 
     linhas = []
-    for r in clean_rows(_todas_linhas(resultados['prod'])):
+    for r in prod_rows:
         cp = r.get('CODPROD')
         if cp is None:
             continue
@@ -7175,6 +7402,11 @@ def _carregar_cohort_compras_global(periodo_meses=12):
     cached = _cache_get(key)
     if cached:
         return {int(cc): meses for cc, meses in cached.items()}
+
+    if CONFIG['data_source'] == 'postgres':
+        compras = provider_sql.cohort_compras(periodo_meses)
+        _cache_set(key, compras, 'metadata')
+        return compras
 
     query = f"""EVALUATE
 SUMMARIZECOLUMNS(
@@ -7633,6 +7865,10 @@ def _carregar_dias_uteis_meta(ano, mes):
     cached = _cache_get(key)
     if cached:
         return cached
+    if CONFIG['data_source'] == 'postgres':          # modo BD: dias úteis calculados em Python
+        dias = provider_sql._dias_uteis_meta(int(ano), int(mes))
+        _cache_set(key, dias, 'dax_lista')
+        return dias
     base = f"CALENDARIO[Ano]={int(ano)} && CALENDARIO[MES]={int(mes)} && CALENDARIO[EhDiaMeta]=1"
     q = (f'EVALUATE ROW('
          f'"mes", CALCULATE(COUNTROWS(CALENDARIO), FILTER(CALENDARIO, {base})), '
@@ -7725,6 +7961,11 @@ def _carregar_metas_realizado(ano, mes, supervisores):
     cached = _cache_get(key)
     if cached:
         return cached
+
+    if CONFIG['data_source'] == 'postgres':          # modo BD: realizado lido do pcpedc/faturamento
+        out = provider_sql.metas_realizado(ano, mes, escopo)
+        _cache_set(key, out, 'dax_agregado')
+        return out
 
     # Mês FECHADO: dataset META esvazia PCPEDC/CALENDARIO ao virar o mês → realizado vem do RCA.
     if not corrente:
@@ -8110,6 +8351,11 @@ def api_metas_serie():
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)
+    if CONFIG['data_source'] == 'postgres':          # modo BD: série diária lida do pcpedc
+        serie = provider_sql.metas_serie(ano, mes, escopo)
+        resp = {'ok': True, 'ano': ano, 'mes': mes, 'serie': serie}
+        _cache_set(key, resp, 'dax_agregado')
+        return jsonify(resp)
     q = (f'EVALUATE SUMMARIZECOLUMNS(PCPEDC[DATA], '
          f'"venda", CALCULATE(SUM(PCPEDC[VLATEND]), FILTER(PCPEDC, {f})))')
     try:
@@ -8240,18 +8486,22 @@ def api_admin_metas_sugestao():
 
     # Histórico vem do dataset RCA (faturamento) — o PCPEDC do dataset META só tem o mês corrente.
     # A sugestão é um ponto de partida (faturamento ≈ proxy do alvo); o admin ajusta.
-    q = ('EVALUATE SUMMARIZECOLUMNS(CALENDARIO[AnoMes], '
-         f'FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[CODUSUR]={codusur}), '
-         '"venda", [VENDA LIQUIDA], "rentab", [LUCRO TOTAL], '
-         '"cli", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI]), '
-         '"mix", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODPROD]))')
-    try:
-        payload = retry_dax(execute_dax)(get_token_cached(), q)  # dataset RCA (default)
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 500
+    if CONFIG['data_source'] == 'postgres':          # modo BD: histórico do joga_demo
+        rows = provider_sql.metas_sugestao_historico(codusur)
+    else:
+        q = ('EVALUATE SUMMARIZECOLUMNS(CALENDARIO[AnoMes], '
+             f'FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[CODUSUR]={codusur}), '
+             '"venda", [VENDA LIQUIDA], "rentab", [LUCRO TOTAL], '
+             '"cli", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI]), '
+             '"mix", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODPROD]))')
+        try:
+            payload = retry_dax(execute_dax)(get_token_cached(), q)  # dataset RCA (default)
+        except Exception as e:
+            return jsonify({'ok': False, 'error': str(e)}), 500
+        rows = clean_rows(_todas_linhas(payload))
 
     h_venda, h_rentab, h_cli, h_mix = {}, {}, {}, {}
-    for r in clean_rows(_todas_linhas(payload)):
+    for r in rows:
         am = r.get('AnoMes')
         if am is None:
             continue

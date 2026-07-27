@@ -20,8 +20,14 @@ from . import pbi
 from . import queries as Q
 from . import core
 from . import store
+from . import provider_sql as PS   # modo DATA_SOURCE=postgres (lê do joga_demo)
 
 bp = Blueprint("estoque", __name__, url_prefix="/estoque")
+
+
+def _pg():
+    """True quando o módulo lê do banco analítico (joga_demo) em vez do Power BI."""
+    return pbi.CONFIG["data_source"] == "postgres"
 
 # Diretório do próprio pacote — o index.html do módulo mora aqui, não na raiz do app.
 _PKG_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -73,19 +79,23 @@ def _logo_cliente():
 # ───────────────────────── cadastro (cache 24h) ─────────────────────────
 @pbi.cached(ttl=86400, key_fn=lambda: "cad:prod")
 def _cadastro_produtos():
+    if pbi.CONFIG["data_source"] == "postgres":
+        return PS.cadastro_produto()
     rows = pbi.run_dax(Q.q_cadastro_produto())
     return {int(core._n(r["CODPROD"])): r for r in rows}
 
 
 @pbi.cached(ttl=86400, key_fn=lambda: "cad:forn")
 def _cadastro_fornecedores():
+    if pbi.CONFIG["data_source"] == "postgres":
+        return PS.cadastro_fornecedor()
     rows = pbi.run_dax(Q.q_cadastro_fornecedor())
     return {int(core._n(r["CODFORNEC"])): r for r in rows}
 
 
 @pbi.cached(ttl=86400, key_fn=lambda: "filiais")
 def _filiais_disponiveis():
-    rows = pbi.run_dax(Q.q_filiais())
+    rows = PS.filiais() if pbi.CONFIG["data_source"] == "postgres" else pbi.run_dax(Q.q_filiais())
     fs = sorted({str(r["CODFILIAL"]).strip() for r in rows if r.get("CODFILIAL") not in (None, "")},
                 key=lambda x: (len(x), x))
     return fs
@@ -114,6 +124,10 @@ def _demo_nome(matricula):
 @pbi.cached(ttl=86400, key_fn=lambda: "compradores")
 def _compradores_map():
     """{matricula: nome} — PCEMPR no dataset Estoque (fallback RCA)."""
+    if pbi.CONFIG["data_source"] == "postgres":
+        m = {int(core._n(r["MATRICULA"])): r["NOME"]
+             for r in PS.compradores() if r.get("MATRICULA") not in (None, "") and r.get("NOME")}
+        return {mat: _demo_nome(mat) for mat in m} if COMPRADOR_DEMO else m
     for runner, q in ((pbi.run_dax, Q.q_compradores_estoque()),
                       (pbi.run_dax_rca, Q.q_compradores_rca())):
         try:
@@ -219,7 +233,8 @@ def _snapshot_rows(filiais):
     hit = pbi._CACHE.get(key)
     if hit is not None:
         return hit
-    rows = pbi.run_dax(Q.q_snapshot_estoque(filiais))
+    rows = (PS.snapshot_estoque(filiais) if pbi.CONFIG["data_source"] == "postgres"
+            else pbi.run_dax(Q.q_snapshot_estoque(filiais)))
     pbi._CACHE.set(key, rows, 1800)
     return rows
 
@@ -230,7 +245,8 @@ def _endereco_map(filiais):
     hit = pbi._CACHE.get(key)
     if hit is not None:
         return hit
-    rows = pbi.run_dax(Q.q_estoque_endereco(filiais))
+    rows = (PS.estoque_endereco(filiais) if pbi.CONFIG["data_source"] == "postgres"
+            else pbi.run_dax(Q.q_estoque_endereco(filiais)))
     m = {int(core._n(r["CODPROD"])): core._n(r.get("qt_end")) for r in rows}
     pbi._CACHE.set(key, m, 1800)
     return m
@@ -243,7 +259,8 @@ def _posicoes_map(filiais):
     if hit is not None:
         return hit
     try:
-        rows = pbi.run_dax(Q.q_posicoes_por_produto(filiais))
+        rows = (PS.posicoes_por_produto(filiais) if pbi.CONFIG["data_source"] == "postgres"
+                else pbi.run_dax(Q.q_posicoes_por_produto(filiais)))
         m = {int(core._n(r["CODPROD"])): int(core._n(r.get("pos"))) for r in rows}
     except Exception as e:
         print(f"[posicoes] WMS indisponível ({e}).")
@@ -257,7 +274,8 @@ def _posicoes_map(filiais):
 def _embalagem_map():
     """{cod: {qtunit, volume, ...}} — caixa/cubagem do PCEMBALAGEM (Estoque)."""
     try:
-        rows = pbi.run_dax(Q.q_embalagem())
+        rows = (PS.embalagem() if pbi.CONFIG["data_source"] == "postgres"
+                else pbi.run_dax(Q.q_embalagem()))
         return {int(core._n(r["CODPROD"])): r for r in rows if r.get("CODPROD") not in (None, "")}
     except Exception as e:
         print(f"[embalagem] indisponível ({e}).")
@@ -273,11 +291,14 @@ def _pedidos_data(filiais, hoje):
     if hit is not None:
         return hit
     data = {"cab": [], "itens": [], "ja_pedida": {}}
+    _pg = pbi.CONFIG["data_source"] == "postgres"
     try:
-        cab = pbi.run_dax(Q.q_pedido_cab(hoje - timedelta(days=180), filiais))
+        cab = (PS.pedido_cab(hoje - timedelta(days=180), filiais) if _pg
+               else pbi.run_dax(Q.q_pedido_cab(hoje - timedelta(days=180), filiais)))
         if cab:
             numped_min = min(int(core._n(r["NUMPED"])) for r in cab)
-            itens = pbi.run_dax(Q.q_pedido_itens(numped_min))
+            itens = (PS.pedido_itens(numped_min) if _pg
+                     else pbi.run_dax(Q.q_pedido_itens(numped_min)))
             data = {"cab": cab, "itens": itens,
                     "ja_pedida": core.montar_ja_pedida(cab, itens, hoje=hoje, dias=180)}
     except Exception as e:
@@ -306,8 +327,11 @@ def _leadtime_raw(hoje):
     hit = pbi._CACHE.get(key)
     if hit is not None:
         return hit
-    raw = {"cab": pbi.run_dax(Q.q_pedido_cab(hoje - timedelta(days=365), filiais=None)),
-           "entradas": pbi.run_dax(Q.q_pedido_entrada())}
+    if pbi.CONFIG["data_source"] == "postgres":
+        raw = {"cab": PS.pedido_cab(hoje - timedelta(days=365), None), "entradas": PS.pedido_entrada()}
+    else:
+        raw = {"cab": pbi.run_dax(Q.q_pedido_cab(hoje - timedelta(days=365), filiais=None)),
+               "entradas": pbi.run_dax(Q.q_pedido_entrada())}
     pbi._CACHE.set(key, raw, 1800)
     return raw
 
@@ -319,8 +343,11 @@ def _verbas_raw(hoje):
     hit = pbi._CACHE.get(key)
     if hit is not None:
         return hit
-    raw = {"verbas": pbi.run_dax(Q.q_verbas()),
-           "aplics": pbi.run_dax(Q.q_verba_aplic())}
+    if pbi.CONFIG["data_source"] == "postgres":
+        raw = {"verbas": PS.verbas(), "aplics": PS.verba_aplic()}
+    else:
+        raw = {"verbas": pbi.run_dax(Q.q_verbas()),
+               "aplics": pbi.run_dax(Q.q_verba_aplic())}
     pbi._CACHE.set(key, raw, 1800)
     return raw
 
@@ -418,6 +445,8 @@ def _vendas_ano_ant_map(periodo, hoje, filiais=None):
 def _vendas_liquidas(ini, fim, filiais=None):
     """{cod: {venda, custo, qtd}} líquido (venda − devoluções − devol. avaria) do RCA no
     intervalo, escopado por filiais de VENDA. Degrada p/ {} se o RCA estiver indisponível."""
+    if pbi.CONFIG["data_source"] == "postgres":   # Inc.2: venda por produto do joga_demo
+        return PS.vendas_por_produto(ini, fim, filiais)
     key = f"vendaliq:{_filiais_key(filiais)}:{ini}:{fim}"
     hit = pbi._CACHE.get(key)
     if hit is not None:
@@ -455,13 +484,16 @@ def _vendas_mensal_rs_map(hoje, filiais=None):
     hit = pbi._CACHE.get(key)
     if hit is not None:
         return hit
+    _pg = pbi.CONFIG["data_source"] == "postgres"
     m = {}
     try:
-        for r in pbi.run_dax_rca(Q.q_venda_produto_mensal_rca(ini, filiais)):
+        venda_rows = PS.venda_produto_mensal(ini, filiais) if _pg else pbi.run_dax_rca(Q.q_venda_produto_mensal_rca(ini, filiais))
+        for r in venda_rows:
             c = int(core._n(r["CODPROD"])); am = int(core._n(r.get("AnoMes")))
             if am:
                 m.setdefault(c, {})[am] = core._n(r.get("venda"))
-        for r in pbi.run_dax_rca(Q.q_devol_produto_mensal_rca(ini, filiais)):
+        devol_rows = PS.devol_produto_mensal(ini, filiais) if _pg else pbi.run_dax_rca(Q.q_devol_produto_mensal_rca(ini, filiais))
+        for r in devol_rows:
             c = int(core._n(r["CODPROD"])); am = int(core._n(r.get("AnoMes")))
             if am and c in m and am in m[c]:
                 m[c][am] -= core._n(r.get("dev"))
@@ -486,7 +518,9 @@ def _vendas_mensal_map(meses, hoje, profundo=False, filiais=None):
         return hit
     m = {}
     try:
-        for r in pbi.run_dax_rca(Q.q_vendas_mensal_rca(ini, filiais)):
+        rows = (PS.vendas_mensal_qt(ini, filiais) if pbi.CONFIG["data_source"] == "postgres"
+                else pbi.run_dax_rca(Q.q_vendas_mensal_rca(ini, filiais)))
+        for r in rows:
             c = int(core._n(r["CODPROD"]))
             am = int(core._n(r.get("AM")))
             if am:
@@ -502,15 +536,19 @@ def _desempenho_data(periodo, hoje, filiais=None):
     """{resumo, compradores} — desempenho comercial por comprador (RCA), escopado por filiais de
     VENDA da unidade. Espelha RECEITA COMPRADOR + comparativo ano×ano. Cache 30min."""
     ini, fim = _venda_datas(periodo, hoje)
+    _pg = pbi.CONFIG["data_source"] == "postgres"
     key = f"desemp:{periodo}:{_filiais_key(filiais)}:{ini}:{fim}"
     hit = pbi._CACHE.get(key)
     if hit is not None:
         return hit
     res = {"resumo": {}, "compradores": []}
     try:
-        receita = pbi.run_dax_rca(Q.q_receita_comprador_rca(ini, fim, filiais))
+        receita = (PS.receita_comprador(ini, fim, filiais) if _pg
+                   else pbi.run_dax_rca(Q.q_receita_comprador_rca(ini, fim, filiais)))
         devol, custo_dev = {}, {}
-        for r in pbi.run_dax_rca(Q.q_devol_comprador_rca(ini, fim, filiais)):
+        _devol_rows = (PS.devol_comprador(ini, fim, filiais) if _pg
+                       else pbi.run_dax_rca(Q.q_devol_comprador_rca(ini, fim, filiais)))
+        for r in _devol_rows:
             cc = r.get("CODCOMPRADOR")
             if cc not in (None, ""):
                 k = int(core._n(cc))
@@ -520,7 +558,9 @@ def _desempenho_data(periodo, hoje, filiais=None):
         ini_ant = ini.replace(year=ini.year - 1)
         fim_ant = fim.replace(year=fim.year - 1)
         venda_ant, custo_ant = {}, {}
-        for r in pbi.run_dax_rca(Q.q_venda_comprador_periodo_rca(ini_ant, fim_ant, filiais)):
+        _va_rows = (PS.venda_comprador_periodo(ini_ant, fim_ant, filiais) if _pg
+                    else pbi.run_dax_rca(Q.q_venda_comprador_periodo_rca(ini_ant, fim_ant, filiais)))
+        for r in _va_rows:
             cc = r.get("CODCOMPRADOR")
             if cc not in (None, ""):
                 venda_ant[int(core._n(cc))] = core._n(r.get("venda"))
@@ -601,6 +641,10 @@ def _preco_venda_map(filiais):
     alinhar com a janela do giro (também 3m). O preço de tabela do BI (PCPRODUT[PVENDA]) está
     vazio; usar o realizado 3m como referência. Cache mensal (6h)."""
     hoje = _hoje()
+    if pbi.CONFIG["data_source"] == "postgres":   # Inc.2: preço realizado 3m do joga_demo
+        vp = PS.vendas_por_produto(hoje - timedelta(days=90), hoje, filiais)
+        return {c: d["venda"] / d["qtd"] for c, d in vp.items()
+                if (d.get("qtd") or 0) > 0 and (d.get("venda") or 0) > 0}
     key = f"precov:{_filiais_key(filiais)}:{hoje.isoformat()[:7]}"
     hit = pbi._CACHE.get(key)
     if hit is not None:
@@ -746,7 +790,8 @@ def api_validade():
     idx = {p["codprod"]: p for p in produtos}
     hoje = _hoje()
     dias = int(params["horizonte_val"])
-    lotes = pbi.run_dax(Q.q_validade(hoje, hoje + timedelta(days=dias), filiais))
+    _janela = (hoje, hoje + timedelta(days=dias))
+    lotes = PS.validade(*_janela, filiais) if _pg() else pbi.run_dax(Q.q_validade(*_janela, filiais))
     fefo = core.validade_fefo(lotes, idx, params, hoje=hoje)
     resumo = {
         "n": len(fefo),
@@ -771,8 +816,8 @@ def _venda_liq_mensal(filiais_venda):
         s = str(int(v))
         return f"{s[:4]}-{s[4:]}"
 
-    vendas = pbi.run_dax_rca(Q.q_venda_comprador_mensal_rca(ini, filiais_venda))
-    devol = pbi.run_dax_rca(Q.q_devol_comprador_mensal_rca(ini, filiais_venda))
+    vendas = PS.venda_comprador_mensal(ini, filiais_venda) if _pg() else pbi.run_dax_rca(Q.q_venda_comprador_mensal_rca(ini, filiais_venda))
+    devol = PS.devol_comprador_mensal(ini, filiais_venda) if _pg() else pbi.run_dax_rca(Q.q_devol_comprador_mensal_rca(ini, filiais_venda))
     dev_idx = {(int(core._n(r["CODCOMPRADOR"])), _am(r["AnoMes"])): core._n(r.get("dev")) for r in devol}
     por_mes, por_comp = {}, {}
     for r in vendas:
@@ -791,7 +836,7 @@ def api_vencidos():
     sobre a venda líquida (por mês e por comprador)."""
     produtos, params, filiais = _build_produtos()
     idx = {p["codprod"]: p for p in produtos}
-    rows = pbi.run_dax(Q.q_vencidos(filiais))
+    rows = PS.vencidos(filiais) if _pg() else pbi.run_dax(Q.q_vencidos(filiais))
     venda_mes, venda_comp = _venda_liq_mensal(_filiais_venda())
     res = core.vencidos_por_mes(rows, idx, venda_mes_map=venda_mes, venda_comp_map=venda_comp)
     # próximo vencimento do estoque ATUAL dos itens que já venceram e continuam na casa —
@@ -799,7 +844,7 @@ def api_vencidos():
     em = res.get("em_estoque") or []
     cods = [p["codprod"] for p in em if p.get("codprod") is not None]
     if cods:
-        pv = pbi.run_dax(Q.q_prox_venc(cods, _hoje(), filiais))
+        pv = PS.prox_venc(cods, _hoje(), filiais) if _pg() else pbi.run_dax(Q.q_prox_venc(cods, _hoje(), filiais))
         pvmap = {int(core._n(r["CODPROD"])): r.get("prox_venc") for r in pv}
         for p in em:  # mesmas refs de res['produtos'] → atualiza os dois
             dtv = pvmap.get(p["codprod"])
@@ -827,7 +872,8 @@ def api_resumos():
     # + demais filtros da UI (curva, XYZ, fornecedor, depto, busca…)
     prod_f = _aplicar_filtros_cliente(prod_f)
     idx = {p["codprod"]: p for p in prod_f}
-    lotes = pbi.run_dax(Q.q_validade(hoje, hoje + timedelta(days=3650), filiais))
+    _jan = (hoje, hoje + timedelta(days=3650))
+    lotes = PS.validade(*_jan, filiais) if _pg() else pbi.run_dax(Q.q_validade(*_jan, filiais))
     # recorta os lotes sempre que QUALQUER filtro estiver ativo (antes só quando havia comprador,
     # o que faria a validade divergir dos outros blocos assim que a curva passasse a filtrar)
     if len(prod_f) != len(produtos):
@@ -860,12 +906,12 @@ def api_produto(codprod):
     produtos, params, filiais = _build_produtos()
     idx = {p["codprod"]: p for p in produtos}
     p = idx.get(codprod)
-    lotes_raw = pbi.run_dax(Q.q_lotes_produto(codprod, filiais))
+    lotes_raw = PS.lotes_produto(codprod, filiais) if _pg() else pbi.run_dax(Q.q_lotes_produto(codprod, filiais))
     lotes = core.validade_fefo(lotes_raw, idx, params, hoje=_hoje()) if p else []
     enderecos = []
     if p:
         try:
-            enderecos = pbi.run_dax(Q.q_produto_enderecos(codprod, filiais))
+            enderecos = PS.produto_enderecos(codprod, filiais) if _pg() else pbi.run_dax(Q.q_produto_enderecos(codprod, filiais))
         except Exception as e:
             print(f"[enderecos] WMS indisponível p/ {codprod} ({e}).")
         p = {**p, "plano": core.plano_reposicao(p, params, hoje=_hoje())}
@@ -884,13 +930,14 @@ def _rua_conferencia(rua):
     key = f"ruaconf:{_filiais_key(filiais)}:{rua}"
     hit = pbi._CACHE.get(key)
     if hit is None:
-        hit = core.rua_conferencia(rua,
-                                   pbi.run_dax(Q.q_rua_itens(rua, filiais)),
-                                   pbi.run_dax(Q.q_ocupacao_vazias(filiais, rua=rua)))
+        _itens = PS.rua_itens(rua, filiais) if _pg() else pbi.run_dax(Q.q_rua_itens(rua, filiais))
+        _vaz = PS.ocupacao_vazias(filiais, rua=rua) if _pg() else pbi.run_dax(Q.q_ocupacao_vazias(filiais, rua=rua))
+        hit = core.rua_conferencia(rua, _itens, _vaz)
         cods = sorted({x["codprod"] for x in hit if x.get("codprod") is not None})
         if cods:
             try:
-                dm = {int(core._n(r["CODPROD"])): r.get("DESCRICAO") for r in pbi.run_dax(Q.q_desc_de(cods))}
+                _dd = PS.desc_de(cods) if _pg() else pbi.run_dax(Q.q_desc_de(cods))
+                dm = {int(core._n(r["CODPROD"])): r.get("DESCRICAO") for r in _dd}
             except Exception as e:
                 print(f"[rua] descrições indisponíveis ({e}).")
                 dm = {}
@@ -916,16 +963,21 @@ def api_ocupacao():
     hit = pbi._CACHE.get(key)
     if hit is None:
         try:
-            hit = core.ocupacao_resumo(pbi.run_dax(Q.q_ocupacao_kpis(filiais)),
-                                       pbi.run_dax(Q.q_ocupacao_por_rua(filiais)),
-                                       pbi.run_dax(Q.q_ocupacao_por_tipo(filiais)),
-                                       pbi.run_dax(Q.q_ocupacao_vazias(filiais)))
+            if _pg():
+                hit = core.ocupacao_resumo(PS.ocupacao_kpis(filiais), PS.ocupacao_por_rua(filiais),
+                                           PS.ocupacao_por_tipo(filiais), PS.ocupacao_vazias(filiais))
+            else:
+                hit = core.ocupacao_resumo(pbi.run_dax(Q.q_ocupacao_kpis(filiais)),
+                                           pbi.run_dax(Q.q_ocupacao_por_rua(filiais)),
+                                           pbi.run_dax(Q.q_ocupacao_por_tipo(filiais)),
+                                           pbi.run_dax(Q.q_ocupacao_vazias(filiais)))
             # descrição das vagas reservadas vem do PCPRODUT completo (itens zerados/FL
             # não estão no snapshot nem no cadastro de revenda)
             cods = sorted({v["codprod"] for v in hit.get("vazias", []) if v.get("codprod") is not None})
             if cods:
                 try:
-                    dm = {int(core._n(r["CODPROD"])): r.get("DESCRICAO") for r in pbi.run_dax(Q.q_desc_de(cods))}
+                    _dd = PS.desc_de(cods) if _pg() else pbi.run_dax(Q.q_desc_de(cods))
+                    dm = {int(core._n(r["CODPROD"])): r.get("DESCRICAO") for r in _dd}
                     for v in hit["vazias"]:
                         if v.get("codprod") is not None and dm.get(v["codprod"]):
                             v["descricao"] = dm[v["codprod"]]
@@ -1051,7 +1103,8 @@ _QUAL_CHECKS = [
 def _vazias_list(filiais):
     """Posições ocupadas sem estoque (reservadas), já com descrição — p/ export da tabela."""
     out = []
-    for r in pbi.run_dax(Q.q_ocupacao_vazias(filiais)):
+    _vaz = PS.ocupacao_vazias(filiais) if _pg() else pbi.run_dax(Q.q_ocupacao_vazias(filiais))
+    for r in _vaz:
         cp = r.get("codprod")
         out.append({
             "endereco": "R%d·P%d·N%d·A%d" % (int(core._n(r.get("rua"))), int(core._n(r.get("predio"))),
@@ -1062,7 +1115,8 @@ def _vazias_list(filiais):
     cods = sorted({x["codprod"] for x in out if x.get("codprod") is not None})
     if cods:
         try:
-            dm = {int(core._n(r["CODPROD"])): r.get("DESCRICAO") for r in pbi.run_dax(Q.q_desc_de(cods))}
+            _dd = PS.desc_de(cods) if _pg() else pbi.run_dax(Q.q_desc_de(cods))
+            dm = {int(core._n(r["CODPROD"])): r.get("DESCRICAO") for r in _dd}
         except Exception:
             dm = {}
         for x in out:
@@ -1079,7 +1133,8 @@ def _export_data(view):
         idx = {p["codprod"]: p for p in produtos}
         hoje = _hoje()
         cods = {p["codprod"] for p in _aplicar_filtros_cliente(produtos)}
-        lotes = pbi.run_dax(Q.q_validade(hoje, hoje + timedelta(days=int(params["horizonte_val"])), filiais))
+        _jv = (hoje, hoje + timedelta(days=int(params["horizonte_val"])))
+        lotes = PS.validade(*_jv, filiais) if _pg() else pbi.run_dax(Q.q_validade(*_jv, filiais))
         linhas = [l for l in core.validade_fefo(lotes, idx, params, hoje=hoje) if l["codprod"] in cods]
         _vd = request.args.get("val_dias")
         if _vd:
@@ -1162,7 +1217,8 @@ def _export_data(view):
         # Espelha a tela: filtro de comprador (topo) + mês clicado no gráfico/tabela.
         produtos, _, filiais = _build_produtos()
         idx = {p["codprod"]: p for p in produtos}
-        linhas = core.vencidos_por_mes(pbi.run_dax(Q.q_vencidos(filiais)), idx)["itens"]
+        _venc = PS.vencidos(filiais) if _pg() else pbi.run_dax(Q.q_vencidos(filiais))
+        linhas = core.vencidos_por_mes(_venc, idx)["itens"]
         cc = request.args.get("comprador_cod")
         if cc:
             linhas = [l for l in linhas if str(l.get("codcomprador")) == cc]
@@ -1759,7 +1815,7 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
 @bp.route("/api/pedido_itens/<int:numped>")
 def api_pedido_itens_winthor(numped):
     """Itens comprados de um pedido REAL do Winthor (PCITEM) — drill do Orçamento."""
-    rows = pbi.run_dax(Q.q_pedido_itens_um(numped))
+    rows = PS.pedido_itens_um(numped) if _pg() else pbi.run_dax(Q.q_pedido_itens_um(numped))
     cad = _cadastro_produtos()
     itens = []
     for r in rows:

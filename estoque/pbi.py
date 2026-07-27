@@ -22,6 +22,14 @@ from dotenv import load_dotenv
 # isto correto permite importar/testar o módulo sozinho.
 load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 
+# Reconstrução das medidas RCA quando MEDIDAS=joga (cliente sem medidas no BI).
+# Import defensivo: se a raiz do app não estiver no path (teste isolado), degrada p/ identidade.
+try:
+    from medidas_dax import reconstruir_medidas
+except ImportError:
+    def reconstruir_medidas(q):
+        return q
+
 # Datasets do workspace (default; sobrescrevíveis via env)
 DATASET_ESTOQUE_DEFAULT = "32fb60e1-5ff1-47ae-9472-b7ce7049f2ce"
 DATASET_RCA_DEFAULT = "f2fbf288-611a-4b17-aeb3-a6f77ef04e3b"  # tem PCEMPR (nome do comprador)
@@ -33,6 +41,8 @@ CONFIG = {
     "group_id":      os.getenv("POWERBI_GROUP_ID", ""),
     "dataset_id":    os.getenv("POWERBI_DATASET_ID_ESTOQUE", DATASET_ESTOQUE_DEFAULT),
     "dataset_rca":   os.getenv("POWERBI_DATASET_ID_RCA", DATASET_RCA_DEFAULT),
+    "medidas":       os.getenv("MEDIDAS", "cliente"),   # cliente | joga (reconstrução própria)
+    "data_source":   os.getenv("DATA_SOURCE", "powerbi"),  # powerbi | postgres (lê do joga_demo)
 }
 
 
@@ -103,6 +113,13 @@ def get_token():
 
 # ───────────────────────── executeQueries ─────────────────────────
 def _execute(token, query, dataset_id=None):
+    # Rede de segurança da produtização: em modo BD, NENHUMA query deve chegar ao Power BI. Um loader
+    # ainda não branchado (tela de outro incremento) falha ALTO aqui — os loaders com try/except
+    # degradam pra vazio — em vez de vazar dado REAL do cliente numa instância de demo.
+    if CONFIG["data_source"] == "postgres":
+        raise RuntimeError("estoque: run_dax em modo postgres — loader não branchado (não bater no BI do cliente)")
+    if CONFIG["medidas"] == "joga":          # cliente sem medidas no BI → reconstrução JOGA
+        query = reconstruir_medidas(query)
     ds = dataset_id or CONFIG["dataset_id"]
     url = (
         f"https://api.powerbi.com/v1.0/myorg/groups/"
@@ -191,6 +208,8 @@ def _para_brasilia(iso_utc):
 def get_dataset_refresh(dataset_id=None):
     """Última atualização concluída do dataset via API REST do Power BI (refresh history).
     Retorna {'end','end_fmt','in_progress'} ou None (degrada se a API não responder)."""
+    if CONFIG["data_source"] == "postgres":   # modo BD: sem dataset PBI → sem refresh history
+        return None
     ds = dataset_id or CONFIG["dataset_id"]
     key = f"pbi:refresh:{ds}"
     hit = _CACHE.get(key)
