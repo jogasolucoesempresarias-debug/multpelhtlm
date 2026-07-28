@@ -110,6 +110,21 @@ ciclo menor que o lead = pedido novo antes do anterior chegar.
 - ⚠️ **A aba Fornecedores é calculada DUAS vezes** — no front (`renderFornecedores`, para os
   filtros responderem sem round-trip) e no back (`core.fornecedores`, para o export). Coluna nova
   entra nos dois, senão o Excel/PDF diverge da tela.
+- 🩹 **Crescimento (YoY): NÃO somar `venda_ano_ant` dos produtos da tela.** Bug achado pelo diretor
+  em 07/2026 e corrigido em `core.yoy_fornecedor`. A tela só tem o que está no **snapshot de
+  estoque ATUAL**: o numerador saía completo (o que vende hoje está no catálogo hoje) e o
+  denominador perdia **todo item que saiu de linha nos últimos 12 meses** — universos diferentes
+  nos dois lados da divisão. Medido no BI real: **18 fornecedores erravam >10 p.p. e 6 trocavam de
+  SINAL** (o app dizia +21,9% num fornecedor que caíra 72,8%). Agora as duas janelas são somadas
+  **completas**, sobre todos os produtos vendidos. Consequência aceita: a coluna passa a ser do
+  fornecedor INTEIRO e não responde aos filtros de recorte — a tela avisa quando há filtro ativo
+  (mesma política do card de Orçamento). Produto sem cadastro de revenda fica fora dos dois lados
+  (0,49% da venda do ano anterior) — é o teto de precisão do método.
+  **Validado contra a rotina 111 do ERP** ("Resumo de Faturamento por Fornecedor"): HIPERROLL
+  17,63% × 17,63% (exato, bruta e devolução no centavo), Ind. Papéis −3,38% × −3,35%,
+  GALVANOTEK 7,44% × 7,26%, BOMBRIL 3,31% × 2,35% (a sobra é ST/IPI — o 111 desconsidera ST).
+  ⚠️ Ao conferir com o 111, **igualar a filial**: o relatório sai com todas e a tela usa a unidade.
+  Gate: `tests/test_fornecedores_ciclo_verba.py` (caso da PEGON travado nos números reais).
 
 **Meta de ruptura — uma meta por curva** (07/2026). Era A (2%) × B+C (5%); virou **A / B / C**
 (2% / 5% / 10%), editáveis em ⚙ Parâmetros. ⚠️ Separar **afrouxa o placar sem ninguém mexer na
@@ -253,7 +268,7 @@ ANALYTICS_DB_NAME=joga_demo   # banco analítico (ANALYTICS_DB_* faz fallback pr
 > demo **não envelhece** sem regenerar. O default powerbi usa `TODAY()` normal.
 
 **Gates:** `tests/test_provider_*.py` (Dashboard, Comercial, Metas, Mix, Radar, Estoque, RBAC) +
-`test_medida_compat.py`. Baseline **266 passam / 3 falham** (as 3 conhecidas de fixture de data).
+`test_medida_compat.py`. Baseline **272 passam / 3 falham** (as 3 conhecidas de fixture de data).
 
 ---
 
@@ -308,7 +323,7 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 ├── estoque/provider_sql.py         # 🆕 modo postgres do Compras
 ├── docker-compose.demo.yml         # 🆕 stack da instância DEMO (Portainer)
 ├── _seed_demo/                     # 🆕 base sintética reprodutível (joga_demo) + bootstrap + seeder
-└── tests/                          # pytest (266 passam; 3 falham por fixture de data — não é regressão)
+└── tests/                          # pytest (272 passam; 3 falham por fixture de data — não é regressão)
 ```
 
 ---
@@ -320,7 +335,7 @@ cp .env.example .env        # preencher (ver variáveis abaixo)
 docker compose -f docker-compose.dev.yml up -d redis
 python -X utf8 init_db.py   # cria/migra schema + admin default (admin@multpel.com.br / admin123)
 python -X utf8 server.py    # http://localhost:5000
-pytest -q                   # 266 passam, 3 falham (fixture de data — não é regressão)
+pytest -q                   # 272 passam, 3 falham (fixture de data — não é regressão)
 ```
 
 Variáveis novas da fusão no `.env` (além das do Power BI/DB/Redis/Resend):
@@ -462,7 +477,7 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 5. **Checagem de API usa `'/api/' in path`, não `startswith`** — por causa de `/estoque/api/...`.
 6. **Não editar `MultpelEstoque/`** (repo congelado) nem publicar em `:latest` sem intenção.
 7. **3 testes falham por fixture de data** (radar/mix/cohort) — pré-existentes, **não** são regressão.
-   O baseline é **266 passam / 3 falham**.
+   O baseline é **272 passam / 3 falham**.
 8. **Verificação visual de tema não confia em captura** das telas de dados (Power BI muda o conteúdo
    entre capturas) — comparar cor computada (`getComputedStyle`), não pixels.
 9. **Base nova ganha `areas=["comercial"]` por default** — libere `compras` no Admin (ou via UPDATE),

@@ -177,3 +177,58 @@ def test_sem_extra_a_aba_continua_funcionando():
     """Se o lead time / verbas caírem, o mapa vem vazio e a aba não pode quebrar."""
     linhas = core.fornecedores([_prod(1, 10, venda=1000.0, lucro=100.0)], extra=None)
     assert linhas[0]["lucro_verba"] == 100.0
+
+
+# ───────── crescimento YoY na régua completa (bug achado pelo diretor 07/2026) ─────────
+# O somatório antigo usava o `venda_ano_ant` dos produtos DA TELA, e a tela só tem o que está no
+# snapshot de estoque ATUAL: o numerador saía completo e o denominador perdia todo item que saiu
+# de linha nos últimos 12 meses. Medido no BI real: 18 fornecedores erravam >10 p.p. e 6 trocavam
+# de SINAL. Caso de referência: PEGON (9161) mostrava +206,5%; o certo é +60,8%.
+
+def test_yoy_soma_produto_que_saiu_de_linha():
+    """O produto vendido só no ano passado TEM de entrar no denominador — é o coração do bug."""
+    venda = {1: {"venda": 23834.47}}                      # só o item que ainda vende
+    venda_ant = {1: {"venda": 7775.26}, 2: {"venda": 7046.77}}   # o 2 saiu de linha
+    r = core.yoy_fornecedor(venda, venda_ant, {1: 9161, 2: 9161})
+    assert r[9161]["venda_yoy"] == 23834.47
+    assert r[9161]["venda_ant_yoy"] == 14822.03           # 7775,26 + 7046,77 (o que o app perdia)
+
+
+def test_crescimento_do_pegon_bate_com_o_bi_real():
+    """Regressão do caso concreto: o número medido contra o Power BI de produção."""
+    extra = {9161: {"venda_yoy": 23834.47, "venda_ant_yoy": 14822.03}}
+    f = core.fornecedores([_prod(1, 9161, venda=23834.47, lucro=6458.14)], extra=extra)[0]
+    assert f["crescimento"] == 60.8                       # era 206,5 com o denominador truncado
+    assert f["venda_ano_ant"] == 14822.03
+    assert f["yoy_completo"] is True
+
+
+def test_yoy_corrige_o_sinal_invertido():
+    """O pior sintoma: o app mostrava CRESCIMENTO em fornecedor que despencou (cod 738 real)."""
+    extra = {738: {"venda_yoy": 13321.42, "venda_ant_yoy": 49065.58}}
+    f = core.fornecedores([_prod(1, 738, venda=13321.42, lucro=1000.0)], extra=extra)[0]
+    assert f["crescimento"] == -72.8                      # o app dizia +21,9%
+    assert f["crescimento"] < 0
+
+
+def test_sem_yoy_no_extra_cai_no_calculo_antigo():
+    """Se o RCA cair, o mapa vem sem YoY e a coluna degrada p/ o somatório dos produtos —
+    incompleto, mas melhor que vazio. `yoy_completo` some, então a tela não promete o que não tem."""
+    p = _prod(1, 10, venda=110.0, lucro=10.0); p["venda_ano_ant"] = 100.0
+    f = core.fornecedores([p], extra={})[0]
+    assert f["crescimento"] == 10.0
+    assert "yoy_completo" not in f
+
+
+def test_yoy_ignora_produto_sem_fornecedor():
+    """Produto sem cadastro de revenda não tem fornecedor — fica fora dos DOIS lados (0,49% da
+    venda do ano anterior no BI real). Entrar num lado só reintroduziria a assimetria do bug."""
+    r = core.yoy_fornecedor({1: {"venda": 100.0}, 9: {"venda": 50.0}},
+                            {1: {"venda": 80.0}, 9: {"venda": 40.0}}, {1: 10})
+    assert r == {10: {"venda_yoy": 100.0, "venda_ant_yoy": 80.0}}
+
+
+def test_yoy_denominador_zero_nao_explode():
+    extra = {10: {"venda_yoy": 500.0, "venda_ant_yoy": 0.0}}
+    f = core.fornecedores([_prod(1, 10, venda=500.0, lucro=50.0)], extra=extra)[0]
+    assert f["crescimento"] is None                       # fornecedor novo: sem base p/ comparar

@@ -422,6 +422,20 @@ def _forn_extra_map(hoje, periodo, filiais):
             out.setdefault(cod, {}).update(v)
     except Exception as e:
         print(f"[fornecedores] verba indisponível ({e}).")
+    # crescimento YoY na régua COMPLETA (todos os produtos vendidos, não só os que ainda estão em
+    # estoque) — ver core.yoy_fornecedor. Reusa os mesmos mapas de venda que o snapshot já busca,
+    # então não custa query nova; degrada p/ o cálculo antigo se o RCA cair.
+    try:
+        fil_v = _filiais_venda()
+        fornec_de_prod = {c: int(core._n(r.get("CODFORNEC")))
+                          for c, r in _cadastro_produtos().items()
+                          if core._n(r.get("CODFORNEC"))}
+        yoy = core.yoy_fornecedor(_vendas_map(periodo, hoje, fil_v),
+                                  _vendas_ano_ant_map(periodo, hoje, fil_v), fornec_de_prod)
+        for cod, v in yoy.items():
+            out.setdefault(cod, {}).update(v)
+    except Exception as e:
+        print(f"[fornecedores] YoY completo indisponível ({e}).")
     pbi._CACHE.set(key, out, 1800)
     return out
 

@@ -1014,6 +1014,31 @@ def verba_por_fornecedor(verbas, aplic_rows, ini, fim, forn_map=None, cnpj_empre
             for c, o in out.items()}
 
 
+def yoy_fornecedor(venda_map, venda_ant_map, fornec_de_produto):
+    """{codfornec: {venda_yoy, venda_ant_yoy}} — venda líquida do fornecedor nas DUAS janelas,
+    somada sobre TODOS os produtos vendidos, não só os que ainda estão em estoque hoje.
+
+    ⚠️ É a correção do crescimento (bug achado pelo diretor 07/2026). O caminho antigo somava o
+    `venda_ano_ant` dos produtos da tela, e a tela só tem o que está no snapshot de estoque ATUAL.
+    O numerador saía completo (o que vende hoje está no catálogo hoje) e o denominador perdia todo
+    item descontinuado nos últimos 12 meses — universos diferentes nos dois lados da divisão, com
+    o crescimento inflado. Medido no BI real: 18 fornecedores erravam >10 p.p. e 6 trocavam de
+    SINAL (o app dizia +27% num fornecedor que caíra 61%).
+
+    Produto sem cadastro de revenda não tem fornecedor e fica fora dos dois lados (0,49% da venda
+    do ano anterior, medido) — é o teto de precisão deste método.
+    """
+    out = {}
+    for mapa, campo in ((venda_map, "venda_yoy"), (venda_ant_map, "venda_ant_yoy")):
+        for cod, d in (mapa or {}).items():
+            cf = (fornec_de_produto or {}).get(cod)
+            if cf is None:
+                continue
+            o = out.setdefault(cf, {"venda_yoy": 0.0, "venda_ant_yoy": 0.0})
+            o[campo] += _n(d.get("venda") if isinstance(d, dict) else d)
+    return {c: {k: _round(v) for k, v in o.items()} for c, o in out.items()}
+
+
 def _extra_fornecedor(g, ex):
     """Colunas que NÃO saem da posição de estoque: ciclo de compras + verba + lucro com verba.
     `ex` = linha do mapa `extra` (ciclo_compras ⊕ verba_por_fornecedor) daquele fornecedor.
@@ -1029,7 +1054,18 @@ def _extra_fornecedor(g, ex):
     ex = ex or {}
     verba = _n(ex.get("verba"))
     lucro = g["lucro"]
+    # crescimento pela régua completa (yoy_fornecedor) quando disponível; sem ela cai no
+    # somatório dos produtos da tela — que é o caminho antigo, incompleto no ano anterior.
+    yoy = {}
+    if ex.get("venda_ant_yoy") is not None:
+        v_at, v_an = _n(ex.get("venda_yoy")), _n(ex.get("venda_ant_yoy"))
+        yoy = {
+            "venda_ano_ant": _round(v_an) if v_an else None,
+            "crescimento": _round((v_at - v_an) / v_an * 100, 1) if v_an > 0 else None,
+            "yoy_completo": True,     # a tela avisa que a coluna ignora os filtros de recorte
+        }
     return {
+        **yoy,
         "n_pedidos": ex.get("n_pedidos") or 0,
         "ciclo_dias": ex.get("ciclo_dias"),
         "ultima_compra": ex.get("ultima_compra"),
