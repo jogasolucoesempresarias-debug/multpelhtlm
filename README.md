@@ -178,6 +178,17 @@ Doc completa das fórmulas em **`docs/estoque/planilha_v3.md`**.
   Gate: `tests/test_estoque_ideal.py` (11 testes, incluindo "sem params sai igual ao de antes").
   ⚠️ Os parâmetros são **por navegador** (`localStorage`): enquanto o valor não for fechado, o
   painel pode significar coisas diferentes para cada pessoa. Ao definir, promover a default do servidor.
+- ⚠️ **Mercadoria em PRÉ-ENTRADA conta no estoque projetado** (`core.qt_em_transicao`). Na
+  pré-entrada o Winthor baixa o `PCITEM[QTENTREGUE]` (o item sai de "já pedido") e joga a
+  quantidade em `QTESTGER` **e** `QTBLOQUEADA` (disponível = 0) — some das duas contas e o app
+  sugeria **comprar de novo o que já está no armazém**. Medido: 130 linhas, **R$ 198.683**.
+  Entra no **projetado**, nunca no `qtdisp`: a mercadoria não é vendável, então segue contando
+  como ruptura e fora do valor de estoque. Status próprio `aguardando_liberacao`.
+  ⚠️ É **heurística** (bloqueio com entrada ≤7d): o Winthor usa o MESMO `QTBLOQUEADA` p/ avaria
+  e pré-entrada e o `MOTIVOBLOQESTOQUE` vem vazio. Validada contra 2ª fonte (`PEDIDO_ENTRADA`):
+  21/21 nos ≤3d, 2/122 no bloqueio >30d. **Trocar por `PCMOVPREENT`** (107.566 linhas no Oracle)
+  quando publicada — só o corpo da função muda. `PCNFENT.CONFERIDO` é campo morto ('N' em 2.287,
+  nulo em 26, nenhum 'S').
 - ⚠️ **Todo lugar que mostra "quanto vou gastar" fala a régua da NF** (c/ impostos): card do
   fornecedor, Cockpit ("A comprar"), Estoque zerado ("Custo de reposição"), Ruptura por comprador,
   drawer 360°, aba Fornecedores e o relatório de Reposição. A **única exceção proposital** é a
@@ -539,7 +550,7 @@ mesmo código (`DATA_SOURCE`/`MEDIDAS`), providers `provider_sql.py`/`estoque/pr
 espelhando o DAX (Comercial + Compras + drills + exports), reconstrução das medidas RCA
 (`medidas_dax.py`), rede de segurança contra vazamento, base sintética `joga_demo` + stack DEMO
 auto-contida. Zero regressão na Multpel **provada centavo-a-centavo** no BI real (antes×depois idêntico);
-2 sweeps HTTP (100% dos endpoints branchados); baseline 282 testes.
+2 sweeps HTTP (100% dos endpoints branchados); baseline 293 testes.
 
 ---
 

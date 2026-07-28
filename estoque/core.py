@@ -181,6 +181,43 @@ def previsao_giro_sazonal(saz, mes):
     return round(saz["media_mensal"] * saz["fatores"].get(mes, 1.0))
 
 
+DIAS_TRANSICAO = 7        # janela do bloqueio recente (ver qt_em_transicao)
+
+
+def qt_em_transicao(qtbloq, dtultent, hoje=None, dias=DIAS_TRANSICAO):
+    """Mercadoria que JÁ CHEGOU e está entre o pedido e o estoque disponível ("pré-entrada":
+    recebida, aguardando conferência/liberação). Nas palavras do diretor: *"tá bloqueado pq sai
+    de pedido e fica na transição para estoque disponível"*.
+
+    **Por que existe:** o Winthor, na pré-entrada, baixa o `PCITEM[QTENTREGUE]` (o item sai de
+    "já pedido") e lança a quantidade em `QTESTGER` **e** em `QTBLOQUEADA` — disponível fica 0.
+    Sem isto, a mercadoria some das DUAS contas ao mesmo tempo e o item volta a aparecer como
+    "ruptura sem pedido" → o app **sugere comprar de novo o que já está no armazém**. Medido em
+    07/2026: 130 linhas, **R$ 198.683** de mercadoria em transição (22 viravam ruptura falsa,
+    108 inflavam a sugestão em silêncio).
+
+    ⚠️ **Heurística, não fato.** O Winthor usa o MESMO `QTBLOQUEADA` para avaria e para
+    pré-entrada, e o `MOTIVOBLOQESTOQUE` vem vazio nesta base — não há campo que os separe.
+    Discrimina-se pela DATA: bloqueio com entrada recente é transição; bloqueio velho é avaria
+    de verdade (e essa deve mesmo continuar sugerindo compra). Validado contra uma 2ª fonte
+    independente (`PEDIDO_ENTRADA`, a data em que a NF do pedido entrou): **21 de 21** itens com
+    bloqueio ≤3d têm NF entrando junto, contra **2 de 122** no bloqueio >30d.
+
+    🔁 **Trocar por dado exato quando der:** `PCMOVPREENT` (107.566 linhas no Oracle) é a tabela
+    da pré-entrada. Falta descobrir como marcar a que ainda está pendente e publicá-la no dataset
+    (mesmo caminho da `TRIB_ENTRADA`). Aí só o corpo desta função muda — o resto do app não sabe
+    de onde vem o número. (`PCNFENT.CONFERIDO` foi testado e é campo morto: 'N' em 2.287 linhas,
+    nulo em 26, nenhum 'S'.)"""
+    q = _n(qtbloq)
+    if q <= 0:
+        return 0.0
+    dt = _parse_dt(dtultent)
+    if dt is None:
+        return 0.0
+    hoje = hoje or date.today()
+    return q if (hoje - dt).days <= int(dias) else 0.0
+
+
 def arredonda_caixa(qt, qtunitcx):
     """Arredonda `qt` PRA CIMA em caixas fechadas. Retorna (qt_arredondado, n_caixas).
     No-op (qt, None) se qtunitcx<=1 ou qt<=0."""
@@ -569,7 +606,11 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         # posição efetiva = disponível + pedido de compra REAL em aberto (Winthor).
         # Como o gerencial já reflete o que foi recebido, o "já pedido" é só o ABERTO
         # (qtped−entregue) — evita comprar de novo o que já está pedido e não duplica estoque.
-        estoque_projetado = qtdisp + qtd_ja_pedida
+        # + o que está EM TRANSIÇÃO (pré-entrada: chegou, aguarda liberação). Entra aqui e NÃO no
+        # `qtdisp` de propósito: a mercadoria ainda não pode ser vendida, então continua contando
+        # como ruptura e fora do valor de estoque — mas não se compra de novo o que já chegou.
+        qt_transicao = qt_em_transicao(r.get("qtbloq"), r.get("dtultent"), hoje=hoje)
+        estoque_projetado = qtdisp + qtd_ja_pedida + qt_transicao
         cobertura_proj = (estoque_projetado / giro_dia) if giro_dia > 0 and estoque_projetado > 0 else None
         sugestao = max(0.0, est_alvo - estoque_projetado)
 
@@ -712,7 +753,13 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         # status executivo + ação recomendada (taxonomia v3 — clareza pro comprador)
         tem_compra = sugestao_cx > 0
         if qtdisp <= 0:
-            if qtd_ja_pedida <= 0:
+            if qt_transicao > 0:
+                # Chegou e aguarda liberação. Ganha da rotulagem de ruptura MESMO quando ainda
+                # sobra compra a fazer: dizer "ruptura sem pedido" para mercadoria que está no
+                # armazém foi exatamente o que levou o comprador a pedir de novo. O quanto ainda
+                # falta comprar continua visível na coluna Sugerido.
+                status_exec = "aguardando_liberacao"
+            elif qtd_ja_pedida <= 0:
                 status_exec = "ruptura_sem_pedido"
             else:
                 status_exec = "ruptura_pedido_parcial" if tem_compra else "ruptura_pedido_cobre"
@@ -778,6 +825,7 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "embalagem_caixa": emb.get("embalagem"),
             "qtd_ja_pedida": _round(qtd_ja_pedida),
             "estoque_projetado": _round(estoque_projetado),
+            "qt_transicao": _round(qt_transicao),   # pré-entrada: chegou, aguarda liberação
             "cobertura_proj": _round(cobertura_proj, 1) if cobertura_proj is not None else None,
             "valor_sugerido_liq": _round(valor_sugerido_liq),
             # régua da NF — é ESTA que consome a meta do Orçamento (PCPEDIDO[VLTOTAL])
