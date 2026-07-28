@@ -653,16 +653,20 @@ function renderEstoqueZero(P){
     {key:'qtdisp',label:'Estoque',num:true,html:p=>cxUn(p.qtdisp,p.caixa)},
     {key:'dias_sem_venda',label:'Dias s/ venda',num:true,fmt:v=>v==null?'nunca':int(v)},
     {key:'qtd_ja_pedida',label:'Já ped.',num:true,html:p=>p.qtd_ja_pedida>0?cxUn(p.qtd_ja_pedida,p.caixa):'—'},
+    // mercadoria que JÁ CHEGOU e está em pré-entrada (aguardando liberação) — sem esta coluna o
+    // comprador vê "Estoque 0" e não entende por que a sugestão caiu
+    {key:'qt_transicao',label:'Recebido',num:true,html:p=>p.qt_transicao>0?`<b title="Chegou e está em pré-entrada, aguardando conferência/liberação. Já conta na projeção — não precisa comprar de novo.">${cxUn(p.qt_transicao,p.caixa)}</b>`:'—'},
     {key:'giro_mes',label:'Giro/mês',num:true,html:p=>`${cxUn(p.giro_mes,p.caixa)} ${spark(p.serie_giro)}`},
     {key:'sugestao_cx',label:'Sugerido (cx)',num:true,html:p=>sugCxN(p)},
     {key:'status_exec',label:'Status',html:p=>statExec(p.status_exec)}];
   const statuses=[...new Set(z.map(p=>p.status_exec))];
   const zf=S.cli.ezStatus?z.filter(p=>p.status_exec===S.cli.ezStatus):z;
   $('#v-estoque_zero').innerHTML=head('Estoque zerado e negativo','estoque_zero')+
-    `<div class="kpi-grid" style="grid-template-columns:repeat(5,1fr)">
+    `<div class="kpi-grid" style="grid-template-columns:repeat(6,1fr)">
        ${kpi('Zerados / negativos',int(z.length),int(neg.length)+' negativos',C.red)}
        ${kpi('Com giro (ruptura real)',int(comGiro.length),'precisam repor',C.orange)}
        ${kpi('Já com pedido',int(comPed.length),'aguardando entrega',C.accent)}
+       ${kpi('Recebido · aguard. liberação',int(z.filter(p=>(p.qt_transicao||0)>0).length),'já no armazém, em pré-entrada',C.accent)}
        ${kpi('Venda perdida (ruptura)',money(vendaPerdida),'dias em ruptura × giro × preço de venda',C.purple)}
        ${kpi('Custo de reposição',money(custoRepor),'repor até o alvo · c/ impostos',C.accent2)}
      </div>
@@ -671,7 +675,7 @@ function renderEstoqueZero(P){
          <option value="">Todos</option>
          ${statuses.map(s=>`<option value="${s}" ${S.cli.ezStatus===s?'selected':''}>${STAT_EXEC[s]?STAT_EXEC[s][0]:s}</option>`).join('')}
        </select></div>
-     <div class="count-line">Todos os produtos com estoque (gerencial) ≤ 0. "Já ped." = pedido de compra real em aberto (Winthor).</div>`+
+     <div class="count-line">Todos os produtos com estoque (gerencial) ≤ 0. "Já ped." = pedido de compra real em aberto (Winthor). <b>"Recebido"</b> = mercadoria que já chegou e está em <b>pré-entrada</b> (bloqueada, aguardando liberação) — ela já entra na projeção, então não aparece mais como compra a fazer.</div>`+
     renderTable(zf,cols,'estoque_zero');
   const sel=$('#ez-status'); if(sel) sel.onchange=e=>{S.cli.ezStatus=e.target.value;render();};
 }
@@ -743,7 +747,7 @@ function renderReposicao(P){
         <h3><span>${esc(gr.forn)} <small class="muted">· ${gr.itens.length} itens${gr.cub>0?` · ${dec(gr.cub,2)} m³`:''}${gr.peso>0?` · ${dec(gr.peso,1)} kg`:''}</small></span>
           <span>${gr.valorNF>gr.valor+0.005?`${money(gr.valorNF)} <small class="muted">previsto c/ impostos · merc. ${money(gr.valor)}</small>`:money(gr.valor)}${notaIncerteza(gr.valorNF,gr.incerto)} <button class="btn sm primary rowact" data-fornped="${gr.cod}">Gerar pedido</button></span></h3>
         <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Embalagem${tip('reposicao','Embalagem')}</th><th class="num">Disp.${tip('reposicao','Disp.')}</th><th class="num">Já ped.${tip('reposicao','Já ped.')}</th><th class="num">Cob.proj${tip('reposicao','Cob.proj')}</th><th class="num">Giro/mês${tip('reposicao','Giro/mês')}</th><th class="num">Sugerido (cx)${tip('reposicao','Sugerido (cx)')}</th><th class="num">m³${tip('reposicao','m³')}</th><th class="num">Valor sug.${tip('reposicao','Valor sug.')}</th><th class="num">Imp.${tip('reposicao','Imp.')}</th><th>Status${tip('reposicao','Status')}</th></tr></thead>
-        <tbody>${gr.itens.sort((a,b)=>(a.cobertura_proj||0)-(b.cobertura_proj||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td>${embCell(p)}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida):'—'}</td><td class="num">${cob(p.cobertura_proj)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${sugCxN(p)}</td><td class="num">${cubItem(p)>0?dec(cubItem(p),3):'—'}</td><td class="num">${money(p.valor_sugerido_liq)}</td><td class="num">${impCell(p)}</td><td>${statExec(p.status_exec)}</td></tr>`).join('')}</tbody></table></div>
+        <tbody>${gr.itens.sort((a,b)=>(a.cobertura_proj||0)-(b.cobertura_proj||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td>${embCell(p)}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida):'—'}${p.qt_transicao>0?` <b title="+${int(p.qt_transicao)} recebido, em pré-entrada (aguardando liberação)">+${int(p.qt_transicao)}</b>`:''}</td><td class="num">${cob(p.cobertura_proj)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${sugCxN(p)}</td><td class="num">${cubItem(p)>0?dec(cubItem(p),3):'—'}</td><td class="num">${money(p.valor_sugerido_liq)}</td><td class="num">${impCell(p)}</td><td>${statExec(p.status_exec)}</td></tr>`).join('')}</tbody></table></div>
       </div>`).join('')+
     (suspensos.length?`<div class="panel" style="border-color:var(--orange)">
       <h3><span>⚠ Rever antes de comprar — pararam de vender (${suspensos.length})${tipT('Itens com giro na média de 3 meses mas sem venda há 60 dias ou mais — confira antes de pedir (o giro pode estar “preso” no histórico).')}</span></h3>
@@ -2297,6 +2301,7 @@ async function openProduto(cod){
       <div class="lote-row"><span>Estoque alvo</span><span>${int(p.est_alvo)}</span></div>
       <div class="lote-row"><span><b>Sugestão de compra</b></span><span><b>${sugCxN(p)}</b> ${money(valReporNF(p))} <small class="muted">c/ imp.${p.trib_firme===false?' ≈':''} · merc. ${money(valReporMerc(p))}</small></span></div>
       <div class="lote-row"><span>Status</span><span>${statExec(p.status_exec)}</span></div>
+      ${p.qt_transicao>0?`<div class="lote-row"><span>Recebido (pré-entrada)</span><span><b>${int(p.qt_transicao)}</b> <small class="muted">aguardando liberação</small></span></div>`:''}
       ${planoDrawer(p.plano,p)}
       ${enderecosDrawer(j.enderecos)}
       <div class="d-sec">Lotes / validade</div>

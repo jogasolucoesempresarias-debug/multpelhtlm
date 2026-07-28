@@ -1132,7 +1132,10 @@ _CSV_COLS = {
     "ruptura": ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "valor", "cobertura_dias",
                 "cobertura_faixa", "qtd_ja_pedida", "giro_mes", "sugestao_compra"],
     "estoque_zero": ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "dias_sem_venda",
-                     "qtd_ja_pedida", "giro_mes", "sugestao_cx", "status_exec"],
+                     # `qt_transicao` = chegou e está em pré-entrada (aguardando liberação). Sem
+                     # esta coluna o relatório mostra "estoque 0" sem dizer que a mercadoria já
+                     # está no armazém — foi o que levou o comprador a pedir de novo.
+                     "qtd_ja_pedida", "qt_transicao", "giro_mes", "sugestao_cx", "status_exec"],
 }
 
 
