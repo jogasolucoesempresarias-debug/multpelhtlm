@@ -160,7 +160,9 @@ tbody tr:hover { background: var(--surface2); }
 /* nome do produto/fornecedor: teto folgado (~46 char) mostra o nome inteiro em ~100% dos casos
    do Winthor (DESCRICAO ~50 char), em 1 linha só; "…" fica só como rede p/ o nome patológico. */
 td .prod { max-width: 340px; overflow: hidden; text-overflow: ellipsis; display: inline-block; vertical-align: middle; }
-/* colunas congeladas (Cód + Produto) — não perde a referência ao rolar lateralmente (tabelas largas) */
+/* colunas congeladas (as 2 primeiras: Cód + Produto/Fornecedor) — não perde a referência ao rolar
+   lateralmente. Usada nas abas Produtos e Fornecedores (a 2ª passou a precisar em 07/2026, quando
+   ganhou as colunas de ciclo de compras e verba e a linha deixou de caber na tela). */
 .tbl-wrap.freeze2 th, .tbl-wrap.freeze2 td { box-sizing: border-box; }
 .tbl-wrap.freeze2 th:first-child, .tbl-wrap.freeze2 td:first-child { position: sticky; left: 0; width: 70px; min-width: 70px; z-index: 3; }
 .tbl-wrap.freeze2 th:nth-child(2), .tbl-wrap.freeze2 td:nth-child(2) { position: sticky; left: 70px; z-index: 3; box-shadow: 1px 0 0 var(--border); }
