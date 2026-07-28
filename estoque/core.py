@@ -1164,7 +1164,7 @@ def por_comprador(produtos):
         g = grupos.setdefault(chave, {
             "codcomprador": cc, "comprador": p.get("comprador") or "Sem comprador",
             "n_produtos": 0, "estoque": 0.0, "venda": 0.0, "lucro": 0.0,
-            "n_ruptura": 0, "valor_parado": 0.0, "sugestao_valor": 0.0,
+            "n_ruptura": 0, "valor_parado": 0.0, "sugestao_valor": 0.0, "sugestao_valor_nf": 0.0,
         })
         g["n_produtos"] += 1
         g["estoque"] += (p["valor"] or 0)
@@ -1175,8 +1175,9 @@ def por_comprador(produtos):
             g["n_ruptura"] += 1
         if p["status_parado"]:
             g["valor_parado"] += (p["valor"] or 0)
-        if (p["sugestao_compra"] or 0) > 0 and (p["giro_dia"] or 0) > 0 and not p.get("compra_suspensa"):
-            g["sugestao_valor"] += (p["sugestao_compra"] or 0) * (p["custo_unit"] or 0)
+        # fonte única (caixa fechada), nas duas réguas — ver _valor_sugerido_compra
+        g["sugestao_valor"] += _valor_sugerido_compra(p)
+        g["sugestao_valor_nf"] += _valor_sugerido_compra(p, "valor_sugerido_nf")
     saida = []
     for g in grupos.values():
         saida.append({
@@ -1185,6 +1186,7 @@ def por_comprador(produtos):
             "margem": _round(g["lucro"] / g["venda"] * 100, 1) if g["venda"] else None,
             "giro_estoque": _round(g["venda"] / g["estoque"], 2) if g["estoque"] else None,  # venda/estoque (turn)
             "valor_parado": _round(g["valor_parado"]), "sugestao_valor": _round(g["sugestao_valor"]),
+            "sugestao_valor_nf": _round(g["sugestao_valor_nf"]),
         })
     saida.sort(key=lambda x: x["venda"], reverse=True)
     return saida

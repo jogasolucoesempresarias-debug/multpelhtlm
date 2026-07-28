@@ -178,6 +178,15 @@ Doc completa das fórmulas em **`docs/estoque/planilha_v3.md`**.
   Gate: `tests/test_estoque_ideal.py` (11 testes, incluindo "sem params sai igual ao de antes").
   ⚠️ Os parâmetros são **por navegador** (`localStorage`): enquanto o valor não for fechado, o
   painel pode significar coisas diferentes para cada pessoa. Ao definir, promover a default do servidor.
+- ⚠️ **Todo lugar que mostra "quanto vou gastar" fala a régua da NF** (c/ impostos): card do
+  fornecedor, Cockpit ("A comprar"), Estoque zerado ("Custo de reposição"), Ruptura por comprador,
+  drawer 360°, aba Fornecedores e o relatório de Reposição. A **única exceção proposital** é a
+  coluna `Valor sug.` do Abastecimento, que segue em **mercadoria** — é o preço que vai na planilha
+  de importação. Fonte única no front: `valReporNF()` (estoque.js); no back: `_valor_sugerido_compra`.
+- ⚠️ **Filtro de tela tem de viajar no `exportQS()`.** `margem`, `cob_max` e `sem_ped` existiam só
+  no front: a tela mostrava 116 itens e o PDF saía com o universo inteiro. Ao criar filtro novo,
+  espelhe em `_aplicar_filtros_cliente` (e no `_margem_bucket`, que replica o `margemBucket` do JS).
+  Gate: `tests/test_export_filtros_reposicao.py`.
 - ⚠️ **A planilha de importação leva o preço LÍQUIDO — nunca com IPI.** O Winthor calcula o imposto
   sozinho na importação (foi assim que 132,05/caixa virou NF de R$ 44.982,01). Mandar preço com
   imposto faria o ERP aplicar **IPI sobre IPI**: pedido ~15% inflado e custo de entrada errado.
@@ -530,7 +539,7 @@ mesmo código (`DATA_SOURCE`/`MEDIDAS`), providers `provider_sql.py`/`estoque/pr
 espelhando o DAX (Comercial + Compras + drills + exports), reconstrução das medidas RCA
 (`medidas_dax.py`), rede de segurança contra vazamento, base sintética `joga_demo` + stack DEMO
 auto-contida. Zero regressão na Multpel **provada centavo-a-centavo** no BI real (antes×depois idêntico);
-2 sweeps HTTP (100% dos endpoints branchados); baseline 242 testes.
+2 sweeps HTTP (100% dos endpoints branchados); baseline 282 testes.
 
 ---
 

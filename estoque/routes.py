@@ -1124,7 +1124,9 @@ _CSV_COLS = {
                       "venda_ano_ant", "crescimento", "lucro", "margem", "giro_mes", "cobertura",
                       "dias_sem_venda"],
     "reposicao": ["codprod", "descricao", "fornecedor", "comprador", "curva_abc", "giro_mes",
-                  "qtdisp", "cobertura", "rop", "est_alvo", "sugestao_compra", "status_abast"],
+                  "qtdisp", "qtd_ja_pedida", "cobertura", "rop", "est_alvo", "sugestao_compra",
+                  # as duas réguas: mercadoria (preço que vai na planilha) e NF (consome a meta)
+                  "valor_sugerido_liq", "valor_sugerido_nf", "perc_ipi", "trib_fonte", "status_abast"],
     "parado": ["codprod", "descricao", "fornecedor", "comprador", "dtultsaida", "dias_sem_venda", "qtdisp",
                "valor", "cobertura", "parado_faixa"],
     "ruptura": ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "valor", "cobertura_dias",
@@ -1132,6 +1134,15 @@ _CSV_COLS = {
     "estoque_zero": ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "dias_sem_venda",
                      "qtd_ja_pedida", "giro_mes", "sugestao_cx", "status_exec"],
 }
+
+
+def _margem_bucket(p):
+    """Faixa de margem do produto — espelha o `margemBucket` do estoque.js (mesmos cortes e
+    mesmos rótulos). Sem margem (produto sem venda no período) = 'sv'."""
+    m = p.get("margem")
+    if m is None:
+        return "sv"
+    return "neg" if m < 0 else ("b0" if m < 10 else ("b10" if m < 20 else ("b20" if m < 30 else "b30")))
 
 
 def _aplicar_filtros_cliente(produtos, skip=()):
@@ -1162,6 +1173,21 @@ def _aplicar_filtros_cliente(produtos, skip=()):
     if g("abast"):
         _ab = {v for v in g("abast").split(",") if v}
         out = [p for p in out if p.get("status_abast") in _ab]
+    # ── filtros do Explorador de produtos (aba Análise→Produtos) ──
+    # ⚠️ Estes três existiam SÓ no front: o PDF/Excel saía com o universo inteiro enquanto a tela
+    # mostrava 116 itens (reportado pelo diretor 07/2026). Espelham `filtered()` do estoque.js.
+    if g("margem"):
+        _mg = {v for v in g("margem").split(",") if v}
+        out = [p for p in out if _margem_bucket(p) in _mg]
+    if g("cob_max") is not None:
+        try:
+            _cm = float(g("cob_max"))
+            # cobertura_dias oficial: inclui ruptura (0d) e exclui sem-giro (9999) — igual à tela
+            out = [p for p in out if p.get("cobertura_dias") is not None and p["cobertura_dias"] <= _cm]
+        except (TypeError, ValueError):
+            pass
+    if g("sem_ped") in ("1", "true", "sim"):
+        out = [p for p in out if (p.get("qtd_ja_pedida") or 0) <= 0]
     bs = g("busca")
     if bs:
         bs = bs.lower()
@@ -1365,7 +1391,12 @@ def _export_data(view):
         produtos = _aplicar_filtros_cliente(produtos)
         cols = _CSV_COLS.get(view, _CSV_COLS["produtos"])
         if view == "reposicao":
-            linhas = [p for p in produtos if (p["sugestao_compra"] or 0) > 0 and (p["giro_dia"] or 0) > 0]
+            # agrupado por fornecedor e, dentro dele, o item mais caro primeiro. O PDF reordena os
+            # GRUPOS pelo total (`group_valor`); esta ordenação é o que o CSV/XLSX (sem grupo) usa.
+            linhas = sorted((p for p in produtos
+                             if (p["sugestao_compra"] or 0) > 0 and (p["giro_dia"] or 0) > 0),
+                            key=lambda p: ((p.get("fornecedor") or "").upper(),
+                                           -(p.get("valor_sugerido_nf") or 0)))
         elif view == "parado":
             # universo do parado = parado_faixa != None (≥15d, com estoque); filtro opcional por faixa
             # (mesmo critério da tela, p/ o export bater com o que aparece). Agrupa por fornecedor.
@@ -1437,9 +1468,12 @@ _PDF_COLS = {
                       ("valor", "Estoque", "money"), ("venda", "Venda", "money"),
                       ("crescimento", "Cresc. AA", "pct"), ("lucro", "Lucro", "money"),
                       ("margem", "Margem", "pct"), ("cobertura", "Cob.(d)", "int")],
-    "reposicao": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 40), ("fornecedor", "Fornecedor", "text", 26),
-                  ("qtdisp", "Disp.", "int"), ("cobertura", "Cob.(d)", "int"), ("giro_mes", "Giro/mês", "int"),
-                  ("sugestao_compra", "Sugerido", "int")],
+    # espelha o padrão da aba Análise→Produtos (ABC/Já ped./Cob.) + o VALOR a comprar, que é o
+    # critério de ordenação pedido. Sai com impostos: é a régua do Orçamento (PCPEDIDO[VLTOTAL]).
+    "reposicao": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 36), ("fornecedor", "Fornecedor", "text", 22),
+                  ("curva_abc", "ABC", "text"), ("qtdisp", "Disp.", "int"), ("qtd_ja_pedida", "Já ped.", "int"),
+                  ("giro_mes", "Giro/mês", "int"), ("cobertura", "Cob.(d)", "int"),
+                  ("sugestao_compra", "Sugerido", "int"), ("valor_sugerido_nf", "A comprar", "money")],
     "parado": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 38), ("fornecedor", "Fornecedor", "text", 24),
                ("dtultsaida", "Últ. venda", "date"), ("dias_sem_venda", "Dias s/v", "int"), ("qtdisp", "Disp.", "int"),
                ("valor", "Valor", "money"), ("parado_faixa", "Faixa", "text")],
@@ -1523,7 +1557,10 @@ def _fmt_pdf(v, kind, maxlen=None):
     return (s[:maxlen - 1] + "…") if (maxlen and len(s) > maxlen) else s
 
 
-def _gerar_pdf(view, linhas, group_by=None):
+def _gerar_pdf(view, linhas, group_by=None, group_valor=None, group_rotulo="Estoque"):
+    """`group_valor`: campo somado no cabeçalho do grupo — quando informado, os GRUPOS saem
+    ordenados por esse total (maior → menor), não em ordem alfabética. É o que o relatório de
+    Reposição pede: fornecedor com mais dinheiro a comprar primeiro."""
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib import colors
     from reportlab.lib.units import cm
@@ -1553,15 +1590,28 @@ def _gerar_pdf(view, linhas, group_by=None):
         return [_fmt_pdf(r.get(c[0]), c[2], c[3] if len(c) > 3 else None) for c in spec]
 
     if group_by:
-        from itertools import groupby
-        linhas = sorted(linhas, key=lambda r: str(r.get(group_by) or "—").upper())
         ncols = len(spec)
-        for gnome, grupo in groupby(linhas, key=lambda r: r.get(group_by) or "—"):
-            grupo = list(grupo)
-            sub_val = sum(core._n(r.get("valor")) for r in grupo)
-            sub_ped = sum(core._n(r.get("qtd_ja_pedida")) for r in grupo)
-            gtxt = (f"{gnome}   ·   {len(grupo)} itens   ·   Estoque {_fmt_pdf(sub_val, 'money')}"
-                    f"   ·   Já pedido {_fmt_pdf(sub_ped, 'int')} un")
+        grupos = {}
+        for r in linhas:
+            grupos.setdefault(str(r.get(group_by) or "—"), []).append(r)
+        if group_valor:
+            # grupos do MAIOR total para o menor (o comprador ataca o fornecedor mais pesado 1º)
+            ordenados = sorted(grupos.items(),
+                               key=lambda kv: -sum(core._n(x.get(group_valor)) for x in kv[1]))
+        else:
+            ordenados = sorted(grupos.items(), key=lambda kv: kv[0].upper())
+        for gnome, grupo in ordenados:
+            if group_valor:
+                # dentro do grupo, item mais caro primeiro — mesmo critério do cabeçalho
+                grupo = sorted(grupo, key=lambda r: -core._n(r.get(group_valor)))
+                sub = sum(core._n(r.get(group_valor)) for r in grupo)
+                gtxt = (f"{gnome}   ·   {len(grupo)} itens   ·   "
+                        f"{group_rotulo} {_fmt_pdf(sub, 'money')}")
+            else:
+                sub_val = sum(core._n(r.get("valor")) for r in grupo)
+                sub_ped = sum(core._n(r.get("qtd_ja_pedida")) for r in grupo)
+                gtxt = (f"{gnome}   ·   {len(grupo)} itens   ·   Estoque {_fmt_pdf(sub_val, 'money')}"
+                        f"   ·   Já pedido {_fmt_pdf(sub_ped, 'int')} un")
             data.append([gtxt] + [""] * (ncols - 1))
             group_rows.append(len(data) - 1)
             for r in grupo:
@@ -1619,7 +1669,13 @@ def _gerar_pdf(view, linhas, group_by=None):
 @bp.route("/api/export/<view>.pdf")
 def api_export_pdf(view):
     _, linhas = _export_data(view)
-    pdf = _gerar_pdf(view, linhas, group_by="fornecedor" if view == "produtos" else None)
+    # Reposição agrupa igual ao Produtos (pedido do diretor 07/2026), mas ordenada pelo DINHEIRO
+    # a comprar (c/ impostos = a régua do Orçamento), não pelo nome do fornecedor.
+    if view == "reposicao":
+        pdf = _gerar_pdf(view, linhas, group_by="fornecedor",
+                         group_valor="valor_sugerido_nf", group_rotulo="A comprar")
+    else:
+        pdf = _gerar_pdf(view, linhas, group_by="fornecedor" if view == "produtos" else None)
     return Response(pdf, mimetype="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="estoque_{view}.pdf"'})
 

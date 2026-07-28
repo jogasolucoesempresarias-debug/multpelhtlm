@@ -99,6 +99,22 @@ const abastLabel=arr=>!arr.length?'Todos':(arr.length===1?(ABAST_LABELS[arr[0]]|
 const MARGEM_LABELS={neg:'Negativa (<0%)',b0:'0–10%',b10:'10–20%',b20:'20–30%',b30:'30%+',sv:'Sem venda'};
 const margemLabel=arr=>!arr.length?'Todas':(arr.length===1?(MARGEM_LABELS[arr[0]]||arr[0]):`${arr.length} faixas`);
 const margemBucket=p=>{const m=p.margem; return m==null?'sv':(m<0?'neg':(m<10?'b0':(m<20?'b10':(m<30?'b20':'b30'))));};
+// ───────── valor a comprar: FONTE ÚNICA de todas as telas ─────────
+// Régua da NF (mercadoria + IPI/ST previstos) sobre a sugestão em CAIXA FECHADA — a mesma da aba
+// Abastecimento. Antes o Cockpit e o Estoque zerado calculavam `sugestao_compra × custo_unit` na
+// mão: divergiam do Abastecimento em DUAS dimensões (caixa fechada e imposto). Decisão do diretor
+// 07/2026: todo lugar que mostra "quanto vou gastar" fala a régua do Orçamento (PCPEDIDO[VLTOTAL]).
+const valReporNF=p=>(p.valor_sugerido_nf!=null?p.valor_sugerido_nf:(p.valor_sugerido_liq||0));
+const valReporMerc=p=>(p.valor_sugerido_liq||0);
+// quanto do valor está apoiado em alíquota ESTIMADA (item sem regra fiscal p/ aquela origem).
+// Em R$, não em contagem de itens: 5% dos itens pode ser 0,5% ou 30% do dinheiro.
+const valReporIncerto=p=>(p.trib_firme===false?valReporNF(p):0);
+// rodapé padrão da incerteza — some quando tudo é firme (só aparece quando importa)
+function notaIncerteza(vNF,vInc){
+  if(!(vInc>0)||!(vNF>0)) return '';
+  const pct=vInc/vNF*100;
+  return ` <small class="muted" title="Itens sem regra fiscal cadastrada para a UF deste fornecedor — a alíquota é estimativa. Confira o IPI ao gerar o pedido.">· ${money(vInc)} c/ imposto estimado (${dec(pct,1)}%)</small>`;
+}
 // valor em "N cx · M un" (só unidades quando não há caixa ou ≤0) — colunas de estoque em caixa
 const cxUn=(v,caixa)=>{ if(v==null) return '—'; const c=caixa||1; return (c>1&&v>0)?`${int(Math.round(v/c))} cx · ${int(v)} un`:int(v); };
 function spark(serie){ // mini sparkline SVG de 3 meses
@@ -405,7 +421,7 @@ function agg(P){
     parado:{atencao:cnt('status_parado','atencao'),critico:cnt('status_parado','critico'),muito_critico:cnt('status_parado','muito_critico')},
     ruptura:{total:rupt.length,valor:sum(rupt,p=>p.valor),f0_15:rupt.filter(p=>p.status_ruptura==='0-15').length,
       zerados:zerados.length,valor_zerados:sum(zerados,p=>p.valor)},
-    repor:{n:repor.length,valor:sum(repor,p=>(p.sugestao_compra||0)*(p.custo_unit||0)),qt:sum(repor,p=>p.sugestao_compra)}};
+    repor:{n:repor.length,valor:sum(repor,valReporNF),merc:sum(repor,valReporMerc),incerto:sum(repor,valReporIncerto),qt:sum(repor,p=>p.sugestao_compra)}};
 }
 
 /* ───────── charts / tabela ───────── */
@@ -464,7 +480,14 @@ function exportQS(){
   if(f.xyz && f.xyz.length) p.set('xyz',f.xyz.join(','));
   if(f.fornec) p.set('fornec',f.fornec);
   if(f.depto) p.set('depto',f.depto);
-  if(f.abast.length && S.view==='produtos') p.set('abast',f.abast.join(','));
+  // filtros do Explorador de produtos — os 4 têm de viajar, senão o PDF sai com o universo
+  // inteiro enquanto a tela mostra o recorte (era o caso de margem/cobMax/semPed).
+  if(S.view==='produtos'){
+    if(f.abast.length) p.set('abast',f.abast.join(','));
+    if((f.margem||[]).length) p.set('margem',f.margem.join(','));
+    if(f.cobMax!==''&&f.cobMax!=null&&!isNaN(+f.cobMax)) p.set('cob_max',f.cobMax);
+    if(f.semPed) p.set('sem_ped','1');
+  }
   if(S.view==='vencidos'){ if(S.venMes) p.set('ven_mes',S.venMes); if(S.venPer&&S.venPer!=='tudo') p.set('ven_per',S.venPer); }
   if(S.view==='leadtime'&&S.ltMin) p.set('lt_min',S.ltMin);
   if(f.valDias && S.view==='validade') p.set('val_dias',f.valDias);
@@ -622,7 +645,9 @@ function renderEstoqueZero(P){
   const neg=z.filter(p=>(p.qtdisp||0)<0), comGiro=z.filter(p=>(p.giro_dia||0)>0), comPed=z.filter(p=>(p.qtd_ja_pedida||0)>0);
   // impacto financeiro da ruptura (a custo): volume parado/mês + custo de repor até o alvo
   const vendaPerdida=comGiro.reduce((s,p)=>s+(p.venda_perdida||0),0);
-  const custoRepor=comGiro.reduce((s,p)=>s+(p.sugestao_compra||0)*(p.custo_unit||0),0);
+  // c/ impostos e em caixa fechada — mesma régua da aba Abastecimento (ver valReporNF)
+  const custoRepor=comGiro.reduce((s,p)=>s+valReporNF(p),0);
+  const custoReporInc=comGiro.reduce((s,p)=>s+valReporIncerto(p),0);
   const cols=[colCod,colProd,colForn,{key:'curva_abc',label:'ABC',badge:true},
     {key:'codcomprador',label:'Comprador',fmt:(v,p)=>esc((p.comprador||'').split(' ')[0]||'—')},
     {key:'qtdisp',label:'Estoque',num:true,html:p=>cxUn(p.qtdisp,p.caixa)},
@@ -639,7 +664,7 @@ function renderEstoqueZero(P){
        ${kpi('Com giro (ruptura real)',int(comGiro.length),'precisam repor',C.orange)}
        ${kpi('Já com pedido',int(comPed.length),'aguardando entrega',C.accent)}
        ${kpi('Venda perdida (ruptura)',money(vendaPerdida),'dias em ruptura × giro × preço de venda',C.purple)}
-       ${kpi('Custo de reposição',money(custoRepor),'repor até o alvo',C.accent2)}
+       ${kpi('Custo de reposição',money(custoRepor),'repor até o alvo · c/ impostos',C.accent2)}
      </div>
      <div class="fb-group" style="margin:0 0 6px"><label>Filtrar status</label>
        <select id="ez-status" class="fb-control" style="width:auto">
@@ -708,7 +733,7 @@ function renderReposicao(P){
   // duas réguas: `valor` = mercadoria (vira preço na planilha do Winthor) e `valorNF` =
   // mercadoria + IPI + ST previstos, que é o que o Orçamento mede (PCPEDIDO[VLTOTAL]).
   // O card mostra a NF em destaque: era aí que o comprador planejava R$ 39,5k e consumia R$ 45,0k.
-  const g={}; rep.forEach(p=>{(g[p.codfornec]=g[p.codfornec]||{cod:p.codfornec,forn:p.fornecedor||('Forn '+p.codfornec),itens:[],valor:0,valorNF:0,cub:0,peso:0}); g[p.codfornec].itens.push(p); g[p.codfornec].valor+=(p.valor_sugerido_liq||0); g[p.codfornec].valorNF+=(p.valor_sugerido_nf||p.valor_sugerido_liq||0); g[p.codfornec].cub+=cubItem(p); g[p.codfornec].peso+=pesoItem(p);});
+  const g={}; rep.forEach(p=>{(g[p.codfornec]=g[p.codfornec]||{cod:p.codfornec,forn:p.fornecedor||('Forn '+p.codfornec),itens:[],valor:0,valorNF:0,incerto:0,cub:0,peso:0}); g[p.codfornec].itens.push(p); g[p.codfornec].valor+=valReporMerc(p); g[p.codfornec].valorNF+=valReporNF(p); g[p.codfornec].incerto+=valReporIncerto(p); g[p.codfornec].cub+=cubItem(p); g[p.codfornec].peso+=pesoItem(p);});
   const grupos=Object.values(g).sort((a,b)=>b.valorNF-a.valorNF);
   const el=$('#v-reposicao');
   el.innerHTML=head('Abastecimento — o que comprar (por fornecedor)','reposicao')+
@@ -716,7 +741,7 @@ function renderReposicao(P){
     grupos.slice(0,40).map(gr=>`
       <div class="panel forn-grp">
         <h3><span>${esc(gr.forn)} <small class="muted">· ${gr.itens.length} itens${gr.cub>0?` · ${dec(gr.cub,2)} m³`:''}${gr.peso>0?` · ${dec(gr.peso,1)} kg`:''}</small></span>
-          <span>${gr.valorNF>gr.valor+0.005?`${money(gr.valorNF)} <small class="muted">c/ impostos · merc. ${money(gr.valor)}</small>`:money(gr.valor)} <button class="btn sm primary rowact" data-fornped="${gr.cod}">Gerar pedido</button></span></h3>
+          <span>${gr.valorNF>gr.valor+0.005?`${money(gr.valorNF)} <small class="muted">previsto c/ impostos · merc. ${money(gr.valor)}</small>`:money(gr.valor)}${notaIncerteza(gr.valorNF,gr.incerto)} <button class="btn sm primary rowact" data-fornped="${gr.cod}">Gerar pedido</button></span></h3>
         <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Embalagem${tip('reposicao','Embalagem')}</th><th class="num">Disp.${tip('reposicao','Disp.')}</th><th class="num">Já ped.${tip('reposicao','Já ped.')}</th><th class="num">Cob.proj${tip('reposicao','Cob.proj')}</th><th class="num">Giro/mês${tip('reposicao','Giro/mês')}</th><th class="num">Sugerido (cx)${tip('reposicao','Sugerido (cx)')}</th><th class="num">m³${tip('reposicao','m³')}</th><th class="num">Valor sug.${tip('reposicao','Valor sug.')}</th><th class="num">Imp.${tip('reposicao','Imp.')}</th><th>Status${tip('reposicao','Status')}</th></tr></thead>
         <tbody>${gr.itens.sort((a,b)=>(a.cobertura_proj||0)-(b.cobertura_proj||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td>${embCell(p)}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida):'—'}</td><td class="num">${cob(p.cobertura_proj)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${sugCxN(p)}</td><td class="num">${cubItem(p)>0?dec(cubItem(p),3):'—'}</td><td class="num">${money(p.valor_sugerido_liq)}</td><td class="num">${impCell(p)}</td><td>${statExec(p.status_exec)}</td></tr>`).join('')}</tbody></table></div>
       </div>`).join('')+
@@ -1243,11 +1268,11 @@ function renderRupturaComprador(P){
   // agrega métricas de ruptura por uma chave (comprador OU curva ABC de venda)
   function agrupa(keyFn,nomeFn){
     const g={};
-    P.forEach(p=>{const kk=keyFn(p); const o=g[kk]=g[kk]||{k:kk,nome:nomeFn(p,kk),n:0,rupt:0,semped:0,perdida:0,repor:0,diasSum:0,diasN:0};
+    P.forEach(p=>{const kk=keyFn(p); const o=g[kk]=g[kk]||{k:kk,nome:nomeFn(p,kk),n:0,rupt:0,semped:0,perdida:0,repor:0,reporInc:0,diasSum:0,diasN:0};
       o.n++;
       // sugestão de compra = MESMA da aba Abastecimento: valor_sugerido_liq (caixa fechada) de
       // TODO item a comprar (sugestao_cx>0, giro>0, não suspenso), não só os zerados.
-      if((p.sugestao_cx||0)>0&&(p.giro_dia||0)>0&&!p.compra_suspensa) o.repor+=(p.valor_sugerido_liq||0);
+      if((p.sugestao_cx||0)>0&&(p.giro_dia||0)>0&&!p.compra_suspensa){ o.repor+=valReporNF(p); o.reporInc+=valReporIncerto(p); }
       if((p.qtdisp||0)<=0&&(p.giro_dia||0)>0){o.rupt++; if((p.qtd_ja_pedida||0)<=0)o.semped++;
         o.perdida+=(p.venda_perdida||0);
         if(p.dias_sem_venda!=null){o.diasSum+=p.dias_sem_venda; o.diasN++;}}});
@@ -2088,9 +2113,10 @@ function modalPedido(opts){
   // continua guardando a MERCADORIA; o valor_nf vai separado no payload.
   const linhaNF=x=>(+x.qtd||0)*(+x.custo_unit||0)*(1+((+x.perc_ipi||0)+(+x.perc_st||0))/100);
   const totalNF=()=>itens.reduce((s,x)=>s+linhaNF(x),0);
-  const rodape=()=>{const t=total(),nf=totalNF();
+  const incertoNF=()=>itens.reduce((s,x)=>s+(x.trib_firme===false?linhaNF(x):0),0);
+  const rodape=()=>{const t=total(),nf=totalNF(),inc=incertoNF();
     return nf>t+0.005
-      ? `Mercadoria: <b>${money(t)}</b> · impostos ${money(nf-t)} · <b>Total da NF ${money(nf)}</b> · ${itens.length} itens`
+      ? `Mercadoria: <b>${money(t)}</b> · impostos ${money(nf-t)} · <b>Total da NF previsto ${money(nf)}</b> · ${itens.length} itens${notaIncerteza(nf,inc)}`
       : `Total: <b>${money(t)}</b> · ${itens.length} itens`;};
   // atualiza só o rodapé + o campo Valor (sem reconstruir a tabela → não rouba o foco do input)
   function refreshTotals(){
@@ -2269,7 +2295,7 @@ async function openProduto(cod){
       <div class="lote-row"><span>Já pedido (aberto)</span><span>${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida)+' un':'—'}</span></div>
       <div class="lote-row"><span>Estoque projetado</span><span>${int(p.estoque_projetado)} <small class="muted">(cob. ${cob(p.cobertura_proj)})</small></span></div>
       <div class="lote-row"><span>Estoque alvo</span><span>${int(p.est_alvo)}</span></div>
-      <div class="lote-row"><span><b>Sugestão de compra</b></span><span><b>${sugCxN(p)}</b> ${money(p.valor_sugerido_liq)}</span></div>
+      <div class="lote-row"><span><b>Sugestão de compra</b></span><span><b>${sugCxN(p)}</b> ${money(valReporNF(p))} <small class="muted">c/ imp.${p.trib_firme===false?' ≈':''} · merc. ${money(valReporMerc(p))}</small></span></div>
       <div class="lote-row"><span>Status</span><span>${statExec(p.status_exec)}</span></div>
       ${planoDrawer(p.plano,p)}
       ${enderecosDrawer(j.enderecos)}
