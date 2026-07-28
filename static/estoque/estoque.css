@@ -136,6 +136,19 @@ h2.section { font-size: 1rem; margin: 4px 0 14px; font-weight: 700; }
 
 /* ───── tables ───── */
 .tbl-wrap { overflow: auto; max-height: calc(100vh - var(--stick-top, 120px) - 130px); border-radius: 11px; border: 1px solid var(--border); }
+/* Barra de rolagem das tabelas: grossa e com contraste (pedido do diretor 07/2026 — a barra fina
+   do sistema é difícil de acertar com o mouse, e as tabelas largas dependem dela). 14px é o
+   mínimo confortável p/ arrastar; o polegar usa --text-dim p/ aparecer nos DOIS temas (cor
+   cravada sumiria no claro ou no escuro). `scrollbar-*` cobre o Firefox, `::-webkit-*` o resto. */
+.tbl-wrap { scrollbar-width: auto; scrollbar-color: var(--text-dim) transparent; }
+.tbl-wrap::-webkit-scrollbar { width: 14px; height: 14px; }
+.tbl-wrap::-webkit-scrollbar-track { background: var(--surface2); border-radius: 8px; }
+.tbl-wrap::-webkit-scrollbar-thumb {
+  background: var(--text-dim); border-radius: 8px;
+  border: 3px solid var(--surface2);   /* “casca” que afina o polegar sem afinar a área de clique */
+}
+.tbl-wrap::-webkit-scrollbar-thumb:hover { background: var(--text); }
+.tbl-wrap::-webkit-scrollbar-corner { background: var(--surface2); }
 table { width: 100%; border-collapse: collapse; font-size: .78rem; }
 thead th {
   text-align: left; padding: 10px 9px; background: var(--surface2); color: var(--text-dim);

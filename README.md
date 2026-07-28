@@ -110,6 +110,12 @@ ciclo menor que o lead = pedido novo antes do anterior chegar.
 - ⚠️ **A aba Fornecedores é calculada DUAS vezes** — no front (`renderFornecedores`, para os
   filtros responderem sem round-trip) e no back (`core.fornecedores`, para o export). Coluna nova
   entra nos dois, senão o Excel/PDF diverge da tela.
+- ⚠️ **Enquanto o `/api/fornecedores_extra` não chega, o crescimento sai `—`, NUNCA o cálculo
+  antigo.** A 1ª versão caía no somatório local como fallback — ou seja, mostrava o número
+  **bugado** (ano anterior truncado) durante a carga, e **para sempre** se o endpoint falhasse,
+  sem avisar. Número errado que parece plausível é pior que célula vazia, ainda mais um que chega a
+  inverter o sinal. Hoje são 3 estados explícitos: carregando → `—` + aviso; falha → `—` + aviso em
+  vermelho; pronto → valor correto.
 - 🩹 **Crescimento (YoY): NÃO somar `venda_ano_ant` dos produtos da tela.** Bug achado pelo diretor
   em 07/2026 e corrigido em `core.yoy_fornecedor`. A tela só tem o que está no **snapshot de
   estoque ATUAL**: o numerador saía completo (o que vende hoje está no catálogo hoje) e o
@@ -138,6 +144,10 @@ Consome no dataset **Estoque**: **PCPEDIDO/PCITEM** (pedido real), **PCEMBALAGEM
 Doc completa das fórmulas em **`docs/estoque/planilha_v3.md`**.
 
 - **Estoque (Disponível/QTDISP)** = gerencial líquido `QTESTGER − avaria(QTBLOQUEADA) − reserva(QTRESERV)`, filiais 3+5. Endereçado (`PCESTENDERECO`, RUA≠99) só na validade/FEFO.
+- **Última entrada × última saída** (`PCEST[DTULTENT]`/`[DTULTSAIDA]`) viajam no produto e aparecem
+  no drawer 360°. Pedido do diretor 07/2026: só com a saída dá pra ver que o item não gira, mas não
+  se é **estoque velho parado** ou **compra recente errada** — a entrada separa os dois. Ex. real:
+  cód 69174, entrada há 243d, saída há 15d, cobertura 753d → estoque velho, não compra ruim.
 - **Giro** = média 3 meses (`QTVENDMES1..3`/3), toggle p/ forecast (RCA). **Custo** = `CUSTOFIN`. **Comprador** = `PCFORNEC.CODCOMPRADOR → PCEMPR.NOME`.
 - **Sugestão de compra** desconta o **pedido REAL em aberto** (PCPEDIDO/PCITEM, últimos 180d) e sai **em caixas** (`QTUNIT`/PCEMBALAGEM); sem fator de caixa → em unidades (pendências em `estoque/itens_sem_fator_caixa.csv`).
 - **Orçamento** = meta `65% da venda líq. 30d` por comprador × realizado do Winthor. **Transferência entre filiais NÃO é compra**: pedido cujo fornecedor tem a **mesma raiz de CNPJ** (8 díg., contra `MULTPEL_EMPRESA`) fica fora do orçamento.

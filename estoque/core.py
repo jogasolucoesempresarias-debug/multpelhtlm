@@ -541,6 +541,11 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
 
         dt_saida = _parse_dt(r.get("dtultsaida"))
         dias_sem_venda = (hoje - dt_saida).days if dt_saida else None
+        # última ENTRADA (PCEST[DTULTENT]) — pedido do diretor 07/2026: sem ela dá pra ver que o
+        # item não sai, mas não dá pra saber se é estoque velho parado ou compra recente errada.
+        # Já vinha na query do snapshot (as duas fontes); só não era repassada.
+        dt_entrada = _parse_dt(r.get("dtultent"))
+        dias_sem_entrada = (hoje - dt_entrada).days if dt_entrada else None
 
         # fornecedor / comprador
         fornec_cod = cad.get("CODFORNEC")
@@ -761,6 +766,8 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "excesso_real": excesso_real,
             "dias_sem_venda": dias_sem_venda,
             "dtultsaida": dt_saida.isoformat() if dt_saida else None,
+            "dias_sem_entrada": dias_sem_entrada,
+            "dtultent": dt_entrada.isoformat() if dt_entrada else None,
             "cv": _round(cv, 3) if cv is not None else None,
             "xyz": xyz,
             "lead_efetivo": _round(lead),

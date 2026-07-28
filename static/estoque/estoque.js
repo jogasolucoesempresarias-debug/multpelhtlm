@@ -1150,15 +1150,15 @@ function renderABCXYZ(P){
    Buscados SÓ quando a aba abre (não no snapshot — ver api_snapshot no routes.py) e cacheados por
    unidade+período. Enquanto não chegam, devolve null e a aba renderiza sem as colunas; quando
    chegam, dispara um render(). Falha → {} (a aba nunca quebra por causa disto). */
-const _fx={key:null,map:null,loading:null};
+const _fx={key:null,map:null,loading:null,erro:false};
 function fornExtra(){
   const key=S.unidade+'|'+S.vperiodo;
   if(_fx.key===key) return _fx.map;
   if(_fx.loading!==key){
     _fx.loading=key;
     getJSON('/estoque/api/fornecedores_extra?'+serverQS())
-      .then(o=>{_fx.key=key;_fx.map=o.extra||{};})
-      .catch(()=>{_fx.key=key;_fx.map={};})       // degrada: sem colunas, aba viva
+      .then(o=>{_fx.key=key;_fx.map=o.extra||{};_fx.erro=false;})
+      .catch(()=>{_fx.key=key;_fx.map={};_fx.erro=true;})
       .finally(()=>{_fx.loading=null; if(S.view==='fornecedores') render();});
   }
   return null;
@@ -1180,9 +1180,12 @@ function renderFornecedores(P){
     // crescimento: régua COMPLETA do servidor (todos os produtos vendidos nas duas janelas).
     // O somatório local só enxerga o que está em estoque HOJE — o ano anterior sairia truncado
     // e o crescimento inflado (era o bug: 6 fornecedores chegavam a inverter o sinal).
+    // 3 estados explícitos. NUNCA cair no somatório local como fallback: ele é justamente o
+    // cálculo bugado (ano anterior truncado pelo snapshot). Mostrar "—" enquanto não há a régua
+    // completa é honesto; mostrar o número velho é pior que não mostrar nada — ele chega a
+    // inverter o sinal, e o usuário não tem como saber que está olhando um valor provisório.
     const temYoY=ex.venda_ant_yoy!=null&&+ex.venda_ant_yoy>0;
-    const cresc=temYoY?((+ex.venda_yoy-+ex.venda_ant_yoy)/+ex.venda_ant_yoy*100)
-                      :(o.vendaAnt>0?((o.venda-o.vendaAnt)/o.vendaAnt*100):null);
+    const cresc=temYoY?((+ex.venda_yoy-+ex.venda_ant_yoy)/+ex.venda_ant_yoy*100):null;
     return{...o,pv,pe,idx,cobertura,margem:o.venda?o.lucro/o.venda*100:null,
       n_pedidos:ex.n_pedidos||0, ciclo_dias:ex.ciclo_dias==null?null:ex.ciclo_dias,
       verba, verba_campanha:+ex.verba_campanha||0,
@@ -1227,7 +1230,7 @@ function renderFornecedores(P){
          ${Object.keys(CLS).map(k=>`<option value="${k}" ${S.cli.fornClasse===k?'selected':''}>${CLS[k]}</option>`).join('')}
        </select></div>
      <div class="count-line">Índice = % na <b>venda (R$)</b> ÷ % no <b>estoque (R$)</b> (&gt;1 = vende mais do que pesa em estoque). <b>Ruptura</b> = vende mas cobertura &lt; ${lead}d (quase sem estoque) — não é performance.</div>
-     <div class="count-line">${exLoading?'<b>Carregando ciclo de compras e verba…</b> ':''}<b>Compras</b>, <b>Venda</b>, <b>Lucro</b> e <b>Verba</b> seguem o período do seletor <b>Venda</b> do topo (hoje: ${({mes:'mês atual',['90d']:'últimos 90d',['6m']:'6 meses',['12m']:'12 meses'})[S.vperiodo]||'período'}) — por isso lucro e verba somam na mesma régua. O <b>Ciclo</b> é sempre apurado em <b>12 meses</b>: é comportamento do fornecedor, não recorte de tela. O <b>Cresc. AA</b> compara as duas janelas <b>completas</b> do fornecedor (todo produto vendido, inclusive o que saiu de linha) — sem isso o ano anterior sairia truncado e o crescimento inflado.${crIgnora.length?` <b>⚠ Filtro ativo (${esc(crIgnora.join(', '))}): o Cresc. AA continua sendo o do fornecedor inteiro</b>, não do recorte.`:''}${vbCamp>0?` ⚠ ${money(vbCamp)} da verba do período é <b>“Premiações e campanhas”</b> (não é redução de custo) e <b>está incluída</b> no “Lucro c/ verba” — refinamento pendente.`:''}</div>
+     <div class="count-line">${exLoading?'<b>Carregando ciclo de compras, verba e crescimento…</b> essas colunas aparecem em instantes. ':(_fx.erro?'<b style="color:'+C.red+'">⚠ Não foi possível carregar ciclo de compras, verba e crescimento</b> — as colunas ficam vazias em vez de mostrar número desatualizado. Recarregue a página. ':'')}<b>Compras</b>, <b>Venda</b>, <b>Lucro</b> e <b>Verba</b> seguem o período do seletor <b>Venda</b> do topo (hoje: ${({mes:'mês atual',['90d']:'últimos 90d',['6m']:'6 meses',['12m']:'12 meses'})[S.vperiodo]||'período'}) — por isso lucro e verba somam na mesma régua. O <b>Ciclo</b> é sempre apurado em <b>12 meses</b>: é comportamento do fornecedor, não recorte de tela. O <b>Cresc. AA</b> compara as duas janelas <b>completas</b> do fornecedor (todo produto vendido, inclusive o que saiu de linha) — sem isso o ano anterior sairia truncado e o crescimento inflado.${crIgnora.length?` <b>⚠ Filtro ativo (${esc(crIgnora.join(', '))}): o Cresc. AA continua sendo o do fornecedor inteiro</b>, não do recorte.`:''}${vbCamp>0?` ⚠ ${money(vbCamp)} da verba do período é <b>“Premiações e campanhas”</b> (não é redução de custo) e <b>está incluída</b> no “Lucro c/ verba” — refinamento pendente.`:''}</div>
      <!-- freeze2: Cód + Fornecedor ficam presos ao rolar lateralmente. Virou necessário quando a
           aba ganhou as 6 colunas de ciclo/verba: sem isso o nome sai da tela antes do "Lucro c/
           verba" e a leitura da linha se perde. Mesmo mecanismo já usado na aba Produtos. -->
@@ -2259,6 +2262,7 @@ async function openProduto(cod){
       <div class="lote-row"><span>Abastecimento</span><span>${badge(p.status_abast)}</span></div>
       <div class="lote-row"><span>Ruptura</span><span>${p.status_ruptura?badge('0-15',p.status_ruptura+'d'):'—'}</span></div>
       <div class="lote-row"><span>Parado</span><span>${p.status_parado?badge(p.status_parado):badge('ok','ok')}</span></div>
+      <div class="lote-row"><span>Última entrada</span><span>${dt(p.dtultent)} ${p.dias_sem_entrada!=null?'('+p.dias_sem_entrada+'d)':''}</span></div>
       <div class="lote-row"><span>Última saída</span><span>${dt(p.dtultsaida)} ${p.dias_sem_venda!=null?'('+p.dias_sem_venda+'d)':''}</span></div>
       <div class="d-sec">Abastecimento (lead ${int(p.lead_efetivo)}d)</div>
       <div class="lote-row"><span>Embalagem</span><span>${embCell(p)}</span></div>
