@@ -1307,6 +1307,12 @@ def _export_data(view):
                 "n_sem_pedido", "pct_sem_pedido", "venda_perdida", "custo_reposicao"]
     elif view == "desempenho":
         linhas = _desempenho_data(request.args.get("venda_periodo", "mes"), _hoje(), _filiais_venda())["compradores"]
+        # única view do catálogo que não passa por `_aplicar_filtros_cliente` (o grão já é o
+        # comprador, não o produto) — sem isto o email do comprador vinculado sairia com a
+        # tabela de TODOS os compradores, expondo o desempenho dos colegas.
+        cc = request.args.get("comprador_cod")
+        if cc:
+            linhas = [l for l in linhas if str(l.get("codcomprador")) == cc]
         cols = ["ranking", "comprador", "fornecedores", "clientes_pos", "venda_liquida",
                 "lucro_bruto", "margem", "devolucao", "part_receita", "part_lucro",
                 "yoy", "yoy_lucro", "status_lucro"]

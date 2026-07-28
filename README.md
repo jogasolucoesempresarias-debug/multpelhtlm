@@ -458,11 +458,17 @@ GitHub Actions ficar verde e dê **Update/Re-pull** na stack.
 
 ## 📧 Email de Compras
 
-- **16 relatórios** (todos com PDF+XLSX já prontos via `_export_data`/`_gerar_pdf`). Catálogo único
+- **17 relatórios** (todos com PDF+XLSX já prontos via `_export_data`/`_gerar_pdf`). Catálogo único
   em **`estoque/relatorios.py`** (Admin e cron leem do mesmo lugar).
 - Admin marca por usuário quais recebe; reusa horário/frequência do cron. ⚠️ O recorte por comprador
   vai na **query string** do contexto simulado (`estoque/emails.py`) — o estoque lê filtro de
   `request.args`, não da sessão (diferente do Comercial).
+- ⚠️ **O parâmetro é `comprador_cod`, não `comprador`.** Até 07/2026 o email mandava `comprador`,
+  que ninguém lê no export: o comprador vinculado recebia relatório **rotulado com o nome dele e
+  com os dados da empresa toda** (inclusive o desempenho dos colegas). Todas as views recortam por
+  `comprador_cod` — via `_aplicar_filtros_cliente` ou filtro próprio (vencidos/leadtime/verbas/
+  **desempenho**). Exceções legítimas: `conferencia` e `vazias` (grão é endereço, não tem
+  comprador). Gate: `tests/test_email_comprador.py`.
 
 ---
 

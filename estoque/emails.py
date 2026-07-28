@@ -44,7 +44,11 @@ def gerar_anexos(app, views, codcomprador=None, data_iso=""):
 
     qs = {}
     if codcomprador not in (None, "", 0):
-        qs["comprador"] = str(codcomprador)
+        # ⚠️ O parâmetro é `comprador_cod` — é esse que `_aplicar_filtros_cliente` (e os filtros
+        # próprios de vencidos/leadtime/verbas) leem. Até 07/2026 isto ia como `comprador`, que
+        # NINGUÉM lê no export: o comprador recebia um relatório rotulado com o nome dele e com
+        # os dados da EMPRESA TODA. Gate: tests/test_email_comprador.py.
+        qs["comprador_cod"] = str(codcomprador)
 
     anexos, erros = [], []
     for view in rel.normalizar(views):
