@@ -83,6 +83,39 @@ Navegação em 2 níveis: **Visão · Comprar · Pedidos · Estoque · Análise*
 - **Estoque** — Cobertura, Parado, Validade (FEFO), Vencidos, Ruptura por comprador, Ocupação.
 - **Análise** — Desempenho comercial, Compras × Vendas, Fornecedores, ABC-XYZ, Produtos, Qualidade da base.
 
+**Aba Fornecedores — ciclo de compras + lucro com verba** (07/2026). Quatro colunas novas:
+`Compras` (quantas vezes compramos no período), `Ciclo 12m` (de quanto em quanto tempo),
+`Lucro bruto` e `Lucro c/ verba`. Cruzar **Ciclo × Lead time** é o que a aba passa a responder:
+ciclo menor que o lead = pedido novo antes do anterior chegar.
+- ⚠️ **Janelas diferentes de propósito.** `Compras`/`Venda`/`Lucro`/`Verba` seguem o seletor
+  **Venda** do topo (é o que permite somar lucro + verba na mesma régua — somar lucro de 1 mês com
+  verba de 12 meses é o erro fácil e caro aqui). O **Ciclo** é sempre **12m**: é comportamento do
+  fornecedor, e em janela curta quase todo fornecedor teria 1 pedido só.
+- ⚠️ **Ciclo conta DATAS distintas, não pedidos** — o mesmo fornecedor recebe vários NUMPED no
+  mesmo dia (um por filial/condição) e contá-los criaria intervalos de 0 dia. `Compras` conta
+  pedidos porque a pergunta é outra. <2 compras em 12m → ciclo `—` (nunca 0).
+- **Verba = NEGOCIADA** (`PCVERBA.VALOR` por emissão), não aplicada: aplicado é evento de
+  caixa/acerto e descolaria da competência do lucro. Hoje entra **toda** verba, inclusive
+  `200013 Premiações e campanhas` (decisão do diretor: refinar depois) — mas a parcela de campanha
+  viaja separada (`verba_campanha`) e a tela **avisa o valor**; o opt-out é trocar
+  `core.CONTAS_VERBA_CAMPANHA` de rótulo para filtro.
+- ⚠️ **`Lucro bruto` NÃO se recalcula como `venda × margem`** (foi como o pedido veio escrito).
+  `margem` é `lucro ÷ venda` arredondada a 1 casa — o caminho de volta reintroduz erro e faria a
+  aba divergir do Comercial, que bate centavo-a-centavo com o RCA. O `lucro` já era agregado e só
+  não era exibido.
+- ⚠️ **Custo zero de query, mas fora do `/api/snapshot`.** Reusa os caches do Lead time
+  (`_leadtime_raw`) e das Verbas (`_verbas_raw`). Fica no **`/api/fornecedores_extra`**, buscado só
+  quando a aba abre — pendurar no snapshot (que TODA tela carrega) faria a tela inicial pagar por
+  duas abas que a maioria não abre. Gate: `tests/test_fornecedores_ciclo_verba.py`.
+- ⚠️ **A aba Fornecedores é calculada DUAS vezes** — no front (`renderFornecedores`, para os
+  filtros responderem sem round-trip) e no back (`core.fornecedores`, para o export). Coluna nova
+  entra nos dois, senão o Excel/PDF diverge da tela.
+
+**Meta de ruptura — uma meta por curva** (07/2026). Era A (2%) × B+C (5%); virou **A / B / C**
+(2% / 5% / 10%), editáveis em ⚙ Parâmetros. ⚠️ Separar **afrouxa o placar sem ninguém mexer na
+operação**: os itens C que estouravam o teto do bloco passam a ter orçamento próprio. Comparar
+antes×depois uma vez, senão parece ganho operacional.
+
 ### Metodologia de dados do Compras (v3) — o essencial
 
 Consome no dataset **Estoque**: **PCPEDIDO/PCITEM** (pedido real), **PCEMBALAGEM** (caixa/cubagem),
@@ -107,7 +140,19 @@ Doc completa das fórmulas em **`docs/estoque/planilha_v3.md`**.
 - ⚠️ **Vencidos: join por `NUMTRANSVENDA`, NUNCA por `NUMNOTA`.** `NUMNOTA` repete ao longo dos anos e infla o resultado ~3,5× (o `SELECT DISTINCT` **não** corrige).
 - ⚠️ **ABC-XYZ: as `<option>` do `#f-xyz` precisam de `value` explícito (`X`/`Y`/`Z`).** Sem ele o filtro casa nada e devolve **zero produtos em silêncio**.
 - ⚠️ **Pedido de compra: o preço converte JUNTO com a quantidade** (o Winthor faz `B×C` literal). Converter só a qtd colocaria o pedido no ERP com valor ~50× menor. Fonte única `core.item_master` (PDF + planilha).
-- ⚠️ **Cobertura ideal:** fronteira **≥45d inclusiva** (`core.resumo_estoque_ideal`); `limiar_dias=45` está fixo, não ligado ao "Cobertura alvo" do ⚙ Parâmetros.
+  Por isso o campo **"Caixas"** do modal de pedido (07/2026, pedido do diretor — o comprador raciocina
+  em caixa) é só uma **view**: ele escreve `qtd = caixas × QTUNITCX` e **a unidade continua a única
+  fonte de verdade** no modelo e no payload. **Nada em caixa sai para o backend** — se sair, cai
+  exatamente nesta armadilha. Item sem fator de caixa mostra "—" e só aceita unidade.
+- ⚠️ **Cobertura ideal:** fronteira **inclusiva** (`core.resumo_estoque_ideal`) — o item que pousa
+  exatamente no limiar já é "ideal". Desde 07/2026 o limiar e a meta são **parâmetros**
+  (`ideal_dias`=45 / `ideal_meta_pct`=90, ⚙ Parâmetros → "Estoque ideal") para o diretor calibrar
+  antes de fixar o número. **Continuam desligados do "Cobertura alvo"** de propósito: um é o alvo de
+  COMPRA, o outro é só a RÉGUA DE MEDIÇÃO do Painel gerencial — mexer num não mexe no outro.
+  Clamp da querystring em `core.regua_estoque_ideal` (limiar 0 faria tudo virar "ideal" em silêncio).
+  Gate: `tests/test_estoque_ideal.py` (11 testes, incluindo "sem params sai igual ao de antes").
+  ⚠️ Os parâmetros são **por navegador** (`localStorage`): enquanto o valor não for fechado, o
+  painel pode significar coisas diferentes para cada pessoa. Ao definir, promover a default do servidor.
 - ⚠️ **A planilha de importação leva o preço LÍQUIDO — nunca com IPI.** O Winthor calcula o imposto
   sozinho na importação (foi assim que 132,05/caixa virou NF de R$ 44.982,01). Mandar preço com
   imposto faria o ERP aplicar **IPI sobre IPI**: pedido ~15% inflado e custo de entrada errado.
@@ -208,7 +253,7 @@ ANALYTICS_DB_NAME=joga_demo   # banco analítico (ANALYTICS_DB_* faz fallback pr
 > demo **não envelhece** sem regenerar. O default powerbi usa `TODAY()` normal.
 
 **Gates:** `tests/test_provider_*.py` (Dashboard, Comercial, Metas, Mix, Radar, Estoque, RBAC) +
-`test_medida_compat.py`. Baseline **242 passam / 3 falham** (as 3 conhecidas de fixture de data).
+`test_medida_compat.py`. Baseline **266 passam / 3 falham** (as 3 conhecidas de fixture de data).
 
 ---
 
@@ -263,7 +308,7 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 ├── estoque/provider_sql.py         # 🆕 modo postgres do Compras
 ├── docker-compose.demo.yml         # 🆕 stack da instância DEMO (Portainer)
 ├── _seed_demo/                     # 🆕 base sintética reprodutível (joga_demo) + bootstrap + seeder
-└── tests/                          # pytest (242 passam; 3 falham por fixture de data — não é regressão)
+└── tests/                          # pytest (266 passam; 3 falham por fixture de data — não é regressão)
 ```
 
 ---
@@ -275,7 +320,7 @@ cp .env.example .env        # preencher (ver variáveis abaixo)
 docker compose -f docker-compose.dev.yml up -d redis
 python -X utf8 init_db.py   # cria/migra schema + admin default (admin@multpel.com.br / admin123)
 python -X utf8 server.py    # http://localhost:5000
-pytest -q                   # 242 passam, 3 falham (fixture de data — não é regressão)
+pytest -q                   # 266 passam, 3 falham (fixture de data — não é regressão)
 ```
 
 Variáveis novas da fusão no `.env` (além das do Power BI/DB/Redis/Resend):
@@ -398,7 +443,7 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
   `PUT /api/me/area-padrao` · `PUT /api/me/tema` · `GET /portal`
 - **Compras (blueprint):** tudo sob `/estoque/...` — `/estoque/`, `/estoque/api/snapshot`,
   `/estoque/api/filtros`, `/estoque/api/orcamento`, `/estoque/api/export/<view>.{csv,xlsx,pdf}`,
-  `/estoque/api/pedidos`, etc. (25 rotas).
+  `/estoque/api/pedidos`, `/estoque/api/fornecedores_extra` (ciclo + verba, lazy), etc.
 - **Admin:** `POST /api/admin/users/<id>/desbloquear` · `GET /api/_internal/compradores-map` ·
   `GET /api/_internal/relatorios-estoque` · `POST /api/admin/enviar-relatorio/<id>?tipo=compras`
 - (Os endpoints do Comercial — dashboard, carteira, vendedores, categorias, mix, tendências, metas —
@@ -417,7 +462,7 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 5. **Checagem de API usa `'/api/' in path`, não `startswith`** — por causa de `/estoque/api/...`.
 6. **Não editar `MultpelEstoque/`** (repo congelado) nem publicar em `:latest` sem intenção.
 7. **3 testes falham por fixture de data** (radar/mix/cohort) — pré-existentes, **não** são regressão.
-   O baseline é **242 passam / 3 falham**.
+   O baseline é **266 passam / 3 falham**.
 8. **Verificação visual de tema não confia em captura** das telas de dados (Power BI muda o conteúdo
    entre capturas) — comparar cor computada (`getComputedStyle`), não pixels.
 9. **Base nova ganha `areas=["comercial"]` por default** — libere `compras` no Admin (ou via UPDATE),

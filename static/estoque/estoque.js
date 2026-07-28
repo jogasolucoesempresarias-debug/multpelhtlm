@@ -48,7 +48,8 @@ const S = {
   unidade:'atacado', unidadeNome:'Atacado', nomesFilial:{},
   compradorNome:'',
   cli:{comprador:'',curva:[],xyz:[],fornec:'',depto:'',busca:'',abast:[],margem:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]},
-  params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1,metaA:2,metaBC:5},
+  // idealDias/idealMeta = régua do "Estoque ideal" do Painel gerencial (só mede; a compra usa `cob`)
+  params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1,metaA:2,metaB:5,metaC:10,idealDias:45,idealMeta:90},
   charts:{}, sort:{}, valFaixa:null,
   vencidos:null, vencidosQS:'', venMes:null, venPer:'2026',   // aba Vencidos: cache por QS, mês selecionado, período (2026|12m|tudo)
   leadtime:null, ltMin:5, ltOpen:new Set(), ltDet:{},   // aba Lead time: cache, mín. pedidos, drills abertos/carregados
@@ -138,8 +139,9 @@ const TIPS = {
     _title:'Placar da meta de ruptura: % de itens zerados que ainda NÃO têm pedido de compra em aberto, separado por curva de venda. Curva ABC apurada sobre os últimos 90 dias; o placar não responde aos filtros do topo (meta que muda com o filtro não é meta).',
     // rótulos são dinâmicos ("Curva A (meta 2,0%)"), então a busca usa a chave estável de `tipk`
     'Curva A':'Itens da curva A (≈80% do faturamento) zerados e ainda sem pedido de compra em aberto ÷ TOTAL de produtos do comprador na curva A. Entre parênteses, o absoluto — base pequena faz 1 item virar um % alto.',
-    'Curva B+C':'Mesma conta nas curvas B e C somadas (item sem curva entra como C). O limite é maior que o da curva A porque são itens de menor peso no faturamento.',
-    'Status':'Acima da meta se QUALQUER uma das duas curvas estourar o seu limite. Limites editáveis em ⚙ Parâmetros.',
+    'Curva B':'Mesma conta na curva B (≈15% do faturamento). Separada da C a pedido do diretor 07/2026: B e C num bloco só escondiam comportamentos diferentes.',
+    'Curva C':'Mesma conta na curva C — a cauda longa (item sem curva entra aqui). O limite é o mais frouxo das três porque é onde a ruptura custa menos.',
+    'Status':'Acima da meta se QUALQUER uma das três curvas estourar o seu limite. Limites editáveis em ⚙ Parâmetros.',
   },
   ruptura:{
     _title:'Distribuição do estoque por dias de cobertura. Cobertura = ARREDONDA.CIMA(estoque ÷ giro diário); giro 0 = não calculável (cai em 121+). Métrica oficial da planilha.',
@@ -281,6 +283,12 @@ const TIPS = {
     '% venda':'Participação do fornecedor na venda total.',
     'Índice':'% na venda ÷ % no estoque (> 1 = vende mais do que pesa em estoque).',
     'Classe':'Classificação: alta performance, equilibrado, estoque alto, ruptura ou crítico sem giro.',
+    'Compras':'Quantas vezes compramos deste fornecedor no período do seletor "Venda" (pedidos de compra distintos no Winthor). Transferência entre filiais não conta como compra.',
+    'Ciclo 12m':'De quanto em quanto tempo compramos deste fornecedor — média dos intervalos entre datas de compra, sempre nos ÚLTIMOS 12 MESES (não segue o filtro do topo: ciclo é comportamento do fornecedor, e numa janela curta quase todo fornecedor teria 1 pedido só). Compare com o Lead time: ciclo menor que o lead significa pedido novo antes do anterior chegar. "—" = menos de 2 compras em 12m.',
+    'Lucro bruto':'Venda líquida − custo dos produtos deste fornecedor no período. É o mesmo lucro que alimenta a coluna Margem (não é recalculado a partir dela).',
+    'Verba':'Verba NEGOCIADA com o fornecedor no mesmo período (PCVERBA, canceladas e estornos fora). Inclui todas as contas — inclusive "Premiações e campanhas", que não é redução de custo; refinar isso ficou para depois, por decisão do diretor.',
+    'Lucro c/ verba':'Lucro bruto + verba negociada no período. É o que o fornecedor realmente deixou. Sem verba no período, é igual ao lucro bruto.',
+    'Margem c/ verba':'(Lucro bruto + verba) ÷ venda líquida. A diferença para a Margem normal é o quanto a negociação de verba melhora o fornecedor.',
   },
   produtos:{
     _title:'Tabela completa de produtos com todos os indicadores. Filtre por abastecimento e por margem.',
@@ -316,6 +324,9 @@ function serverQS(){
   p.set('parado_atencao', S.params.parado);
   p.set('forecast', S.params.forecast?1:0); p.set('forecast_meses', S.params.fcmeses);
   p.set('forecast_sazonal', S.params.sazonal?1:0); p.set('arredonda_cx', S.params.arredondacx?1:0);
+  // régua do Estoque ideal (Painel gerencial) — vai no serverQS porque o filtrosQS() do /api/resumos
+  // é construído em cima dele; a meta viaja em % (0-100) e o servidor converte p/ fração.
+  p.set('ideal_dias', S.params.idealDias); p.set('ideal_meta_pct', S.params.idealMeta);
   return p.toString();
 }
 
@@ -1135,6 +1146,24 @@ function renderABCXYZ(P){
   $('#v-abcxyz').querySelectorAll('.axm-cell[data-key]').forEach(c=>c.onclick=()=>{const k=c.dataset.key;S.cli.curva=[k[0]];S.cli.xyz=[k[1]];syncCurvaUI();syncXyzUI();goView('produtos',{});});
 }
 
+/* Ciclo de compras + verba por fornecedor: vêm de PCPEDIDO/PCVERBA, não da posição de estoque.
+   Buscados SÓ quando a aba abre (não no snapshot — ver api_snapshot no routes.py) e cacheados por
+   unidade+período. Enquanto não chegam, devolve null e a aba renderiza sem as colunas; quando
+   chegam, dispara um render(). Falha → {} (a aba nunca quebra por causa disto). */
+const _fx={key:null,map:null,loading:null};
+function fornExtra(){
+  const key=S.unidade+'|'+S.vperiodo;
+  if(_fx.key===key) return _fx.map;
+  if(_fx.loading!==key){
+    _fx.loading=key;
+    getJSON('/estoque/api/fornecedores_extra?'+serverQS())
+      .then(o=>{_fx.key=key;_fx.map=o.extra||{};})
+      .catch(()=>{_fx.key=key;_fx.map={};})       // degrada: sem colunas, aba viva
+      .finally(()=>{_fx.loading=null; if(S.view==='fornecedores') render();});
+  }
+  return null;
+}
+
 function renderFornecedores(P){
   // Opção A: nesta aba o filtro "Curva" age pela ABC do FORNECEDOR (não do produto).
   // Agrega ignorando a curva do produto (filtered(true)) e filtra os fornecedores por ABC no fim.
@@ -1144,9 +1173,16 @@ function renderFornecedores(P){
   const lead=S.params.lead||10;
   // índice = % na VENDA (R$) ÷ % no ESTOQUE (R$) — "vende mais do que pesa". Antes usava giro em
   // unidades, distorcendo fornecedor de alto valor/baixo volume.
+  const _ex=fornExtra(), EX=_ex||{}, exLoading=(_ex===null);   // null = ainda carregando
   const F=Object.values(g).map(o=>{const pv=o.venda/tvenda*100,pe=o.valor/tv*100,idx=pe>0?pv/pe:(pv>0?999:0),cobertura=o.girodia>0?o.disp/o.girodia:null;
     let cl=(o.giro<=0&&o.venda<=0)?'critico_sem_giro':(cobertura!=null&&cobertura<lead?'ruptura':(idx>=1.2?'alta_performance':(idx>=0.8?'equilibrado':'estoque_alto')));
+    const ex=EX[o.codfornec]||{}, verba=+ex.verba||0;
     return{...o,pv,pe,idx,cobertura,margem:o.venda?o.lucro/o.venda*100:null,
+      n_pedidos:ex.n_pedidos||0, ciclo_dias:ex.ciclo_dias==null?null:ex.ciclo_dias,
+      verba, verba_campanha:+ex.verba_campanha||0,
+      // lucro já existia agregado e só não era exibido; NUNCA recalcular como venda×margem
+      // (margem vem de lucro÷venda arredondado — o caminho de volta reintroduz erro).
+      lucro_verba:o.lucro+verba, margem_verba:o.venda?((o.lucro+verba)/o.venda*100):null,
       crescimento:o.vendaAnt>0?((o.venda-o.vendaAnt)/o.vendaAnt*100):null,cl};}).sort((a,b)=>b.valor-a.valor);
   // curva ABC do fornecedor por venda (Pareto do faturamento) — mesma leitura dos produtos
   {const _tv=F.reduce((s,o)=>s+(o.venda||0),0)||1; let _ac=0;
@@ -1156,6 +1192,12 @@ function renderFornecedores(P){
     {key:'n_produtos',label:'Itens',num:true},{key:'valor',label:'Estoque',num:true,fmt:money},{key:'giro',label:'Giro/mês',num:true,fmt:int},
     {key:'cobertura',label:'Cob.',num:true,fmt:cob},
     {key:'venda',label:'Venda',num:true,fmt:money},colCresc,{key:'margem',label:'Margem',num:true,fmt:v=>v==null?'—':dec(v,1)+'%'},
+    {key:'n_pedidos',label:'Compras',num:true,fmt:v=>v?int(v)+'×':'—'},
+    {key:'ciclo_dias',label:'Ciclo 12m',num:true,fmt:v=>v==null?'—':dec(v,0)+'d'},
+    {key:'lucro',label:'Lucro bruto',num:true,fmt:money},
+    {key:'verba',label:'Verba',num:true,fmt:v=>v?money(v):'—'},
+    {key:'lucro_verba',label:'Lucro c/ verba',num:true,fmt:money},
+    {key:'margem_verba',label:'Margem c/ verba',num:true,fmt:v=>v==null?'—':dec(v,1)+'%'},
     {key:'pe',label:'% est.',num:true,fmt:v=>dec(v,1)+'%'},{key:'pv',label:'% venda',num:true,fmt:v=>dec(v,1)+'%'},
     {key:'idx',label:'Índice',num:true,fmt:v=>dec(v,2)},{key:'cl',label:'Classe',badge:true}];
   const CLS={alta_performance:'Alta performance',equilibrado:'Equilibrado',estoque_alto:'Estoque alto',ruptura:'Ruptura',critico_sem_giro:'Crítico s/ giro'};
@@ -1165,13 +1207,17 @@ function renderFornecedores(P){
   const rows=[...Ff].sort((a,b)=>{let x=a[sk.key],y=b[sk.key];if(typeof x==='string')return sk.dir*x.localeCompare(y);return sk.dir*((x||0)-(y||0));});
   const headr=cols.map(c=>`<th class="${c.num?'num':''}" data-k="${c.key}">${c.label}${tip('fornecedores',c.label)}</th>`).join('');
   const body=rows.slice(0,300).map(r=>'<tr>'+cols.map(c=>{let v=r[c.key];if(c.badge)return`<td>${badge(v)}</td>`;if(c.fmt)v=c.fmt(v);return`<td class="${c.num?'num':''}">${v==null?'—':v}</td>`;}).join('')+'</tr>').join('');
+  // quanto da verba do período é campanha (não é redução de custo) — o diretor pediu p/ incluir
+  // tudo por ora, então o aviso mostra o tamanho do que ainda falta refinar em vez de escondê-lo
+  const vbCamp=Ff.reduce((s,r)=>s+(r.verba_campanha||0),0);
   $('#v-fornecedores').innerHTML=head('Desempenho por fornecedor — giro × estoque','fornecedores')+
     `<div class="fb-group" style="margin:0 0 6px"><label>Filtrar classe</label>
        <select id="forn-cl" class="fb-control" style="width:auto">
          <option value="">Todas</option>
          ${Object.keys(CLS).map(k=>`<option value="${k}" ${S.cli.fornClasse===k?'selected':''}>${CLS[k]}</option>`).join('')}
        </select></div>
-     <div class="count-line">Índice = % na <b>venda (R$)</b> ÷ % no <b>estoque (R$)</b> (&gt;1 = vende mais do que pesa em estoque). <b>Ruptura</b> = vende mas cobertura &lt; ${lead}d (quase sem estoque) — não é performance.</div><div class="tbl-wrap"><table><thead><tr>${headr}</tr></thead><tbody>${body}</tbody></table></div>`;
+     <div class="count-line">Índice = % na <b>venda (R$)</b> ÷ % no <b>estoque (R$)</b> (&gt;1 = vende mais do que pesa em estoque). <b>Ruptura</b> = vende mas cobertura &lt; ${lead}d (quase sem estoque) — não é performance.</div>
+     <div class="count-line">${exLoading?'<b>Carregando ciclo de compras e verba…</b> ':''}<b>Compras</b>, <b>Venda</b>, <b>Lucro</b> e <b>Verba</b> seguem o período do seletor <b>Venda</b> do topo (hoje: ${({mes:'mês atual',['90d']:'últimos 90d',['6m']:'6 meses',['12m']:'12 meses'})[S.vperiodo]||'período'}) — por isso lucro e verba somam na mesma régua. O <b>Ciclo</b> é sempre apurado em <b>12 meses</b>: é comportamento do fornecedor, não recorte de tela.${vbCamp>0?` ⚠ ${money(vbCamp)} da verba do período é <b>“Premiações e campanhas”</b> (não é redução de custo) e <b>está incluída</b> no “Lucro c/ verba” — refinamento pendente.`:''}</div><div class="tbl-wrap"><table><thead><tr>${headr}</tr></thead><tbody>${body}</tbody></table></div>`;
   $('#v-fornecedores').querySelectorAll('thead th').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort['fornecedores']||{};S.sort['fornecedores']={key:k,dir:cur.key===k?-cur.dir:-1};render();});
   const fc=$('#forn-cl'); if(fc) fc.onchange=e=>{S.cli.fornClasse=e.target.value;render();};
 }
@@ -1223,7 +1269,7 @@ function renderRupturaComprador(P){
 /* ───────── Meta de ruptura (placar executivo) ─────────
    Aba NOVA e isolada (decisão do diretor 07/2026): Cockpit, Painel gerencial e a aba Ruptura
    ficam intocados — o placar não mexe no que já funciona.
-   Meta: "% s/ ped." ≤ metaA na curva A e ≤ metaBC nas curvas B+C.
+   Meta: "% s/ ped." ≤ metaA/metaB/metaC na respectiva curva (uma meta por curva desde 07/2026).
    "% s/ ped." = itens em ruptura SEM pedido de compra em aberto ÷ TOTAL de produtos do grupo —
    mesma definição da aba Ruptura (core.ruptura_por_comprador), só que quebrada por curva.
    Itens sem giro seguem no denominador de propósito (decisão do diretor: a cobertura tem de
@@ -1246,23 +1292,28 @@ async function metaBaseProdutos(){
   return _metaBase.produtos;
 }
 
-// agrega o % s/ pedido por comprador, separando curva A de B+C
+// agrega o % s/ pedido por comprador, uma coluna por curva (A, B e C)
+// B e C eram um bloco só (meta 5%). Separados a pedido do diretor 07/2026: "B+C junto não
+// funciona bem" — C é cauda longa e comporta uma meta mais frouxa que B.
+// ⚠️ Separar AFROUXA o placar sem ninguém mexer na operação: os itens C que estouravam o teto
+// de 5% do bloco passam a ter orçamento próprio de 10%. Comparar antes×depois uma vez.
 function metaAgrega(P){
   const g={};
   P.forEach(p=>{
     const cod=p.codcomprador==null?0:p.codcomprador;
-    const o=g[cod]=g[cod]||{cod,nome:p.comprador||'Sem comprador',nA:0,sA:0,nBC:0,sBC:0};
+    const o=g[cod]=g[cod]||{cod,nome:p.comprador||'Sem comprador',nA:0,sA:0,nB:0,sB:0,nC:0,sC:0};
     const semPed=(p.qtdisp||0)<=0&&(p.giro_dia||0)>0&&(p.qtd_ja_pedida||0)<=0;
-    if((p.curva_abc||'C')==='A'){ o.nA++; if(semPed)o.sA++; }   // sem curva → C (regra da aba Ruptura)
-    else { o.nBC++; if(semPed)o.sBC++; }
+    const cv=(p.curva_abc==='A'||p.curva_abc==='B')?p.curva_abc:'C';   // sem curva → C (regra da aba Ruptura)
+    o['n'+cv]++; if(semPed) o['s'+cv]++;
   });
   return Object.values(g).map(o=>({...o,
-    pctA:o.nA?o.sA/o.nA*100:null, pctBC:o.nBC?o.sBC/o.nBC*100:null})).filter(o=>o.nA+o.nBC>0);
+    pctA:o.nA?o.sA/o.nA*100:null, pctB:o.nB?o.sB/o.nB*100:null, pctC:o.nC?o.sC/o.nC*100:null
+  })).filter(o=>o.nA+o.nB+o.nC>0);
 }
 
 async function renderMetaRuptura(){
   const _p=(v,d)=>v==null||!isFinite(+v)?d:+v;              // meta 0 é válida (tolerância zero)
-  const el=$('#v-meta_ruptura'), mA=_p(S.params.metaA,2), mBC=_p(S.params.metaBC,5);
+  const el=$('#v-meta_ruptura'), mA=_p(S.params.metaA,2), mB=_p(S.params.metaB,5), mC=_p(S.params.metaC,10);
   // só mostra "carregando" em cache miss — senão a tabela pisca a cada clique de ordenação
   const _cache=(S.vperiodo===META_PER)?S.produtosAll:(_metaBase.key===metaBaseQS()?_metaBase.produtos:null);
   if(!_cache) el.innerHTML='<div class="count-line">Carregando a base de 90 dias…</div>';
@@ -1271,10 +1322,13 @@ async function renderMetaRuptura(){
   catch(e){ el.innerHTML=`<div class="count-line">Falha ao carregar a base da meta: ${esc(e.message)}</div>`; return; }
   if(S.view!=='meta_ruptura') return;                      // trocou de aba durante o fetch
 
-  const fora=r=>(r.pctA!=null&&r.pctA>mA)||(r.pctBC!=null&&r.pctBC>mBC);
+  // fora da meta = QUALQUER uma das três curvas estourar o seu limite (regra de antes, com 3)
+  const fora=r=>(r.pctA!=null&&r.pctA>mA)||(r.pctB!=null&&r.pctB>mB)||(r.pctC!=null&&r.pctC>mC);
   const rows0=metaAgrega(P).map(r=>({...r,st:fora(r)?1:0}));   // `st` numérico p/ a coluna Status ordenar
-  const T=rows0.reduce((s,r)=>({nA:s.nA+r.nA,sA:s.sA+r.sA,nBC:s.nBC+r.nBC,sBC:s.sBC+r.sBC}),{nA:0,sA:0,nBC:0,sBC:0});
-  const tA=T.nA?T.sA/T.nA*100:null, tBC=T.nBC?T.sBC/T.nBC*100:null;
+  const T=rows0.reduce((s,r)=>({nA:s.nA+r.nA,sA:s.sA+r.sA,nB:s.nB+r.nB,sB:s.sB+r.sB,
+                                nC:s.nC+r.nC,sC:s.sC+r.sC}),{nA:0,sA:0,nB:0,sB:0,nC:0,sC:0});
+  const tA=T.nA?T.sA/T.nA*100:null, tB=T.nB?T.sB/T.nB*100:null, tC=T.nC?T.sC/T.nC*100:null;
+  const foraEmpresa=(tA!=null&&tA>mA)||(tB!=null&&tB>mB)||(tC!=null&&tC>mC);
   const nFora=rows0.filter(fora).length;
 
   // célula: % + absoluto (2% sobre base pequena vira 1 item — o absoluto evita leitura errada)
@@ -1287,24 +1341,26 @@ async function renderMetaRuptura(){
 
   // `tipk` = chave estável no catálogo TIPS (o label carrega a meta e muda com o parâmetro)
   const cols=[{k:'nome',label:'Comprador'},{k:'pctA',label:`Curva A (meta ${dec(mA,1)}%)`,tipk:'Curva A',num:1},
-    {k:'pctBC',label:`Curva B+C (meta ${dec(mBC,1)}%)`,tipk:'Curva B+C',num:1},{k:'st',label:'Status',tipk:'Status'}];
-  const sk=S.sort['metarupt']||{key:'pctBC',dir:-1};
+    {k:'pctB',label:`Curva B (meta ${dec(mB,1)}%)`,tipk:'Curva B',num:1},
+    {k:'pctC',label:`Curva C (meta ${dec(mC,1)}%)`,tipk:'Curva C',num:1},{k:'st',label:'Status',tipk:'Status'}];
+  const sk=S.sort['metarupt']||{key:'pctC',dir:-1};
   const headr=cols.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${c.tipk?tip('meta_ruptura',c.tipk):''}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('');
   const rows=_sortArr(rows0,sk);
   const body=rows.map(r=>`<tr>
       <td><span class="prod">${esc(r.nome)}</span></td>
-      ${cel(r.pctA,r.sA,r.nA,mA)}${cel(r.pctBC,r.sBC,r.nBC,mBC)}
+      ${cel(r.pctA,r.sA,r.nA,mA)}${cel(r.pctB,r.sB,r.nB,mB)}${cel(r.pctC,r.sC,r.nC,mC)}
       <td>${selo(!fora(r),fora(r)?'Acima da meta':'Dentro da meta')}</td></tr>`).join('')
-    ||'<tr><td colspan="4" class="muted">Sem produtos no escopo.</td></tr>';
+    ||'<tr><td colspan="5" class="muted">Sem produtos no escopo.</td></tr>';
   const totRow=rows.length?`<tr style="border-top:2px solid var(--border);font-weight:700">
-      <td>EMPRESA</td>${cel(tA,T.sA,T.nA,mA)}${cel(tBC,T.sBC,T.nBC,mBC)}
-      <td>${selo(!((tA!=null&&tA>mA)||(tBC!=null&&tBC>mBC)),((tA!=null&&tA>mA)||(tBC!=null&&tBC>mBC))?'Acima da meta':'Dentro da meta')}</td></tr>`:'';
+      <td>EMPRESA</td>${cel(tA,T.sA,T.nA,mA)}${cel(tB,T.sB,T.nB,mB)}${cel(tC,T.sC,T.nC,mC)}
+      <td>${selo(!foraEmpresa,foraEmpresa?'Acima da meta':'Dentro da meta')}</td></tr>`:'';
 
   el.innerHTML=`<h2 class="section"><span>Meta de ruptura — % sem pedido${tip('meta_ruptura','_title')}</span></h2>
-    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
+    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
       ${kpi('Compradores acima da meta',int(nFora)+' de '+int(rows0.length),'basta uma das curvas estourar',nFora?C.red:C.green)}
       ${kpi(`Empresa · curva A (meta ${dec(mA,1)}%)`,tA!=null?dec(tA,1)+'%':'—',int(T.sA)+' de '+int(T.nA)+' itens',tA!=null&&tA>mA?C.red:C.green)}
-      ${kpi(`Empresa · curva B+C (meta ${dec(mBC,1)}%)`,tBC!=null?dec(tBC,1)+'%':'—',int(T.sBC)+' de '+int(T.nBC)+' itens',tBC!=null&&tBC>mBC?C.red:C.green)}
+      ${kpi(`Empresa · curva B (meta ${dec(mB,1)}%)`,tB!=null?dec(tB,1)+'%':'—',int(T.sB)+' de '+int(T.nB)+' itens',tB!=null&&tB>mB?C.red:C.green)}
+      ${kpi(`Empresa · curva C (meta ${dec(mC,1)}%)`,tC!=null?dec(tC,1)+'%':'—',int(T.sC)+' de '+int(T.nC)+' itens',tC!=null&&tC>mC?C.red:C.green)}
     </div>
     <div class="count-line"><b>% s/ ped.</b> = itens zerados (estoque ≤ 0 com giro) <b>ainda sem pedido de compra em aberto</b> ÷ total de produtos do comprador naquela curva. Entre parênteses, o absoluto. Limites editáveis em <b>⚙ Parâmetros</b>.</div>
     <div class="count-line">Escopo fixo: <b>${esc(S.unidadeNome||'unidade atual')}</b> · curva ABC apurada sobre os <b>últimos 90 dias</b> de venda. O placar <b>não responde aos filtros do topo</b> de propósito — meta que muda de valor conforme o filtro não é meta. Para investigar item a item, use <b>Estoque → Ruptura</b>.</div>
@@ -1855,7 +1911,7 @@ async function injectResumos(sel){
   const lim=ei.limiar!=null?ei.limiar:45;
   const metaPct=ei.meta_pct||0.90, alerta=!!ei.alerta, corIdeal=alerta?C.red:C.green;
   const idealPanel=`<div class="panel" id="gg-ideal-panel"${alerta?` style="border-color:${C.red}"`:''}>
-      <h3><span>Estoque ideal — cobertura mínima${tipT(`% dos SKUs que giram por faixa de cobertura. Ideal = ${lim} dias ou mais (${lim}d é o alvo de compra — quem repôs no alvo atingiu a meta); risco = menos de ${lim}. Meta: ≥90% na faixa ideal. “Sem giro” fica à parte e não entra no %.`)}</span>${alerta
+      <h3><span>Estoque ideal — cobertura mínima${tipT(`% dos SKUs que giram por faixa de cobertura. Ideal = ${lim} dias ou mais; risco = menos de ${lim}. Meta: ≥${dec(metaPct*100,0)}% na faixa ideal. Os dois valores são editáveis em ⚙ Parâmetros (“Estoque ideal”) e só MEDEM — não alteram a sugestão de compra, que usa a Cobertura alvo. “Sem giro” fica à parte e não entra no %.`)}</span>${alerta
         ?`<span class="badge" style="background:${C.red}22;color:${C.red}">⚠ abaixo da meta (≥${dec(metaPct*100,0)}%)</span>`
         :`<span class="badge" style="background:${C.green}22;color:${C.green}">✓ dentro da meta</span>`}</h3>
       <div class="row" style="align-items:center">
@@ -2026,10 +2082,15 @@ function modalPedido(opts){
   }
   function draw(){
     $('#pd-itens').innerHTML = itens.length
-      ? `<div class="tbl-wrap" style="max-height:240px"><table><thead><tr><th>Cód</th><th>Produto</th><th class="num">Qtd (un)</th><th class="num">Cx</th><th class="num">Custo</th><th class="num">IPI %${tipT('Alíquota que o Winthor deve aplicar na entrada. Vem da tributação de entrada do ERP; quando o item não tem regra fiscal para a UF do fornecedor, é ESTIMATIVA (marcada com ≈) — confira e corrija aqui, o total da NF recalcula.')}</th><th class="num">Valor NF</th><th></th></tr></thead><tbody>`+
+      ? `<div class="tbl-wrap" style="max-height:240px"><table><thead><tr><th>Cód</th><th>Produto</th><th class="num">Caixas${tipT('Edite direto em CAIXAS — a quantidade em unidades ao lado recalcula sozinha (caixas × fator un/cx do item). Item sem fator de caixa cadastrado mostra "—": nele só dá para digitar unidade. O pedido é sempre enviado ao Winthor em UNIDADES.')}</th><th class="num">Qtd (un)</th><th class="num">Custo</th><th class="num">IPI %${tipT('Alíquota que o Winthor deve aplicar na entrada. Vem da tributação de entrada do ERP; quando o item não tem regra fiscal para a UF do fornecedor, é ESTIMATIVA (marcada com ≈) — confira e corrija aqui, o total da NF recalcula.')}</th><th class="num">Valor NF</th><th></th></tr></thead><tbody>`+
+        // Caixa vem ANTES da unidade de propósito (pedido do diretor 07/2026): é nela que o
+        // comprador raciocina e é ela que o fornecedor fatura. A unidade continua visível e
+        // editável porque é ela que vai no payload/PDF/planilha — ver o handler de [data-cxi].
         itens.map((x,i)=>`<tr><td class="num">${x.codprod}</td><td><span class="prod">${esc(x.descricao||'')}</span></td>
+          <td class="num">${x.qtunitcx>1
+            ?`<input type="number" data-cxi="${i}" value="${Math.ceil((+x.qtd||0)/x.qtunitcx)}" min="0" step="1" style="width:66px;text-align:right" title="${int(x.qtunitcx)} un por caixa"> <span class="muted">cx</span>`
+            :'<span class="muted" title="item sem fator de caixa cadastrado — digite em unidades">—</span>'}</td>
           <td class="num"><input type="number" data-qi="${i}" value="${+x.qtd||0}" min="0" style="width:74px;text-align:right"></td>
-          <td class="num">${x.qtunitcx>1?int(Math.ceil((+x.qtd||0)/x.qtunitcx))+' cx':'—'}</td>
           <td class="num"><input type="number" data-ci="${i}" value="${+x.custo_unit||0}" min="0" step="0.01" style="width:84px;text-align:right"></td>
           <td class="num"><input type="number" data-ipi="${i}" value="${+x.perc_ipi||0}" min="0" max="100" step="0.01" style="width:70px;text-align:right"${x.trib_firme===false?' title="estimativa — o item não tem regra fiscal para esta origem"':''}>${x.trib_firme===false?' ≈':''}</td>
           <td class="num">${money(linhaNF(x))}</td>
@@ -2041,7 +2102,20 @@ function modalPedido(opts){
       // NÃO chamar draw() aqui: reconstruir a tabela a cada tecla destruía o input e roubava o
       // foco (não dava pra digitar). Atualiza modelo + as células derivadas (Cx/Valor) na mão.
       const i=+inp.dataset.qi, x=itens[i]; x.qtd=+inp.value||0; const tr=inp.closest('tr');
-      tr.children[3].textContent = x.qtunitcx>1 ? int(Math.ceil((+x.qtd||0)/x.qtunitcx))+' cx' : '—';
+      const cxin=tr.querySelector('[data-cxi]');   // null em item sem fator de caixa
+      if(cxin) cxin.value=Math.ceil((+x.qtd||0)/x.qtunitcx);
+      tr.children[6].textContent = money(linhaNF(x));
+      refreshTotals();
+    });
+    // Edição em CAIXAS: escreve de volta em UNIDADES (qtd continua a única fonte de verdade —
+    // é ela que vai no payload, no item_master, no PDF e na planilha do Winthor). Nada em caixa
+    // sai daqui: o Winthor faz preço × quantidade literal, então converter a qtd sem converter o
+    // preço colocaria o pedido no ERP com valor ~50× menor (ver armadilha do README).
+    $('#pd-itens').querySelectorAll('[data-cxi]').forEach(inp=>inp.oninput=()=>{
+      const i=+inp.dataset.cxi, x=itens[i], tr=inp.closest('tr');
+      const cx=Math.max(0,Math.floor(+inp.value||0));
+      x.qtd=cx*(x.qtunitcx||1);
+      tr.querySelector('[data-qi]').value=x.qtd;   // espelha sem redesenhar (não rouba o foco)
       tr.children[6].textContent = money(linhaNF(x));
       refreshTotals();
     });
@@ -2450,7 +2524,8 @@ async function init(){
   // params inputs
   $('#p-lead').value=S.params.lead; $('#p-seg').value=S.params.seg; $('#p-cob').value=S.params.cob; $('#p-hor').value=S.params.hor;
   $('#p-parado').value=S.params.parado; $('#p-fcmeses').value=S.params.fcmeses;
-  $('#p-meta-a').value=S.params.metaA; $('#p-meta-bc').value=S.params.metaBC;
+  $('#p-meta-a').value=S.params.metaA; $('#p-meta-b').value=S.params.metaB; $('#p-meta-c').value=S.params.metaC;
+  $('#p-ideal-dias').value=S.params.idealDias; $('#p-ideal-meta').value=S.params.idealMeta;
   const giroModo=()=>S.params.sazonal?2:(S.params.forecast?1:0);  // 0=media3 1=forecast 2=sazonal
   $('#p-forecast').querySelectorAll('.seg-opt').forEach(o=>o.classList.toggle('on',+o.dataset.v===giroModo()));
   $('#p-forecast').querySelectorAll('.seg-opt').forEach(o=>o.onclick=()=>{const v=+o.dataset.v;S.params.forecast=v>=1?1:0;S.params.sazonal=v===2?1:0;$('#p-forecast').querySelectorAll('.seg-opt').forEach(x=>x.classList.toggle('on',x===o));});
@@ -2487,7 +2562,10 @@ async function init(){
   };
   // meta aceita 0 (tolerância zero), então não dá p/ usar `||default` — vazio/inválido cai no default
   const _meta=(id,d)=>{const v=($(id).value||'').trim(); return v===''||!isFinite(+v)?d:Math.max(0,+v);};
-  $('#p-apply').onclick=()=>{S.params={lead:+$('#p-lead').value,seg:+$('#p-seg').value,cob:+$('#p-cob').value,hor:+$('#p-hor').value,parado:+$('#p-parado').value||60,forecast:S.params.forecast?1:0,sazonal:S.params.sazonal?1:0,fcmeses:+$('#p-fcmeses').value||6,arredondacx:S.params.arredondacx?1:0,metaA:_meta('#p-meta-a',2),metaBC:_meta('#p-meta-bc',5)};loadData();};
+  $('#p-apply').onclick=()=>{S.params={lead:+$('#p-lead').value,seg:+$('#p-seg').value,cob:+$('#p-cob').value,hor:+$('#p-hor').value,parado:+$('#p-parado').value||60,forecast:S.params.forecast?1:0,sazonal:S.params.sazonal?1:0,fcmeses:+$('#p-fcmeses').value||6,arredondacx:S.params.arredondacx?1:0,metaA:_meta('#p-meta-a',2),metaB:_meta('#p-meta-b',5),metaC:_meta('#p-meta-c',10),
+    // limiar 0 tornaria TODO item "ideal" → piso de 1 dia aqui (o servidor tem o seu próprio
+    // clamp p/ querystring montada na mão, onde 0/lixo cai no default 45). Meta 0 é válida.
+    idealDias:Math.max(1,_meta('#p-ideal-dias',45)),idealMeta:Math.min(100,_meta('#p-ideal-meta',90))};loadData();};
   document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{S.view=t.dataset.view;S.cli.parado='';S.cli.ruptura='';S.cli.cobFaixa=[];S.cli.cobSub='';render();});
   document.querySelectorAll('.navgroup').forEach(x=>x.onclick=()=>{ const g=x.dataset.group; if(GROUP_OF(S.view)!==g){ S.view=NAV[g][0]; S.cli.parado='';S.cli.ruptura='';S.cli.cobFaixa=[];S.cli.cobSub=''; render(); }});
   $('#overlay').onclick=closeDrawer; $('#modal-bg').onclick=e=>{if(e.target===$('#modal-bg'))closeModal();};

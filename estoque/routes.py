@@ -387,6 +387,45 @@ def _compras_12m_map(hoje):
     return out
 
 
+def _forn_extra_map(hoje, periodo, filiais):
+    """{codfornec: {n_pedidos, ciclo_dias, ultima_compra, verba, verba_campanha}} — as colunas
+    novas da aba Fornecedores (ciclo de compras + verba), pedido do diretor 07/2026.
+
+    NENHUMA query nova: o cabeçalho de pedidos vem do cache do Lead time (`_leadtime_raw`, 12m)
+    e a verba do cache da aba Verbas (`_verbas_raw`). Degrada p/ {} se qualquer um cair — a aba
+    continua funcionando sem as colunas novas em vez de quebrar inteira.
+
+    Janelas (ver os docstrings em core): pedidos e verba na janela do seletor "Venda" (a mesma do
+    lucro, senão a soma lucro+verba não faria sentido); o CICLO em 12m fixos.
+    """
+    key = f"fornextra:{_filiais_key(filiais)}:{periodo}:{hoje.isoformat()}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    ini, fim = _venda_datas(periodo, hoje)
+    forn_map = _cadastro_fornecedores()
+    cnpj = MULTPEL_EMPRESA["cnpj"]
+    out = {}
+    try:
+        ciclo = core.ciclo_compras(_leadtime_raw(hoje)["cab"], ini, fim, filiais=filiais,
+                                   forn_map=forn_map, cnpj_empresa=cnpj,
+                                   ciclo_desde=hoje - timedelta(days=365))
+        for cod, v in ciclo.items():
+            out.setdefault(cod, {}).update(v)
+    except Exception as e:
+        print(f"[fornecedores] ciclo de compras indisponível ({e}).")
+    try:
+        raw = _verbas_raw(hoje)
+        vb = core.verba_por_fornecedor(raw["verbas"], raw["aplics"], ini, fim,
+                                       forn_map=forn_map, cnpj_empresa=cnpj)
+        for cod, v in vb.items():
+            out.setdefault(cod, {}).update(v)
+    except Exception as e:
+        print(f"[fornecedores] verba indisponível ({e}).")
+    pbi._CACHE.set(key, out, 1800)
+    return out
+
+
 def _verbas_res(hoje):
     """Agregado da aba Verbas (core.verbas_fornecedores) — fecha o TRIPÉ cruzando com a
     compra 12m e o lead real já calculados. Degrada p/ vazio se o BI cair. Cache 30min."""
@@ -725,6 +764,10 @@ def api_filtros():
 @bp.route("/api/snapshot")
 def api_snapshot():
     produtos, params, filiais = _build_produtos()
+    # ⚠️ ciclo de compras / verba NÃO entram aqui de propósito: exigiriam o cab de pedidos 12m e a
+    # PCVERBA, que hoje só são pagos por quem abre Lead time/Verbas. Pendurá-los no snapshot (o
+    # endpoint mais quente do módulo, que TODA tela carrega) faria a tela inicial pagar por duas
+    # abas que a maioria não abre. Vão no /api/fornecedores_extra, buscado só pela aba.
     return jsonify({
         "ok": True,
         "gerado_em": date.today().isoformat(),
@@ -739,6 +782,19 @@ def api_snapshot():
         "fornecedores": core.fornecedores(produtos, params),
         "compradores": core.por_comprador(produtos),
     })
+
+
+@bp.route("/api/fornecedores_extra")
+def api_fornecedores_extra():
+    """Colunas da aba Fornecedores que não saem da posição de estoque: ciclo de compras
+    (PCPEDIDO) + verba negociada (PCVERBA), por fornecedor.
+
+    Endpoint SEPARADO do snapshot de propósito — ver o comentário em `api_snapshot`. A aba busca
+    isto ao abrir; enquanto não chega, ela renderiza sem as colunas novas em vez de travar.
+    """
+    _, _, filiais = _build_produtos()
+    return jsonify({"ok": True, "extra": _forn_extra_map(
+        _hoje(), request.args.get("venda_periodo", "mes"), filiais)})
 
 
 @bp.route("/api/desempenho")
@@ -918,7 +974,9 @@ def api_resumos():
         "n_produtos": len(prod_f),
         "validade": core.resumo_validade(lotes, idx, hoje=hoje),
         "cobertura": core.resumo_cobertura(prod_f),
-        "estoque_ideal": core.resumo_estoque_ideal(prod_f),
+        # régua do Estoque ideal vem do ⚙ Parâmetros (limiar em dias + meta em %); o clamp da
+        # querystring mora no core.regua_estoque_ideal — ver o porquê lá.
+        "estoque_ideal": core.resumo_estoque_ideal(prod_f, *core.regua_estoque_ideal(params)),
         "orcamento": orc["resumo"],
         "orcamento_ignora": orc_ignora,
         "ruptura": core.resumo_ruptura(prod_f),
@@ -1177,10 +1235,13 @@ def _export_data(view):
         cols = ["codprod", "descricao", "curva_abc", "comprador", "fornecedor", "numlote", "dtval",
                 "dias_para_vencer", "qt", "saldo_proj", "valor_risco", "classificacao", "risco"]
     elif view == "fornecedores":
-        produtos, params, _ = _build_produtos()
+        produtos, params, _fil = _build_produtos()
         # Opção A: a Curva filtra pela ABC do FORNECEDOR (pula a curva do produto e filtra o
         # resultado agregado por curva_abc do fornecedor) — igual à tela.
-        linhas = core.fornecedores(_aplicar_filtros_cliente(produtos, skip={"curva"}), params)
+        # mesmo `extra` da tela (ciclo + verba), senão o Excel/PDF sairia sem as colunas novas
+        linhas = core.fornecedores(
+            _aplicar_filtros_cliente(produtos, skip={"curva"}), params,
+            extra=_forn_extra_map(_hoje(), request.args.get("venda_periodo", "mes"), _fil))
         _cv = request.args.get("curva")
         if _cv:
             _cvset = {x for x in _cv.split(",") if x}
@@ -1382,6 +1443,9 @@ _PDF_COLS = {
     "fornecedores": [("codfornec", "Cód", "text"), ("fornecedor", "Fornecedor", "text", 34), ("n_produtos", "Itens", "int"),
                      ("valor", "Estoque", "money"), ("venda", "Venda", "money"),
                      ("crescimento", "Cresc. AA", "pct"), ("margem", "Margem", "pct"),
+                     ("n_pedidos", "Compras (nº)", "int"), ("ciclo_dias", "Ciclo 12m (d)", "num"),
+                     ("lucro", "Lucro bruto", "money"), ("verba", "Verba", "money"),
+                     ("lucro_verba", "Lucro c/ verba", "money"), ("margem_verba", "Margem c/ verba", "pct"),
                      ("indice", "Índice", "num"), ("classificacao", "Classe", "text")],
     "compradores": [("codcomprador", "Cód", "text"), ("comprador", "Comprador", "text", 30), ("n_produtos", "Itens", "int"),
                     ("estoque", "Estoque", "money"), ("venda", "Venda", "money"), ("lucro", "Lucro", "money"),

@@ -35,6 +35,13 @@ DEFAULTS = {
     "forecast_meses":   6,         # janela da média móvel simples do forecast bruto
     "forecast_sazonal": 0,         # 1 = aplica fator sazonal ano-a-ano (implica forecast on)
     "arredonda_cx":     1,         # 1 = arredonda sugestão/pedido p/ caixa fechada (QTUNITCX)
+    # ⚠️ Os dois abaixo são a RÉGUA DE MEDIÇÃO do "Estoque ideal" (Painel gerencial) — NÃO alteram
+    # a sugestão de compra. `cobertura_total` (alvo de COMPRA) segue independente de propósito:
+    # um diz até onde comprar, o outro diz a partir de quanto o SKU conta como coberto. Antes de
+    # 07/2026 os dois valores estavam cravados em resumo_estoque_ideal(); viraram parâmetro a
+    # pedido do diretor p/ calibrar na prática antes de fixar o número.
+    "ideal_dias":       45,        # cobertura mínima (dias) p/ o SKU contar como "ideal"
+    "ideal_meta_pct":   90,        # % dos SKUs que giram que precisa estar na faixa ideal
 }
 _STR_PARAMS = {"giro_base", "base_estoque"}
 
@@ -908,8 +915,134 @@ def cockpit(produtos):
     }
 
 
+# ───────── ciclo de compras + verba por fornecedor (colunas da aba Fornecedores) ─────────
+# Pedido do consultor/diretor 07/2026. As duas alimentam `fornecedores()` por um mapa `extra`,
+# porque NENHUMA das duas sai de `produtos` (posição de estoque): compra vem de PCPEDIDO e verba
+# de PCVERBA. Ambas reusam raw que a aba Lead time / Verbas JÁ carregam — zero query nova.
+
+def ciclo_compras(cab, ini, fim, filiais=None, forn_map=None, cnpj_empresa=None, ciclo_desde=None):
+    """{codfornec: {n_pedidos, ciclo_dias, ultima_compra, n_ciclo}} a partir do cabeçalho de
+    pedidos (PCPEDIDO).
+
+    Duas perguntas DIFERENTES, de propósito em janelas diferentes:
+    • `n_pedidos` = QUANTAS VEZES compramos — conta pedidos (NUMPED distintos) dentro de
+      [ini, fim], que é a janela do seletor "Venda" do topo (o "período filtrado no parâmetro"
+      que o consultor pediu).
+    • `ciclo_dias` = de quanto em quanto tempo compramos — média dos intervalos, apurada sobre
+      `ciclo_desde` (12m fixo). Ciclo é COMPORTAMENTO do fornecedor, igual ao lead time: numa
+      janela de "mês atual" quase todo fornecedor teria 0 ou 1 pedido e o ciclo sairia nulo,
+      então ele andaria conforme o filtro e deixaria de ser comparável.
+
+    ⚠️ O ciclo conta DATAS distintas de emissão, não pedidos: o mesmo fornecedor costuma receber
+    vários NUMPED no mesmo dia (um por filial/condição) e contá-los criaria intervalos de 0 dia
+    que derrubam a média artificialmente. `n_pedidos` conta pedidos porque a pergunta é outra.
+
+    Transferência entre filiais (mesma raiz de CNPJ da empresa) fica fora — não é compra, mesma
+    régua do orçamento e da aba Verbas.
+    """
+    forn_map = forn_map or {}
+    raiz = _cnpj_raiz(cnpj_empresa)
+    fil = {str(f) for f in filiais} if filiais else None
+    peds, datas = {}, {}
+    for r in cab or []:
+        cod = int(_n(r.get("CODFORNEC")))
+        if not cod:
+            continue
+        if raiz and _cnpj_raiz((forn_map.get(cod) or {}).get("CGC")) == raiz:
+            continue
+        if fil is not None and str(r.get("CODFILIAL") or "").strip() not in fil:
+            continue
+        dt = _parse_dt(r.get("DTEMISSAO"))
+        if not dt:
+            continue
+        if ciclo_desde is None or dt >= ciclo_desde:
+            datas.setdefault(cod, set()).add(dt)
+        if ini <= dt <= fim:
+            peds.setdefault(cod, set()).add(int(_n(r.get("NUMPED"))))
+
+    out = {}
+    for cod in set(peds) | set(datas):
+        ds = sorted(datas.get(cod, ()))
+        # média dos intervalos = (última − primeira) ÷ (nº de intervalos). Com 1 só data não há
+        # intervalo: ciclo indefinido (None), não zero — zero mentiria "compra todo dia".
+        ciclo = _round((ds[-1] - ds[0]).days / (len(ds) - 1), 1) if len(ds) >= 2 else None
+        out[cod] = {
+            "n_pedidos": len(peds.get(cod, ())),
+            "ciclo_dias": ciclo,
+            "n_ciclo": len(ds),
+            "ultima_compra": ds[-1].isoformat() if ds else None,
+        }
+    return out
+
+
+# conta de verba que NÃO é redução de custo do produto (é ação comercial). Fica separada para o
+# refinamento pedido pelo diretor 07/2026 ("nem toda verba vai pro preço, algumas vão pra
+# campanha") — hoje ENTRA no total, por decisão dele; virar opt-out é trocar o filtro abaixo.
+CONTAS_VERBA_CAMPANHA = {200013}
+
+
+def verba_por_fornecedor(verbas, aplic_rows, ini, fim, forn_map=None, cnpj_empresa=None):
+    """{codfornec: {verba, verba_campanha}} — verba NEGOCIADA (PCVERBA.VALOR) por data de
+    emissão dentro de [ini, fim].
+
+    ⚠️ A janela é a MESMA do lucro (seletor "Venda" do topo), não os 12m fixos da aba Verbas.
+    Somar lucro de 1 mês com verba de 12 meses daria um "lucro com verba" inflado e sem
+    significado — é o erro mais fácil de cometer aqui.
+
+    Usa NEGOCIADO (o que o fornecedor concedeu no período), não APLICADO: aplicado é quando a
+    verba foi consumida, um evento de caixa/acerto que pode cair meses depois e descolaria da
+    competência do lucro. Canceladas/estornos já saem no `_verbas_prep`.
+    """
+    forn_map = forn_map or {}
+    raiz = _cnpj_raiz(cnpj_empresa)
+    V, _, _, _ = _verbas_prep(verbas, aplic_rows)
+    out = {}
+    for v in V:
+        cod = v["_forn"]
+        if not cod:
+            continue
+        if raiz and _cnpj_raiz((forn_map.get(cod) or {}).get("CGC")) == raiz:
+            continue
+        emis = v["_emis"]
+        if not emis or not (ini <= emis <= fim):
+            continue
+        o = out.setdefault(cod, {"verba": 0.0, "verba_campanha": 0.0})
+        o["verba"] += v["_valor"]
+        if int(_n(v.get("CODCONTA"))) in CONTAS_VERBA_CAMPANHA:
+            o["verba_campanha"] += v["_valor"]
+    return {c: {"verba": _round(o["verba"]), "verba_campanha": _round(o["verba_campanha"])}
+            for c, o in out.items()}
+
+
+def _extra_fornecedor(g, ex):
+    """Colunas que NÃO saem da posição de estoque: ciclo de compras + verba + lucro com verba.
+    `ex` = linha do mapa `extra` (ciclo_compras ⊕ verba_por_fornecedor) daquele fornecedor.
+
+    `lucro` (venda líq. − custo) já era calculado e só não era EXIBIDO — a coluna nova apenas o
+    mostra. NÃO se recalcula como `venda × margem`: margem é `lucro ÷ venda` arredondada a 1
+    casa, então o caminho de volta devolveria o mesmo número com erro de arredondamento e a aba
+    passaria a divergir do Comercial (que bate centavo-a-centavo com o RCA).
+
+    `lucro_verba` = lucro + verba negociada na MESMA janela. Sem verba no período o valor é o
+    próprio lucro (não é None): fornecedor sem verba tem lucro com verba = lucro.
+    """
+    ex = ex or {}
+    verba = _n(ex.get("verba"))
+    lucro = g["lucro"]
+    return {
+        "n_pedidos": ex.get("n_pedidos") or 0,
+        "ciclo_dias": ex.get("ciclo_dias"),
+        "ultima_compra": ex.get("ultima_compra"),
+        "verba": _round(verba),
+        "verba_campanha": _round(_n(ex.get("verba_campanha"))),
+        "lucro_verba": _round(lucro + verba),
+        # margem com verba: mede o fornecedor como ele realmente remunera (é a dor do diretor)
+        "margem_verba": _round((lucro + verba) / g["venda"] * 100, 1) if g["venda"] else None,
+    }
+
+
 # ───────────────────────── fornecedores ─────────────────────────
-def fornecedores(produtos, params=None):
+def fornecedores(produtos, params=None, extra=None):
     total_valor = sum(p["valor"] or 0 for p in produtos) or 1
     total_giro = sum(p["giro_mes"] or 0 for p in produtos) or 1
     total_venda = sum(p["venda"] or 0 for p in produtos) or 1
@@ -968,6 +1101,7 @@ def fornecedores(produtos, params=None):
             "perc_giro": _round(perc_giro, 2), "perc_venda": _round(perc_venda, 2),
             "perc_estoque": _round(perc_est, 2),
             "indice": _round(indice, 2), "classificacao": classif,
+            **_extra_fornecedor(g, (extra or {}).get(g["codfornec"])),
         })
     # curva ABC do FORNECEDOR por venda (Pareto do faturamento) — mesma leitura dos produtos
     _a = params["abc_a"] if params else DEFAULTS["abc_a"]
@@ -1824,14 +1958,30 @@ def resumo_ruptura(produtos):
     }
 
 
+def regua_estoque_ideal(params):
+    """(limiar_dias, meta_pct) do 'Estoque ideal' a partir dos params (⚙ Parâmetros).
+
+    Os dois chegam pela querystring, então clampa aqui — é a única porta:
+    • limiar 0/vazio/lixo → volta ao default 45. Zero faria TODO item virar "ideal" e o painel
+      passaria a dizer 100% sempre (mentira silenciosa, o pior tipo).
+    • meta viaja em % (0-100) porque é assim que o campo da tela é natural; o resumo recebe
+      FRAÇÃO. Fora da faixa satura em 0/1 — meta 0 é válida (nunca alerta), 100 exige tudo.
+    """
+    lim = int(_n((params or {}).get("ideal_dias")) or DEFAULTS["ideal_dias"])
+    meta = _n((params or {}).get("ideal_meta_pct"))
+    return max(1, lim), min(1.0, max(0.0, meta / 100.0))
+
+
 def resumo_estoque_ideal(produtos, limiar_dias=45, meta_pct=0.90):
     """Cobertura MÍNIMA de estoque (pedido do diretor) — % de SKUs por faixa de cobertura.
     `limiar_dias` = MÍNIMO de dias para o item contar como ideal (fronteira inclusiva):
     • Em risco  = giro > 0 e cobertura < `limiar_dias` (≤44d)
     • Ideal     = giro > 0 e cobertura ≥ `limiar_dias` (45d+)
-    A fronteira é inclusiva de propósito (ajuste 07/2026): 45d é o próprio ALVO de compra
-    (`cobertura_total`), então o item reposto no alvo ATINGIU a meta — contá-lo como "em risco"
-    punia justamente quem comprou certo (28 SKUs pousavam exatamente em 45d, ~2× os dias vizinhos).
+    A fronteira é inclusiva de propósito (ajuste 07/2026): o item que pousa EXATAMENTE no limiar
+    atingiu a meta — contá-lo como "em risco" punia justamente quem comprou certo (28 SKUs pousavam
+    exatamente em 45d, ~2× os dias vizinhos). O default 45 nasceu de coincidir com o alvo de compra
+    (`cobertura_total`), mas os dois são INDEPENDENTES: desde 07/2026 o limiar é o parâmetro
+    `ideal_dias` (⚙ Parâmetros) e pode ser calibrado sem mexer na sugestão de compra.
     • Sem giro  = giro ≤ 0 (reportado à parte; NÃO entra no % ideal p/ não distorcer)
     O % ideal é medido só sobre os itens QUE GIRAM (base da 'cobertura mínima'); o gatilho de
     alerta dispara quando ideal% < `meta_pct` (90%). Cobertura na regra oficial da planilha."""
