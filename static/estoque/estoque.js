@@ -382,21 +382,13 @@ function filtered(skipCurva){
   });
 }
 function lotesFiltrados(){
-  const f=S.cli, b=(f.busca||'').trim().toLowerCase();
-  let L=S.validade?.lotes||[];
-  if(f.comprador){
-    const cods=new Set(S.produtosAll.filter(p=>String(p.codcomprador)===f.comprador).map(p=>p.codprod));
-    L=L.filter(l=>cods.has(l.codprod));
-  }
-  // fornecedor = o PRINCIPAL do cadastro (PCPRODUT.CODFORNEC), mesma semântica do filtered()
-  // das outras abas. Faltava aqui: a tela ignorava o filtro enquanto o export já aplicava
-  // (reclamação do diretor 07/2026 — tela e Excel discordavam).
-  if(f.fornec){
-    const cods=new Set(S.produtosAll.filter(p=>String(p.codfornec)===f.fornec).map(p=>p.codprod));
-    L=L.filter(l=>cods.has(l.codprod));
-  }
-  if(b) L=L.filter(l=>String(l.codprod).includes(b)||(l.descricao||'').toLowerCase().includes(b));
-  return L;
+  // Recorta os lotes pelos PRODUTOS VISÍVEIS (filtered()) — assim vale TODO filtro do topo
+  // (comprador, fornecedor, curva, XYZ, depto, busca) com uma regra só.
+  // ⚠️ Tem de casar com o export, que usa `_aplicar_filtros_cliente` (todos os filtros): quando
+  // esta função aplicava só comprador/fornecedor/busca, filtrar por Curva fazia a tela mostrar
+  // um conjunto e o Excel outro. Mesmo defeito já reportado 2x pelo diretor (07/2026).
+  const cods=new Set(filtered().map(p=>p.codprod));
+  return (S.validade?.lotes||[]).filter(l=>cods.has(l.codprod));
 }
 
 /* ───────── agregação cockpit ───────── */
@@ -513,7 +505,14 @@ function wireAlerts(el){ el.querySelectorAll('.alert').forEach(a=>a.onclick=()=>
 // cores por SEMÂNTICA de cobertura: ruptura(vermelho) → saudável(verde) → excesso(roxo)
 const COR_FAIXA={'0-30':C.red,'31-60':C.green,'61-90':'#22c55e','91-120':C.yellow,'121+':C.purple,'sem giro':C.dim};
 function renderCockpit(P){
-  const k=agg(P), v=S.validade?.resumo||{};
+  const k=agg(P);
+  // Resumo de vencimento recalculado sobre os lotes FILTRADOS. O `/api/validade` devolve o FEFO
+  // inteiro e o `resumo` dele é global — usá-lo direto fazia o alerta "Vencimento ≤7 dias" e os
+  // "Maiores ofensores" ignorarem o filtro de fornecedor (reclamação do diretor 07/2026), enquanto
+  // todo o resto do Cockpit acompanhava. Sem filtro ativo, isto bate igual ao resumo do servidor.
+  const _LF=lotesFiltrados(), _crit=_LF.filter(l=>l.classificacao==='critico');
+  const v={critico:_crit.length, valor_risco_critico:_crit.reduce((s,l)=>s+(l.valor_risco||0),0),
+           valor_risco:_LF.reduce((s,l)=>s+(l.valor_risco||0),0), n:_LF.length};
   const el=$('#v-cockpit');
   const totItens=P.length||1;
   const periodoLbl={mes:'no mês','90d':'90 dias','6m':'6 meses','12m':'12 meses'}[S.vperiodo];
@@ -565,7 +564,7 @@ function renderCockpit(P){
   const _abcLeg=$('#abc-itens-leg'); if(_abcLeg) _abcLeg.innerHTML=['A','B','C'].map((c,i)=>`<div style="display:flex;align-items:center;gap:8px;font-size:.82rem;white-space:nowrap"><span style="width:11px;height:11px;border-radius:3px;background:${[C.green,C.accent,C.dim][i]};flex:none"></span><b>Curva ${c}</b> <span style="color:var(--text-dim)">${int(k.abc[c].qt)} · ${dec(k.abc[c].qt/totItens*100,0)}%</span></div>`).join('');
   document.querySelectorAll('[data-abclens]').forEach(b=>b.onclick=()=>{S.abcLens=b.dataset.abclens;render();});
   const topPar=P.filter(p=>p.status_parado).sort((a,b)=>b.valor-a.valor).slice(0,6);
-  const topVen=(S.validade?.lotes||[]).slice().sort((a,b)=>b.valor_risco-a.valor_risco).slice(0,6);
+  const topVen=_LF.slice().sort((a,b)=>b.valor_risco-a.valor_risco).slice(0,6);
   $('#cp-parado').innerHTML=topPar.map(p=>`<div class="lote-row" data-cod="${p.codprod}" style="cursor:pointer"><span class="prod">${esc(p.descricao)}</span><span class="lr-r">${money(p.valor)}<br><small class="muted">${p.dias_sem_venda==null?'sem saída':p.dias_sem_venda+'d s/ venda'}</small></span></div>`).join('')||'<div class="empty">Nada parado 🎉</div>';
   $('#cp-venc').innerHTML=topVen.map(l=>`<div class="lote-row" data-cod="${l.codprod}" style="cursor:pointer"><span class="prod">${esc(l.descricao)}</span><span class="lr-r">${money(l.valor_risco)}<br><small class="muted">vence ${l.dias_para_vencer}d</small></span></div>`).join('')||'<div class="empty">Sem risco no horizonte 🎉</div>';
   el.querySelectorAll('.lote-row[data-cod]').forEach(r=>r.onclick=()=>openProduto(r.dataset.cod));
