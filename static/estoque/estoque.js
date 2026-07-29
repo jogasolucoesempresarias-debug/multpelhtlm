@@ -1243,7 +1243,7 @@ function renderFornecedores(P){
   const sk=S.sort['fornecedores']||{key:'valor',dir:-1};
   const rows=[...Ff].sort((a,b)=>{let x=a[sk.key],y=b[sk.key];if(typeof x==='string')return sk.dir*x.localeCompare(y);return sk.dir*((x||0)-(y||0));});
   const headr=cols.map(c=>`<th class="${c.num?'num':''}" data-k="${c.key}">${c.label}${tip('fornecedores',c.label)}</th>`).join('');
-  const body=rows.slice(0,300).map(r=>'<tr>'+cols.map(c=>{let v=r[c.key];if(c.badge)return`<td>${badge(v)}</td>`;if(c.fmt)v=c.fmt(v);return`<td class="${c.num?'num':''}">${v==null?'—':v}</td>`;}).join('')+'</tr>').join('');
+  const body=rows.slice(0,300).map(r=>`<tr data-forn="${r.codfornec}" style="cursor:pointer" title="Ver 360° do fornecedor (venda mês a mês, ciclo, pedidos)">`+cols.map(c=>{let v=r[c.key];if(c.badge)return`<td>${badge(v)}</td>`;if(c.fmt)v=c.fmt(v);return`<td class="${c.num?'num':''}">${v==null?'—':v}</td>`;}).join('')+'</tr>').join('');
   // quanto da verba do período é campanha (não é redução de custo) — o diretor pediu p/ incluir
   // tudo por ora, então o aviso mostra o tamanho do que ainda falta refinar em vez de escondê-lo
   const vbCamp=Ff.reduce((s,r)=>s+(r.verba_campanha||0),0);
@@ -1257,13 +1257,14 @@ function renderFornecedores(P){
          <option value="">Todas</option>
          ${Object.keys(CLS).map(k=>`<option value="${k}" ${S.cli.fornClasse===k?'selected':''}>${CLS[k]}</option>`).join('')}
        </select></div>
-     <div class="count-line">Índice = % na <b>venda (R$)</b> ÷ % no <b>estoque (R$)</b> (&gt;1 = vende mais do que pesa em estoque). <b>Ruptura</b> = vende mas cobertura &lt; ${lead}d (quase sem estoque) — não é performance.</div>
+     <div class="count-line">💡 <b>Clique numa linha</b> para ver o 360° do fornecedor (venda mês a mês vs ano anterior, ciclo × lead, pedidos em aberto). Índice = % na <b>venda (R$)</b> ÷ % no <b>estoque (R$)</b> (&gt;1 = vende mais do que pesa em estoque). <b>Ruptura</b> = vende mas cobertura &lt; ${lead}d (quase sem estoque) — não é performance.</div>
      <div class="count-line">${exLoading?'<b>Carregando ciclo de compras, verba e crescimento…</b> essas colunas aparecem em instantes. ':(_fx.erro?'<b style="color:'+C.red+'">⚠ Não foi possível carregar ciclo de compras, verba e crescimento</b> — as colunas ficam vazias em vez de mostrar número desatualizado. Recarregue a página. ':'')}<b>Compras</b>, <b>Venda</b>, <b>Lucro</b> e <b>Verba</b> seguem o período do seletor <b>Venda</b> do topo (hoje: ${({mes:'mês atual',['90d']:'últimos 90d',['6m']:'6 meses',['12m']:'12 meses'})[S.vperiodo]||'período'}) — por isso lucro e verba somam na mesma régua. O <b>Ciclo</b> é sempre apurado em <b>12 meses</b>: é comportamento do fornecedor, não recorte de tela. O <b>Cresc. AA</b> compara as duas janelas <b>completas</b> do fornecedor (todo produto vendido, inclusive o que saiu de linha) — sem isso o ano anterior sairia truncado e o crescimento inflado.${crIgnora.length?` <b>⚠ Filtro ativo (${esc(crIgnora.join(', '))}): o Cresc. AA continua sendo o do fornecedor inteiro</b>, não do recorte.`:''}${vbCamp>0?` ⚠ ${money(vbCamp)} da verba do período é <b>“Premiações e campanhas”</b> (não é redução de custo) e <b>está incluída</b> no “Lucro c/ verba” — refinamento pendente.`:''}</div>
      <!-- freeze2: Cód + Fornecedor ficam presos ao rolar lateralmente. Virou necessário quando a
           aba ganhou as 6 colunas de ciclo/verba: sem isso o nome sai da tela antes do "Lucro c/
           verba" e a leitura da linha se perde. Mesmo mecanismo já usado na aba Produtos. -->
      <div class="tbl-wrap freeze2"><table><thead><tr>${headr}</tr></thead><tbody>${body}</tbody></table></div>`;
   $('#v-fornecedores').querySelectorAll('thead th').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort['fornecedores']||{};S.sort['fornecedores']={key:k,dir:cur.key===k?-cur.dir:-1};render();});
+  $('#v-fornecedores').querySelectorAll('tbody tr[data-forn]').forEach(tr=>tr.onclick=()=>openFornecedor(tr.dataset.forn));
   const fc=$('#forn-cl'); if(fc) fc.onchange=e=>{S.cli.fornClasse=e.target.value;render();};
 }
 
@@ -2312,6 +2313,62 @@ async function openProduto(cod){
     wireDrawer();
     buildVendaChart(p);
   }catch(e){ dr.innerHTML='<span class="d-close">×</span><div class="empty">Erro: '+e.message+'</div>'; wireDrawer(); }
+}
+// ───────── drawer 360° do FORNECEDOR ─────────
+// Pedido do diretor 07/2026: "colocar a tela adicional de venda mês a mês do fornecedor, igual
+// tem a do produto". O gráfico sobrepõe o MESMO mês do ano anterior — sem isso a coluna
+// "Cresc. AA" diz que caiu 20% e não diz QUANDO nem se é tendência ou mês pontual.
+async function openFornecedor(cod){
+  const ov=$('#overlay'),dr=$('#drawer'); ov.classList.add('on'); dr.classList.add('on');
+  dr.innerHTML='<div class="loader"><div class="spinner"></div></div>';
+  try{
+    const j=await getJSON('/estoque/api/fornecedor/'+cod+'?'+serverQS());
+    const f=j.fornecedor||{}, tops=j.top_produtos||[], peds=j.pedidos_abertos||[];
+    const yoy=(f.venda_ant_yoy>0)?((f.venda_yoy-f.venda_ant_yoy)/f.venda_ant_yoy*100):null;
+    const kv=(lbl,val,sub)=>`<div class="lote-row"><span>${lbl}</span><span class="lr-r">${val}${sub?`<br><small class="muted">${sub}</small>`:''}</span></div>`;
+    // lead time só sai como número quando a amostra sustenta (mesma régua da aba Lead time)
+    const leadTxt=f.lead_real!=null&&f.lead_confiavel?`${int(f.lead_real)}d`
+      :(f.lead_todos!=null?`~${int(f.lead_todos)}d <small class="muted">(amostra fraca)</small>`:'—');
+    dr.innerHTML=`<span class="d-close">×</span>
+      <h2>${esc(f.fornecedor)}</h2>
+      <div class="count-line">Cód ${f.codfornec}${f.estado?` · ${esc(f.estado)}`:''}${f.comprador?` · comprador ${esc(f.comprador)}`:''} · ${int(f.n_produtos)} itens em estoque</div>
+      <div class="d-sec">Resultado (${({mes:'mês atual','90d':'últimos 90 dias','6m':'6 meses','12m':'12 meses'})[S.vperiodo]||'período'})</div>
+      ${kv('Venda líquida',`<b>${money(f.venda)}</b>`, yoy!=null?`${yoy>=0?'▲':'▼'} ${dec(Math.abs(yoy),1)}% vs ano anterior`:'')}
+      ${kv('Lucro bruto',money(f.lucro), f.margem!=null?`margem ${dec(f.margem,1)}%`:'')}
+      ${f.verba?kv('Verba negociada',money(f.verba), f.verba_campanha?`inclui ${money(f.verba_campanha)} de campanha`:''):''}
+      <div class="d-sec">Estoque e reposição</div>
+      ${kv('Valor em estoque',money(f.estoque))}
+      ${kv('A comprar',`<b>${money(f.sugestao_nf)}</b>`,'sugestão c/ impostos')}
+      ${f.n_ruptura>0?kv('Em ruptura',`<b style="color:${C.red}">${int(f.n_ruptura)}</b> itens`,'com giro e sem estoque'):''}
+      ${f.valor_parado>0?kv('Estoque parado',money(f.valor_parado)):''}
+      <div class="d-sec">Ritmo de compra</div>
+      ${kv('Ciclo de compra',f.ciclo_dias!=null?`${dec(f.ciclo_dias,0)}d`:'—','de quanto em quanto tempo compramos (12m)')}
+      ${kv('Lead time',leadTxt,f.lead_n?`${int(f.lead_n)} entradas medidas`:'sem entrada medida')}
+      ${f.ciclo_dias!=null&&f.lead_real!=null&&f.lead_confiavel&&f.ciclo_dias<f.lead_real?`<div class="count-line" style="color:${C.orange}">⚠ Ciclo menor que o lead: pedido novo antes do anterior chegar.</div>`:''}
+      ${kv('Última compra',f.ultima_compra?dt(f.ultima_compra):'—',f.n_pedidos?`${int(f.n_pedidos)} pedidos no período`:'')}
+      ${peds.length?`<div class="d-sec">Pedidos em aberto (${peds.length})</div>`+peds.map(pd=>
+        `<div class="lote-row"><span>#${pd.numped} · ${dt(pd.dtemissao)}</span><span class="lr-r">${money(pd.valor)}${pd.dtprevent?`<br><small class="muted">prev. ${dt(pd.dtprevent)}</small>`:''}</span></div>`).join(''):''}
+      <div class="d-sec">Venda (12 meses)</div>
+      <div class="count-line">Linha clara = mesmo mês do ano anterior. Inclui o <b>mês corrente</b>, ainda em andamento.</div>
+      <div class="chart-box sm" style="height:185px"><canvas id="d-forn12"></canvas></div>
+      ${tops.length?`<div class="d-sec">Top produtos (venda no período)</div>`+tops.map(tp=>
+        `<div class="lote-row" data-cod="${tp.codprod}" style="cursor:pointer"><span class="prod">${esc(tp.descricao)}</span><span class="lr-r">${money(tp.venda)}<br><small class="muted">estoque ${money(tp.valor)}${tp.cobertura!=null?` · ${cob(tp.cobertura)}`:''}</small></span></div>`).join(''):''}`;
+    wireDrawer();
+    dr.querySelectorAll('.lote-row[data-cod]').forEach(r=>r.onclick=()=>openProduto(r.dataset.cod));
+    buildFornChart(j);
+  }catch(e){ dr.innerHTML='<span class="d-close">×</span><div class="empty">Erro: '+e.message+'</div>'; wireDrawer(); }
+}
+function buildFornChart(j){
+  const meses=j.meses||[], atual=j.serie||[], ant=j.serie_ant||[];
+  if(!meses.length||!atual.some(v=>v>0)){ const b=$('#d-forn12'); if(b&&b.parentElement) b.parentElement.innerHTML='<div class="muted" style="font-size:.8rem">Sem venda registrada nos últimos 12 meses.</div>'; return; }
+  const lbl=meses.map(m=>{const s=String(m); return ('0'+((+s.slice(4,6)))).slice(-2)+'/'+s.slice(2,4);});
+  const ult=atual.length-1;
+  chart('d-forn12',{data:{labels:lbl,datasets:[
+    {type:'bar',label:'Venda líquida',data:atual,backgroundColor:atual.map((_,i)=>i===ult?'rgba(56,189,248,.45)':C.accent),borderRadius:4,order:2},
+    {type:'line',label:'Ano anterior',data:ant,borderColor:C.dim,borderWidth:1.5,borderDash:[5,4],pointRadius:0,tension:.3,fill:false,order:1}]},
+    options:{plugins:{legend:{display:true,labels:{boxWidth:10,font:{size:10}}},
+      tooltip:{callbacks:{label:c=>c.dataset.label+': '+money(c.raw)}}},
+      scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
 }
 function wireDrawer(){ $('#drawer .d-close').onclick=closeDrawer; }
 function closeDrawer(){ $('#overlay').classList.remove('on'); $('#drawer').classList.remove('on'); }

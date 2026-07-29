@@ -400,6 +400,48 @@ FILTER(
 )"""
 
 
+def q_venda_fornecedor_mensal_rca(data_ini, filiais=None):
+    """Venda BRUTA por CODFORNEC × mês desde data_ini — série do drawer 360° do FORNECEDOR.
+
+    ⚠️ Agrega no DAX pelo `FATURAMENTO_VENDAS[CODFORNEC]`, e **não** somando os produtos da tela.
+    Somar os produtos do snapshot é o bug do YoY já corrigido (`core.yoy_fornecedor`): a tela só
+    tem o que está em estoque HOJE, então todo item que saiu de linha some do histórico — medido
+    no BI: 18 fornecedores erravam >10 p.p. e 6 **trocavam de sinal**. Agregando no fato, o
+    universo é completo por construção (nem depende do cadastro de revenda).
+
+    Custo: ~245 fornecedores × 24 meses ≈ 6k linhas, contra ~54k da série por produto na mesma
+    janela — e o `executeQueries` corta em 100.000 (armadilha real, já pegou no PCEST).
+    Validado: `CODFORNEC` e `CODFORNECPRINC` dão o MESMO total (R$ 86.832,88 bruta em 12m no
+    fornecedor 11909) e batem com a régua do cadastro. Líquida = esta − q_devol_fornecedor_mensal_rca."""
+    return f"""EVALUATE
+FILTER(
+    SUMMARIZECOLUMNS(
+        FATURAMENTO_VENDAS[CODFORNEC],
+        CALENDARIO[AnoMes],
+        FILTER(FATURAMENTO_VENDAS,
+            FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)}{_fv_and('FATURAMENTO_VENDAS', filiais)}),
+        "venda", [VENDA BRUTA]
+    ),
+    [venda] <> 0
+)"""
+
+
+def q_devol_fornecedor_mensal_rca(data_ini, filiais=None):
+    """Devolução por CODFORNEC × mês (DTENT) — o que torna a série do fornecedor LÍQUIDA,
+    mesma régua da coluna `Venda` da aba (senão o gráfico não fecharia com a tabela)."""
+    return f"""EVALUATE
+FILTER(
+    SUMMARIZECOLUMNS(
+        FATURAMENTO_DEVOLUCAO[CODFORNEC],
+        CALENDARIO[AnoMes],
+        FILTER(FATURAMENTO_DEVOLUCAO,
+            FATURAMENTO_DEVOLUCAO[DTENT] >= {_d(data_ini)}{_fv_and('FATURAMENTO_DEVOLUCAO', filiais)}),
+        "dev", [TOTAL DEVOLUCAO]
+    ),
+    [dev] <> 0
+)"""
+
+
 def q_devol_produto_mensal_rca(data_ini, filiais=None):
     """Devolução por CODPROD × mês (CALENDARIO[AnoMes]) desde data_ini (DTENT).
     Espelha a q_devol_comprador_mensal_rca, mas por produto — p/ a venda LÍQUIDA do

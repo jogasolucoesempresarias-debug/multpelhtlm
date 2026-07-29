@@ -328,6 +328,34 @@ def venda_produto_mensal(ini, filiais=None):
         return [{"CODPROD": cod, "AnoMes": am, "venda": _f(v) or 0.0} for cod, am, v in cur.fetchall()]
 
 
+def venda_fornecedor_mensal(ini, filiais=None):
+    """Espelha q_venda_fornecedor_mensal_rca: [{CODFORNEC, AnoMes, venda}] — série do drawer do
+    fornecedor. Agrega no FATO (o sintético tem `codfornec`), igual ao DAX: somar por produto
+    perderia item que saiu de linha (ver core.yoy_fornecedor)."""
+    fv = _fil(filiais)
+    with analytics_conn() as c:
+        cur = c.cursor()
+        cur.execute(f"""SELECT codfornec, {_AM} am, {VB} FROM faturamento_vendas
+            WHERE dtsaida >= %s{fv} AND codfornec IS NOT NULL
+            GROUP BY codfornec, am HAVING {VB} <> 0""", (ini,))
+        return [{"CODFORNEC": cf, "AnoMes": am, "venda": _f(v) or 0.0} for cf, am, v in cur.fetchall()]
+
+
+def devol_fornecedor_mensal(ini, filiais=None):
+    """Espelha q_devol_fornecedor_mensal_rca. ⚠️ A `faturamento_devolucao` sintética NÃO tem
+    `codfornec` (só o produto) — o fornecedor vem do cadastro via join. No Power BI o fato já
+    traz a coluna; a diferença é irrelevante na demo (o cadastro sintético não muda de dono)."""
+    fv = _fil(filiais).replace("codfilial", "d.codfilial") if filiais else ""
+    with analytics_conn() as c:
+        cur = c.cursor()
+        cur.execute(f"""SELECT p.codfornec, {_AM_DEV.replace('dtent', 'd.dtent')} am, {DEV.replace('vldevolucao', 'd.vldevolucao').replace('codativ', 'd.codativ').replace('coddevol', 'd.coddevol')}
+            FROM faturamento_devolucao d JOIN pcprodut p ON p.codprod = d.codprod
+            WHERE d.dtent >= %s{fv} AND p.codfornec IS NOT NULL
+            GROUP BY p.codfornec, am""", (ini,))
+        return [{"CODFORNEC": cf, "AnoMes": am, "dev": _f(v) or 0.0}
+                for cf, am, v in cur.fetchall() if _f(v)]
+
+
 def devol_produto_mensal(ini, filiais=None):
     """Espelha q_devol_produto_mensal_rca: [{CODPROD, AnoMes, dev}] — devolução por produto×mês (DTENT)."""
     fv = _fil(filiais)

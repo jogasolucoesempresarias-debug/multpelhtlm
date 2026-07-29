@@ -545,6 +545,48 @@ def _vendas_liquidas(ini, fim, filiais=None):
     return m
 
 
+def _vendas_forn_mensal_map(hoje, filiais=None, meses=24):
+    """{codfornec: {AnoMes(int): venda_LÍQUIDA R$}} — série do drawer 360° do FORNECEDOR.
+
+    **24 meses** (não 12) para o gráfico sobrepor o MESMO mês do ano anterior: sem isso o
+    diretor vê "−20,4%" na coluna e não enxerga *quando* caiu. Cabe folgado: agregada por
+    fornecedor são ~6k linhas (a série por produto na mesma janela daria ~54k, e o
+    `executeQueries` corta em 100.000).
+
+    ⚠️ Régua COMPLETA — agrega no fato por `CODFORNEC`, não somando os produtos da tela.
+    Ver `q_venda_fornecedor_mensal_rca` e `core.yoy_fornecedor` para o porquê (item que saiu de
+    linha some do histórico e chega a inverter o sinal do crescimento).
+
+    Sob demanda (só quando abre um fornecedor) e cacheado 12h, igual ao mapa do produto."""
+    ini = hoje.replace(day=1)
+    for _ in range(int(meses)):
+        ini = (ini - timedelta(days=1)).replace(day=1)
+    key = f"vfornmes:{_filiais_key(filiais)}:{meses}:{hoje.strftime('%Y-%m')}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    _pgm = pbi.CONFIG["data_source"] == "postgres"
+    m = {}
+    try:
+        for r in (PS.venda_fornecedor_mensal(ini, filiais) if _pgm
+                  else pbi.run_dax_rca(Q.q_venda_fornecedor_mensal_rca(ini, filiais))):
+            cf = int(core._n(r.get("CODFORNEC")))
+            am = int(core._n(r.get("AnoMes")))
+            if cf and am:
+                m.setdefault(cf, {})[am] = core._n(r.get("venda"))
+        for r in (PS.devol_fornecedor_mensal(ini, filiais) if _pgm
+                  else pbi.run_dax_rca(Q.q_devol_fornecedor_mensal_rca(ini, filiais))):
+            cf = int(core._n(r.get("CODFORNEC")))
+            am = int(core._n(r.get("AnoMes")))
+            if cf in m and am in m[cf]:
+                m[cf][am] -= core._n(r.get("dev"))
+    except Exception as e:
+        print(f"[venda forn 24m] RCA indisponível ({e}). Drawer do fornecedor sai sem o gráfico.")
+        m = {}
+    pbi._CACHE.set(key, m, 43200)   # 12h
+    return m
+
+
 def _vendas_mensal_rs_map(hoje, filiais=None):
     """{cod: {AnoMes(int): venda_LÍQUIDA R$}} dos últimos 12 meses — alimenta SÓ o gráfico
     "venda 12m" do drawer 360°. Mapa SEPARADO do de quantidade (que alimenta giro/forecast)
@@ -995,6 +1037,84 @@ def api_resumos():
         "orcamento_ignora": orc_ignora,
         "ruptura": core.resumo_ruptura(prod_f),
     })
+
+
+@bp.route("/api/fornecedor/<int:codfornec>")
+def api_fornecedor(codfornec):
+    """Drawer 360° do FORNECEDOR — o "igual tem a do produto" pedido pelo diretor (07/2026).
+
+    Reúne o que já existe sobre o fornecedor, tudo de caches vivos: **nenhuma query nova além
+    da série mensal** (`_vendas_forn_mensal_map`, 12h de cache, ~6k linhas).
+
+    ⚠️ A série é a régua COMPLETA (agregada no fato por CODFORNEC). Os KPIs seguem o seletor
+    "Venda" do topo, como a tabela; a série é sempre 24m — é histórico, não recorte de tela
+    (mesma política do Ciclo 12m, ver README)."""
+    produtos, params, filiais = _build_produtos()
+    hoje = _hoje()
+    periodo = request.args.get("venda_periodo", "mes")
+    forn = _cadastro_fornecedores().get(codfornec) or {}
+    itens = [p for p in produtos if p.get("codfornec") == codfornec]
+
+    meses = core._meses_ate(hoje, 12)
+    serie_map = _vendas_forn_mensal_map(hoje, _filiais_venda()).get(codfornec) or {}
+    serie = [core._round(core._n(serie_map.get(am)), 2) for am in meses]
+    # mesmo mês do ano anterior, para o gráfico responder "quando caiu" e não só "caiu"
+    serie_ant = [core._round(core._n(serie_map.get(am - 100)), 2) for am in meses]
+
+    extra = (_forn_extra_map(hoje, periodo, filiais) or {}).get(codfornec) or {}
+    lead = next((f for f in _leadtime_res(hoje)["fornecedores"]
+                 if f.get("codfornec") == codfornec), None)
+    # top produtos do fornecedor por venda no período (o drill natural do drawer)
+    top = sorted(itens, key=lambda p: -(p.get("venda") or 0))[:10]
+    # pedidos de compra REAIS em aberto (o que já está a caminho deste fornecedor)
+    try:
+        cab = _pedidos_data(filiais, hoje)["cab"]
+        abertos = sorted((c for c in cab
+                          if int(core._n(c.get("CODFORNEC"))) == codfornec
+                          and core._n(c.get("VLENTREGUE")) <= 0),
+                         key=lambda c: str(c.get("DTEMISSAO") or ""), reverse=True)[:8]
+        pedidos = [{"numped": int(core._n(c.get("NUMPED"))),
+                    "dtemissao": core._parse_dt(c.get("DTEMISSAO")).isoformat()
+                    if core._parse_dt(c.get("DTEMISSAO")) else None,
+                    "valor": core._round(core._n(c.get("VLTOTAL"))),
+                    "dtprevent": core._parse_dt(c.get("DTPREVENT")).isoformat()
+                    if core._parse_dt(c.get("DTPREVENT")) else None} for c in abertos]
+    except Exception as e:
+        print(f"[fornecedor {codfornec}] pedidos indisponíveis ({e}).")
+        pedidos = []
+
+    _sug = sum(core._valor_sugerido_compra(p, "valor_sugerido_nf") for p in itens)
+    resumo = {
+        "codfornec": codfornec,
+        "fornecedor": forn.get("FORNECEDOR") or f"FORN {codfornec}",
+        "fantasia": forn.get("FANTASIA"), "estado": forn.get("ESTADO"),
+        "comprador": (_compradores_map() or {}).get(int(core._n(forn.get("CODCOMPRADOR")))) or None,
+        "prazo_entrega": core._n(forn.get("PRAZOENTREGA")) or None,
+        "n_produtos": len(itens),
+        "estoque": core._round(sum(p.get("valor") or 0 for p in itens)),
+        "venda": core._round(sum(p.get("venda") or 0 for p in itens)),
+        "lucro": core._round(sum(p.get("lucro") or 0 for p in itens)),
+        "n_ruptura": sum(1 for p in itens if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0),
+        "sugestao_nf": core._round(_sug),          # a comprar, régua da NF (c/ impostos)
+        "valor_parado": core._round(sum(p.get("valor") or 0 for p in itens if p.get("status_parado"))),
+        # lead REAL (mediana das entradas >=2d) é o que a aba Lead time mostra; `confiavel`
+        # diz se há amostra suficiente — sem isso o drawer exibiria um número frágil como fato
+        "lead_real": (lead or {}).get("lead_real"),
+        "lead_todos": (lead or {}).get("lead_todos"),
+        "lead_n": (lead or {}).get("n"),
+        "lead_confiavel": (lead or {}).get("confiavel"),
+        "ultima_compra": extra.get("ultima_compra"),
+        **{k: extra.get(k) for k in ("n_pedidos", "ciclo_dias", "verba", "verba_campanha",
+                                     "venda_yoy", "venda_ant_yoy")},
+    }
+    resumo["margem"] = core._round(resumo["lucro"] / resumo["venda"] * 100, 1) if resumo["venda"] else None
+    return jsonify({"ok": True, "fornecedor": resumo, "meses": meses,
+                    "serie": serie, "serie_ant": serie_ant,
+                    "top_produtos": [{k: p.get(k) for k in
+                                      ("codprod", "descricao", "venda", "lucro", "margem",
+                                       "valor", "qtdisp", "cobertura", "curva_abc", "status_abast")}
+                                     for p in top],
+                    "pedidos_abertos": pedidos})
 
 
 @bp.route("/api/produto/<int:codprod>")

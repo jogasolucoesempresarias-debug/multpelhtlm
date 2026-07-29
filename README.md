@@ -132,6 +132,21 @@ ciclo menor que o lead = pedido novo antes do anterior chegar.
   ⚠️ Ao conferir com o 111, **igualar a filial**: o relatório sai com todas e a tela usa a unidade.
   Gate: `tests/test_fornecedores_ciclo_verba.py` (caso da PEGON travado nos números reais).
 
+**Drawer 360° do FORNECEDOR** (07/2026, pedido do diretor: "venda mês a mês do fornecedor, igual
+tem a do produto"). Clique na linha da aba Fornecedores → venda 12m **com o mesmo mês do ano
+anterior sobreposto**, ciclo × lead, pedidos em aberto, a comprar (c/ impostos) e top produtos.
+- ⚠️ **A série agrega no FATO por `CODFORNEC`** (`q_venda_fornecedor_mensal_rca`), **não** somando
+  os produtos da tela — somar produtos é o bug do YoY já corrigido (item que saiu de linha some do
+  histórico). Provado equivalente com o mesmo filtro: **R$ 74.636,87 nas duas agregações, R$ 0,00
+  de diferença** — e agregar no fato custa **~6k linhas contra ~54k** da série por produto em 24
+  meses (o `executeQueries` corta em **100.000**, armadilha que já mordeu no PCEST).
+- **24 meses** de janela porque o gráfico sobrepõe o mesmo mês do ano anterior: sem isso a coluna
+  `Cresc. AA` diz que caiu 20% e não diz **quando** nem se é tendência ou mês pontual.
+- KPIs seguem o seletor **Venda** do topo; a **série é sempre 12m** exibidos (24m carregados) — é
+  histórico, não recorte de tela (mesma política do Ciclo).
+- `lead_confiavel=False` → a tela mostra `~26d (amostra fraca)`, não o número seco. Gate:
+  `tests/test_fornecedor_360.py`.
+
 **Meta de ruptura — uma meta por curva** (07/2026). Era A (2%) × B+C (5%); virou **A / B / C**
 (2% / 5% / 10%), editáveis em ⚙ Parâmetros. ⚠️ Separar **afrouxa o placar sem ninguém mexer na
 operação**: os itens C que estouravam o teto do bloco passam a ter orçamento próprio. Comparar
