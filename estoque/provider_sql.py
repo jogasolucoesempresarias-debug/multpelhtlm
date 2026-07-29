@@ -345,13 +345,17 @@ def devol_fornecedor_mensal(ini, filiais=None):
     """Espelha q_devol_fornecedor_mensal_rca. ⚠️ A `faturamento_devolucao` sintética NÃO tem
     `codfornec` (só o produto) — o fornecedor vem do cadastro via join. No Power BI o fato já
     traz a coluna; a diferença é irrelevante na demo (o cadastro sintético não muda de dono)."""
-    fv = _fil(filiais).replace("codfilial", "d.codfilial") if filiais else ""
+    # SEM alias e SEM string-replace nas constantes: as colunas que `_AM_DEV`/`DEV` usam
+    # (dtent, vldevolucao, codativ, coddevol, codfilial) só existem na devolução, então não há
+    # ambiguidade no JOIN. Só `codprod` existe nas duas — por isso é a única qualificada.
+    fv = _fil(filiais)
     with analytics_conn() as c:
         cur = c.cursor()
-        cur.execute(f"""SELECT p.codfornec, {_AM_DEV.replace('dtent', 'd.dtent')} am, {DEV.replace('vldevolucao', 'd.vldevolucao').replace('codativ', 'd.codativ').replace('coddevol', 'd.coddevol')}
-            FROM faturamento_devolucao d JOIN pcprodut p ON p.codprod = d.codprod
-            WHERE d.dtent >= %s{fv} AND p.codfornec IS NOT NULL
-            GROUP BY p.codfornec, am""", (ini,))
+        cur.execute(f"""SELECT pcprodut.codfornec, {_AM_DEV} am, {DEV}
+            FROM faturamento_devolucao
+            JOIN pcprodut ON pcprodut.codprod = faturamento_devolucao.codprod
+            WHERE dtent >= %s{fv} AND pcprodut.codfornec IS NOT NULL
+            GROUP BY pcprodut.codfornec, am""", (ini,))
         return [{"CODFORNEC": cf, "AnoMes": am, "dev": _f(v) or 0.0}
                 for cf, am, v in cur.fetchall() if _f(v)]
 
