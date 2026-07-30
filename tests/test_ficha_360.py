@@ -193,3 +193,45 @@ def test_tipo_invalido_devolve_404(app_ctx, monkeypatch):
     with app_ctx.test_request_context("/estoque/api/export/ficha/cliente/1.xlsx"):
         _resp, status = routes.api_export_ficha_xlsx("cliente", 1)
     assert status == 404
+
+
+# ─────────────────── lead real na linha da Abastecimento ───────────────────
+# Pedido do diretor 07/2026: "não preciso entrar na aba lead time para verificar o tempo de
+# entrega do fornecedor, só olhar ali e ajustar no parametro". O lead viaja pelo endpoint LAZY
+# (`/api/fornecedores_extra`) e não pelo snapshot — o snapshot é carregado por todas as telas.
+#
+# ⚠️ As chaves chegam como STRING: jsonify serializa chave numérica de dict como string. O front
+# não sente (em JS `obj[1]` e `obj["1"]` são o mesmo slot), mas o teste sente.
+def test_fornecedores_extra_leva_o_lead_real(app_ctx, monkeypatch):
+    _mock(monkeypatch, [_prod(1)],
+          lead=[{"codfornec": 1, "lead_real": 14.0, "n": 28, "confiavel": True}])
+    with app_ctx.test_request_context("/estoque/api/fornecedores_extra"):
+        extra = routes.api_fornecedores_extra().get_json()["extra"]
+    assert extra["1"]["lead_real"] == 14.0
+    assert extra["1"]["lead_n"] == 28 and extra["1"]["lead_confiavel"] is True
+    # e NÃO pode ter apagado o ciclo/verba que já viajavam por aqui
+    assert extra["1"]["ciclo_dias"] == 30.0
+
+
+def test_amostra_fraca_viaja_junto_do_lead(app_ctx, monkeypatch):
+    """O comprador vai MEXER no parâmetro com base neste número. 14d medidos em 2 entradas não
+    sustentam a mesma decisão que 14d em 40 — sem a marca, a tela venderia palpite como fato."""
+    _mock(monkeypatch, [_prod(1)],
+          lead=[{"codfornec": 1, "lead_real": 14.0, "n": 2, "confiavel": False}])
+    with app_ctx.test_request_context("/estoque/api/fornecedores_extra"):
+        extra = routes.api_fornecedores_extra().get_json()["extra"]
+    assert extra["1"]["lead_confiavel"] is False
+
+
+def test_lead_fora_nao_derruba_ciclo_e_verba(app_ctx, monkeypatch):
+    """O lead vem de outro cache. Se ele cair, a aba Fornecedores não pode perder junto as
+    colunas que já funcionavam — degrada o campo, não o endpoint."""
+    def _boom(*a, **k):
+        raise RuntimeError("BI fora")
+    _mock(monkeypatch, [_prod(1)])
+    monkeypatch.setattr(routes, "_leadtime_res", _boom)
+    with app_ctx.test_request_context("/estoque/api/fornecedores_extra"):
+        j = routes.api_fornecedores_extra().get_json()
+    assert j["ok"] is True
+    assert j["extra"]["1"]["ciclo_dias"] == 30.0     # ciclo sobreviveu
+    assert "lead_real" not in j["extra"]["1"]        # e o lead simplesmente não veio

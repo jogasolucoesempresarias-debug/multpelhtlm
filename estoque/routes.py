@@ -847,10 +847,29 @@ def api_fornecedores_extra():
 
     Endpoint SEPARADO do snapshot de propósito — ver o comentário em `api_snapshot`. A aba busca
     isto ao abrir; enquanto não chega, ela renderiza sem as colunas novas em vez de travar.
+
+    Desde 07/2026 leva também o **lead real** por fornecedor, porque a aba Abastecimento passou a
+    exibi-lo na linha (pedido do diretor: "não preciso entrar na aba lead time para ver o prazo
+    do fornecedor, só olhar ali e ajustar no parâmetro"). Sai por aqui e NÃO pelo `/api/snapshot`
+    pela mesma razão do ciclo/verba: o snapshot é carregado por TODAS as telas, e a maioria não
+    usa lead. `_leadtime_res` já é cache de 30min — custo zero de query.
     """
+    hoje = _hoje()
     _, _, filiais = _build_produtos()
-    return jsonify({"ok": True, "extra": _forn_extra_map(
-        _hoje(), request.args.get("venda_periodo", "mes"), filiais)})
+    extra = dict(_forn_extra_map(hoje, request.args.get("venda_periodo", "mes"), filiais) or {})
+    try:
+        for f in _leadtime_res(hoje).get("fornecedores", []):
+            cf = f.get("codfornec")
+            if cf is None:
+                continue
+            # `confiavel` viaja junto de propósito: o comprador vai MEXER no parâmetro com base
+            # neste número, e 14d medidos em 2 entradas não sustentam a mesma decisão que 14d
+            # medidos em 40. Sem a marca, a tela apresentaria amostra fraca como fato.
+            extra[cf] = {**(extra.get(cf) or {}), "lead_real": f.get("lead_real"),
+                         "lead_n": f.get("n"), "lead_confiavel": f.get("confiavel")}
+    except Exception as e:      # lead fora não pode derrubar ciclo e verba junto
+        print(f"[fornecedores_extra] lead time indisponível ({e}).")
+    return jsonify({"ok": True, "extra": extra})
 
 
 @bp.route("/api/desempenho")

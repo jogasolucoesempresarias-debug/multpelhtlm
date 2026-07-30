@@ -767,6 +767,30 @@ function renderReposicao(P){
   // inclicável naquele estado (o clique fecha, o re-render reabre) — clique morto é pior que
   // um clique a mais.
   const aberto=gr=>S.repAll||S.repOpen.has(gr.cod);
+  // ───── lead REAL do fornecedor na linha (pedido do diretor 07/2026) ─────
+  // "quando for fazer o pedido, não preciso entrar na aba lead time para verificar o tempo de
+  // entrega do fornecedor, só olhar ali e ajustar no parâmetro".
+  // ⚠️ Este é o lead MEDIDO (mediana das entradas ≥2d, igual à aba Lead time) — NÃO é o que a
+  // sugestão usou. Desde 07/2026 a sugestão calcula com o parâmetro global da tela para TODOS os
+  // fornecedores (core.py: "o slider vale p/ todos"). Os dois na mesma linha se pareceriam, então
+  // o valor sai em LARANJA quando diverge do parâmetro: é o sinal de que há ajuste a fazer antes
+  // de gerar o pedido. Sem isso a linha diria "14d" ao lado de um valor calculado com 10d.
+  const _ex=fornExtra(), EX=_ex||{}, exLoading=(_ex===null);
+  const leadParam=+S.params.lead||10;
+  const leadCell=cod=>{
+    // 3 estados explícitos, como na coluna de crescimento: NUNCA um número provisório ou velho
+    if(exLoading) return `<span class="muted" title="Carregando o lead time real do fornecedor…">lead —</span>`;
+    if(_fx.erro) return `<span style="color:${C.red}" title="Não foi possível carregar o lead time real. Recarregue a página.">lead —</span>`;
+    const ex=EX[cod]||{}, lr=ex.lead_real;
+    if(lr==null) return `<span class="muted" title="Sem entrada medida para este fornecedor — a sugestão usa o parâmetro de ${int(leadParam)}d.">lead —</span>`;
+    const fraca=ex.lead_confiavel===false, difere=Math.abs(lr-leadParam)>=1;
+    const nd=dec(lr,lr%1?1:0);
+    const tit=`Lead real medido: ${nd}d${ex.lead_n?` (${int(ex.lead_n)} entradas)`:''}.`
+      +(fraca?' AMOSTRA FRACA — poucas entradas medidas, confira antes de usar.':'')
+      +(difere?` A sugestão foi calculada com ${int(leadParam)}d (⚙ Parâmetros). Ajuste antes de gerar o pedido.`
+              :` Igual ao parâmetro em uso (${int(leadParam)}d).`);
+    return `<span title="${tit}" style="${difere?`color:${C.orange}`:''}">lead <b>${fraca?'~':''}${nd}d</b>${difere?' ⚠':''}</span>`;
+  };
   const el=$('#v-reposicao');
   el.innerHTML=head('Abastecimento — o que comprar (por fornecedor)','reposicao')+
     `<div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
@@ -776,6 +800,7 @@ function renderReposicao(P){
      </div>
      <div class="count-line">Sugestão líquida = estoque-alvo (giro/dia × (lead + ${int(S.params.cob)}d)) − estoque projetado (disponível + <b>pedido real em aberto</b>), arredondada em <b>caixas</b>. <b>m³</b> = cubagem do pedido sugerido (caixas × volume da caixa). O <b>lead</b> entra na conta (o estoque cai até a mercadoria chegar) e usa o prazo do fornecedor quando houver. O total do fornecedor sai <b>com impostos (IPI/ST)</b> — é a mesma régua do Orçamento, que lê o valor da NF do Winthor; a coluna <b>Valor sug.</b> segue em mercadoria, que é o preço que vai na planilha de importação.</div>
      <div class="count-line">⚠️ O card <b>Venda perdida</b> conta os itens <b>zerados com giro</b> — conjunto parecido, mas não idêntico ao da lista abaixo (item suspenso entra num e não no outro). Os dois números não fecham entre si de propósito.</div>
+     <div class="count-line"><b>lead</b> na linha = <b>lead real medido</b> do fornecedor (mediana das entradas, mesma régua da aba Lead time) — <b>não</b> é o que a sugestão usou. A sugestão calcula com o parâmetro <b>${int(leadParam)}d</b>, igual para todos. Lead <b style="color:${C.orange}">em laranja ⚠</b> = diferente do parâmetro: ajuste em <b>⚙ Parâmetros</b> antes de gerar o pedido daquele fornecedor. <b>~</b> antes do número = amostra fraca (poucas entradas medidas). <b>—</b> = fornecedor sem entrada medida.</div>
      <div class="row" style="gap:14px;margin-bottom:8px;align-items:flex-end">
        <div class="fb-group" style="margin:0"><label>Ordenar por</label>
          <select id="rep-ord" class="fb-control" style="width:auto">
@@ -794,7 +819,7 @@ function renderReposicao(P){
         <tbody>${gr.itens.sort((a,b)=>(a.cobertura_proj||0)-(b.cobertura_proj||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td>${embCell(p)}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida):'—'}${p.qt_transicao>0?` <b title="+${int(p.qt_transicao)} recebido, em pré-entrada (aguardando liberação)">+${int(p.qt_transicao)}</b>`:''}</td><td class="num">${cob(p.cobertura_proj)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${sugCxN(p)}</td><td class="num">${cubItem(p)>0?dec(cubItem(p),3):'—'}</td><td class="num">${money(p.valor_sugerido_liq)}</td><td class="num">${impCell(p)}</td><td>${statExec(p.status_exec)}</td></tr>`).join('')}</tbody></table></div>`:'';
       return `<div class="panel forn-grp${op?' on':''}">
         <h3 class="forn-hd" data-forngrp="${gr.cod}" style="cursor:pointer" title="${op?'Fechar':'Abrir'} os itens deste fornecedor">
-          <span><span class="muted" style="display:inline-block;width:1em">${op?'▾':'▸'}</span>${esc(gr.forn)} <small class="muted">· ${gr.cod} · ${gr.itens.length} itens${gr.zerados?` · <b style="color:${C.red}">${int(gr.zerados)} zerado${gr.zerados>1?'s':''}</b>`:''}${gr.cub>0?` · ${dec(gr.cub,2)} m³`:''}${gr.peso>0?` · ${dec(gr.peso,1)} kg`:''}</small></span>
+          <span><span class="muted" style="display:inline-block;width:1em">${op?'▾':'▸'}</span>${esc(gr.forn)} <small class="muted">· ${gr.cod} · ${gr.itens.length} itens${gr.zerados?` · <b style="color:${C.red}">${int(gr.zerados)} zerado${gr.zerados>1?'s':''}</b>`:''}${gr.cub>0?` · ${dec(gr.cub,2)} m³`:''}${gr.peso>0?` · ${dec(gr.peso,1)} kg`:''} · ${leadCell(gr.cod)}</small></span>
           <span>${gr.valorNF>gr.valor+0.005?`${money(gr.valorNF)} <small class="muted">previsto c/ impostos · merc. ${money(gr.valor)}</small>`:money(gr.valor)}${notaIncerteza(gr.valorNF,gr.incerto)} <button class="btn sm primary rowact" data-fornped="${gr.cod}">Gerar pedido</button></span></h3>
         ${corpo}
       </div>`;}).join('')+
@@ -1251,7 +1276,9 @@ function fornExtra(){
     getJSON('/estoque/api/fornecedores_extra?'+serverQS())
       .then(o=>{_fx.key=key;_fx.map=o.extra||{};_fx.erro=false;})
       .catch(()=>{_fx.key=key;_fx.map={};_fx.erro=true;})
-      .finally(()=>{_fx.loading=null; if(S.view==='fornecedores') render();});
+      // a Abastecimento também consome este extra (lead real na linha do fornecedor), então
+      // precisa repintar quando ele chega — senão a coluna fica em "—" até o próximo render
+      .finally(()=>{_fx.loading=null; if(S.view==='fornecedores'||S.view==='reposicao') render();});
   }
   return null;
 }
