@@ -2325,6 +2325,14 @@ function buildVendaChart(p){
       scales}});
 }
 
+/* ───────── ficha 360° exportável ─────────
+   Botões de export dos drawers (pedido do diretor 07/2026: "exportar os dois e colocar em
+   horizontal"). Leva o MESMO serverQS() do fetch do drawer — unidade e período mudam os
+   números, e ficha que ignora o filtro sai divergindo da tela que a originou. */
+const fichaBtns=(tipo,cod)=>`<div style="display:flex;gap:8px;margin:6px 0 12px">
+  <a class="btn sm" href="/estoque/api/export/ficha/${tipo}/${cod}.xlsx?${serverQS()}" title="Ficha em uma linha horizontal (Excel)">⬇ Excel</a>
+  <a class="btn sm" href="/estoque/api/export/ficha/${tipo}/${cod}.pdf?${serverQS()}" title="Ficha em paisagem (PDF)">⬇ PDF</a></div>`;
+
 /* ───────── produto 360 ───────── */
 async function openProduto(cod){
   const ov=$('#overlay'),dr=$('#drawer'); ov.classList.add('on'); dr.classList.add('on'); dr.innerHTML='<div class="loader"><div class="spinner"></div></div>';
@@ -2337,6 +2345,7 @@ async function openProduto(cod){
     dr.innerHTML=`<span class="d-close">×</span>
       <h2>${esc(p.descricao)}</h2>
       <div class="d-cod">cód ${p.codprod} · ${esc(p.fornecedor||'')} · ${badge(p.curva_abc)} ${badge(p.xyz)} · ${esc((p.comprador||'').split(' ')[0]||'')}</div>
+      ${fichaBtns('produto',p.codprod)}
       <div class="d-kpis">
         <div class="d-kpi"><div class="l">Disponível</div><div class="v">${int(p.qtdisp)}</div></div>
         <div class="d-kpi"><div class="l">Valor</div><div class="v">${money(p.valor)}</div></div>
@@ -2396,6 +2405,7 @@ async function openFornecedor(cod){
     dr.innerHTML=`<span class="d-close">×</span>
       <h2>${esc(f.fornecedor)}</h2>
       <div class="count-line">Cód ${f.codfornec}${f.estado?` · ${esc(f.estado)}`:''}${f.comprador?` · comprador ${esc(f.comprador)}`:''} · ${int(f.n_produtos)} itens em estoque</div>
+      ${fichaBtns('fornecedor',f.codfornec)}
       <div class="d-sec">Resultado (${({mes:'mês atual','90d':'últimos 90 dias','6m':'6 meses','12m':'12 meses'})[S.vperiodo]||'período'})</div>
       ${kv('Venda líquida',`<b>${money(f.venda)}</b>`, yoy!=null?`${yoy>=0?'▲':'▼'} ${dec(Math.abs(yoy),1)}% vs ano anterior`:'')}
       ${kv('Lucro bruto',money(f.lucro), f.margem!=null?`margem ${dec(f.margem,1)}%`:'')}

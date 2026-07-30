@@ -1039,6 +1039,40 @@ def api_resumos():
     })
 
 
+def _resumo_fornecedor(codfornec, itens, forn, extra, lead):
+    """Os ESCALARES do 360° do fornecedor, num dict achatado.
+
+    Extraído do `api_fornecedor` quando a ficha exportável nasceu (07/2026): drawer e export
+    passaram a ler do MESMO lugar. Duplicar esta conta era garantir que um dia a ficha e a tela
+    diriam números diferentes para o mesmo fornecedor — o app já tem cicatriz dessa família."""
+    _sug = sum(core._valor_sugerido_compra(p, "valor_sugerido_nf") for p in itens)
+    resumo = {
+        "codfornec": codfornec,
+        "fornecedor": forn.get("FORNECEDOR") or f"FORN {codfornec}",
+        "fantasia": forn.get("FANTASIA"), "estado": forn.get("ESTADO"),
+        "comprador": (_compradores_map() or {}).get(int(core._n(forn.get("CODCOMPRADOR")))) or None,
+        "prazo_entrega": core._n(forn.get("PRAZOENTREGA")) or None,
+        "n_produtos": len(itens),
+        "estoque": core._round(sum(p.get("valor") or 0 for p in itens)),
+        "venda": core._round(sum(p.get("venda") or 0 for p in itens)),
+        "lucro": core._round(sum(p.get("lucro") or 0 for p in itens)),
+        "n_ruptura": sum(1 for p in itens if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0),
+        "sugestao_nf": core._round(_sug),          # a comprar, régua da NF (c/ impostos)
+        "valor_parado": core._round(sum(p.get("valor") or 0 for p in itens if p.get("status_parado"))),
+        # lead REAL (mediana das entradas >=2d) é o que a aba Lead time mostra; `confiavel`
+        # diz se há amostra suficiente — sem isso o drawer exibiria um número frágil como fato
+        "lead_real": (lead or {}).get("lead_real"),
+        "lead_todos": (lead or {}).get("lead_todos"),
+        "lead_n": (lead or {}).get("n"),
+        "lead_confiavel": (lead or {}).get("confiavel"),
+        "ultima_compra": extra.get("ultima_compra"),
+        **{k: extra.get(k) for k in ("n_pedidos", "ciclo_dias", "verba", "verba_campanha",
+                                     "venda_yoy", "venda_ant_yoy")},
+    }
+    resumo["margem"] = core._round(resumo["lucro"] / resumo["venda"] * 100, 1) if resumo["venda"] else None
+    return resumo
+
+
 @bp.route("/api/fornecedor/<int:codfornec>")
 def api_fornecedor(codfornec):
     """Drawer 360° do FORNECEDOR — o "igual tem a do produto" pedido pelo diretor (07/2026).
@@ -1083,31 +1117,7 @@ def api_fornecedor(codfornec):
         print(f"[fornecedor {codfornec}] pedidos indisponíveis ({e}).")
         pedidos = []
 
-    _sug = sum(core._valor_sugerido_compra(p, "valor_sugerido_nf") for p in itens)
-    resumo = {
-        "codfornec": codfornec,
-        "fornecedor": forn.get("FORNECEDOR") or f"FORN {codfornec}",
-        "fantasia": forn.get("FANTASIA"), "estado": forn.get("ESTADO"),
-        "comprador": (_compradores_map() or {}).get(int(core._n(forn.get("CODCOMPRADOR")))) or None,
-        "prazo_entrega": core._n(forn.get("PRAZOENTREGA")) or None,
-        "n_produtos": len(itens),
-        "estoque": core._round(sum(p.get("valor") or 0 for p in itens)),
-        "venda": core._round(sum(p.get("venda") or 0 for p in itens)),
-        "lucro": core._round(sum(p.get("lucro") or 0 for p in itens)),
-        "n_ruptura": sum(1 for p in itens if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0),
-        "sugestao_nf": core._round(_sug),          # a comprar, régua da NF (c/ impostos)
-        "valor_parado": core._round(sum(p.get("valor") or 0 for p in itens if p.get("status_parado"))),
-        # lead REAL (mediana das entradas >=2d) é o que a aba Lead time mostra; `confiavel`
-        # diz se há amostra suficiente — sem isso o drawer exibiria um número frágil como fato
-        "lead_real": (lead or {}).get("lead_real"),
-        "lead_todos": (lead or {}).get("lead_todos"),
-        "lead_n": (lead or {}).get("n"),
-        "lead_confiavel": (lead or {}).get("confiavel"),
-        "ultima_compra": extra.get("ultima_compra"),
-        **{k: extra.get(k) for k in ("n_pedidos", "ciclo_dias", "verba", "verba_campanha",
-                                     "venda_yoy", "venda_ant_yoy")},
-    }
-    resumo["margem"] = core._round(resumo["lucro"] / resumo["venda"] * 100, 1) if resumo["venda"] else None
+    resumo = _resumo_fornecedor(codfornec, itens, forn, extra, lead)
     return jsonify({"ok": True, "fornecedor": resumo, "meses": meses,
                     "serie": serie, "serie_ant": serie_ant,
                     "top_produtos": [{k: p.get(k) for k in
@@ -1229,6 +1239,87 @@ def api_plano_reposicao():
     return jsonify({"ok": True, "gerado_em": hoje.isoformat(), "n": len(itens), "itens": itens})
 
 
+# ───────────────────────── ficha 360° (escalares) ─────────────────────────
+# Pedido do diretor 07/2026: "exportar os dois [drawers] e colocar em horizontal no Excel e PDF".
+# Só os campos ESCALARES, por decisão dele — as listas do drawer (lotes, endereços, pedidos em
+# aberto, top produtos, plano semanal) têm tamanho variável e não cabem numa linha.
+#
+# Esta spec é FONTE ÚNICA e serve três saídas: a ficha de um item (Excel + PDF), e as colunas
+# extras do export da lista. Campo novo entra aqui e aparece nos três — era o jeito de não
+# repetir a dívida da aba Fornecedores, que é calculada em dois lugares e exige lembrar dos dois.
+# Formato: (seção, chave, rótulo, tipo). A seção só é usada pela grade do PDF.
+_FICHA_COLS = {
+    "produto": [
+        ("Identificação", "codprod", "Cód", "text"),
+        ("Identificação", "descricao", "Produto", "text"),
+        ("Identificação", "fornecedor", "Fornecedor", "text"),
+        ("Identificação", "comprador", "Comprador", "text"),
+        ("Identificação", "curva_abc", "ABC", "text"),
+        ("Identificação", "xyz", "XYZ", "text"),
+        ("Posição de estoque", "qtdisp", "Disponível", "int"),
+        ("Posição de estoque", "valor", "Valor em estoque", "money"),
+        ("Posição de estoque", "giro_mes", "Giro/mês", "int"),
+        ("Posição de estoque", "cobertura", "Cobertura (d)", "int"),
+        ("Venda no período", "venda", "Venda", "money"),
+        ("Venda no período", "lucro", "Lucro", "money"),
+        ("Venda no período", "margem", "Margem", "pct"),
+        ("Venda no período", "qtd_vendida", "Qtd vendida", "int"),
+        ("Situação", "status_abast", "Abastecimento", "text"),
+        ("Situação", "status_ruptura", "Ruptura", "text"),
+        ("Situação", "status_parado", "Parado", "text"),
+        ("Situação", "dtultent", "Última entrada", "date"),
+        ("Situação", "dias_sem_entrada", "Dias s/ entrada", "int"),
+        ("Situação", "dtultsaida", "Última saída", "date"),
+        ("Situação", "dias_sem_venda", "Dias s/ venda", "int"),
+        ("Abastecimento", "lead_efetivo", "Lead (d)", "int"),
+        ("Abastecimento", "embalagem_caixa", "Embalagem", "text"),
+        ("Abastecimento", "caixa", "Un/caixa", "int"),
+        ("Abastecimento", "qtd_ja_pedida", "Já pedido (aberto)", "int"),
+        ("Abastecimento", "qt_transicao", "Recebido (pré-entrada)", "int"),
+        ("Abastecimento", "estoque_projetado", "Estoque projetado", "int"),
+        ("Abastecimento", "cobertura_proj", "Cob. projetada (d)", "int"),
+        ("Abastecimento", "est_alvo", "Estoque alvo", "int"),
+        ("Abastecimento", "sugestao_compra", "Sugestão (un)", "int"),
+        ("Abastecimento", "sugestao_cx", "Sugestão (cx)", "int"),
+        # as duas réguas, como em toda tela que diz "quanto vou gastar"
+        ("Abastecimento", "valor_sugerido_nf", "A comprar (c/ impostos)", "money"),
+        ("Abastecimento", "valor_sugerido_liq", "A comprar (mercadoria)", "money"),
+        ("Abastecimento", "status_exec", "Status", "text"),
+    ],
+    "fornecedor": [
+        ("Identificação", "codfornec", "Cód", "text"),
+        ("Identificação", "fornecedor", "Fornecedor", "text"),
+        ("Identificação", "fantasia", "Fantasia", "text"),
+        ("Identificação", "estado", "UF", "text"),
+        ("Identificação", "comprador", "Comprador", "text"),
+        ("Posição de estoque", "n_produtos", "Itens", "int"),
+        ("Posição de estoque", "estoque", "Valor em estoque", "money"),
+        ("Posição de estoque", "sugestao_nf", "A comprar (c/ impostos)", "money"),
+        ("Posição de estoque", "n_ruptura", "Em ruptura", "int"),
+        ("Posição de estoque", "valor_parado", "Capital parado", "money"),
+        ("Venda no período", "venda", "Venda", "money"),
+        ("Venda no período", "lucro", "Lucro", "money"),
+        ("Venda no período", "margem", "Margem", "pct"),
+        ("Ritmo de compra", "ciclo_dias", "Ciclo de compra 12m (d)", "int"),
+        ("Ritmo de compra", "n_pedidos", "Compras no período", "int"),
+        ("Ritmo de compra", "lead_real", "Lead time real (d)", "int"),
+        ("Ritmo de compra", "lead_n", "Entradas medidas", "int"),
+        # amostra fraca vira COLUNA, não nota de rodapé: o lead de 26d apurado em 2 entradas e o
+        # apurado em 40 não valem a mesma decisão, e na planilha não há tooltip para avisar
+        ("Ritmo de compra", "lead_confiavel", "Lead confiável", "bool"),
+        ("Ritmo de compra", "prazo_entrega", "Prazo cadastrado (d)", "int"),
+        ("Ritmo de compra", "ultima_compra", "Última compra", "date"),
+        ("Verba", "verba", "Verba negociada", "money"),
+        ("Verba", "verba_campanha", "· da qual campanha", "money"),
+    ],
+}
+
+
+def _ficha_campos(tipo):
+    """Só as chaves da ficha, na ordem — para montar colunas de export de lista."""
+    return [c[1] for c in _FICHA_COLS[tipo]]
+
+
 # ───────────────────────── export CSV ─────────────────────────
 _CSV_COLS = {
     "produtos": ["codprod", "descricao", "fornecedor", "comprador", "curva_abc", "xyz", "abc_xyz",
@@ -1257,6 +1348,12 @@ _CSV_COLS = {
                      # está no armazém — foi o que levou o comprador a pedir de novo.
                      "qtd_ja_pedida", "qt_transicao", "giro_mes", "sugestao_cx", "status_exec"],
 }
+
+# O Excel/CSV da aba Produtos leva TODOS os escalares do 360° (07/2026): o diretor pediu a ficha
+# "em horizontal", e no Excel não há limite de largura que justifique escolher. O PDF da lista
+# NÃO recebe o mesmo tratamento de propósito — 34 colunas em A4 paisagem dão ~0,8cm cada e viram
+# borrão; para o detalhe completo em papel existe a ficha de um item (`/export/ficha/...`).
+_CSV_COLS["produtos"] += [c for c in _ficha_campos("produto") if c not in _CSV_COLS["produtos"]]
 
 
 def _margem_bucket(p):
@@ -1412,9 +1509,42 @@ def _export_data(view):
         fc = request.args.get("forn_classe")
         if fc:
             linhas = [r for r in linhas if r.get("classificacao") == fc]
+        # Campos que até 07/2026 só o drawer 360° mostrava: a comprar, em ruptura, capital parado
+        # e o lead real. Agregados sobre os MESMOS produtos filtrados que alimentaram o
+        # core.fornecedores (nunca sobre o universo inteiro — somar recortes diferentes nos dois
+        # lados é como nasceu o bug do Cresc. AA). `ultima_compra`, ciclo e verba já vinham do
+        # `_extra_fornecedor`. O lead sai do cache da aba Lead time: nenhuma query nova.
+        _pf = _aplicar_filtros_cliente(produtos, skip={"curva"})
+        _agg = {}
+        for _p in _pf:
+            _cf = _p.get("codfornec")
+            if _cf is None:
+                continue
+            _a = _agg.setdefault(_cf, {"sugestao_nf": 0.0, "n_ruptura": 0, "valor_parado": 0.0})
+            _a["sugestao_nf"] += core._valor_sugerido_compra(_p, "valor_sugerido_nf")
+            if (_p.get("qtdisp") or 0) <= 0 and (_p.get("giro_dia") or 0) > 0:
+                _a["n_ruptura"] += 1
+            if _p.get("status_parado"):
+                _a["valor_parado"] += (_p.get("valor") or 0)
+        try:
+            _lead = {f.get("codfornec"): f for f in _leadtime_res(_hoje()).get("fornecedores", [])}
+        except Exception as e:      # lead indisponível não pode derrubar o export inteiro
+            print(f"[export fornecedores] lead time indisponível ({e}).")
+            _lead = {}
+        for r in linhas:
+            _a = _agg.get(r.get("codfornec")) or {}
+            _l = _lead.get(r.get("codfornec")) or {}
+            r["sugestao_nf"] = core._round(_a.get("sugestao_nf") or 0)
+            r["n_ruptura"] = _a.get("n_ruptura") or 0
+            r["valor_parado"] = core._round(_a.get("valor_parado") or 0)
+            r["lead_real"], r["lead_n"] = _l.get("lead_real"), _l.get("n")
+            r["lead_confiavel"] = _l.get("confiavel")
         cols = ["codfornec", "fornecedor", "curva_abc", "comprador", "n_produtos", "valor", "giro", "cobertura",
                 "venda_ano_ant", "crescimento",
-                "venda", "lucro", "margem", "perc_venda", "perc_estoque", "indice", "classificacao"]
+                "venda", "lucro", "margem", "perc_venda", "perc_estoque", "indice", "classificacao",
+                # os do 360° do fornecedor
+                "sugestao_nf", "n_ruptura", "valor_parado", "n_pedidos", "ciclo_dias",
+                "lead_real", "lead_n", "lead_confiavel", "ultima_compra", "verba", "verba_campanha"]
     elif view == "compradores":
         produtos, _, _ = _build_produtos()
         linhas = core.por_comprador(_aplicar_filtros_cliente(produtos))
@@ -1543,6 +1673,83 @@ def _export_data(view):
     return cols, linhas
 
 
+def _ficha_dados(tipo, cod):
+    """(spec, dict achatado, título) da ficha 360° de UM produto ou fornecedor.
+
+    Lê exatamente as mesmas fontes do drawer — `_build_produtos` para o produto e
+    `_resumo_fornecedor` para o fornecedor — e por isso responde aos filtros do topo
+    (unidade/período) que viajam na querystring. Ficha que ignora o filtro sairia divergindo da
+    tela que a originou, que é a armadilha do `exportQS()` já documentada no README."""
+    produtos, params, filiais = _build_produtos()
+    if tipo == "produto":
+        p = next((x for x in produtos if x.get("codprod") == cod), None)
+        if not p:
+            return None, None, None
+        return _FICHA_COLS["produto"], p, f"{p.get('codprod')} · {p.get('descricao') or ''}"
+    itens = [p for p in produtos if p.get("codfornec") == cod]
+    forn = _cadastro_fornecedores().get(cod) or {}
+    if not itens and not forn:
+        return None, None, None
+    hoje = _hoje()
+    extra = (_forn_extra_map(hoje, request.args.get("venda_periodo", "mes"), filiais) or {}).get(cod) or {}
+    try:
+        lead = next((f for f in _leadtime_res(hoje)["fornecedores"] if f.get("codfornec") == cod), None)
+    except Exception as e:
+        print(f"[ficha fornecedor {cod}] lead indisponível ({e}).")
+        lead = None
+    r = _resumo_fornecedor(cod, itens, forn, extra, lead)
+    return _FICHA_COLS["fornecedor"], r, f"{r.get('codfornec')} · {r.get('fornecedor') or ''}"
+
+
+@bp.route("/api/export/ficha/<tipo>/<int:cod>.xlsx")
+def api_export_ficha_xlsx(tipo, cod):
+    """Ficha em UMA linha horizontal: rótulos no cabeçalho, valores embaixo.
+
+    Formato escolhido pelo diretor ("colocar em horizontal"). O ganho de colar várias fichas numa
+    planilha só aparece assim — em pé, cada ficha seria um bloco novo que não empilha."""
+    from openpyxl import Workbook
+    if tipo not in _FICHA_COLS:
+        return jsonify({"ok": False, "erro": "tipo inválido"}), 404
+    spec, dados, titulo = _ficha_dados(tipo, cod)
+    if not spec:
+        return jsonify({"ok": False, "erro": f"{tipo} {cod} sem posição"}), 404
+    wb = Workbook(); ws = wb.active; ws.title = tipo[:31]
+    ws.append([c[2] for c in spec])
+    ws.append([_fmt_xlsx(dados.get(c[1]), c[3]) for c in spec])
+    for i, c in enumerate(spec, start=1):
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = max(12, min(38, len(c[2]) + 4))
+    ws.freeze_panes = "A2"
+    bio = io.BytesIO(); wb.save(bio); bio.seek(0)
+    return Response(bio.getvalue(),
+                    mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="ficha_{tipo}_{cod}.xlsx"'})
+
+
+@bp.route("/api/export/ficha/<tipo>/<int:cod>.pdf")
+def api_export_ficha_pdf(tipo, cod):
+    if tipo not in _FICHA_COLS:
+        return jsonify({"ok": False, "erro": "tipo inválido"}), 404
+    spec, dados, titulo = _ficha_dados(tipo, cod)
+    if not spec:
+        return jsonify({"ok": False, "erro": f"{tipo} {cod} sem posição"}), 404
+    pdf = _gerar_pdf_ficha(tipo, spec, dados, titulo)
+    return Response(pdf, mimetype="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="ficha_{tipo}_{cod}.pdf"'})
+
+
+def _fmt_xlsx(v, kind):
+    """No Excel o número sai NÚMERO (para somar/filtrar); só data e booleano viram texto legível.
+    Formatar tudo como string era o caminho fácil e entregaria uma planilha em que nada calcula."""
+    if kind == "bool":
+        return "" if v is None else ("sim" if v else "não")
+    if v is None:
+        return ""
+    if kind == "date":
+        s = str(v)[:10].split("-")
+        return f"{s[2]}/{s[1]}/{s[0]}" if len(s) == 3 else str(v)
+    return v
+
+
 @bp.route("/api/export/<view>.csv")
 def api_export_csv(view):
     cols, linhas = _export_data(view)
@@ -1666,6 +1873,10 @@ _PDF_TITULO = {"produtos": "Produtos", "comprasvendas": "Compras × Vendas", "re
 
 
 def _fmt_pdf(v, kind, maxlen=None):
+    # `bool` antes do teste de vazio: False é informação ("lead NÃO confiável"), não ausência —
+    # cair no "—" apagaria justamente o aviso que a coluna existe para dar.
+    if kind == "bool":
+        return "—" if v is None else ("sim" if v else "não")
     if v is None or v == "":
         return "—"
     try:
@@ -1781,6 +1992,87 @@ def _gerar_pdf(view, linhas, group_by=None, group_valor=None, group_rotulo="Esto
                    ('TEXTCOLOR', (0, gi), (-1, gi), colors.HexColor('#0f2a5c')),
                    ('ALIGN', (0, gi), (-1, gi), 'LEFT')]
     tbl = Table(data, repeatRows=1, colWidths=col_w)
+    tbl.setStyle(TableStyle(estilo))
+    story.append(tbl)
+
+    def _rodape(canvas, doc):
+        canvas.saveState()
+        canvas.setFont('Helvetica', 7)
+        canvas.setFillColor(colors.HexColor('#94a3b8'))
+        canvas.drawRightString(doc.pagesize[0] - 1.2 * cm, 0.8 * cm, f"Página {doc.page}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_rodape, onLaterPages=_rodape)
+    return buf.getvalue()
+
+
+def _gerar_pdf_ficha(tipo, spec, dados, titulo, pares_por_linha=3):
+    """Ficha 360° de UM item, em paisagem, com os pares rótulo/valor lado a lado numa grade.
+
+    Gerador separado do `_gerar_pdf` porque ficha NÃO é tabela: os 34 campos do produto como 34
+    colunas em A4 paisagem dariam ~0,8cm cada e sairiam ilegíveis. A grade transpõe a mesma
+    informação em ~12 linhas e cabe numa página. Precedente no repo: `_gerar_pdf_pedido`."""
+    from xml.sax.saxutils import escape as _x
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT
+
+    rotulo = {"produto": "Ficha do produto", "fornecedor": "Ficha do fornecedor"}.get(tipo, "Ficha")
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=1.2 * cm, rightMargin=1.2 * cm,
+                            topMargin=1.2 * cm, bottomMargin=1.5 * cm, title=f"Estoque — {rotulo}")
+    styles = getSampleStyleSheet()
+    t_style = ParagraphStyle('t', parent=styles['Heading1'], fontSize=14, alignment=TA_LEFT,
+                             textColor=colors.HexColor('#0a0e17'))
+    s_style = ParagraphStyle('s', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#475569'))
+    # descrição de produto tem "&" e aspas — Paragraph interpreta markup, então escapa
+    story = [Paragraph(f'<b>JOGA · Estoque</b> — {rotulo}', t_style),
+             Paragraph(f"<b>{_x(str(titulo or ''))}</b>", s_style),
+             Paragraph(f"Gerado em {date.today().strftime('%d/%m/%Y')}", s_style),
+             Spacer(1, 0.35 * cm)]
+
+    # agrupa os campos por seção, preservando a ordem da spec (a mesma ordem do drawer)
+    secoes = []
+    for sec, chave, rot, kind in spec:
+        if not secoes or secoes[-1][0] != sec:
+            secoes.append((sec, []))
+        secoes[-1][1].append((rot, _fmt_pdf(dados.get(chave), kind)))
+
+    ncols = pares_por_linha * 2
+    data, linhas_secao = [], []
+    for sec, campos in secoes:
+        linhas_secao.append(len(data))
+        data.append([sec] + [""] * (ncols - 1))
+        for i in range(0, len(campos), pares_por_linha):
+            linha = []
+            for rot, val in campos[i:i + pares_por_linha]:
+                linha += [rot, val]
+            data.append(linha + [""] * (ncols - len(linha)))
+
+    usable = landscape(A4)[0] - 2.4 * cm
+    pesos = [1.0, 1.45] * pares_por_linha
+    col_w = [usable * p / sum(pesos) for p in pesos]
+
+    estilo = [
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#cbd5e1')),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 4), ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('LEFTPADDING', (0, 0), (-1, -1), 5), ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+    ]
+    for i in range(pares_por_linha):
+        estilo.append(('TEXTCOLOR', (i * 2, 0), (i * 2, -1), colors.HexColor('#475569')))
+        estilo.append(('FONTNAME', (i * 2 + 1, 0), (i * 2 + 1, -1), 'Helvetica-Bold'))
+    for gi in linhas_secao:
+        estilo += [('SPAN', (0, gi), (-1, gi)),
+                   ('BACKGROUND', (0, gi), (-1, gi), colors.HexColor('#1e293b')),
+                   ('TEXTCOLOR', (0, gi), (-1, gi), colors.white),
+                   ('FONTNAME', (0, gi), (-1, gi), 'Helvetica-Bold'),
+                   ('ALIGN', (0, gi), (-1, gi), 'LEFT')]
+    tbl = Table(data, colWidths=col_w)
     tbl.setStyle(TableStyle(estilo))
     story.append(tbl)
 
