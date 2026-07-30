@@ -311,6 +311,15 @@ td .prod { max-width: 340px; overflow: hidden; text-overflow: ellipsis; display:
 /* reposição por fornecedor */
 .forn-grp h3 { align-items: center; }
 .forn-grp h3 small { font-weight: 400; }
+/* Abastecimento: fechado, cada fornecedor é uma LINHA de lista; aberto, volta a ser um painel.
+   Sem o aperto no estado fechado, 200 fornecedores viram 200 cartões e a leitura macro que
+   motivou a mudança (07/2026) se perde no scroll — que era exatamente a queixa. */
+.forn-grp { padding: 11px 16px; margin-bottom: 7px; transition: border-color .15s ease; }
+.forn-grp h3 { margin-bottom: 0; gap: 12px; }
+.forn-grp.on { padding: 16px; margin-bottom: 16px; }
+.forn-grp.on h3 { margin-bottom: 12px; }
+.forn-grp:not(.on):hover { border-color: var(--accent); }
+.forn-hd { user-select: none; }
 
 /* modal */
 .modal-bg { position: fixed; inset: 0; background: rgba(var(--sombra-rgb), .6); display: none; align-items: center; justify-content: center; z-index: 70; }

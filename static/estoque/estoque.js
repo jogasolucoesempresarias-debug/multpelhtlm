@@ -54,6 +54,10 @@ const S = {
   vencidos:null, vencidosQS:'', venMes:null, venPer:'2026',   // aba Vencidos: cache por QS, mês selecionado, período (2026|12m|tudo)
   leadtime:null, ltMin:5, ltOpen:new Set(), ltDet:{},   // aba Lead time: cache, mín. pedidos, drills abertos/carregados
   verbas:null, vbOpen:new Set(), vbDet:{},              // aba Verbas: cache + drills abertos/carregados
+  // aba Abastecimento: fornecedores expandidos, "abrir tudo" e ordenação da lista.
+  // A tela abre FECHADA (pedido do diretor 07/2026): a leitura de entrada é macro — quais
+  // fornecedores preciso comprar e quanto — e os itens são o drill.
+  repOpen:new Set(), repAll:false, repOrd:'valor',
 };
 
 /* ───────── helpers ───────── */
@@ -109,6 +113,13 @@ const valReporMerc=p=>(p.valor_sugerido_liq||0);
 // quanto do valor está apoiado em alíquota ESTIMADA (item sem regra fiscal p/ aquela origem).
 // Em R$, não em contagem de itens: 5% dos itens pode ser 0,5% ou 30% do dinheiro.
 const valReporIncerto=p=>(p.trib_firme===false?valReporNF(p):0);
+// ───────── venda perdida por ruptura: FONTE ÚNICA ─────────
+// Item zerado COM giro (a ruptura oficial), somando `venda_perdida` (dias parados × giro/dia ×
+// preço de venda, já calculado no servidor). Usado pelo card do Abastecimento e pelo do Estoque
+// zerado — se cada tela filtrasse por conta própria, os dois cards diriam valores diferentes para
+// a mesma coisa, que é como o app já se queimou antes com o "quanto vou gastar".
+const emRuptura=p=>(p.qtdisp||0)<=0&&(p.giro_dia||0)>0;
+const vendaPerdidaTotal=P=>P.filter(emRuptura).reduce((s,p)=>s+(p.venda_perdida||0),0);
 // rodapé padrão da incerteza — some quando tudo é firme (só aparece quando importa)
 function notaIncerteza(vNF,vInc){
   if(!(vInc>0)||!(vNF>0)) return '';
@@ -171,7 +182,7 @@ const TIPS = {
     'Status':'Situação executiva: ruptura sem pedido, ruptura com pedido parcial/coberto, etc.',
   },
   reposicao:{
-    _title:'Sugestão de compra agrupada por fornecedor. Sugestão = estoque-alvo − (disponível + pedido já em aberto), arredondada em caixas.',
+    _title:'Sugestão de compra agrupada por fornecedor, com a lista fechada: cada linha é um fornecedor a comprar e o valor do pedido sugerido; clique no cabeçalho para ver os itens. Sugestão = estoque-alvo − (disponível + pedido já em aberto), arredondada em caixas.',
     'Embalagem':'Embalagem da caixa e o fator de conversão unidade↔caixa (un/cx).',
     'Cob.proj':'Cobertura projetada em dias = (disponível + já pedido) ÷ giro diário.',
     'm³':'Cubagem do pedido sugerido (caixas sugeridas × volume da caixa).',
@@ -326,7 +337,10 @@ function tip(view, label){ const v=(TIPS[view]&&TIPS[view][label]); const t=(v!=
 function tipT(txt){ return tipSpan(txt); }
 
 /* ───────── prefs ───────── */
-function savePrefs(){ try{ localStorage.setItem(PREF, JSON.stringify({comprador:S.cli.comprador,base:S.base,vperiodo:S.vperiodo,unidade:S.unidade,params:S.params,view:S.view})); }catch(e){} }
+// `repAll`/`repOrd` são preferência de EXIBIÇÃO da aba Abastecimento (abrir tudo, ordem da lista).
+// Ficam no localStorage sem cerimônia porque não mudam nenhum número — ao contrário dos ⚙ Parâmetros,
+// onde "por navegador" significa que o painel pode dizer coisas diferentes para cada pessoa.
+function savePrefs(){ try{ localStorage.setItem(PREF, JSON.stringify({comprador:S.cli.comprador,base:S.base,vperiodo:S.vperiodo,unidade:S.unidade,params:S.params,view:S.view,repAll:S.repAll,repOrd:S.repOrd})); }catch(e){} }
 function loadPrefs(){ try{ return JSON.parse(localStorage.getItem(PREF))||{}; }catch(e){ return {}; } }
 
 /* ───────── querystring p/ servidor ───────── */
@@ -643,7 +657,7 @@ function renderEstoqueZero(P){
   const z=P.filter(p=>(p.qtdisp||0)<=0);
   const neg=z.filter(p=>(p.qtdisp||0)<0), comGiro=z.filter(p=>(p.giro_dia||0)>0), comPed=z.filter(p=>(p.qtd_ja_pedida||0)>0);
   // impacto financeiro da ruptura (a custo): volume parado/mês + custo de repor até o alvo
-  const vendaPerdida=comGiro.reduce((s,p)=>s+(p.venda_perdida||0),0);
+  const vendaPerdida=vendaPerdidaTotal(P);   // fonte única — mesmo número do card da Abastecimento
   // c/ impostos e em caixa fechada — mesma régua da aba Abastecimento (ver valReporNF)
   const custoRepor=comGiro.reduce((s,p)=>s+valReporNF(p),0);
   const custoReporInc=comGiro.reduce((s,p)=>s+valReporIncerto(p),0);
@@ -736,18 +750,54 @@ function renderReposicao(P){
   // duas réguas: `valor` = mercadoria (vira preço na planilha do Winthor) e `valorNF` =
   // mercadoria + IPI + ST previstos, que é o que o Orçamento mede (PCPEDIDO[VLTOTAL]).
   // O card mostra a NF em destaque: era aí que o comprador planejava R$ 39,5k e consumia R$ 45,0k.
-  const g={}; rep.forEach(p=>{(g[p.codfornec]=g[p.codfornec]||{cod:p.codfornec,forn:p.fornecedor||('Forn '+p.codfornec),itens:[],valor:0,valorNF:0,incerto:0,cub:0,peso:0}); g[p.codfornec].itens.push(p); g[p.codfornec].valor+=valReporMerc(p); g[p.codfornec].valorNF+=valReporNF(p); g[p.codfornec].incerto+=valReporIncerto(p); g[p.codfornec].cub+=cubItem(p); g[p.codfornec].peso+=pesoItem(p);});
-  const grupos=Object.values(g).sort((a,b)=>b.valorNF-a.valorNF);
+  const g={}; rep.forEach(p=>{(g[p.codfornec]=g[p.codfornec]||{cod:p.codfornec,forn:p.fornecedor||('Forn '+p.codfornec),itens:[],valor:0,valorNF:0,incerto:0,cub:0,peso:0,zerados:0}); g[p.codfornec].itens.push(p); g[p.codfornec].valor+=valReporMerc(p); g[p.codfornec].valorNF+=valReporNF(p); g[p.codfornec].incerto+=valReporIncerto(p); g[p.codfornec].cub+=cubItem(p); g[p.codfornec].peso+=pesoItem(p); if(emRuptura(p)) g[p.codfornec].zerados++;});
+  // ordenação da LISTA de fornecedores. Default = maior pedido primeiro (era a ordem fixa antiga).
+  // Com a lista fechada, "vejo todos" só vira "sei por onde começar" se der para reordenar.
+  const ORD={valor:['Valor sugerido (maior)',(a,b)=>b.valorNF-a.valorNF],
+             zerados:['Itens zerados (mais)',(a,b)=>(b.zerados-a.zerados)||(b.valorNF-a.valorNF)],
+             itens:['Nº de itens (mais)',(a,b)=>(b.itens.length-a.itens.length)||(b.valorNF-a.valorNF)],
+             nome:['Fornecedor (A–Z)',(a,b)=>String(a.forn).localeCompare(String(b.forn))]};
+  const ordK=ORD[S.repOrd]?S.repOrd:'valor';
+  const grupos=Object.values(g).sort(ORD[ordK][1]);
+  // totais da tela (respeitam os filtros do topo, como todo o resto da aba)
+  const totNF=grupos.reduce((s,x)=>s+x.valorNF,0), totMerc=grupos.reduce((s,x)=>s+x.valor,0);
+  const totInc=grupos.reduce((s,x)=>s+x.incerto,0), totItens=grupos.reduce((s,x)=>s+x.itens.length,0);
+  const vendaPerdida=vendaPerdidaTotal(P), nRupt=P.filter(emRuptura).length;
+  // Sem "abre sozinho quando sobra 1 fornecedor": qualquer regra do tipo torna o cabeçalho
+  // inclicável naquele estado (o clique fecha, o re-render reabre) — clique morto é pior que
+  // um clique a mais.
+  const aberto=gr=>S.repAll||S.repOpen.has(gr.cod);
   const el=$('#v-reposicao');
   el.innerHTML=head('Abastecimento — o que comprar (por fornecedor)','reposicao')+
-    `<div class="count-line">Sugestão líquida = estoque-alvo (giro/dia × (lead + ${int(S.params.cob)}d)) − estoque projetado (disponível + <b>pedido real em aberto</b>), arredondada em <b>caixas</b>. <b>m³</b> = cubagem do pedido sugerido (caixas × volume da caixa). O <b>lead</b> entra na conta (o estoque cai até a mercadoria chegar) e usa o prazo do fornecedor quando houver. O total do fornecedor sai <b>com impostos (IPI/ST)</b> — é a mesma régua do Orçamento, que lê o valor da NF do Winthor; a coluna <b>Valor sug.</b> segue em mercadoria, que é o preço que vai na planilha de importação.</div>`+
-    grupos.slice(0,40).map(gr=>`
-      <div class="panel forn-grp">
-        <h3><span>${esc(gr.forn)} <small class="muted">· ${gr.itens.length} itens${gr.cub>0?` · ${dec(gr.cub,2)} m³`:''}${gr.peso>0?` · ${dec(gr.peso,1)} kg`:''}</small></span>
+    `<div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
+       ${kpi('Total a comprar',money(totNF),`${int(grupos.length)} fornecedores · ${int(totItens)} itens · merc. ${moneyK(totMerc)}${notaIncerteza(totNF,totInc)}`,C.orange)}
+       ${kpi('Venda perdida (ruptura)',money(vendaPerdida),`${int(nRupt)} itens zerados com giro`,C.purple)}
+       ${kpi('Fornecedores a comprar',int(grupos.length),'clique num deles para ver os itens',C.accent)}
+     </div>
+     <div class="count-line">Sugestão líquida = estoque-alvo (giro/dia × (lead + ${int(S.params.cob)}d)) − estoque projetado (disponível + <b>pedido real em aberto</b>), arredondada em <b>caixas</b>. <b>m³</b> = cubagem do pedido sugerido (caixas × volume da caixa). O <b>lead</b> entra na conta (o estoque cai até a mercadoria chegar) e usa o prazo do fornecedor quando houver. O total do fornecedor sai <b>com impostos (IPI/ST)</b> — é a mesma régua do Orçamento, que lê o valor da NF do Winthor; a coluna <b>Valor sug.</b> segue em mercadoria, que é o preço que vai na planilha de importação.</div>
+     <div class="count-line">⚠️ O card <b>Venda perdida</b> conta os itens <b>zerados com giro</b> — conjunto parecido, mas não idêntico ao da lista abaixo (item suspenso entra num e não no outro). Os dois números não fecham entre si de propósito.</div>
+     <div class="row" style="gap:14px;margin-bottom:8px;align-items:flex-end">
+       <div class="fb-group" style="margin:0"><label>Ordenar por</label>
+         <select id="rep-ord" class="fb-control" style="width:auto">
+           ${Object.entries(ORD).map(([k,v])=>`<option value="${k}" ${k===ordK?'selected':''}>${v[0]}</option>`).join('')}
+         </select></div>
+       <div class="fb-group" style="margin:0"><label>&nbsp;</label>
+         <button class="btn sm" id="rep-toggle-all">${S.repAll?'⊟ Fechar todos':'⊞ Expandir todos'}</button></div>
+     </div>`+
+    (grupos.length?'':'<div class="empty">Nenhuma compra sugerida no filtro atual 🎉</div>')+
+    grupos.map(gr=>{
+      const op=aberto(gr);
+      // O corpo só entra no DOM quando aberto. É isso que permitiu tirar o corte antigo de 40
+      // fornecedores (`slice(0,40)`), que escondia o resto SEM AVISAR — justamente na tela cujo
+      // pedido era "ver todos os fornecedores que eu preciso comprar".
+      const corpo=op?`<div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Embalagem${tip('reposicao','Embalagem')}</th><th class="num">Disp.${tip('reposicao','Disp.')}</th><th class="num">Já ped.${tip('reposicao','Já ped.')}</th><th class="num">Cob.proj${tip('reposicao','Cob.proj')}</th><th class="num">Giro/mês${tip('reposicao','Giro/mês')}</th><th class="num">Sugerido (cx)${tip('reposicao','Sugerido (cx)')}</th><th class="num">m³${tip('reposicao','m³')}</th><th class="num">Valor sug.${tip('reposicao','Valor sug.')}</th><th class="num">Imp.${tip('reposicao','Imp.')}</th><th>Status${tip('reposicao','Status')}</th></tr></thead>
+        <tbody>${gr.itens.sort((a,b)=>(a.cobertura_proj||0)-(b.cobertura_proj||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td>${embCell(p)}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida):'—'}${p.qt_transicao>0?` <b title="+${int(p.qt_transicao)} recebido, em pré-entrada (aguardando liberação)">+${int(p.qt_transicao)}</b>`:''}</td><td class="num">${cob(p.cobertura_proj)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${sugCxN(p)}</td><td class="num">${cubItem(p)>0?dec(cubItem(p),3):'—'}</td><td class="num">${money(p.valor_sugerido_liq)}</td><td class="num">${impCell(p)}</td><td>${statExec(p.status_exec)}</td></tr>`).join('')}</tbody></table></div>`:'';
+      return `<div class="panel forn-grp${op?' on':''}">
+        <h3 class="forn-hd" data-forngrp="${gr.cod}" style="cursor:pointer" title="${op?'Fechar':'Abrir'} os itens deste fornecedor">
+          <span><span class="muted" style="display:inline-block;width:1em">${op?'▾':'▸'}</span>${esc(gr.forn)} <small class="muted">· ${gr.cod} · ${gr.itens.length} itens${gr.zerados?` · <b style="color:${C.red}">${int(gr.zerados)} zerado${gr.zerados>1?'s':''}</b>`:''}${gr.cub>0?` · ${dec(gr.cub,2)} m³`:''}${gr.peso>0?` · ${dec(gr.peso,1)} kg`:''}</small></span>
           <span>${gr.valorNF>gr.valor+0.005?`${money(gr.valorNF)} <small class="muted">previsto c/ impostos · merc. ${money(gr.valor)}</small>`:money(gr.valor)}${notaIncerteza(gr.valorNF,gr.incerto)} <button class="btn sm primary rowact" data-fornped="${gr.cod}">Gerar pedido</button></span></h3>
-        <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Embalagem${tip('reposicao','Embalagem')}</th><th class="num">Disp.${tip('reposicao','Disp.')}</th><th class="num">Já ped.${tip('reposicao','Já ped.')}</th><th class="num">Cob.proj${tip('reposicao','Cob.proj')}</th><th class="num">Giro/mês${tip('reposicao','Giro/mês')}</th><th class="num">Sugerido (cx)${tip('reposicao','Sugerido (cx)')}</th><th class="num">m³${tip('reposicao','m³')}</th><th class="num">Valor sug.${tip('reposicao','Valor sug.')}</th><th class="num">Imp.${tip('reposicao','Imp.')}</th><th>Status${tip('reposicao','Status')}</th></tr></thead>
-        <tbody>${gr.itens.sort((a,b)=>(a.cobertura_proj||0)-(b.cobertura_proj||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td>${embCell(p)}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida):'—'}${p.qt_transicao>0?` <b title="+${int(p.qt_transicao)} recebido, em pré-entrada (aguardando liberação)">+${int(p.qt_transicao)}</b>`:''}</td><td class="num">${cob(p.cobertura_proj)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${sugCxN(p)}</td><td class="num">${cubItem(p)>0?dec(cubItem(p),3):'—'}</td><td class="num">${money(p.valor_sugerido_liq)}</td><td class="num">${impCell(p)}</td><td>${statExec(p.status_exec)}</td></tr>`).join('')}</tbody></table></div>
-      </div>`).join('')+
+        ${corpo}
+      </div>`;}).join('')+
     (suspensos.length?`<div class="panel" style="border-color:var(--orange)">
       <h3><span>⚠ Rever antes de comprar — pararam de vender (${suspensos.length})${tipT('Itens com giro na média de 3 meses mas sem venda há 60 dias ou mais — confira antes de pedir (o giro pode estar “preso” no histórico).')}</span></h3>
       <div class="count-line">Têm giro na média de 3 meses, mas <b>sem venda há ≥60 dias</b> → a sugestão pode estar comprando estoque que travou. Confira antes de pedir.</div>
@@ -755,7 +805,21 @@ function renderReposicao(P){
       <tbody>${suspensos.slice(0,100).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td><span class="prod">${esc(p.fornecedor||'—')}</span></td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.dias_sem_venda==null?'—':int(p.dias_sem_venda)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${int(p.sugestao_compra)}</td></tr>`).join('')}</tbody></table></div>
     </div>`:'');
   el.querySelectorAll('tbody tr').forEach(tr=>tr.onclick=e=>{if(!e.target.closest('.rowact'))openProduto(tr.dataset.cod);});
-  el.querySelectorAll('[data-fornped]').forEach(b=>b.onclick=()=>{ const gr=grupos.find(x=>String(x.cod)===b.dataset.fornped); modalPedidoFornecedor(gr); });
+  // "Gerar pedido" vive DENTRO do cabeçalho que abre/fecha: sem o stopPropagation o clique no botão
+  // também alternaria o grupo, e o comprador voltaria do modal com a lista aberta/fechada sozinha.
+  el.querySelectorAll('[data-fornped]').forEach(b=>b.onclick=e=>{ e.stopPropagation(); const gr=grupos.find(x=>String(x.cod)===b.dataset.fornped); modalPedidoFornecedor(gr); });
+  el.querySelectorAll('.forn-hd').forEach(h=>h.onclick=e=>{
+    if(e.target.closest('.rowact')) return;
+    const cod=+h.dataset.forngrp;
+    // com "expandir todos" ligado, o 1º clique num cabeçalho fecha aquele grupo: sai do modo
+    // global e mantém abertos os outros, que é o que o gesto quer dizer.
+    if(S.repAll){ S.repAll=false; grupos.forEach(x=>{ if(x.cod!==cod) S.repOpen.add(x.cod); }); S.repOpen.delete(cod); }
+    else if(S.repOpen.has(cod)) S.repOpen.delete(cod);
+    else S.repOpen.add(cod);
+    render();
+  });
+  const ro=$('#rep-ord'); if(ro) ro.onchange=e=>{ S.repOrd=e.target.value; render(); };
+  const rt=$('#rep-toggle-all'); if(rt) rt.onclick=()=>{ S.repAll=!S.repAll; S.repOpen.clear(); render(); };
 }
 
 async function renderPlano(){
@@ -2603,6 +2667,8 @@ async function init(){
   if(pr.vperiodo) S.vperiodo=pr.vperiodo; if(pr.params) S.params={...S.params,...pr.params};   // base fixa em gerencial (endereçado só p/ validade, que é isolada)
   if(pr.unidade) S.unidade=pr.unidade;
   if(pr.view) S.view=pr.view;
+  if(pr.repAll) S.repAll=true;                 // quem prefere a Abastecimento aberta não reclica todo dia
+  if(pr.repOrd) S.repOrd=pr.repOrd;
   applyNav();   // organiza os tabs já na 1ª pintura (antes do fetch) — evita o flash de todos os tabs
   document.body.classList.add('booted');   // revela os tabs (CSS esconde até aqui)
   try{
