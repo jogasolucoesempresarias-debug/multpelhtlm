@@ -117,9 +117,30 @@ _CACHE_TTLS = {
 }
 
 
+def _cache_ns(key):
+    """Prefixa TODA chave de cache com a FONTE DE DADOS.
+
+    ⚠️ Sem isso, um Redis compartilhado entre modos serve dado de uma fonte para a outra. Foi um
+    caso real (07/2026): rodar o app em modo demo (`DATA_SOURCE=postgres`, base sintética) gravou
+    o mapa de vendedores da DEMO na mesma chave que a produção usa; na volta ao Power BI o cache
+    respondeu com os 114 vendedores sintéticos e os códigos reais viraram "RCA 950" na tela.
+
+    É a mesma família do que a rede de segurança do `execute_dax` já protege — dado de uma fonte
+    aparecendo na outra — só que pela porta do cache, que aquela guarda não cobre. Em produção as
+    stacks têm Redis próprio, então o estrago fica no ambiente local; mas é justamente ali que se
+    valida antes de subir, e validação com dado errado é pior que validação nenhuma.
+
+    O banco analítico entra na chave porque dois Postgres diferentes (demo × Winthor de um
+    cliente) colidiriam do mesmo jeito."""
+    fonte = CONFIG['data_source']
+    if fonte == 'postgres':
+        fonte += ':' + os.getenv('ANALYTICS_DB_NAME', 'joga_demo')
+    return f'{fonte}:{key}'
+
+
 def _cache_get(key):
     try:
-        raw = _R.get(key)
+        raw = _R.get(_cache_ns(key))
         return json.loads(raw) if raw else None
     except redis.RedisError:
         return None
@@ -127,7 +148,7 @@ def _cache_get(key):
 
 def _cache_set(key, data, ttl_tipo='dax_agregado'):
     try:
-        _R.setex(key, _CACHE_TTLS[ttl_tipo], json.dumps(data, default=str))
+        _R.setex(_cache_ns(key), _CACHE_TTLS[ttl_tipo], json.dumps(data, default=str))
     except redis.RedisError:
         pass
 
