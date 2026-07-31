@@ -1158,6 +1158,58 @@ def api_fornecedor(codfornec):
                     "pedidos_abertos": pedidos})
 
 
+def _top_vendedores_produto(codprod, periodo, filiais_venda, hoje, n=3):
+    """Top N vendedores DESTE produto no período: [{codusur, nome, qtd, valor}].
+
+    Pedido do diretor 07/2026 ("trazer o melhor vendedor do item nessa janela"). O uso que
+    justifica: num item parado ou com excesso, saber quem já escoou aquilo transforma o drawer de
+    diagnóstico em ação — hoje o comprador vê o capital imobilizado e não tem o que fazer com a
+    informação.
+
+    Consulta por PRODUTO, sob demanda: o corte transversal (todos os produtos × todos os
+    vendedores) daria ~145 mil linhas e estouraria o limite de 100.000 do executeQueries em
+    silêncio. Cache de 30min por produto+período.
+
+    Nome vem do mapa de vendedores do COMERCIAL (`_carregar_vendedores_map`, cache 24h, já
+    resolvido nos dois modos de fonte) — import tardio porque o server importa este blueprint, e
+    no topo isso seria circular. Sem o mapa, cai no código: ranking com número vale mais que
+    ranking nenhum."""
+    ini, fim = _venda_datas(periodo, hoje)
+    key = f"topvend:{codprod}:{periodo}:{_filiais_key(filiais_venda)}:{hoje.isoformat()}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    try:
+        rows = (PS.vendedores_do_produto(codprod, ini, fim, filiais_venda) if _pg()
+                else pbi.run_dax_rca(Q.q_vendedores_do_produto_rca(codprod, ini, fim, filiais_venda)))
+    except Exception as e:
+        print(f"[top vendedores {codprod}] indisponível ({e}).")
+        return []
+    try:
+        from server import _carregar_vendedores_map
+        nomes = _carregar_vendedores_map() or {}
+    except Exception as e:
+        print(f"[top vendedores] mapa de nomes indisponível ({e}).")
+        nomes = {}
+    saida = []
+    for r in rows:
+        cu = core._n(r.get("CODUSUR"))
+        if not cu:
+            continue
+        cu = int(cu)
+        info = nomes.get(str(cu)) or {}
+        saida.append({"codusur": cu, "nome": info.get("nome") or f"RCA {cu}",
+                      "qtd": core._round(core._n(r.get("qtd"))),
+                      "valor": core._round(core._n(r.get("valor")))})
+    # ordena por QUANTIDADE: a pergunta é quem gira volume do item (é o que escoa estoque).
+    # O faturamento viaja junto na tela para o comprador ver quando os dois discordam — vender
+    # muita unidade barata e vender pouca cara são conversas diferentes.
+    saida.sort(key=lambda x: (-(x["qtd"] or 0), -(x["valor"] or 0)))
+    saida = saida[:n]
+    pbi._CACHE.set(key, saida, 1800)
+    return saida
+
+
 @bp.route("/api/produto/<int:codprod>")
 def api_produto(codprod):
     produtos, params, filiais = _build_produtos()
@@ -1178,7 +1230,10 @@ def api_produto(codprod):
         rs = (_vendas_mensal_rs_map(_hoje(), _filiais_venda()) or {}).get(codprod) or {}
         p["serie_mensal_meses"] = meses
         p["serie_mensal_rs"] = [core._round(core._n(rs.get(am)), 2) for am in meses] if rs else None
-    return jsonify({"ok": bool(p), "produto": p, "lotes": lotes, "enderecos": enderecos})
+    top_vend = _top_vendedores_produto(codprod, request.args.get("venda_periodo", "mes"),
+                                       _filiais_venda(), _hoje()) if p else []
+    return jsonify({"ok": bool(p), "produto": p, "lotes": lotes, "enderecos": enderecos,
+                    "top_vendedores": top_vend})
 
 
 def _rua_conferencia(rua):

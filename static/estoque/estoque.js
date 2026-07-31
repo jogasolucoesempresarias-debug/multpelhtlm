@@ -2439,6 +2439,18 @@ async function baixarFichaPdf(tipo,cod,btn){
   finally{ btn.disabled=false; btn.textContent=rotulo; }
 }
 
+/* Top 3 vendedores do item — UM campo dentro de "Venda no período", não seção própria
+   (decisão do diretor 07/2026: "é só o campo com os três vendedores, não precisa abrir uma nova
+   aba do drawer pra tão pouca coisa"). Quantidade primeiro, porque é ela que escoa estoque; o
+   faturamento ao lado revela quando os dois discordam (muita unidade barata × pouca cara). */
+function topVendedoresRow(tops){
+  if(!tops||!tops.length) return '';
+  const linha=(v,i)=>`<div${i?' style="margin-top:3px"':''}>${i+1}. ${esc(v.nome)}
+     <small class="muted">${int(v.qtd)} un · ${moneyK(v.valor)}</small></div>`;
+  return `<div class="lote-row"><span>Top vendedores<br><small class="muted">no período</small></span>
+    <span class="lr-r" style="text-align:right">${tops.map(linha).join('')}</span></div>`;
+}
+
 /* ───────── produto 360 ───────── */
 async function openProduto(cod){
   const ov=$('#overlay'),dr=$('#drawer'); ov.classList.add('on'); dr.classList.add('on'); dr.innerHTML='<div class="loader"><div class="spinner"></div></div>';
@@ -2467,6 +2479,7 @@ async function openProduto(cod){
       <div class="lote-row"><span>Venda</span><span>${money(p.venda)}</span></div>
       <div class="lote-row"><span>Lucro</span><span>${money(p.lucro)} ${p.margem!=null?`<small class="muted">(${dec(p.margem,1)}%)</small>`:''}</span></div>
       <div class="lote-row"><span>Qtd vendida</span><span>${int(p.qtd_vendida)}</span></div>
+      ${topVendedoresRow(j.top_vendedores)}
       <div class="d-sec">Situação</div>
       <div class="lote-row"><span>Abastecimento</span><span>${badge(p.status_abast)}</span></div>
       <div class="lote-row"><span>Ruptura</span><span>${p.status_ruptura?badge('0-15',p.status_ruptura+'d'):'—'}</span></div>

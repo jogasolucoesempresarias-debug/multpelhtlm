@@ -400,6 +400,33 @@ FILTER(
 )"""
 
 
+def q_vendedores_do_produto_rca(codprod, data_ini, data_fim, filiais=None):
+    """Quem vendeu ESTE produto no período: CODUSUR × (qtd, valor). Alimenta o "top vendedores"
+    do drawer 360° do produto (pedido do diretor 07/2026).
+
+    ⚠️ É por PRODUTO, sob demanda — de propósito. A versão "todos os produtos × todos os
+    vendedores" daria ~2.900 × ~50 ≈ 145 mil linhas e estouraria o corte de 100.000 do
+    `executeQueries` **em silêncio** (a armadilha que já mordeu este projeto no PCEST). Aqui o
+    filtro por CODPROD entra ANTES do agrupamento, então voltam algumas dezenas de linhas.
+
+    Bruta, sem parear devolução: o objetivo é "quem sabe vender este item" (ranking), não fechar
+    centavo com o RCA. Parear devolução por vendedor exigiria uma 2ª query (DTENT ≠ DTSAIDA) para
+    mudar a ordem em quase nada — e o drawer já traz a venda líquida do item logo acima."""
+    return f"""EVALUATE
+FILTER(
+    SUMMARIZECOLUMNS(
+        FATURAMENTO_VENDAS[CODUSUR],
+        FILTER(FATURAMENTO_VENDAS,
+            FATURAMENTO_VENDAS[CODPROD] = {int(codprod)}
+            && FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)}
+            && FATURAMENTO_VENDAS[DTSAIDA] <= {_d(data_fim)}{_fv_and('FATURAMENTO_VENDAS', filiais)}),
+        "qtd",   SUM(FATURAMENTO_VENDAS[QT]),
+        "valor", [VENDA BRUTA]
+    ),
+    [qtd] <> 0 || [valor] <> 0
+)"""
+
+
 def q_venda_fornecedor_mensal_rca(data_ini, filiais=None):
     """Venda BRUTA por CODFORNEC × mês desde data_ini — série do drawer 360° do FORNECEDOR.
 

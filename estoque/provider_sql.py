@@ -381,6 +381,24 @@ def venda_comprador_mensal(ini, filiais=None):
         return [{"CODCOMPRADOR": cc, "AnoMes": am, "venda": _f(v) or 0.0} for cc, am, v in cur.fetchall()]
 
 
+def vendedores_do_produto(codprod, ini, fim, filiais=None):
+    """Espelha q_vendedores_do_produto_rca: [{CODUSUR, qtd, valor}] — quem vendeu ESTE produto
+    no período. Bruta, como o DAX: o ranking é "quem sabe vender o item", não fechamento fiscal.
+
+    Filtra por codprod na cláusula WHERE (não em Python): o fato sintético tem ~1,17M linhas e
+    trazer tudo para filtrar depois seria o mesmo erro que o DAX evita agrupando por produto."""
+    fv = _fil(filiais)
+    with analytics_conn() as c:
+        cur = c.cursor()
+        cur.execute(f"""SELECT codusur, coalesce(sum(qt) FILTER (WHERE codoper='S'),0), {VB}
+            FROM faturamento_vendas
+            WHERE codprod = %s AND dtsaida BETWEEN %s AND %s{fv}
+            GROUP BY codusur""", (int(codprod), ini, fim))
+        return [{"CODUSUR": cu, "qtd": _f(q) or 0.0, "valor": _f(v) or 0.0}
+                for cu, q, v in cur.fetchall()
+                if cu is not None and ((_f(q) or 0) != 0 or (_f(v) or 0) != 0)]
+
+
 def devol_comprador_mensal(ini, filiais=None):
     """Espelha q_devol_comprador_mensal_rca: [{CODCOMPRADOR, AnoMes, dev}] — devolução por comprador×mês."""
     fv = _fil(filiais)
