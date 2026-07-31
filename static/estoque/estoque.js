@@ -625,7 +625,7 @@ function renderRuptura(P){
   const semG=P.filter(p=>p.cobertura_faixa==='121+'&&p.sem_giro), exc=P.filter(p=>p.excesso_real);
   const el=$('#v-ruptura');
   el.innerHTML=head('Cobertura de estoque por faixa','ruptura')+
-    resumoFaixasBlock('Por faixa de cobertura (valor de estoque)'+tipT('Valor de estoque em cada faixa de cobertura. Clique numa faixa para filtrar a tabela.'),faixas,P,p=>p.valor,cf,'ch-cob')+
+    resumoFaixasBlock('Por faixa de cobertura (valor de estoque)'+tipT('Valor de estoque em cada faixa de cobertura. Clique numa faixa para filtrar a tabela.'),faixas,rf,p=>p.valor,cf,'ch-cob')+
     `<div class="row" style="gap:14px;margin-bottom:4px">
        <div class="fb-group"><label>Faixa <small class="muted">(marque várias)</small></label>
          <details class="ms" id="cob-faixa"><summary class="fb-control" style="width:auto">${cobFaixaLabel(cf)}</summary>
@@ -1177,6 +1177,11 @@ function wirePorComprador(el){
   el.querySelectorAll('tr[data-comp]').forEach(tr=>{const cod=tr.dataset.comp; if(!cod)return;
     tr.onclick=()=>{S.cli.comprador=(S.cli.comprador===cod)?'':cod; const sel=$('#f-comprador'); if(sel){sel.value=S.cli.comprador;S.compradorNome=S.cli.comprador?(sel.selectedOptions[0]?.textContent||''):'';} render();};});
 }
+/* `items` = conjunto que alimenta a tabela "Por comprador". Tem de ser o RECORTE VISÍVEL, não o
+   universo: os cards e o gráfico são o seletor (mostram todas as faixas de propósito), mas a
+   tabela embaixo responde à seleção, igual à lista de itens. Passar o universo aqui fazia o
+   "Por comprador" mostrar R$ 48,8k / 82 itens enquanto a tela dizia 31 itens / R$ 11,1k —
+   reportado pelo diretor 07/2026 na aba Parado; a Cobertura tinha o mesmo defeito. */
 function resumoFaixasBlock(titulo,faixas,items,valorFn,active,chartId){
   const cards=faixas.map(f=>`<div class="vfx ${(Array.isArray(active)?active.includes(f.key):f.key===active)?'on':''}" data-fkey="${f.key}" style="--c:${f.color}">
       <div class="vfx-h">${f.label}</div><div class="vfx-v">${money(f.valor)}</div>
@@ -1227,7 +1232,7 @@ function renderParado(P){
     {key:'_plano',label:'Ação',html:p=>planoCell('parado',String(p.codprod),p.codprod,p.descricao,null)}];
   const el=$('#v-parado');
   el.innerHTML=head('Estoque parado — o que liquidar','parado')
-    +resumoFaixasBlock('Valor parado por faixa (dias sem venda)'+tipT('Valor de estoque parado em cada faixa de dias sem venda. Clique para filtrar.'),faixas,universo,p=>p.valor,pf,'ch-parado')
+    +resumoFaixasBlock('Valor parado por faixa (dias sem venda)'+tipT('Valor de estoque parado em cada faixa de dias sem venda. Clique para filtrar.'),faixas,par,p=>p.valor,pf,'ch-parado')
     +`<div class="row" style="gap:14px;margin:6px 0;align-items:flex-end">
         <div class="fb-group"><label>Faixa <small class="muted">(marque várias)</small></label>
           <details class="ms" id="par-faixa"><summary class="fb-control" style="width:auto">${parFaixaLabel(pf)}</summary>
@@ -1328,6 +1333,23 @@ function fornExtra(){
   return null;
 }
 
+/* Curva ABC do FORNECEDOR sobre o UNIVERSO (todo o snapshot), não sobre a lista filtrada.
+   Bug achado pelo diretor 07/2026: filtrando só a BOMBRIL ela aparecia como C, e voltava a A com
+   todos os fornecedores na tela. Pareto sobre recorte é matematicamente sem sentido — com um
+   fornecedor só, o acumulado dele é 100%, o que cai direto na faixa C.
+   É a mesma política que os PRODUTOS já seguem (curva atribuída no servidor sobre o conjunto
+   inteiro; filtro de tela só recorta a lista). Só UNIDADE e PERÍODO redefinem a curva. */
+function abcFornecedorMap(){
+  const g={};
+  (S.produtosAll||[]).forEach(p=>{ if(p.codfornec==null) return;
+    g[p.codfornec]=(g[p.codfornec]||0)+(p.venda||0); });
+  const arr=Object.entries(g).map(([cod,venda])=>({cod,venda})).sort((a,b)=>b.venda-a.venda);
+  const tot=arr.reduce((s,o)=>s+o.venda,0)||1;
+  const m={}; let ac=0;
+  arr.forEach(o=>{ ac+=o.venda; const p=ac/tot*100; m[o.cod]=p<=80?'A':(p<=95?'B':'C'); });
+  return m;
+}
+
 function renderFornecedores(P){
   // Opção A: nesta aba o filtro "Curva" age pela ABC do FORNECEDOR (não do produto).
   // Agrega ignorando a curva do produto (filtered(true)) e filtra os fornecedores por ABC no fim.
@@ -1357,9 +1379,8 @@ function renderFornecedores(P){
       // (margem vem de lucro÷venda arredondado — o caminho de volta reintroduz erro).
       lucro_verba:o.lucro+verba, margem_verba:o.venda?((o.lucro+verba)/o.venda*100):null,
       crescimento:cresc, yoyCompleto:temYoY, cl};}).sort((a,b)=>b.valor-a.valor);
-  // curva ABC do fornecedor por venda (Pareto do faturamento) — mesma leitura dos produtos
-  {const _tv=F.reduce((s,o)=>s+(o.venda||0),0)||1; let _ac=0;
-   [...F].sort((a,b)=>(b.venda||0)-(a.venda||0)).forEach(o=>{_ac+=(o.venda||0);const _p=_ac/_tv*100;o.curva_abc=_p<=80?'A':(_p<=95?'B':'C');});}
+  // curva ABC do fornecedor — do UNIVERSO, nunca do recorte (ver abcFornecedorMap)
+  {const _m=abcFornecedorMap(); F.forEach(o=>{o.curva_abc=_m[o.codfornec]||'C';});}
   const cols=[{key:'codfornec',label:'Cód',num:true},{key:'fornecedor',label:'Fornecedor',fmt:v=>`<span class="prod">${esc(v)}</span>`},
     {key:'curva_abc',label:'ABC',badge:true},
     {key:'n_produtos',label:'Itens',num:true},{key:'valor',label:'Estoque',num:true,fmt:money},{key:'giro',label:'Giro/mês',num:true,fmt:int},

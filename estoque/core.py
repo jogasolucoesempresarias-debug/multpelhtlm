@@ -1133,7 +1133,28 @@ def _extra_fornecedor(g, ex):
 
 
 # ───────────────────────── fornecedores ─────────────────────────
-def fornecedores(produtos, params=None, extra=None):
+def curva_abc_fornecedores(produtos, params=None):
+    """{codfornec: 'A'|'B'|'C'} por Pareto da venda, sobre o conjunto RECEBIDO.
+
+    Existe para que a curva seja calculada no UNIVERSO e não no recorte da tela. Pareto sobre
+    lista filtrada é matematicamente sem sentido: com um fornecedor só, o acumulado dele é 100%
+    e ele cai em C — foi o que o diretor viu, a BOMBRIL virando C ao filtrar por ela e voltando
+    a A com todos na tela. Mesma política que os PRODUTOS já seguem (a curva sai do conjunto
+    inteiro no servidor; os filtros só recortam a lista)."""
+    _a = params["abc_a"] if params else DEFAULTS["abc_a"]
+    _b = params["abc_b"] if params else DEFAULTS["abc_b"]
+    agg = {}
+    for p in produtos:
+        cf = p.get("codfornec")
+        if cf is None:
+            continue
+        agg[cf] = agg.get(cf, 0.0) + (p.get("venda") or 0)
+    linhas = [{"codfornec": k, "venda": v} for k, v in agg.items()]
+    _aplicar_curva(linhas, "venda", "curva_abc", _a, _b)
+    return {l["codfornec"]: l["curva_abc"] for l in linhas}
+
+
+def fornecedores(produtos, params=None, extra=None, curva_map=None):
     total_valor = sum(p["valor"] or 0 for p in produtos) or 1
     total_giro = sum(p["giro_mes"] or 0 for p in produtos) or 1
     total_venda = sum(p["venda"] or 0 for p in produtos) or 1
@@ -1194,10 +1215,17 @@ def fornecedores(produtos, params=None, extra=None):
             "indice": _round(indice, 2), "classificacao": classif,
             **_extra_fornecedor(g, (extra or {}).get(g["codfornec"])),
         })
-    # curva ABC do FORNECEDOR por venda (Pareto do faturamento) — mesma leitura dos produtos
-    _a = params["abc_a"] if params else DEFAULTS["abc_a"]
-    _b = params["abc_b"] if params else DEFAULTS["abc_b"]
-    _aplicar_curva(saida, "venda", "curva_abc", _a, _b)
+    # Curva ABC do FORNECEDOR por venda (Pareto do faturamento) — mesma leitura dos produtos.
+    # `curva_map` vem do UNIVERSO (todos os fornecedores), não do recorte: Pareto sobre lista
+    # filtrada dá resultado sem sentido — com um fornecedor só, o acumulado é 100% e ele vira C.
+    # Sem o mapa, cai no cálculo local (é o caso de quem chama sem filtro nenhum).
+    if curva_map:
+        for r in saida:
+            r["curva_abc"] = curva_map.get(r["codfornec"], "C")
+    else:
+        _a = params["abc_a"] if params else DEFAULTS["abc_a"]
+        _b = params["abc_b"] if params else DEFAULTS["abc_b"]
+        _aplicar_curva(saida, "venda", "curva_abc", _a, _b)
     saida.sort(key=lambda x: x["valor"], reverse=True)
     return saida
 

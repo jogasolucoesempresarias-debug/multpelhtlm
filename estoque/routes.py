@@ -1614,9 +1614,13 @@ def _export_data(view):
         # Opção A: a Curva filtra pela ABC do FORNECEDOR (pula a curva do produto e filtra o
         # resultado agregado por curva_abc do fornecedor) — igual à tela.
         # mesmo `extra` da tela (ciclo + verba), senão o Excel/PDF sairia sem as colunas novas
+        # curva do UNIVERSO (todos os produtos, antes de qualquer filtro) — senão o export
+        # repetiria o bug que o diretor viu na tela: filtrar um fornecedor fazia ele virar C,
+        # porque o Pareto era refeito sobre a lista recortada
         linhas = core.fornecedores(
             _aplicar_filtros_cliente(produtos, skip={"curva"}), params,
-            extra=_forn_extra_map(_hoje(), request.args.get("venda_periodo", "mes"), _fil))
+            extra=_forn_extra_map(_hoje(), request.args.get("venda_periodo", "mes"), _fil),
+            curva_map=core.curva_abc_fornecedores(produtos, params))
         _cv = request.args.get("curva")
         if _cv:
             _cvset = {x for x in _cv.split(",") if x}
