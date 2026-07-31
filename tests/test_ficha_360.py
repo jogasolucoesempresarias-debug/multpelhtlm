@@ -235,3 +235,70 @@ def test_lead_fora_nao_derruba_ciclo_e_verba(app_ctx, monkeypatch):
     assert j["ok"] is True
     assert j["extra"]["1"]["ciclo_dias"] == 30.0     # ciclo sobreviveu
     assert "lead_real" not in j["extra"]["1"]        # e o lead simplesmente não veio
+
+
+# ─────────────────── gráfico no PDF + seção oculta (07/2026) ───────────────────
+# "coloca o gráfico no final da página" e "tira posição do estoque". O gráfico vem CAPTURADO do
+# canvas do Chart.js (POST) em vez de redesenhado no reportlab: põe no papel a curva que ele
+# estava olhando e evita manter duas implementações do mesmo gráfico.
+def _png_data_url(w=40, h=20):
+    import base64
+    from PIL import Image as PILImage
+    bio = io.BytesIO()
+    PILImage.new("RGB", (w, h), "white").save(bio, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(bio.getvalue()).decode()
+
+
+def test_pdf_da_ficha_embute_o_grafico_enviado(app_ctx, monkeypatch):
+    _mock(monkeypatch, [_prod(1)])
+    with app_ctx.test_request_context("/estoque/api/export/ficha/produto/1.pdf",
+                                      method="POST", json={"grafico": _png_data_url()}):
+        com = routes.api_export_ficha_pdf("produto", 1)
+    _mock(monkeypatch, [_prod(1)])
+    with app_ctx.test_request_context("/estoque/api/export/ficha/produto/1.pdf"):
+        sem = routes.api_export_ficha_pdf("produto", 1)
+    assert com.data[:4] == b"%PDF" and sem.data[:4] == b"%PDF"
+    assert len(com.data) > len(sem.data), "o PDF com gráfico tem de carregar a imagem"
+
+
+def test_get_continua_valendo_sem_grafico(app_ctx, monkeypatch):
+    """O GET é o caminho do email e de quem chama a URL direto — não pode exigir POST."""
+    _mock(monkeypatch, [_prod(1)])
+    with app_ctx.test_request_context("/estoque/api/export/ficha/fornecedor/1.pdf"):
+        resp = routes.api_export_ficha_pdf("fornecedor", 1)
+    assert resp.data[:4] == b"%PDF"
+
+
+@pytest.mark.parametrize("ruim", [
+    None, "", "nao-e-data-url", "data:image/svg+xml,<svg/>",      # tipo errado
+    "data:image/png;base64,ISTO_NAO_E_BASE64_VALIDO!!!",          # base64 quebrado
+    "data:image/png;base64," + "QQ" * 10,                          # decodifica, mas não é PNG
+])
+def test_grafico_torto_nao_derruba_a_ficha(app_ctx, monkeypatch, ruim):
+    """O payload vem do navegador. Canvas vazio, recorte errado ou base64 truncado degradam para
+    "PDF sem gráfico" — que é exatamente o que existia antes desta funcionalidade."""
+    _mock(monkeypatch, [_prod(1)])
+    with app_ctx.test_request_context("/estoque/api/export/ficha/produto/1.pdf",
+                                      method="POST", json={"grafico": ruim}):
+        resp = routes.api_export_ficha_pdf("produto", 1)
+    assert resp.data[:4] == b"%PDF"
+
+
+def test_grafico_gigante_e_recusado(app_ctx, monkeypatch):
+    """Uma réplica serve todo mundo: payload sem teto viraria memória do processo."""
+    from reportlab.lib.units import cm
+    assert routes._img_do_data_url("data:image/png;base64," + "A" * 6_000_001, 10, cm) is None
+
+
+def test_pdf_omite_a_secao_pedida_mas_o_excel_mantem(app_ctx, monkeypatch):
+    """"tira posição do estoque" vale para o PAPEL, onde o espaço é disputado e três dos quatro
+    campos repetem o bloco Abastecimento. No Excel a largura não custa nada e a planilha segue
+    sendo o registro completo — por isso a omissão é do PDF, não da spec."""
+    assert "Posição de estoque" in routes._FICHA_PDF_OCULTA["produto"]
+    # a spec (e portanto o Excel) continua com os campos
+    campos = [c[1] for c in routes._FICHA_COLS["produto"]]
+    assert "qtdisp" in campos and "valor" in campos and "giro_mes" in campos
+    _mock(monkeypatch, [_prod(1)])
+    with app_ctx.test_request_context("/estoque/api/export/ficha/produto/1.xlsx"):
+        rows = _xlsx_rows(routes.api_export_ficha_xlsx("produto", 1))
+    assert "Valor em estoque" in rows[0]

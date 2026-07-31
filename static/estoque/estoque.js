@@ -791,13 +791,34 @@ function renderReposicao(P){
               :` Igual ao parâmetro em uso (${int(leadParam)}d).`);
     return `<span title="${tit}" style="${difere?`color:${C.orange}`:''}">lead <b>${fraca?'~':''}${nd}d</b>${difere?' ⚠':''}</span>`;
   };
+  // ───── saldo de orçamento: quanto de verba ainda cabe ─────
+  const _o=orcResumo(), orcLoading=(_o===null), O=_o||{};
+  const orcCard=(()=>{
+    if(orcLoading) return kpi('Saldo de orçamento','—','carregando a meta do mês…',C.dim);
+    if(_orc.erro) return kpi('Saldo de orçamento','—','indisponível — recarregue a página',C.red);
+    if(O.meta==null||!(O.meta>0)) return kpi('Saldo de orçamento','—','sem meta no mês para este escopo',C.dim);
+    const saldo=+O.saldo||0, cons=O.pct_consumido!=null?O.pct_consumido*100:null;
+    // cor pela mesma régua da aba Orçamento (≥100% vermelho, ≥85% laranja) — duas telas, um critério
+    const cor=saldo<=0?C.red:(cons!=null&&cons>=85?C.orange:C.green);
+    // o confronto que motivou o card: a sugestão da tela cabe no que sobrou?
+    const cabe=totNF<=saldo;
+    const sub=`meta ${moneyK(O.meta)} · comprado ${moneyK(O.comprado)}${cons!=null?` (${dec(cons,1)}%)`:''}`
+      +(saldo>0&&!cabe?` · <b style="color:${C.orange}">a sugestão acima excede em ${moneyK(totNF-saldo)}</b>`:'')
+      +(O.valor_aberto>0?` · ${moneyK(O.valor_aberto)} já comprometido em pedidos abertos`:'');
+    return kpi('Saldo de orçamento',money(saldo),sub,cor);
+  })();
+  // filtros que recortam a sugestão mas NÃO o orçamento — a tela avisa em vez de fingir que fecham
+  const _rotOrc={curva:'curva',xyz:'XYZ',fornec:'fornecedor',depto:'depto',busca:'busca'};
+  const orcIgnora=Object.keys(_rotOrc).filter(k=>S.cli[k]&&S.cli[k].length).map(k=>_rotOrc[k]);
   const el=$('#v-reposicao');
   el.innerHTML=head('Abastecimento — o que comprar (por fornecedor)','reposicao')+
-    `<div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
+    `<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
        ${kpi('Total a comprar',money(totNF),`${int(grupos.length)} fornecedores · ${int(totItens)} itens · merc. ${moneyK(totMerc)}${notaIncerteza(totNF,totInc)}`,C.orange)}
+       ${orcCard}
        ${kpi('Venda perdida (ruptura)',money(vendaPerdida),`${int(nRupt)} itens zerados com giro`,C.purple)}
        ${kpi('Fornecedores a comprar',int(grupos.length),'clique num deles para ver os itens',C.accent)}
      </div>
+     <div class="count-line"><b>Saldo de orçamento</b> = meta do mês (65% da venda líq. 30d) − comprado no Winthor, do <b>comprador selecionado</b> (${esc(S.compradorNome||'empresa toda')}). É o mesmo número da aba <b>Pedidos → Orçamento</b>. ⚠️ Ele é do <b>mês inteiro</b> e <b>não responde aos filtros de tela</b>${orcIgnora.length?` — <b>filtro ativo (${esc(orcIgnora.join(', '))}): o “Total a comprar” encolheu, o saldo não</b>`:''}. É de propósito: a pergunta é quanta verba ainda existe, não quanta verba corresponde ao recorte.</div>
      <div class="count-line">Sugestão líquida = estoque-alvo (giro/dia × (lead + ${int(S.params.cob)}d)) − estoque projetado (disponível + <b>pedido real em aberto</b>), arredondada em <b>caixas</b>. <b>m³</b> = cubagem do pedido sugerido (caixas × volume da caixa). O <b>lead</b> entra na conta (o estoque cai até a mercadoria chegar) e usa o prazo do fornecedor quando houver. O total do fornecedor sai <b>com impostos (IPI/ST)</b> — é a mesma régua do Orçamento, que lê o valor da NF do Winthor; a coluna <b>Valor sug.</b> segue em mercadoria, que é o preço que vai na planilha de importação.</div>
      <div class="count-line">⚠️ O card <b>Venda perdida</b> conta os itens <b>zerados com giro</b> — conjunto parecido, mas não idêntico ao da lista abaixo (item suspenso entra num e não no outro). Os dois números não fecham entre si de propósito.</div>
      <div class="count-line"><b>lead</b> na linha = <b>lead real medido</b> do fornecedor (mediana das entradas, mesma régua da aba Lead time) — <b>não</b> é o que a sugestão usou. A sugestão calcula com o parâmetro <b>${int(leadParam)}d</b>, igual para todos. Lead <b style="color:${C.orange}">em laranja ⚠</b> = diferente do parâmetro: ajuste em <b>⚙ Parâmetros</b> antes de gerar o pedido daquele fornecedor. <b>~</b> antes do número = amostra fraca (poucas entradas medidas). <b>—</b> = fornecedor sem entrada medida.</div>
@@ -968,26 +989,30 @@ async function renderVencidos(){
   let itens=(J.itens||[]).filter(keep);
   if(S.venMes) itens=itens.filter(i=>i.mes===S.venMes);
 
-  // venda/pct vêm do servidor (J.meses) — só existem SEM filtro de comprador (a venda é
-  // total da empresa, não por comprador-mês). Com comprador filtrado, a linha % some.
-  const semFiltroComp=!fc;
+  // Denominador do %: sem filtro de comprador é a venda do mês (J.meses); COM filtro é a venda
+  // daquele comprador naquele mês (J.venda_comp_mes, chave "cc|YYYY-MM").
+  // Até 07/2026 o cruzado não existia — a query já trazia comprador × mês, mas o servidor
+  // colapsava as duas dimensões em mapas separados. Consequência: com comprador filtrado a linha
+  // de % sumia do gráfico e o card caía no % all-time, ignorando o seletor de período em silêncio.
   const jm={}; (J.meses||[]).forEach(m=>{jm[m.mes]={venda:m.venda,pct:m.pct};});
+  const vcm=J.venda_comp_mes||{};
+  const vendaDoMes=mes=>fc?(vcm[fc+'|'+mes]??null):(jm[mes]?.venda??null);
+  const _r3=v=>Math.round(v*1000)/1000;   // mesma precisão do _round(...,3) do servidor
   // meses recalculados a partir das linhas visíveis → respeitam o filtro de comprador
   const mm={}; (J.itens||[]).filter(keep).forEach(i=>{ if(!i.mes)return;
     const g=mm[i.mes]=mm[i.mes]||{mes:i.mes,itens:0,qt:0,valor:0}; g.itens++; g.qt+=i.qt||0; g.valor+=i.total||0; });
-  const meses=Object.values(mm).map(g=>({...g,
-    venda:semFiltroComp?(jm[g.mes]?.venda??null):null,
-    pct:semFiltroComp?(jm[g.mes]?.pct??null):null})).sort((a,b)=>a.mes<b.mes?1:-1);
+  const meses=Object.values(mm).map(g=>{const v=vendaDoMes(g.mes);
+    return {...g, venda:v, pct:(v?_r3(g.valor/v*100):null)};}).sort((a,b)=>a.mes<b.mes?1:-1);
   const tot=(k)=>itens.reduce((s,i)=>s+(i[k]||0),0);
   const emEst=(J.em_estoque||[]).filter(p=>(!fc||String(p.codcomprador)===fc)&&(!ff||String(p.codfornec)===ff));
   const pior=meses.length?meses.reduce((a,b)=>b.valor>a.valor?b:a):null;
   const mesLbl=m=>{const[a,b]=m.split('-');return ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][+b-1]+'/'+a.slice(2);};
   // % global do PERÍODO: perda ÷ venda líquida dos meses visíveis que têm venda (RCA ≥2024).
-  // Com comprador filtrado, cai pro pct all-time daquele comprador (não há venda por comp-mês).
+  // Agora vale TAMBÉM com comprador filtrado — antes caía no % all-time daquele comprador, então
+  // o card respondia a um período diferente do que estava selecionado na tela, sem avisar.
   const mesesCV=meses.filter(m=>m.venda!=null);
   const perdaCV=mesesCV.reduce((s,m)=>s+m.valor,0), vendaCV=mesesCV.reduce((s,m)=>s+m.venda,0);
-  const pctGlobal=fc ? (J.por_comprador||[]).find(g=>String(g.cod)===fc)?.pct
-                     : (vendaCV?perdaCV/vendaCV*100:null);
+  const pctGlobal=vendaCV?perdaCV/vendaCV*100:null;
   const perLbl={'2026':'2026','12m':'12 meses','tudo':'Tudo'};
 
   el.innerHTML=head('Vencidos — perda por validade','vencidos')
@@ -1268,6 +1293,26 @@ function renderABCXYZ(P){
    unidade+período. Enquanto não chegam, devolve null e a aba renderiza sem as colunas; quando
    chegam, dispara um render(). Falha → {} (a aba nunca quebra por causa disto). */
 const _fx={key:null,map:null,loading:null,erro:false};
+
+// ───────── saldo de orçamento p/ a aba Abastecimento (busca preguiçosa) ─────────
+// Pedido do diretor 07/2026: "quanto falta de orçamento a usar, iria completar essa tela".
+// Mesmo padrão do fornExtra: 3 estados, cache por comprador, nunca um número velho.
+// ⚠️ O saldo é do MÊS e do COMPRADOR — não responde a curva/XYZ/fornecedor/busca. Isso é
+// intencional e confirmado pelo diretor: ele quer saber quanta verba ainda tem, não quanta
+// verba corresponde ao recorte da tela. A tela avisa quando há filtro que o card ignora.
+const _orc={key:null,resumo:null,loading:null,erro:false};
+function orcResumo(){
+  const key=(S.compradorNome||'TODOS')+'|'+S.unidade;
+  if(_orc.key===key) return _orc.resumo;
+  if(_orc.loading!==key){
+    _orc.loading=key;
+    getJSON('/estoque/api/orcamento?comprador='+encodeURIComponent(S.compradorNome||'TODOS'))
+      .then(o=>{_orc.key=key;_orc.resumo=o.resumo||{};_orc.erro=false;})
+      .catch(()=>{_orc.key=key;_orc.resumo={};_orc.erro=true;})
+      .finally(()=>{_orc.loading=null; if(S.view==='reposicao') render();});
+  }
+  return null;
+}
 function fornExtra(){
   const key=S.unidade+'|'+S.vperiodo;
   if(_fx.key===key) return _fx.map;
@@ -2358,7 +2403,41 @@ function buildVendaChart(p){
    números, e ficha que ignora o filtro sai divergindo da tela que a originou. */
 const fichaBtns=(tipo,cod)=>`<div style="display:flex;gap:8px;margin:6px 0 12px">
   <a class="btn sm" href="/estoque/api/export/ficha/${tipo}/${cod}.xlsx?${serverQS()}" title="Ficha em uma linha horizontal (Excel)">⬇ Excel</a>
-  <a class="btn sm" href="/estoque/api/export/ficha/${tipo}/${cod}.pdf?${serverQS()}" title="Ficha em paisagem (PDF)">⬇ PDF</a></div>`;
+  <button class="btn sm" data-ficha-pdf="${tipo}:${cod}" title="Ficha em paisagem, com o gráfico da tela (PDF)">⬇ PDF</button></div>`;
+
+// O PDF vira POST porque leva o GRÁFICO junto (pedido do diretor 07/2026). Capturar o canvas do
+// Chart.js põe no papel exatamente a curva da tela — sem redesenhar no reportlab, que seria uma
+// segunda implementação do mesmo gráfico para manter em sincronia.
+// ⚠️ `toDataURL` num canvas do Chart.js sai com fundo TRANSPARENTE, que no PDF branco vira texto
+// claro sobre nada. Por isso a captura é rebatida sobre branco antes de subir.
+function capturaGrafico(id){
+  const cv=document.getElementById(id);
+  if(!cv||!cv.width||!cv.height) return null;
+  try{
+    const off=document.createElement('canvas');
+    off.width=cv.width; off.height=cv.height;
+    const ctx=off.getContext('2d');
+    ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,off.width,off.height);
+    ctx.drawImage(cv,0,0);
+    return off.toDataURL('image/png');
+  }catch(e){ return null; }   // canvas "sujo" ou sem contexto → PDF sai sem gráfico
+}
+
+async function baixarFichaPdf(tipo,cod,btn){
+  const rotulo=btn.textContent;
+  btn.disabled=true; btn.textContent='gerando…';
+  try{
+    const grafico=capturaGrafico(tipo==='produto'?'d-venda12':'d-forn12');
+    const r=await fetch(`/estoque/api/export/ficha/${tipo}/${cod}.pdf?${serverQS()}`,
+      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({grafico})});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const blob=await r.blob(), url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download=`ficha_${tipo}_${cod}.pdf`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),4000);
+  }catch(e){ toast('Falha ao gerar o PDF: '+e.message); }
+  finally{ btn.disabled=false; btn.textContent=rotulo; }
+}
 
 /* ───────── produto 360 ───────── */
 async function openProduto(cod){
@@ -2471,7 +2550,14 @@ function buildFornChart(j){
       tooltip:{callbacks:{label:c=>c.dataset.label+': '+money(c.raw)}}},
       scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
 }
-function wireDrawer(){ $('#drawer .d-close').onclick=closeDrawer; }
+function wireDrawer(){
+  $('#drawer .d-close').onclick=closeDrawer;
+  // botão de PDF dos dois drawers (produto e fornecedor) — ligado aqui porque os dois passam
+  // por wireDrawer() e o gráfico só existe depois que o drawer terminou de renderizar
+  $('#drawer').querySelectorAll('[data-ficha-pdf]').forEach(b=>b.onclick=()=>{
+    const [tipo,cod]=b.dataset.fichaPdf.split(':'); baixarFichaPdf(tipo,cod,b);
+  });
+}
 function closeDrawer(){ $('#overlay').classList.remove('on'); $('#drawer').classList.remove('on'); }
 
 /* ───────── ocupação / WMS ───────── */

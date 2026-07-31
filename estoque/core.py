@@ -2201,7 +2201,8 @@ def logistica_pedidos(cab, itens, prod_map, embalagem_map, comp_map, forn_map, h
 
 
 # ───────────────────────── validade / FEFO ─────────────────────────
-def vencidos_por_mes(rows, produtos_idx=None, venda_mes_map=None, venda_comp_map=None):
+def vencidos_por_mes(rows, produtos_idx=None, venda_mes_map=None, venda_comp_map=None,
+                     venda_comp_mes_map=None):
     """Perda por VALIDADE (conta 200042) por mês — espelha a planilha VENCIDOS do diretor.
 
     rows: saída de q_vencidos (grão = item da nota, já escopado na conta 200042).
@@ -2210,6 +2211,10 @@ def vencidos_por_mes(rows, produtos_idx=None, venda_mes_map=None, venda_comp_map
     contraponto do validade_fefo (que olha risco futuro; aqui é perda realizada).
     venda_mes_map/venda_comp_map: venda líquida por mês ('YYYY-MM') e por comprador (cc),
     p/ o % da perda sobre a venda. Só há venda ≥2024 → meses antigos saem com pct=None.
+    venda_comp_mes_map: venda líquida CRUZADA {'cc|YYYY-MM': liq}. É o denominador que faltava
+    para o % responder ao filtro de comprador — sem ele a tela ou escondia a linha de % ou
+    mostrava o percentual all-time do comprador ignorando o período selecionado (07/2026).
+    Viaja cru para o front, que é quem sabe qual comprador e qual período estão na tela.
     """
     idx = produtos_idx or {}
     vmes = venda_mes_map or {}
@@ -2327,6 +2332,8 @@ def vencidos_por_mes(rows, produtos_idx=None, venda_mes_map=None, venda_comp_map
             "pct_total": _pct(perda_com_venda, venda_total),
         },
         "meses": meses,
+        # denominador cruzado (comprador × mês) — o front recorta por comprador E por período
+        "venda_comp_mes": venda_comp_mes_map or {},
         "itens": itens,
         "produtos": produtos,
         "em_estoque": em_estoque,

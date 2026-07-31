@@ -962,9 +962,17 @@ def api_validade():
 
 def _venda_liq_mensal(filiais_venda):
     """Venda LÍQUIDA (bruta − devolução) por comprador × mês, p/ o % da aba Vencidos.
-    Devolve (por_mes {AnoMes 'YYYY-MM': liq}, por_comprador {cc: liq}). Mesma fórmula da
-    aba Desempenho (líq = [VENDA BRUTA] − [TOTAL DEVOLUCAO]). Venda começa em 2024 no RCA;
-    meses anteriores ficam sem % (numerador sem denominador)."""
+    Devolve (por_mes {AnoMes 'YYYY-MM': liq}, por_comprador {cc: liq},
+    por_comp_mes {'cc|YYYY-MM': liq}). Mesma fórmula da aba Desempenho
+    (líq = [VENDA BRUTA] − [TOTAL DEVOLUCAO]). Venda começa em 2024 no RCA;
+    meses anteriores ficam sem % (numerador sem denominador).
+
+    ⚠️ O terceiro mapa (CRUZADO) existe porque a query já traz o grão comprador × mês
+    (`q_venda_comprador_mensal_rca` agrupa por CODCOMPRADOR **e** AnoMes) e as duas primeiras
+    agregações o descartavam — cada uma colapsando uma dimensão. Sem o cruzado, a aba Vencidos
+    com comprador filtrado não tinha denominador: a linha de % sumia do gráfico e o card caía no
+    % all-time daquele comprador, **ignorando o seletor de período** sem avisar (07/2026).
+    A devolução (`dev_idx`) já mantinha o grão — era só a venda que perdia."""
     ini = date(2024, 1, 1)
 
     def _am(v):
@@ -974,14 +982,17 @@ def _venda_liq_mensal(filiais_venda):
     vendas = PS.venda_comprador_mensal(ini, filiais_venda) if _pg() else pbi.run_dax_rca(Q.q_venda_comprador_mensal_rca(ini, filiais_venda))
     devol = PS.devol_comprador_mensal(ini, filiais_venda) if _pg() else pbi.run_dax_rca(Q.q_devol_comprador_mensal_rca(ini, filiais_venda))
     dev_idx = {(int(core._n(r["CODCOMPRADOR"])), _am(r["AnoMes"])): core._n(r.get("dev")) for r in devol}
-    por_mes, por_comp = {}, {}
+    por_mes, por_comp, por_comp_mes = {}, {}, {}
     for r in vendas:
         cc = int(core._n(r["CODCOMPRADOR"]))
         mes = _am(r["AnoMes"])
         liq = core._n(r.get("venda")) - dev_idx.get((cc, mes), 0.0)
         por_mes[mes] = por_mes.get(mes, 0.0) + liq
         por_comp[cc] = por_comp.get(cc, 0.0) + liq
-    return por_mes, por_comp
+        # chave em string: este mapa viaja no JSON, e tupla não sobrevive à serialização
+        k = f"{cc}|{mes}"
+        por_comp_mes[k] = por_comp_mes.get(k, 0.0) + liq
+    return por_mes, por_comp, por_comp_mes
 
 
 @bp.route("/api/vencidos")
@@ -992,8 +1003,9 @@ def api_vencidos():
     produtos, params, filiais = _build_produtos()
     idx = {p["codprod"]: p for p in produtos}
     rows = PS.vencidos(filiais) if _pg() else pbi.run_dax(Q.q_vencidos(filiais))
-    venda_mes, venda_comp = _venda_liq_mensal(_filiais_venda())
-    res = core.vencidos_por_mes(rows, idx, venda_mes_map=venda_mes, venda_comp_map=venda_comp)
+    venda_mes, venda_comp, venda_comp_mes = _venda_liq_mensal(_filiais_venda())
+    res = core.vencidos_por_mes(rows, idx, venda_mes_map=venda_mes, venda_comp_map=venda_comp,
+                                venda_comp_mes_map=venda_comp_mes)
     # próximo vencimento do estoque ATUAL dos itens que já venceram e continuam na casa —
     # "já perdi isso; e o que tenho vence quando?". Só p/ os em_estoque (lista curta).
     em = res.get("em_estoque") or []
@@ -1337,6 +1349,14 @@ _FICHA_COLS = {
 def _ficha_campos(tipo):
     """Só as chaves da ficha, na ordem — para montar colunas de export de lista."""
     return [c[1] for c in _FICHA_COLS[tipo]]
+
+
+# Seções que o PDF omite (pedido do diretor 07/2026: "tira posição do estoque e coloca o gráfico
+# no final da página"). Some só do PAPEL, onde o espaço é disputado e onde três dos quatro campos
+# repetem o bloco Abastecimento logo abaixo (Disponível ≡ Estoque projetado quando não há pedido
+# em aberto, Cobertura ≡ Cob. projetada). No Excel continuam: lá a largura não custa nada e a
+# planilha é o registro completo.
+_FICHA_PDF_OCULTA = {"produto": {"Posição de estoque"}}
 
 
 # ───────────────────────── export CSV ─────────────────────────
@@ -1744,16 +1764,57 @@ def api_export_ficha_xlsx(tipo, cod):
                     headers={"Content-Disposition": f'attachment; filename="ficha_{tipo}_{cod}.xlsx"'})
 
 
-@bp.route("/api/export/ficha/<tipo>/<int:cod>.pdf")
+@bp.route("/api/export/ficha/<tipo>/<int:cod>.pdf", methods=["GET", "POST"])
 def api_export_ficha_pdf(tipo, cod):
+    """O POST carrega o GRÁFICO já desenhado na tela (`grafico`, PNG em data-URL).
+
+    Pedido do diretor 07/2026: "coloca o gráfico no final da página". Capturar o canvas do
+    Chart.js em vez de redesenhar no reportlab põe no papel EXATAMENTE a curva que ele estava
+    olhando — e evita manter duas implementações do mesmo gráfico, que divergiriam na primeira
+    vez que alguém mexesse numa. O GET continua valendo e sai sem gráfico (é o caminho do email
+    e de quem chama a URL direto)."""
     if tipo not in _FICHA_COLS:
         return jsonify({"ok": False, "erro": "tipo inválido"}), 404
     spec, dados, titulo = _ficha_dados(tipo, cod)
     if not spec:
         return jsonify({"ok": False, "erro": f"{tipo} {cod} sem posição"}), 404
-    pdf = _gerar_pdf_ficha(tipo, spec, dados, titulo)
+    grafico = None
+    if request.method == "POST":
+        grafico = (request.get_json(silent=True) or {}).get("grafico")
+    pdf = _gerar_pdf_ficha(tipo, spec, dados, titulo, grafico=grafico)
     return Response(pdf, mimetype="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="ficha_{tipo}_{cod}.pdf"'})
+
+
+def _img_do_data_url(data_url, largura_cm, cm):
+    """Converte o PNG capturado do canvas num Image do reportlab, preservando a proporção.
+
+    Blindado de propósito: o payload vem do navegador e um data-URL torto (recorte errado, canvas
+    vazio, base64 truncado) não pode derrubar a geração — o PDF sai sem o gráfico, que é o que
+    havia antes de existir esta funcionalidade."""
+    import base64
+    from reportlab.lib.utils import ImageReader
+    from reportlab.platypus import Image
+    try:
+        if not data_url or "," not in str(data_url):
+            return None
+        cabeca, b64 = str(data_url).split(",", 1)
+        if "image/png" not in cabeca:
+            return None
+        # teto de 6MB no base64: imagem de dashboard não passa de algumas centenas de KB, e sem
+        # limite um payload gigante viraria memória do processo (1 réplica serve todo mundo)
+        if len(b64) > 6_000_000:
+            print("[ficha] gráfico recusado: payload acima do teto.")
+            return None
+        bruto = io.BytesIO(base64.b64decode(b64))
+        larg_px, alt_px = ImageReader(bruto).getSize()
+        if not larg_px or not alt_px:
+            return None
+        bruto.seek(0)
+        return Image(bruto, width=largura_cm * cm, height=largura_cm * cm * alt_px / larg_px)
+    except Exception as e:
+        print(f"[ficha] gráfico ignorado ({e}).")
+        return None
 
 
 def _fmt_xlsx(v, kind):
@@ -2025,7 +2086,7 @@ def _gerar_pdf(view, linhas, group_by=None, group_valor=None, group_rotulo="Esto
     return buf.getvalue()
 
 
-def _gerar_pdf_ficha(tipo, spec, dados, titulo, pares_por_linha=3):
+def _gerar_pdf_ficha(tipo, spec, dados, titulo, pares_por_linha=3, grafico=None):
     """Ficha 360° de UM item, em paisagem, com os pares rótulo/valor lado a lado numa grade.
 
     Gerador separado do `_gerar_pdf` porque ficha NÃO é tabela: os 34 campos do produto como 34
@@ -2054,8 +2115,11 @@ def _gerar_pdf_ficha(tipo, spec, dados, titulo, pares_por_linha=3):
              Spacer(1, 0.35 * cm)]
 
     # agrupa os campos por seção, preservando a ordem da spec (a mesma ordem do drawer)
+    ocultas = _FICHA_PDF_OCULTA.get(tipo) or set()
     secoes = []
     for sec, chave, rot, kind in spec:
+        if sec in ocultas:
+            continue
         if not secoes or secoes[-1][0] != sec:
             secoes.append((sec, []))
         secoes[-1][1].append((rot, _fmt_pdf(dados.get(chave), kind)))
@@ -2094,6 +2158,15 @@ def _gerar_pdf_ficha(tipo, spec, dados, titulo, pares_por_linha=3):
     tbl = Table(data, colWidths=col_w)
     tbl.setStyle(TableStyle(estilo))
     story.append(tbl)
+
+    # gráfico no FIM da página, como ele pediu. Largura ~metade da faixa útil: o gráfico da tela é
+    # largo e baixo, e esticá-lo na página inteira empurraria a ficha para uma segunda folha —
+    # o ponto do formato paisagem era caber em uma.
+    img = _img_do_data_url(grafico, (landscape(A4)[0] - 2.4 * cm) / cm * 0.55, cm)
+    if img is not None:
+        story += [Spacer(1, 0.45 * cm),
+                  Paragraph("<b>Venda dos últimos 12 meses</b>", s_style),
+                  Spacer(1, 0.15 * cm), img]
 
     def _rodape(canvas, doc):
         canvas.saveState()
