@@ -2086,7 +2086,7 @@ def _gerar_pdf(view, linhas, group_by=None, group_valor=None, group_rotulo="Esto
     return buf.getvalue()
 
 
-def _gerar_pdf_ficha(tipo, spec, dados, titulo, pares_por_linha=3, grafico=None):
+def _gerar_pdf_ficha(tipo, spec, dados, titulo, pares_por_linha=4, grafico=None):
     """Ficha 360° de UM item, em paisagem, com os pares rótulo/valor lado a lado numa grade.
 
     Gerador separado do `_gerar_pdf` porque ficha NÃO é tabela: os 34 campos do produto como 34
@@ -2114,6 +2114,16 @@ def _gerar_pdf_ficha(tipo, spec, dados, titulo, pares_por_linha=3, grafico=None)
              Paragraph(f"Gerado em {date.today().strftime('%d/%m/%Y')}", s_style),
              Spacer(1, 0.35 * cm)]
 
+    # Valor longo entra como Paragraph para QUEBRAR dentro da célula. String crua no Table do
+    # reportlab não quebra: ela transborda por cima da coluna vizinha — era o que acontecia com
+    # "COPAPA COMPANHIA PADUANA DE PAPEIS", que vazava até a borda da página. Só o texto longo
+    # paga o custo; número e data seguem string simples.
+    val_style = ParagraphStyle('v', parent=styles['Normal'], fontSize=8, leading=9.5,
+                               fontName='Helvetica-Bold', textColor=colors.black)
+
+    def _celula(txt):
+        return Paragraph(_x(str(txt)), val_style) if len(str(txt)) > 18 else txt
+
     # agrupa os campos por seção, preservando a ordem da spec (a mesma ordem do drawer)
     ocultas = _FICHA_PDF_OCULTA.get(tipo) or set()
     secoes = []
@@ -2122,7 +2132,7 @@ def _gerar_pdf_ficha(tipo, spec, dados, titulo, pares_por_linha=3, grafico=None)
             continue
         if not secoes or secoes[-1][0] != sec:
             secoes.append((sec, []))
-        secoes[-1][1].append((rot, _fmt_pdf(dados.get(chave), kind)))
+        secoes[-1][1].append((rot, _celula(_fmt_pdf(dados.get(chave), kind))))
 
     ncols = pares_por_linha * 2
     data, linhas_secao = [], []
@@ -2162,7 +2172,11 @@ def _gerar_pdf_ficha(tipo, spec, dados, titulo, pares_por_linha=3, grafico=None)
     # gráfico no FIM da página, como ele pediu. Largura ~metade da faixa útil: o gráfico da tela é
     # largo e baixo, e esticá-lo na página inteira empurraria a ficha para uma segunda folha —
     # o ponto do formato paisagem era caber em uma.
-    img = _img_do_data_url(grafico, (landscape(A4)[0] - 2.4 * cm) / cm * 0.55, cm)
+    # 50% da faixa útil (~13,7cm): MEDIDO, não estimado — é o maior gráfico com que a ficha
+    # inteira ainda fecha em UMA página nos dois tipos. Acima disso a do produto vira duas, e
+    # "gráfico no fim da página" com a página seguinte só para o gráfico não é o que foi pedido.
+    # Foi também por isso que a grade passou a 4 pares por linha (com 3, nem a tabela cabia).
+    img = _img_do_data_url(grafico, (landscape(A4)[0] - 2.4 * cm) / cm * 0.50, cm)
     if img is not None:
         story += [Spacer(1, 0.45 * cm),
                   Paragraph("<b>Venda dos últimos 12 meses</b>", s_style),

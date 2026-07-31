@@ -302,3 +302,18 @@ def test_pdf_omite_a_secao_pedida_mas_o_excel_mantem(app_ctx, monkeypatch):
     with app_ctx.test_request_context("/estoque/api/export/ficha/produto/1.xlsx"):
         rows = _xlsx_rows(routes.api_export_ficha_xlsx("produto", 1))
     assert "Valor em estoque" in rows[0]
+
+
+def test_ficha_com_grafico_cabe_em_UMA_pagina(app_ctx, monkeypatch):
+    """O formato paisagem existe para caber numa folha. A largura do gráfico (50% da faixa) e a
+    grade de 4 pares por linha foram MEDIDAS para isso: com 3 pares ou gráfico a 55%, a ficha do
+    produto virava duas páginas — e "gráfico no fim da página", com a página seguinte só para o
+    gráfico, não é o que foi pedido. Mexer em qualquer um dos dois sem medir quebra isto."""
+    grande = _png_data_url(900, 320)
+    for tipo in ("produto", "fornecedor"):
+        _mock(monkeypatch, [_prod(1, descricao="COPAPA COMPANHIA PADUANA DE PAPEIS LTDA ME")])
+        with app_ctx.test_request_context(f"/estoque/api/export/ficha/{tipo}/1.pdf",
+                                          method="POST", json={"grafico": grande}):
+            data = routes.api_export_ficha_pdf(tipo, 1).data
+        paginas = data.count(b"/Type /Page") - data.count(b"/Type /Pages")
+        assert paginas == 1, f"ficha de {tipo} saiu com {paginas} páginas"
