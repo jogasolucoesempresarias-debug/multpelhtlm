@@ -304,16 +304,46 @@ def test_pdf_omite_a_secao_pedida_mas_o_excel_mantem(app_ctx, monkeypatch):
     assert "Valor em estoque" in rows[0]
 
 
-def test_ficha_com_grafico_cabe_em_UMA_pagina(app_ctx, monkeypatch):
-    """O formato paisagem existe para caber numa folha. A largura do gráfico (50% da faixa) e a
-    grade de 4 pares por linha foram MEDIDAS para isso: com 3 pares ou gráfico a 55%, a ficha do
-    produto virava duas páginas — e "gráfico no fim da página", com a página seguinte só para o
-    gráfico, não é o que foi pedido. Mexer em qualquer um dos dois sem medir quebra isto."""
-    grande = _png_data_url(900, 320)
+@pytest.mark.parametrize("canvas", [
+    (900, 320),    # gráfico largo
+    (760, 350),    # proporção do drawer
+    (800, 420),    # tela retina (devicePixelRatio 2)
+    (600, 560),    # quase quadrado
+])
+def test_ficha_com_grafico_cabe_em_UMA_pagina(app_ctx, monkeypatch, canvas):
+    """O formato paisagem existe para caber numa folha.
+
+    A 1ª versão dimensionava o gráfico só pela LARGURA e foi calibrada contra um PNG 2,8:1. O
+    canvas real do Chart.js é mais quadrado — mesma largura, imagem muito mais alta — e a ficha
+    saía com o gráfico sozinho na página 2 e metade da 1ª em branco. A proporção depende do
+    tamanho do drawer e do devicePixelRatio de quem clicou, ou seja NÃO é constante: por isso o
+    caso de teste varre proporções em vez de fixar uma, e o encaixe limita altura E largura.
+    """
+    grande = _png_data_url(*canvas)
     for tipo in ("produto", "fornecedor"):
         _mock(monkeypatch, [_prod(1, descricao="COPAPA COMPANHIA PADUANA DE PAPEIS LTDA ME")])
         with app_ctx.test_request_context(f"/estoque/api/export/ficha/{tipo}/1.pdf",
                                           method="POST", json={"grafico": grande}):
             data = routes.api_export_ficha_pdf(tipo, 1).data
         paginas = data.count(b"/Type /Page") - data.count(b"/Type /Pages")
-        assert paginas == 1, f"ficha de {tipo} saiu com {paginas} páginas"
+        assert paginas == 1, f"ficha de {tipo} com canvas {canvas} saiu com {paginas} páginas"
+
+
+def test_texto_longo_nao_transborda_da_celula(app_ctx, monkeypatch):
+    """String crua no Table do reportlab não quebra: transborda por cima da coluna vizinha —
+    aconteceu com o nome do fornecedor e, depois, com o rótulo "A comprar (c/ impostos)" colado
+    no número. A quebra é decidida MEDINDO a largura do texto na fonte contra a da coluna;
+    quebrar por contagem de caracteres chutada foi o erro seguinte (quase todo rótulo virava
+    duas linhas e a tabela empurrava o gráfico para fora da página)."""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.units import cm
+    pares = 4
+    usable = landscape(A4)[0] - 2.4 * cm
+    pesos = [1.0, 1.45] * pares
+    col_rot, col_val = [usable * x / sum(pesos) for x in (1.0, 1.45)]
+    for _sec, _chave, rot, _kind in routes._FICHA_COLS["produto"] + routes._FICHA_COLS["fornecedor"]:
+        cabe = stringWidth(rot, "Helvetica", 8) <= (col_rot - 10)
+        # rótulo que não cabe TEM de ser quebrável (ter espaço) — senão nem o Paragraph salva
+        assert cabe or " " in rot, f"rótulo {rot!r} não cabe na coluna e não tem onde quebrar"
+    assert col_val > col_rot, "a coluna de valor tem de ser a mais larga do par"

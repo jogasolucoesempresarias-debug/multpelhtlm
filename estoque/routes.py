@@ -1786,8 +1786,15 @@ def api_export_ficha_pdf(tipo, cod):
                     headers={"Content-Disposition": f'attachment; filename="ficha_{tipo}_{cod}.pdf"'})
 
 
-def _img_do_data_url(data_url, largura_cm, cm):
+def _img_do_data_url(data_url, largura_cm, cm, altura_max_cm=None):
     """Converte o PNG capturado do canvas num Image do reportlab, preservando a proporção.
+
+    ⚠️ Limita por LARGURA **e** ALTURA. Dimensionar só pela largura foi o bug da 1ª versão: a
+    calibração usou um PNG 2,8:1 e o canvas real do Chart.js é bem mais quadrado, então a mesma
+    largura virava uma imagem alta demais, que não cabia na sobra da página — o reportlab
+    empurrava o gráfico para a folha 2 e deixava metade da 1ª em branco. A proporção da captura
+    depende do tamanho do drawer e do devicePixelRatio de quem clicou, ou seja, NÃO é constante:
+    o encaixe tem de ser calculado, não presumido.
 
     Blindado de propósito: o payload vem do navegador e um data-URL torto (recorte errado, canvas
     vazio, base64 truncado) não pode derrubar a geração — o PDF sai sem o gráfico, que é o que
@@ -1811,7 +1818,12 @@ def _img_do_data_url(data_url, largura_cm, cm):
         if not larg_px or not alt_px:
             return None
         bruto.seek(0)
-        return Image(bruto, width=largura_cm * cm, height=largura_cm * cm * alt_px / larg_px)
+        larg = largura_cm * cm
+        alt = larg * alt_px / larg_px
+        if altura_max_cm and alt > altura_max_cm * cm:      # alto demais → encolhe pela altura
+            alt = altura_max_cm * cm
+            larg = alt * larg_px / alt_px
+        return Image(bruto, width=larg, height=alt)
     except Exception as e:
         print(f"[ficha] gráfico ignorado ({e}).")
         return None
@@ -2114,15 +2126,27 @@ def _gerar_pdf_ficha(tipo, spec, dados, titulo, pares_por_linha=4, grafico=None)
              Paragraph(f"Gerado em {date.today().strftime('%d/%m/%Y')}", s_style),
              Spacer(1, 0.35 * cm)]
 
-    # Valor longo entra como Paragraph para QUEBRAR dentro da célula. String crua no Table do
-    # reportlab não quebra: ela transborda por cima da coluna vizinha — era o que acontecia com
-    # "COPAPA COMPANHIA PADUANA DE PAPEIS", que vazava até a borda da página. Só o texto longo
-    # paga o custo; número e data seguem string simples.
+    # ── quebra de texto: MEDIDA, não por contagem de caracteres ──
+    # String crua no Table do reportlab não quebra — transborda por cima da coluna vizinha. Foi o
+    # que aconteceu com "COPAPA COMPANHIA PADUANA DE PAPEIS" (valor) e com "A comprar (c/
+    # impostos)" colado no número (rótulo). Mas quebrar por limite de caracteres chutado é o outro
+    # extremo: com o corte em 14, quase todo rótulo virava duas linhas e a tabela crescia tanto que
+    # empurrava o gráfico para a segunda página. Aqui a decisão é por LARGURA REAL do texto na
+    # fonte, comparada com a da coluna: quebra só o que de fato não cabe.
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    usable = landscape(A4)[0] - 2.4 * cm
+    pesos = [1.0, 1.45] * pares_por_linha
+    col_w = [usable * p / sum(pesos) for p in pesos]
+    PAD = 10          # LEFTPADDING + RIGHTPADDING aplicados no estilo abaixo
     val_style = ParagraphStyle('v', parent=styles['Normal'], fontSize=8, leading=9.5,
                                fontName='Helvetica-Bold', textColor=colors.black)
+    rot_style = ParagraphStyle('r', parent=styles['Normal'], fontSize=8, leading=9.5,
+                               textColor=colors.HexColor('#475569'))
 
-    def _celula(txt):
-        return Paragraph(_x(str(txt)), val_style) if len(str(txt)) > 18 else txt
+    def _celula(txt, style, larg):
+        s = str(txt)
+        fonte = 'Helvetica-Bold' if style is val_style else 'Helvetica'
+        return Paragraph(_x(s), style) if stringWidth(s, fonte, 8) > (larg - PAD) else s
 
     # agrupa os campos por seção, preservando a ordem da spec (a mesma ordem do drawer)
     ocultas = _FICHA_PDF_OCULTA.get(tipo) or set()
@@ -2132,7 +2156,8 @@ def _gerar_pdf_ficha(tipo, spec, dados, titulo, pares_por_linha=4, grafico=None)
             continue
         if not secoes or secoes[-1][0] != sec:
             secoes.append((sec, []))
-        secoes[-1][1].append((rot, _celula(_fmt_pdf(dados.get(chave), kind))))
+        secoes[-1][1].append((_celula(rot, rot_style, col_w[0]),
+                              _celula(_fmt_pdf(dados.get(chave), kind), val_style, col_w[1])))
 
     ncols = pares_por_linha * 2
     data, linhas_secao = [], []
@@ -2145,15 +2170,15 @@ def _gerar_pdf_ficha(tipo, spec, dados, titulo, pares_por_linha=4, grafico=None)
                 linha += [rot, val]
             data.append(linha + [""] * (ncols - len(linha)))
 
-    usable = landscape(A4)[0] - 2.4 * cm
-    pesos = [1.0, 1.45] * pares_por_linha
-    col_w = [usable * p / sum(pesos) for p in pesos]
-
+    # col_w já foi calculado acima — é ele que decide o que quebra, então não pode ser recalculado
+    # aqui (duas fontes da mesma largura acabariam divergindo numa mudança futura).
     estilo = [
         ('FONTSIZE', (0, 0), (-1, -1), 8),
         ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#cbd5e1')),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 0), (-1, -1), 4), ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        # respiro enxuto (2,5pt, como o PDF do pedido): com 17 linhas, cada ponto de padding custa
+        # ~1,2cm de página. Foi o que abriu espaço para um gráfico legível em vez de um de 4cm
+        ('TOPPADDING', (0, 0), (-1, -1), 2.5), ('BOTTOMPADDING', (0, 0), (-1, -1), 2.5),
         ('LEFTPADDING', (0, 0), (-1, -1), 5), ('RIGHTPADDING', (0, 0), (-1, -1), 5),
     ]
     for i in range(pares_por_linha):
@@ -2172,15 +2197,17 @@ def _gerar_pdf_ficha(tipo, spec, dados, titulo, pares_por_linha=4, grafico=None)
     # gráfico no FIM da página, como ele pediu. Largura ~metade da faixa útil: o gráfico da tela é
     # largo e baixo, e esticá-lo na página inteira empurraria a ficha para uma segunda folha —
     # o ponto do formato paisagem era caber em uma.
-    # 50% da faixa útil (~13,7cm): MEDIDO, não estimado — é o maior gráfico com que a ficha
-    # inteira ainda fecha em UMA página nos dois tipos. Acima disso a do produto vira duas, e
-    # "gráfico no fim da página" com a página seguinte só para o gráfico não é o que foi pedido.
-    # Foi também por isso que a grade passou a 4 pares por linha (com 3, nem a tabela cabia).
-    img = _img_do_data_url(grafico, (landscape(A4)[0] - 2.4 * cm) / cm * 0.50, cm)
+    # Teto de ALTURA (6cm) é o que garante a página única, não a largura: a proporção da captura
+    # varia com o tamanho do drawer e o devicePixelRatio de quem clicou. A largura é só o limite
+    # superior; um canvas quadrado encolhe pela altura e sai mais estreito, que é o certo.
+    img = _img_do_data_url(grafico, (landscape(A4)[0] - 2.4 * cm) / cm * 0.50, cm, altura_max_cm=5.5)
     if img is not None:
+        # KeepTogether: sem isso o título cabe na página 1, a imagem não, e sobra um rótulo órfão
+        # no rodapé apontando para um gráfico que está na folha seguinte (foi o que aconteceu).
+        from reportlab.platypus import KeepTogether
         story += [Spacer(1, 0.45 * cm),
-                  Paragraph("<b>Venda dos últimos 12 meses</b>", s_style),
-                  Spacer(1, 0.15 * cm), img]
+                  KeepTogether([Paragraph("<b>Venda dos últimos 12 meses</b>", s_style),
+                                Spacer(1, 0.15 * cm), img])]
 
     def _rodape(canvas, doc):
         canvas.saveState()
