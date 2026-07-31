@@ -138,3 +138,42 @@ def test_modo_postgres_tem_provider_espelhado():
 def test_core_round_nao_quebra_com_none():
     """As linhas vêm do BI e podem trazer null — o ranking não pode explodir por isso."""
     assert core._n(None) == 0
+
+
+# ─────────────────── o modo como a PRODUÇÃO carrega o app ───────────────────
+# O Dockerfile roda `python server.py`, então lá aquele arquivo é o módulo `__main__` — não
+# `server`. A 1ª versão fazia `from server import _carregar_vendedores_map`, o que em produção
+# importava uma SEGUNDA cópia de um módulo de ~8,7 mil linhas (outro Flask app, outra conexão
+# Redis) a cada drawer aberto; o que falhasse ali caía no except e o mapa vinha vazio — TODO
+# vendedor virava "RCA 950" na tela do diretor.
+#
+# ⚠️ Nenhum teste pegaria isso pelo caminho normal: na suíte o `import server` registra o módulo
+# com esse nome e o import funciona. Por isso este teste SIMULA a condição de produção.
+def test_resolve_nomes_quando_o_app_e_o_modulo___main__(monkeypatch):
+    import sys
+    import server as _srv
+    monkeypatch.setattr(_srv, "_carregar_vendedores_map",
+                        lambda: {"950": {"nome": "IGOR CLAUDIO"}})
+    # produção: o arquivo virou __main__ e NÃO existe módulo chamado "server"
+    monkeypatch.setitem(sys.modules, "__main__", _srv)
+    monkeypatch.delitem(sys.modules, "server", raising=False)
+    assert routes._vendedores_nomes() == {"950": "IGOR CLAUDIO"}
+
+
+def test_nao_importa_server_de_novo():
+    """Se alguém reintroduzir o `from server import ...`, volta o bug — e volta invisível,
+    porque a suíte roda com o módulo registrado como 'server'."""
+    import inspect
+    # olha só LINHAS DE CÓDIGO: a docstring da função cita o padrão proibido de propósito,
+    # para quem for mexer entender por que ele não pode voltar
+    linhas = [l.strip() for l in inspect.getsource(routes._vendedores_nomes).splitlines()]
+    assert not [l for l in linhas if l.startswith("from server import")]
+    assert any("sys.modules" in l for l in linhas), "tem de reusar o módulo já carregado"
+
+
+def test_mapa_ausente_nao_derruba_o_ranking(monkeypatch):
+    """Sem mapa em módulo nenhum, o ranking sai com o código — não some."""
+    import sys
+    monkeypatch.setitem(sys.modules, "server", object())
+    monkeypatch.setitem(sys.modules, "__main__", object())
+    assert routes._vendedores_nomes() == {}

@@ -1158,6 +1158,33 @@ def api_fornecedor(codfornec):
                     "pedidos_abertos": pedidos})
 
 
+def _vendedores_nomes():
+    """{codusur_str: nome} do mapa de vendedores do Comercial (PCUSUARI, cache 24h).
+
+    ⚠️ NÃO usa `from server import ...`. Em produção o container roda `python server.py`
+    (Dockerfile), então aquele arquivo é o módulo **`__main__`** — e o import criaria uma SEGUNDA
+    cópia de um módulo de ~8,7 mil linhas, reexecutando-o inteiro (outro Flask app, outra conexão
+    Redis) a cada abertura de drawer. Foi o que aconteceu: em produção o mapa vinha vazio e TODO
+    vendedor aparecia como "RCA 950".
+
+    O teste nunca pegaria: na suíte o `import server` registra o módulo com esse nome e o import
+    funciona. É por isso que a busca é pelo módulo JÁ CARREGADO, nos dois nomes possíveis, em vez
+    de importar de novo."""
+    import sys
+    for nome_mod in ("server", "__main__"):
+        mod = sys.modules.get(nome_mod)
+        fn = getattr(mod, "_carregar_vendedores_map", None)
+        if callable(fn):
+            try:
+                return {k: (v.get("nome") if isinstance(v, dict) else v)
+                        for k, v in (fn() or {}).items()}
+            except Exception as e:
+                print(f"[vendedores] mapa indisponível ({e}).")
+                return {}
+    print("[vendedores] mapa de nomes não encontrado em nenhum módulo carregado.")
+    return {}
+
+
 def _top_vendedores_produto(codprod, periodo, filiais_venda, hoje, n=3):
     """Top N vendedores DESTE produto no período: [{codusur, nome, qtd, valor}].
 
@@ -1185,20 +1212,14 @@ def _top_vendedores_produto(codprod, periodo, filiais_venda, hoje, n=3):
     except Exception as e:
         print(f"[top vendedores {codprod}] indisponível ({e}).")
         return []
-    try:
-        from server import _carregar_vendedores_map
-        nomes = _carregar_vendedores_map() or {}
-    except Exception as e:
-        print(f"[top vendedores] mapa de nomes indisponível ({e}).")
-        nomes = {}
+    nomes = _vendedores_nomes()
     saida = []
     for r in rows:
         cu = core._n(r.get("CODUSUR"))
         if not cu:
             continue
         cu = int(cu)
-        info = nomes.get(str(cu)) or {}
-        saida.append({"codusur": cu, "nome": info.get("nome") or f"RCA {cu}",
+        saida.append({"codusur": cu, "nome": nomes.get(str(cu)) or f"RCA {cu}",
                       "qtd": core._round(core._n(r.get("qtd"))),
                       "valor": core._round(core._n(r.get("valor")))})
     # ordena por QUANTIDADE: a pergunta é quem gira volume do item (é o que escoa estoque).
