@@ -166,6 +166,16 @@ Doc completa das fórmulas em **`docs/estoque/planilha_v3.md`**.
 - **Giro** = média 3 meses (`QTVENDMES1..3`/3), toggle p/ forecast (RCA). **Custo** = `CUSTOFIN`. **Comprador** = `PCFORNEC.CODCOMPRADOR → PCEMPR.NOME`.
 - **Sugestão de compra** desconta o **pedido REAL em aberto** (PCPEDIDO/PCITEM, últimos 180d) e sai **em caixas** (`QTUNIT`/PCEMBALAGEM); sem fator de caixa → em unidades (pendências em `estoque/itens_sem_fator_caixa.csv`).
 - **Orçamento** = meta `65% da venda líq. 30d` por comprador × realizado do Winthor. **Transferência entre filiais NÃO é compra**: pedido cujo fornecedor tem a **mesma raiz de CNPJ** (8 díg., contra `MULTPEL_EMPRESA`) fica fora do orçamento.
+  - **Mês fechado** (08/2026, pergunta do diretor "quando vira o mês o orçamento zera; quem
+    estourou não deveria arrastar?"): o mês anterior passa a ser **apurado e exibido sempre**
+    (`meta_ant`/`comprado_ant`/`saldo_ant`) — era ele ser invisível o problema. **Descontar** o
+    estouro da meta é **opt-in** (`?arrastar=1`, checkbox na tela): a meta é 65% da venda dos
+    ÚLTIMOS 30 DIAS, régua de **fluxo**, não budget anual — ligado por default puniria duas vezes
+    quem estourou porque a venda subiu. ⚠️ **Sobra NÃO vira crédito** e o arraste **não cascateia**
+    (estouro maior que a meta zera o mês e morre ali). A base da meta do mês passado é a venda de
+    30d medida **naquele fechamento**, não a de hoje — reconstruir com a venda atual produziria
+    estouro contra uma meta que nunca existiu; sem ela o bloco sai vazio, não errado.
+    Gate: `tests/test_orcamento_mes_anterior.py` (antes disso o Orçamento não tinha teste nenhum).
 - **Duas réguas de valor (IPI/ST).** O Orçamento mede o realizado por `PCPEDIDO[VLTOTAL]`, que é a
   **NF cheia** (mercadoria + IPI + ST). Então a sugestão de compra sai nas duas: `valor_sugerido_liq`
   (mercadoria — é ela que vira **preço na planilha do Winthor**) e **`valor_sugerido_nf`** (o que
@@ -204,6 +214,31 @@ Doc completa das fórmulas em **`docs/estoque/planilha_v3.md`**.
   21/21 nos ≤3d, 2/122 no bloqueio >30d. **Trocar por `PCMOVPREENT`** (107.566 linhas no Oracle)
   quando publicada — só o corpo da função muda. `PCNFENT.CONFERIDO` é campo morto ('N' em 2.287,
   nulo em 26, nenhum 'S').
+  - 🩹 **AVARIA aparecendo como pré-entrada** (08/2026, achado pelo diretor — "na teoria o que é
+    avaria não deveria aparecer aí"). **Não era mudança de rotina no ERP: eram dois furos do
+    cálculo**, os dois resolvidos com a posição **por filial** (`q_bloqueio_filial` →
+    `core.qt_em_transicao(linhas=…)`):
+    1. o snapshot agrega `SUM(QTBLOQUEADA)` com `MAX(DTULTENT)` — **cruza o bloqueio de uma
+       filial com a data de outra**. No Atacado (3+5), uma entrada recente na Matriz carimbava
+       como "chegando" uma avaria velha do Depósito. Nenhum limiar de dias conserta isso;
+    2. `DTULTENT` é a última entrada de **qualquer natureza**. Agora `QTULTENT` é **teto**: 200 un
+       bloqueadas com entrada de 12 un = 12 em pré-entrada, 188 avaria. É **cap, não filtro** —
+       descartar a linha traria de volta o BO original.
+    A query é **separada do snapshot de propósito** (colunas novas no coração do módulo
+    arriscariam todas as telas) e **degrada** para o modo agregado se falhar. Sintoma na tela que
+    denunciava tudo: a coluna **Avaria** e o **"+N" de já-pedido** mostravam o MESMO número.
+    Gate: `tests/test_pre_entrada.py`. Pista ainda não explorada: no WMS a **RUA 99** é o endereço
+    de avaria (o app já a exclui do endereçado) — bloqueio ali é avaria por definição.
+- ⚠️ **"Sem pedido" ≠ "sem pedido em aberto"** (`core._sem_providencia` / `semProvidencia` no JS).
+  Item em **pré-entrada** não conta: já está no armazém e o Winthor baixou o pedido ao receber.
+  Achado pelo diretor em 08/2026 — a aba Ruptura dizia **4** na curva A e o drill (Estoque zerado
+  → "Ruptura s/ pedido") mostrava **3**, porque `status_exec` já tratava pré-entrada como estado
+  exclusivo e as agregações de ruptura nunca foram atualizadas. ⚠️ São **três** implementações do
+  mesmo conceito: `core.ruptura_por_comprador` (export), `agrupa()` (tela) e `metaAgrega()`
+  (placar da Meta de ruptura) — mexeu numa, mexa nas três. O item **continua em `n_ruptura`**:
+  falta estoque de fato, a venda perdida é real; o que ele deixa de ser é risco de omissão.
+  ⚠️ Isso **afrouxa o placar da meta** sem ninguém mexer na operação — comparar antes×depois uma
+  vez, senão parece ganho operacional. Gate: `tests/test_pre_entrada.py`.
 - ⚠️ **Todo lugar que mostra "quanto vou gastar" fala a régua da NF** (c/ impostos): card do
   fornecedor, Cockpit ("A comprar"), Estoque zerado ("Custo de reposição"), Ruptura por comprador,
   drawer 360°, aba Fornecedores e o relatório de Reposição. A **única exceção proposital** é a
@@ -274,7 +309,16 @@ com `≈` e o **% fica editável no pedido**: é ali que mora todo o erro residu
 - **Sem repo/servidor/banco separados.** Virou o pacote `estoque/` (blueprint `/estoque`); `store.py` aponta pro banco do app; `store.init()` saiu do import e foi pro `init_db.py`.
 - **Rotas prefixadas** com `/estoque` (`/estoque/api/...`, `/estoque/static/...`) — resolve as colisões de `/`, `/health`, `/login`, `/static`.
 - **Ganhou email** (não tinha): 16 relatórios, escolhidos por usuário no Admin (ver Fase Email).
-- **Ainda "Multpel" de propósito** (dado da cliente, não marca): `MULTPEL_EMPRESA` (emitente do pedido), `logo-multpel-trofeu.png` (logo do comprador no PDF), `NOMES_FILIAL`.
+- **Dado da cliente virou ENV** (08/2026): o emitente do pedido sai de `EMPRESA_*` (`EMPRESA_RAZAO`,
+  `EMPRESA_CNPJ`, …), com o default apontando para a Multpel — produção não precisa de env, e a
+  **demo define os seus** no compose. O logo (`CLIENTE_LOGO`) cai para "sem logo" quando a
+  instância declara `EMPRESA_RAZAO`: quem troca a empresa do pedido não quer a marca da outra.
+  `NOMES_FILIAL` perdeu a marca no rótulo (`"Multpel Matriz"` → `"Matriz"`) — aquela linha aparece
+  no topo de toda tela, inclusive na apresentação. `ADMIN_EMAIL` idem, pela tela de login.
+- 🗑️ **Removidos os mascaradores de demo** `COMPRADOR_DEMO` (Compras) e `TIME_DEMO` (Comercial):
+  existiam de quando a apresentação rodava sobre a base REAL. Hoje a demo tem base própria
+  (`joga_demo`, sintética) — não há nome real a esconder, e um flag global desses só volta como
+  risco de alguém esquecê-lo ligado em produção.
 
 ---
 
@@ -313,7 +357,8 @@ ANALYTICS_DB_NAME=joga_demo   # banco analítico (ANALYTICS_DB_* faz fallback pr
 > demo **não envelhece** sem regenerar. O default powerbi usa `TODAY()` normal.
 
 **Gates:** `tests/test_provider_*.py` (Dashboard, Comercial, Metas, Mix, Radar, Estoque, RBAC) +
-`test_medida_compat.py`. Baseline **272 passam / 3 falham** (as 3 conhecidas de fixture de data).
+`test_medida_compat.py`. Baseline **392 passam / 5 falham** (3 de fixture de data + 2 do
+`test_provider_estoque` que dependem de um `joga_demo` local com venda no mês corrente).
 
 ---
 
@@ -368,7 +413,7 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 ├── estoque/provider_sql.py         # 🆕 modo postgres do Compras
 ├── docker-compose.demo.yml         # 🆕 stack da instância DEMO (Portainer)
 ├── _seed_demo/                     # 🆕 base sintética reprodutível (joga_demo) + bootstrap + seeder
-└── tests/                          # pytest (272 passam; 3 falham por fixture de data — não é regressão)
+└── tests/                          # pytest (392 passam; 5 falham por ambiente/fixture — não é regressão)
 ```
 
 ---
@@ -380,7 +425,7 @@ cp .env.example .env        # preencher (ver variáveis abaixo)
 docker compose -f docker-compose.dev.yml up -d redis
 python -X utf8 init_db.py   # cria/migra schema + admin default (admin@multpel.com.br / admin123)
 python -X utf8 server.py    # http://localhost:5000
-pytest -q                   # 272 passam, 3 falham (fixture de data — não é regressão)
+pytest -q                   # 392 passam, 5 falham (fixture de data + joga_demo local — não é regressão)
 ```
 
 Variáveis novas da fusão no `.env` (além das do Power BI/DB/Redis/Resend):
@@ -528,7 +573,8 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 5. **Checagem de API usa `'/api/' in path`, não `startswith`** — por causa de `/estoque/api/...`.
 6. **Não editar `MultpelEstoque/`** (repo congelado) nem publicar em `:latest` sem intenção.
 7. **3 testes falham por fixture de data** (radar/mix/cohort) — pré-existentes, **não** são regressão.
-   O baseline é **272 passam / 3 falham**.
+   O baseline é **392 passam / 5 falham** (+2 do `test_provider_estoque`, que precisam de um
+   `joga_demo` local com venda no mês corrente — falham no HEAD limpo também).
 8. **Verificação visual de tema não confia em captura** das telas de dados (Power BI muda o conteúdo
    entre capturas) — comparar cor computada (`getComputedStyle`), não pixels.
 9. **Base nova ganha `areas=["comercial"]` por default** — libere `compras` no Admin (ou via UPDATE),

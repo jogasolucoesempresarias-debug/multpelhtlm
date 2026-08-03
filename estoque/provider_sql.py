@@ -60,6 +60,27 @@ def snapshot_estoque(filiais=None):
                 for (cod, qeg, qr, qb, qp, qt, cf, g1, g2, g3, dts, dte) in cur.fetchall()]
 
 
+# ───────────────────────── bloqueio por filial (pré-entrada × avaria) ─────────────────────────
+def bloqueio_filial(filiais=None):
+    """Espelha q_bloqueio_filial: bloqueio no grão CODPROD × CODFILIAL, sem agregar as filiais
+    (é o pareamento que separa pré-entrada de avaria — ver core.qt_em_transicao).
+
+    `qtultent` só existe na base sintética a partir de 08/2026. Em base antiga a coluna não
+    está lá: devolve NULL e a função cai no comportamento sem teto, que é o de antes."""
+    with analytics_conn() as c:
+        cur = c.cursor()
+        cur.execute("""SELECT 1 FROM information_schema.columns
+                       WHERE table_name='pcest' AND column_name='qtultent'""")
+        col_qu = "qtultent" if cur.fetchone() else "NULL::numeric"
+        cur.execute(f"""
+            SELECT codprod, codfilial, qtbloqueada, {col_qu}, dtultent
+            FROM pcest WHERE qtbloqueada <> 0{_fil(filiais)}
+        """)
+        return [{"CODPROD": cod, "CODFILIAL": fil, "qtbloq": _f(qb),
+                 "qtultent": _f(qu), "dtultent": _iso(dte)}
+                for (cod, fil, qb, qu, dte) in cur.fetchall()]
+
+
 # ───────────────────────── estoque endereçado (QTDISP oficial) ─────────────────────────
 def estoque_endereco(filiais=None):
     """Espelha q_estoque_endereco: SUM(PCESTENDERECO[QT]) por CODPROD, RUA<>99, filiais."""

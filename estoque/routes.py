@@ -69,9 +69,16 @@ def compradores_reais(prod_map=None, forn_map=None):
 
 
 def _logo_cliente():
+    """Logo impresso no PDF do pedido de compra. `None` = cabeçalho sem logo.
+
+    ⚠️ O fallback é o logo do cliente ATUAL — o que, numa instância de demonstração, imprimiria a
+    marca dele num pedido fictício. Por isso o fallback só vale quando a instância NÃO declarou um
+    emitente próprio (`EMPRESA_RAZAO`): quem troca a empresa do pedido não quer o logo da outra."""
     env = os.getenv("CLIENTE_LOGO", "").strip()
     if env and os.path.exists(env):
         return env
+    if os.getenv("EMPRESA_RAZAO", "").strip():
+        return None
     raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(raiz, "static", "estoque", "logo-multpel-trofeu.png")
 
@@ -101,33 +108,17 @@ def _filiais_disponiveis():
     return fs
 
 
-# ─────────────────── DEMO/APRESENTAÇÃO: apelidos fictícios de comprador ───────────────────
-# TEMPORÁRIO, só para apresentação: troca TODO nome de comprador por um nome fictício
-# determinístico (mesma matrícula → sempre o mesmo nome). NÃO afeta cálculo, só o rótulo, e
-# como todas as telas resolvem pelo _compradores_map(), a troca é consistente em todo lugar.
-# >>> REVERTER: basta COMPRADOR_DEMO = False e redeployar (o restart limpa o cache de 24h). <<<
-COMPRADOR_DEMO = False
-_DEMO_FIRST = ["Carlos", "Beatriz", "Rafael", "Fernanda", "Gustavo", "Patrícia", "André",
-               "Juliana", "Marcelo", "Renata", "Thiago", "Camila", "Bruno", "Larissa",
-               "Diego", "Vanessa"]
-_DEMO_LAST = ["Andrade", "Lima", "Monteiro", "Rocha", "Teixeira", "Nunes", "Carvalho", "Prado",
-              "Fontes", "Barros", "Azevedo", "Duarte", "Siqueira", "Campos", "Ramalho", "Moraes"]
-
-
-def _demo_nome(matricula):
-    """Nome fictício estável (256 combinações first×last) indexado pela matrícula — determinístico
-    e praticamente sem colisão entre os poucos compradores exibidos."""
-    m = int(matricula)
-    return f"{_DEMO_FIRST[m % len(_DEMO_FIRST)]} {_DEMO_LAST[(m // len(_DEMO_LAST)) % len(_DEMO_LAST)]}"
-
-
 @pbi.cached(ttl=86400, key_fn=lambda: "compradores")
 def _compradores_map():
-    """{matricula: nome} — PCEMPR no dataset Estoque (fallback RCA)."""
+    """{matricula: nome} — PCEMPR no dataset Estoque (fallback RCA).
+
+    ⚠️ Aqui existiu um mascarador de nomes (COMPRADOR_DEMO), de quando a demo rodava sobre a base
+    REAL da Multpel. Removido em 08/2026: hoje a demo tem base própria (`joga_demo`, sintética),
+    então não há nome real para esconder — mascarar de novo só reintroduziria um flag que alguém
+    esqueceria ligado em produção."""
     if pbi.CONFIG["data_source"] == "postgres":
-        m = {int(core._n(r["MATRICULA"])): r["NOME"]
-             for r in PS.compradores() if r.get("MATRICULA") not in (None, "") and r.get("NOME")}
-        return {mat: _demo_nome(mat) for mat in m} if COMPRADOR_DEMO else m
+        return {int(core._n(r["MATRICULA"])): r["NOME"]
+                for r in PS.compradores() if r.get("MATRICULA") not in (None, "") and r.get("NOME")}
     for runner, q in ((pbi.run_dax, Q.q_compradores_estoque()),
                       (pbi.run_dax_rca, Q.q_compradores_rca())):
         try:
@@ -135,8 +126,7 @@ def _compradores_map():
             m = {int(core._n(r["MATRICULA"])): r["NOME"]
                  for r in rows if r.get("MATRICULA") not in (None, "") and r.get("NOME")}
             if m:
-                # DEMO: mascara os nomes reais (ver bloco COMPRADOR_DEMO acima). Reverter = False.
-                return {mat: _demo_nome(mat) for mat in m} if COMPRADOR_DEMO else m
+                return m
         except Exception:
             continue
     return {}
@@ -158,17 +148,11 @@ def _filiais_key(filiais):
 # Estoque físico (PCEST) e Venda (RCA faturamento) vivem em filiais DIFERENTES por unidade.
 # Atacado: estoque nos CDs 3+5, mas fatura em 3+7+8 (5=depósito, 7/8=venda sem estoque).
 # Lojas (A&M/AC) e JID são autossuficientes. Filiais 1,2,6,10-13,15 excluídas; 8 sem estoque.
-NOMES_FILIAL = {"3": "Multpel Matriz", "4": "A&M", "5": "Deposito",
+# ⚠️ Rótulo sem marca de propósito ("Matriz", não "Multpel Matriz"): esta linha aparece no topo de
+# TODA tela, inclusive na instância de demonstração, que roda a mesma imagem. Dentro do app do
+# próprio cliente "Matriz" já é inequívoco — a marca ali só servia para vazar numa apresentação.
+NOMES_FILIAL = {"3": "Matriz", "4": "A&M", "5": "Deposito",
                 "7": "Telemarketing", "8": "Atacado", "9": "JID", "14": "AC"}
-
-
-def _nomes_filial_view():
-    """Nomes de filial p/ exibição. Com COMPRADOR_DEMO ligado, tira a marca 'Multpel' do rótulo
-    (ex.: 'Multpel Matriz' → 'Matriz') na linha do topo da apresentação. Reverte com o mesmo flag."""
-    if not COMPRADOR_DEMO:
-        return NOMES_FILIAL
-    return {k: (v.replace("Multpel ", "").replace("Multpel", "").strip() or v)
-            for k, v in NOMES_FILIAL.items()}
 UNIDADES = {
     "atacado": {"nome": "Atacado", "estoque": ["3", "5"],            "venda": ["3", "7", "8"]},
     "am":      {"nome": "A&M",     "estoque": ["4"],                 "venda": ["4"]},
@@ -178,39 +162,24 @@ UNIDADES = {
 }
 UNIDADE_PADRAO = "atacado"
 
-# Dados fixos do emitente (Multpel) p/ o cabeçalho do pedido de compra — estilo relatório 211.
+# Emitente do pedido de compra (cabeçalho do PDF, estilo relatório 211) + CNPJ que identifica
+# TRANSFERÊNCIA entre filiais no orçamento (mesma raiz de CNPJ ⇒ não é compra).
+#
+# ⚠️ É dado de INSTÂNCIA, não código: cada `EMPRESA_*` sobrescreve por env var. O default segue a
+# Multpel (cliente atual) para não exigir env em produção; a demo define os seus no compose e
+# assim o PDF de pedido dela sai sem nenhum dado real — sem precisar de flag de "modo demo".
 MULTPEL_EMPRESA = {
-    "razao": "MULTPEL COM. DE PAPEIS E EMBALAGENS LTDA",
-    "cnpj": "02.262.785/0001-04",
-    "ie": "081924950",
-    "endereco": "Rua Antonio Pedro Carleto, 56",
-    "bairro": "Vila Rica",
-    "cep": "29301-200",
-    "cidade": "Cachoeiro de Itapemirim",
-    "uf": "ES",
-    "tel": "(28) 3526-1450",
-    "email": "fiscal@mutpelatacado.com.br",
+    "razao":    os.getenv("EMPRESA_RAZAO", "MULTPEL COM. DE PAPEIS E EMBALAGENS LTDA"),
+    "cnpj":     os.getenv("EMPRESA_CNPJ", "02.262.785/0001-04"),
+    "ie":       os.getenv("EMPRESA_IE", "081924950"),
+    "endereco": os.getenv("EMPRESA_ENDERECO", "Rua Antonio Pedro Carleto, 56"),
+    "bairro":   os.getenv("EMPRESA_BAIRRO", "Vila Rica"),
+    "cep":      os.getenv("EMPRESA_CEP", "29301-200"),
+    "cidade":   os.getenv("EMPRESA_CIDADE", "Cachoeiro de Itapemirim"),
+    "uf":       os.getenv("EMPRESA_UF", "ES"),
+    "tel":      os.getenv("EMPRESA_TEL", "(28) 3526-1450"),
+    "email":    os.getenv("EMPRESA_EMAIL", "fiscal@mutpelatacado.com.br"),
 }
-
-# DEMO/APRESENTAÇÃO: emitente fictício SÓ para impressão no PDF do pedido. Reverte com COMPRADOR_DEMO.
-_EMITENTE_DEMO = {
-    "razao": "ATACADO EXEMPLO DISTRIBUIDORA LTDA",
-    "cnpj": "12.345.678/0001-90",
-    "ie": "123456789",
-    "endereco": "Av. das Nações, 1000",
-    "bairro": "Centro",
-    "cep": "00000-000",
-    "cidade": "São Paulo",
-    "uf": "SP",
-    "tel": "(11) 4000-0000",
-    "email": "compras@exemplo.com.br",
-}
-
-
-def _emitente_view():
-    """Emitente para IMPRESSÃO no PDF do pedido. Com COMPRADOR_DEMO, usa o fictício acima.
-    NÃO troca o MULTPEL_EMPRESA usado na LÓGICA (o cnpj_empresa do orçamento continua o real)."""
-    return _EMITENTE_DEMO if COMPRADOR_DEMO else MULTPEL_EMPRESA
 
 
 def _unidade():
@@ -237,6 +206,29 @@ def _snapshot_rows(filiais):
             else pbi.run_dax(Q.q_snapshot_estoque(filiais)))
     pbi._CACHE.set(key, rows, 1800)
     return rows
+
+
+def _bloqueio_map(filiais):
+    """{cod: [{qtbloq, dtultent, qtultent}, ...]} — bloqueio POR FILIAL (ver core.qt_em_transicao).
+
+    ⚠️ Degrada para `{}` se a query falhar: sem o mapa, a pré-entrada volta ao cálculo agregado
+    (que erra a favor de comprar de novo). Uma tabela nova não pode derrubar o módulo inteiro."""
+    key = f"bloq:{_filiais_key(filiais)}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    m = {}
+    try:
+        rows = (PS.bloqueio_filial(filiais) if pbi.CONFIG["data_source"] == "postgres"
+                else pbi.run_dax(Q.q_bloqueio_filial(filiais)))
+        for r in rows:
+            m.setdefault(int(core._n(r["CODPROD"])), []).append(
+                {"qtbloq": r.get("qtbloq"), "qtultent": r.get("qtultent"),
+                 "dtultent": r.get("dtultent")})
+    except Exception as e:
+        print(f"[bloqueio] posição por filial indisponível ({e}); pré-entrada no modo agregado.")
+    pbi._CACHE.set(key, m, 1800)
+    return m
 
 
 def _endereco_map(filiais):
@@ -440,10 +432,14 @@ def _forn_extra_map(hoje, periodo, filiais):
     return out
 
 
-def _verbas_res(hoje):
+def _verbas_res(hoje, comprador=None):
     """Agregado da aba Verbas (core.verbas_fornecedores) — fecha o TRIPÉ cruzando com a
-    compra 12m e o lead real já calculados. Degrada p/ vazio se o BI cair. Cache 30min."""
-    key = f"verbas:{hoje.isoformat()}"
+    compra 12m e o lead real já calculados. Degrada p/ vazio se o BI cair. Cache 30min.
+
+    `comprador` recorta no CORE (não no cliente) para o resumo dos cards falar do mesmo
+    universo da tabela. A chave de cache carrega o comprador; o raw (a query cara) é
+    compartilhado entre todos, então o recorte custa só a reagregação em memória."""
+    key = f"verbas:{hoje.isoformat()}:{comprador or 'todos'}"
     hit = pbi._CACHE.get(key)
     if hit is not None:
         return hit
@@ -455,17 +451,21 @@ def _verbas_res(hoje):
         res = core.verbas_fornecedores(raw["verbas"], raw["aplics"], _cadastro_fornecedores(),
                                        _compradores_map(), compras_map=_compras_12m_map(hoje),
                                        lead_map=lead_map, hoje=hoje,
-                                       cnpj_empresa=MULTPEL_EMPRESA["cnpj"])
+                                       cnpj_empresa=MULTPEL_EMPRESA["cnpj"],
+                                       comprador=comprador)
     except Exception as e:
         print(f"[verbas] indisponível ({e}).")
     pbi._CACHE.set(key, res, 1800)
     return res
 
 
-def _leadtime_res(hoje):
+def _leadtime_res(hoje, comprador=None):
     """Agregado da aba Lead time (core.leadtime_fornecedores sobre o raw acima).
-    Degrada p/ vazio se o BI estiver fora. Cache 30min."""
-    key = f"leadtime:{hoje.isoformat()}"
+    Degrada p/ vazio se o BI estiver fora. Cache 30min (chave por comprador — ver _verbas_res).
+
+    ⚠️ Quem consome isto como MAPA por fornecedor (verbas, /api/fornecedores_extra) chama SEM
+    comprador de propósito: lá o recorte é do consumidor, e um mapa parcial viraria coluna vazia."""
+    key = f"leadtime:{hoje.isoformat()}:{comprador or 'todos'}"
     hit = pbi._CACHE.get(key)
     if hit is not None:
         return hit
@@ -474,7 +474,8 @@ def _leadtime_res(hoje):
         raw = _leadtime_raw(hoje)
         res = core.leadtime_fornecedores(raw["cab"], raw["entradas"], _cadastro_fornecedores(),
                                          _compradores_map(), hoje=hoje,
-                                         cnpj_empresa=MULTPEL_EMPRESA["cnpj"])
+                                         cnpj_empresa=MULTPEL_EMPRESA["cnpj"],
+                                         comprador=comprador)
     except Exception as e:
         print(f"[leadtime] indisponível ({e}).")
     pbi._CACHE.set(key, res, 1800)
@@ -739,7 +740,8 @@ def _build_produtos():
                                        ja_pedida_map=ja_pedida, embalagem_map=embalagem,
                                        preco_venda_map=preco_venda, venda_ant_map=venda_ant,
                                        tributacao_map=_peddata.get("tributacao"),
-                                       trib_entrada_map=_trib_entrada_map())
+                                       trib_entrada_map=_trib_entrada_map(),
+                                       bloqueio_map=_bloqueio_map(filiais_e))
     # ocupação WMS: nº de posições por item + volume endereçado (m³) + flag "espaço morto".
     pos_map = _posicoes_map(filiais_e)
     for p in produtos:
@@ -806,7 +808,7 @@ def api_filtros():
                       "cod": "" if uid == "todas" else ",".join(sorted(set(u["estoque"] + u["venda"]), key=int))}
                      for uid, u in UNIDADES.items()],
         "unidade_padrao": UNIDADE_PADRAO,
-        "nomes_filial": _nomes_filial_view(),
+        "nomes_filial": NOMES_FILIAL,
         "deptos": deptos,
         "fornecedores": fornecedores,
         "compradores": compradores,
@@ -885,8 +887,9 @@ def api_desempenho():
 @bp.route("/api/leadtime")
 def api_leadtime():
     """Lead time por fornecedor (12m): 1º recebimento (PEDIDO_ENTRADA) − emissão (PCPEDIDO).
-    Devolve os DOIS leads (com/sem 'digitado na hora') — ver core.leadtime_fornecedores."""
-    res = _leadtime_res(_hoje())
+    Devolve os DOIS leads (com/sem 'digitado na hora') — ver core.leadtime_fornecedores.
+    `?comprador_cod=` recorta a base (inclusive o resumo dos cards)."""
+    res = _leadtime_res(_hoje(), comprador=request.args.get("comprador_cod"))
     return jsonify({"ok": True, "gerado_em": date.today().isoformat(),
                     "bi_refresh": pbi.get_dataset_refresh(), **res})
 
@@ -894,8 +897,9 @@ def api_leadtime():
 @bp.route("/api/verbas")
 def api_verbas():
     """Verbas de fornecedor (rotina 1801): negociado × aplicado × saldo + tripé com
-    compra 12m e lead time — ver core.verbas_fornecedores."""
-    res = _verbas_res(_hoje())
+    compra 12m e lead time — ver core.verbas_fornecedores.
+    `?comprador_cod=` recorta a base (inclusive o resumo dos cards)."""
+    res = _verbas_res(_hoje(), comprador=request.args.get("comprador_cod"))
     return jsonify({"ok": True, "gerado_em": date.today().isoformat(),
                     "bi_refresh": pbi.get_dataset_refresh(), **res})
 
@@ -1433,6 +1437,23 @@ def _ficha_campos(tipo):
 # em aberto, Cobertura ≡ Cob. projetada). No Excel continuam: lá a largura não custa nada e a
 # planilha é o registro completo.
 _FICHA_PDF_OCULTA = {"produto": {"Posição de estoque"}}
+
+# Rótulos encurtados SÓ no PDF (07/2026 → revisto em 08/2026, ficha de fornecedor saindo em 2
+# páginas). O que estoura a página não é o número de campos — produto e fornecedor têm 13 linhas
+# de tabela cada — e sim rótulo que não cabe na coluna e vira DUAS linhas: a `Table` estica a
+# linha inteira pela célula mais alta, e a ficha de fornecedor tinha 8 dessas contra 5 da de
+# produto. Encurtar aqui, e não em `_FICHA_COLS`, preserva o rótulo longo no Excel — lá a largura
+# não custa nada e a planilha é o registro completo (mesmo princípio do `_FICHA_PDF_OCULTA`).
+_FICHA_PDF_ROTULO = {
+    "fornecedor": {
+        "Ciclo de compra 12m (d)": "Ciclo 12m (d)",
+        "Compras no período": "Compras (per.)",
+        "Lead time real (d)": "Lead real (d)",
+        "Prazo cadastrado (d)": "Prazo cad. (d)",
+        "A comprar (c/ impostos)": "A comprar (c/ imp.)",
+        "· da qual campanha": "· campanha",
+    },
+}
 
 
 # ───────────────────────── export CSV ─────────────────────────
@@ -2230,13 +2251,14 @@ def _gerar_pdf_ficha(tipo, spec, dados, titulo, pares_por_linha=4, grafico=None)
 
     # agrupa os campos por seção, preservando a ordem da spec (a mesma ordem do drawer)
     ocultas = _FICHA_PDF_OCULTA.get(tipo) or set()
+    curtos = _FICHA_PDF_ROTULO.get(tipo) or {}
     secoes = []
     for sec, chave, rot, kind in spec:
         if sec in ocultas:
             continue
         if not secoes or secoes[-1][0] != sec:
             secoes.append((sec, []))
-        secoes[-1][1].append((_celula(rot, rot_style, col_w[0]),
+        secoes[-1][1].append((_celula(curtos.get(rot, rot), rot_style, col_w[0]),
                               _celula(_fmt_pdf(dados.get(chave), kind), val_style, col_w[1])))
 
     ncols = pares_por_linha * 2
@@ -2277,17 +2299,30 @@ def _gerar_pdf_ficha(tipo, spec, dados, titulo, pares_por_linha=4, grafico=None)
     # gráfico no FIM da página, como ele pediu. Largura ~metade da faixa útil: o gráfico da tela é
     # largo e baixo, e esticá-lo na página inteira empurraria a ficha para uma segunda folha —
     # o ponto do formato paisagem era caber em uma.
-    # Teto de ALTURA (6cm) é o que garante a página única, não a largura: a proporção da captura
-    # varia com o tamanho do drawer e o devicePixelRatio de quem clicou. A largura é só o limite
+    # Teto de ALTURA é o que garante a página única, não a largura: a proporção da captura varia
+    # com o tamanho do drawer e o devicePixelRatio de quem clicou. A largura é só o limite
     # superior; um canvas quadrado encolhe pela altura e sai mais estreito, que é o certo.
-    img = _img_do_data_url(grafico, (landscape(A4)[0] - 2.4 * cm) / cm * 0.50, cm, altura_max_cm=5.5)
+    #
+    # ⚠️ Esse teto era FIXO em 5,5cm — calibrado na ficha de produto e, portanto, uma aposta de que
+    # nenhuma outra ficha ficaria mais alta. A de fornecedor ficou (9,3cm de tabela contra 8,5cm,
+    # por ter uma seção a mais e o dobro de rótulos quebrando em duas linhas) e passou a sair em
+    # DUAS páginas sempre que o canvas vinha mais quadrado. Agora o teto é a SOBRA REAL da página,
+    # medida depois de montar a tabela: qualquer ficha cabe em uma folha, e quem paga a conta é o
+    # gráfico encolhendo — não o leitor recebendo meia página em branco e um gráfico órfão atrás.
+    rot_graf = Paragraph("<b>Venda dos últimos 12 meses</b>", s_style)
+    usada = sum(f.wrap(doc.width, doc.height)[1] for f in story)
+    sobra_cm = (doc.height - usada - 0.45 * cm - rot_graf.wrap(doc.width, doc.height)[1]
+                - 0.15 * cm) / cm
+    # piso de 2,6cm: abaixo disso o gráfico é ilegível e é melhor não fingir que informa.
+    alt_max = min(5.5, sobra_cm - 0.15)
+    img = _img_do_data_url(grafico, (landscape(A4)[0] - 2.4 * cm) / cm * 0.50, cm,
+                           altura_max_cm=alt_max) if alt_max >= 2.6 else None
     if img is not None:
         # KeepTogether: sem isso o título cabe na página 1, a imagem não, e sobra um rótulo órfão
         # no rodapé apontando para um gráfico que está na folha seguinte (foi o que aconteceu).
         from reportlab.platypus import KeepTogether
         story += [Spacer(1, 0.45 * cm),
-                  KeepTogether([Paragraph("<b>Venda dos últimos 12 meses</b>", s_style),
-                                Spacer(1, 0.15 * cm), img])]
+                  KeepTogether([rot_graf, Spacer(1, 0.15 * cm), img])]
 
     def _rodape(canvas, doc):
         canvas.saveState()
@@ -2328,10 +2363,23 @@ def api_orcamento():
     pdata = _pedidos_data(filiais, hoje)
     cab = pdata["cab"]
     venda_comp = _venda_comprador_30d(filiais, _filiais_venda(), hoje)
+    # Base da meta que VALIA no fechamento do mês passado — a venda de 30d medida naquele dia,
+    # não a de hoje. Reconstruir a meta de ontem com a venda de hoje produziria um "estouro"
+    # contra uma meta que nunca existiu. Se falhar, o bloco do mês anterior sai vazio (None) em
+    # vez de sair errado — e o arraste, sem base, não desconta nada.
+    venda_comp_ant = None
+    try:
+        fim_mes_ant = date(hoje.year, hoje.month, 1) - timedelta(days=1)
+        venda_comp_ant = _venda_comprador_30d(filiais, _filiais_venda(), fim_mes_ant)
+    except Exception as e:
+        print(f"[orcamento] venda do mês anterior indisponível ({e}).")
+    # arraste do estouro: OPT-IN (?arrastar=1). Default desligado — ver core.orcamento_winthor.
+    arrastar = request.args.get("arrastar") in ("1", "true", "True")
     # meta sempre automática (65% da venda líquida 30d por comprador) — sem override manual
     res = core.orcamento_winthor(cab, venda_comp, _compradores_map(), _cadastro_fornecedores(),
                                  mes, comprador, pct=pct, hoje=hoje, meta_override=None,
-                                 cnpj_empresa=MULTPEL_EMPRESA["cnpj"])
+                                 cnpj_empresa=MULTPEL_EMPRESA["cnpj"],
+                                 venda_comp_ant=venda_comp_ant, arrastar=arrastar)
     # peso + cubagem por pedido: mesma fonte (PCPEDIDO/PCITEM) já carregada → NENHUMA query nova.
     # Só existe p/ pedido em ABERTO (logistica_pedidos ignora o recebido) — que é o que a tabela mostra.
     try:
@@ -2492,13 +2540,13 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
             ]))
             return t
 
-        E, F = _emitente_view(), (forn or {})   # DEMO: emitente fictício quando COMPRADOR_DEMO
-        # cabeçalho: logo Multpel + título/nº do pedido
+        E, F = MULTPEL_EMPRESA, (forn or {})   # emitente da instância (env EMPRESA_*)
+        # cabeçalho: logo do cliente + título/nº do pedido
         head_dir = Paragraph(
             f"<b>Pedido de Compra</b><br/><font size=9>Nº <b>{_e(pe.get('n_pedido') or pe.get('id') or '—')}</b> · "
             f"Emissão <b>{_d(pe.get('data_pedido'))}</b></font><br/>"
             f"<font size=7 color='#64748b'>Gerado em {date.today().strftime('%d/%m/%Y %H:%M')}</font>", titulo_style)
-        logo_path = None if COMPRADOR_DEMO else _logo_cliente()   # DEMO: sem logo do cliente
+        logo_path = _logo_cliente()   # CLIENTE_LOGO (env) → fallback JOGA
         try:
             head_row = Table([[Image(logo_path, width=2.3 * cm, height=2.3 * cm), head_dir]], colWidths=[2.7 * cm, 15.9 * cm])
         except Exception:

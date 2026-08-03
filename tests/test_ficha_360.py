@@ -36,13 +36,14 @@ def _prod(cod, forn=1, **kw):
     return base
 
 
-def _mock(monkeypatch, produtos, extra=None, lead=None):
+def _mock(monkeypatch, produtos, extra=None, lead=None,
+          forn_nome="FORN TESTE", comp_nome="JOAO"):
     monkeypatch.setattr(routes, "_build_produtos",
                         lambda *a, **k: (produtos, core.merge_params({}), ["3"]))
     monkeypatch.setattr(routes, "_cadastro_fornecedores",
-                        lambda: {1: {"FORNECEDOR": "FORN TESTE", "ESTADO": "SP",
+                        lambda: {1: {"FORNECEDOR": forn_nome, "ESTADO": "SP",
                                      "CODCOMPRADOR": 7, "PRAZOENTREGA": 12}})
-    monkeypatch.setattr(routes, "_compradores_map", lambda: {7: "JOAO"})
+    monkeypatch.setattr(routes, "_compradores_map", lambda: {7: comp_nome})
     monkeypatch.setattr(routes, "_forn_extra_map",
                         lambda *a, **k: {1: extra if extra is not None
                                          else {"ciclo_dias": 30.0, "n_pedidos": 4}})
@@ -309,6 +310,7 @@ def test_pdf_omite_a_secao_pedida_mas_o_excel_mantem(app_ctx, monkeypatch):
     (760, 350),    # proporção do drawer
     (800, 420),    # tela retina (devicePixelRatio 2)
     (600, 560),    # quase quadrado
+    (500, 900),    # em pé (drawer estreito) — o pior caso de altura
 ])
 def test_ficha_com_grafico_cabe_em_UMA_pagina(app_ctx, monkeypatch, canvas):
     """O formato paisagem existe para caber numa folha.
@@ -318,15 +320,30 @@ def test_ficha_com_grafico_cabe_em_UMA_pagina(app_ctx, monkeypatch, canvas):
     saía com o gráfico sozinho na página 2 e metade da 1ª em branco. A proporção depende do
     tamanho do drawer e do devicePixelRatio de quem clicou, ou seja NÃO é constante: por isso o
     caso de teste varre proporções em vez de fixar uma, e o encaixe limita altura E largura.
+
+    ⚠️ Os NOMES aqui são longos de propósito. Este gate já existia quando o diretor reportou a
+    ficha de FORNECEDOR saindo em 2 páginas (08/2026) — e passava, porque a fixture usava
+    "FORN TESTE"/"JOAO". Nome curto não quebra em duas linhas, a tabela fica ~1cm mais baixa e o
+    gráfico cabe: o teste media um caso que a produção não tem. Dado de teste benigno demais é
+    gate que não protege nada.
     """
     grande = _png_data_url(*canvas)
     for tipo in ("produto", "fornecedor"):
-        _mock(monkeypatch, [_prod(1, descricao="COPAPA COMPANHIA PADUANA DE PAPEIS LTDA ME")])
+        _mock(monkeypatch, [_prod(1, descricao="COPAPA COMPANHIA PADUANA DE PAPEIS LTDA ME",
+                                  fornecedor="COPAPA COMPANHIA PADUANA DE PAPEIS")],
+              forn_nome="COPAPA COMPANHIA PADUANA DE PAPEIS",
+              comp_nome="MARIA APARECIDA GONCALVES DA SILVA",
+              extra={"ciclo_dias": 27.0, "n_pedidos": 14, "verba": 208413.55,
+                     "verba_campanha": 41220.10},
+              lead=[{"codfornec": 1, "lead_real": 16.0, "n": 31, "confiavel": True}])
         with app_ctx.test_request_context(f"/estoque/api/export/ficha/{tipo}/1.pdf",
                                           method="POST", json={"grafico": grande}):
             data = routes.api_export_ficha_pdf(tipo, 1).data
         paginas = data.count(b"/Type /Page") - data.count(b"/Type /Pages")
         assert paginas == 1, f"ficha de {tipo} com canvas {canvas} saiu com {paginas} páginas"
+        assert b"/Image" in data or b"/XObject" in data, (
+            f"ficha de {tipo} coube em 1 página mas PERDEU o gráfico — encolher é aceitável, "
+            f"sumir não")
 
 
 def test_texto_longo_nao_transborda_da_celula(app_ctx, monkeypatch):

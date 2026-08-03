@@ -51,9 +51,12 @@ const S = {
   // idealDias/idealMeta = régua do "Estoque ideal" do Painel gerencial (só mede; a compra usa `cob`)
   params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1,metaA:2,metaB:5,metaC:10,idealDias:45,idealMeta:90},
   charts:{}, sort:{}, valFaixa:null,
+  orcArrastar:false,   // Orçamento: descontar o estouro do mês anterior da meta (opt-in)
   vencidos:null, vencidosQS:'', venMes:null, venPer:'2026',   // aba Vencidos: cache por QS, mês selecionado, período (2026|12m|tudo)
-  leadtime:null, ltMin:5, ltOpen:new Set(), ltDet:{},   // aba Lead time: cache, mín. pedidos, drills abertos/carregados
-  verbas:null, vbOpen:new Set(), vbDet:{},              // aba Verbas: cache + drills abertos/carregados
+  // Lead time / Verbas: cache com CHAVE do comprador — as duas agregam no servidor e o recorte
+  // por comprador é feito lá (mediana e totais não se recalculam a partir das linhas visíveis).
+  leadtime:null, leadtimeKey:null, ltMin:5, ltOpen:new Set(), ltDet:{},
+  verbas:null, verbasKey:null, vbOpen:new Set(), vbDet:{},
   // aba Abastecimento: fornecedores expandidos, "abrir tudo" e ordenação da lista.
   // A tela abre FECHADA (pedido do diretor 07/2026): a leitura de entrada é macro — quais
   // fornecedores preciso comprar e quanto — e os itens são o drill.
@@ -340,7 +343,7 @@ function tipT(txt){ return tipSpan(txt); }
 // `repAll`/`repOrd` são preferência de EXIBIÇÃO da aba Abastecimento (abrir tudo, ordem da lista).
 // Ficam no localStorage sem cerimônia porque não mudam nenhum número — ao contrário dos ⚙ Parâmetros,
 // onde "por navegador" significa que o painel pode dizer coisas diferentes para cada pessoa.
-function savePrefs(){ try{ localStorage.setItem(PREF, JSON.stringify({comprador:S.cli.comprador,base:S.base,vperiodo:S.vperiodo,unidade:S.unidade,params:S.params,view:S.view,repAll:S.repAll,repOrd:S.repOrd})); }catch(e){} }
+function savePrefs(){ try{ localStorage.setItem(PREF, JSON.stringify({comprador:S.cli.comprador,base:S.base,vperiodo:S.vperiodo,unidade:S.unidade,params:S.params,view:S.view,repAll:S.repAll,repOrd:S.repOrd,orcArrastar:S.orcArrastar})); }catch(e){} }
 function loadPrefs(){ try{ return JSON.parse(localStorage.getItem(PREF))||{}; }catch(e){ return {}; } }
 
 /* ───────── querystring p/ servidor ───────── */
@@ -1010,7 +1013,11 @@ async function renderVencidos(){
   // % global do PERÍODO: perda ÷ venda líquida dos meses visíveis que têm venda (RCA ≥2024).
   // Agora vale TAMBÉM com comprador filtrado — antes caía no % all-time daquele comprador, então
   // o card respondia a um período diferente do que estava selecionado na tela, sem avisar.
-  const mesesCV=meses.filter(m=>m.venda!=null);
+  // ⚠️ E TAMBÉM com um mês clicado no gráfico (S.venMes): `meses` não pode ser filtrado (alimenta
+  // o gráfico e a tabela lateral, que precisam da série inteira), então o recorte entra AQUI.
+  // Sem isto, clicar em abr/26 mudava "Valor perdido" e deixava o "% da venda" no total do
+  // período — dois cards lado a lado falando de recortes diferentes, sem nada indicando.
+  const mesesCV=meses.filter(m=>m.venda!=null && (!S.venMes||m.mes===S.venMes));
   const perdaCV=mesesCV.reduce((s,m)=>s+m.valor,0), vendaCV=mesesCV.reduce((s,m)=>s+m.venda,0);
   const pctGlobal=vendaCV?perdaCV/vendaCV*100:null;
   const perLbl={'2026':'2026','12m':'12 meses','tudo':'Tudo'};
@@ -1022,8 +1029,9 @@ async function renderVencidos(){
       <div class="kpi-grid">
         ${kpi('Valor perdido',money(tot('total')),`${int(itens.length)} itens · ${int(tot('qt'))} un`,C.red)}
         ${kpi('% da venda',pctGlobal!=null?pctGlobal.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%':'—',
-              'perda ÷ venda líquida',C.accent)}
-        ${kpi('Produtos afetados',int(new Set(itens.map(i=>i.codprod)).size),`em ${int(meses.length)} meses`,C.orange)}
+              'perda ÷ venda líquida'+(S.venMes?' · '+mesLbl(S.venMes):''),C.accent)}
+        ${kpi('Produtos afetados',int(new Set(itens.map(i=>i.codprod)).size),
+              S.venMes?`em ${mesLbl(S.venMes)}`:`em ${int(meses.length)} meses`,C.orange)}
         ${kpi('Pior mês',pior?mesLbl(pior.mes):'—',pior?money(pior.valor):'',C.yellow)}
         ${kpi('Ainda em estoque',int(emEst.length),`${money(emEst.reduce((s,p)=>s+(p.valor||0),0))} já perdidos · histórico`,C.purple)}
       </div>
@@ -1425,6 +1433,15 @@ function renderFornecedores(P){
   const fc=$('#forn-cl'); if(fc) fc.onchange=e=>{S.cli.fornClasse=e.target.value;render();};
 }
 
+/* "Sem pedido" = ruptura sem NENHUMA providência. Espelha `core._sem_providencia` — as duas
+   implementações existem porque a tela agrega no cliente (filtro sem round-trip) e o export
+   agrega no servidor; divergir faz o Excel contradizer a tela.
+   ⚠️ Pré-entrada (`qt_transicao>0`) NÃO conta: a mercadoria está no armazém aguardando liberação
+   e o Winthor já baixou o pedido ao recebê-la. Era a origem do "4 na aba Ruptura × 3 no Estoque
+   zerado" que o diretor achou em 08/2026 — `status_exec` já tratava pré-entrada como estado
+   exclusivo, estas duas agregações não. O item segue contando em RUPTURA: falta estoque de fato. */
+function semProvidencia(p){ return (p.qtd_ja_pedida||0)<=0 && (p.qt_transicao||0)<=0; }
+
 function renderRupturaComprador(P){
   // agrega métricas de ruptura por uma chave (comprador OU curva ABC de venda)
   function agrupa(keyFn,nomeFn){
@@ -1434,7 +1451,7 @@ function renderRupturaComprador(P){
       // sugestão de compra = MESMA da aba Abastecimento: valor_sugerido_liq (caixa fechada) de
       // TODO item a comprar (sugestao_cx>0, giro>0, não suspenso), não só os zerados.
       if((p.sugestao_cx||0)>0&&(p.giro_dia||0)>0&&!p.compra_suspensa){ o.repor+=valReporNF(p); o.reporInc+=valReporIncerto(p); }
-      if((p.qtdisp||0)<=0&&(p.giro_dia||0)>0){o.rupt++; if((p.qtd_ja_pedida||0)<=0)o.semped++;
+      if((p.qtdisp||0)<=0&&(p.giro_dia||0)>0){o.rupt++; if(semProvidencia(p))o.semped++;
         o.perdida+=(p.venda_perdida||0);
         if(p.dias_sem_venda!=null){o.diasSum+=p.dias_sem_venda; o.diasN++;}}});
     return Object.values(g).map(o=>({...o,pct:o.n?o.rupt/o.n*100:0,pctSemPed:o.n?o.semped/o.n*100:0,diasrup:o.diasN?Math.round(o.diasSum/o.diasN):0})).filter(o=>o.n>0);
@@ -1461,7 +1478,7 @@ function renderRupturaComprador(P){
        ${kpi('Sugestão de compra',money(totC),'igual à aba Abastecimento',C.accent)}
        ${kpi('Compradores',int(porComp.length),'',C.accent2)}
      </div>
-     <div class="count-line">Ruptura = estoque ≤ 0 e giro > 0. <b>"Dias rupt. méd"</b> = média de dias sem venda dos itens em ruptura (há quanto tempo, em média, estão zerados). "Sem pedido" = ainda sem pedido de compra em aberto (risco real); <b>"% s/ ped."</b> = sem pedido ÷ total de produtos do comprador (base da meta — todo item conta). <b>"Venda perdida"</b> = dias em ruptura (desde a última venda, teto 60d) × giro/dia × <b>preço de venda</b> (realizado 3m) — o que se deixou de vender no período parado. <b>"Sugestão de compra"</b> = mesmo valor da aba <b>Comprar → Abastecimento</b> (caixa fechada × custo de todos os itens a comprar), considerando Lead time + Cobertura alvo.</div>
+     <div class="count-line">Ruptura = estoque ≤ 0 e giro > 0. <b>"Dias rupt. méd"</b> = média de dias sem venda dos itens em ruptura (há quanto tempo, em média, estão zerados). "Sem pedido" = ruptura sem NENHUMA providência: sem pedido de compra em aberto <b>e</b> sem mercadoria em pré-entrada (essa já está no armazém, aguardando liberação — conta como ruptura, não como omissão); <b>"% s/ ped."</b> = sem pedido ÷ total de produtos do comprador (base da meta — todo item conta). <b>"Venda perdida"</b> = dias em ruptura (desde a última venda, teto 60d) × giro/dia × <b>preço de venda</b> (realizado 3m) — o que se deixou de vender no período parado. <b>"Sugestão de compra"</b> = mesmo valor da aba <b>Comprar → Abastecimento</b> (caixa fechada × custo de todos os itens a comprar), considerando Lead time + Cobertura alvo.</div>
      <div class="panel" id="rc-comp"><h3>Por comprador</h3>${tabela(porComp,'ruptcomp','Comprador')}</div>
      <div class="panel" id="rc-curva"><h3>Por curva ABC <small class="muted">· quanto da ruptura está em cada curva de venda (A = campeões) · clique p/ ver os itens</small></h3>${tabela(porCurva,'ruptcurva','Curva ABC',true)}</div>`;
   wireSortTbl($('#rc-comp'),'ruptcomp',render);
@@ -1505,7 +1522,9 @@ function metaAgrega(P){
   P.forEach(p=>{
     const cod=p.codcomprador==null?0:p.codcomprador;
     const o=g[cod]=g[cod]||{cod,nome:p.comprador||'Sem comprador',nA:0,sA:0,nB:0,sB:0,nC:0,sC:0};
-    const semPed=(p.qtdisp||0)<=0&&(p.giro_dia||0)>0&&(p.qtd_ja_pedida||0)<=0;
+    // mesma régua da aba Ruptura, pré-entrada inclusive (semProvidencia): o placar não pode
+    // punir o comprador por mercadoria que já está no armazém aguardando liberação
+    const semPed=(p.qtdisp||0)<=0&&(p.giro_dia||0)>0&&semProvidencia(p);
     const cv=(p.curva_abc==='A'||p.curva_abc==='B')?p.curva_abc:'C';   // sem curva → C (regra da aba Ruptura)
     o['n'+cv]++; if(semPed) o['s'+cv]++;
   });
@@ -1667,15 +1686,19 @@ async function renderDesempenho(){
    respeita os filtros GLOBAIS de comprador e fornecedor do topo. */
 async function renderLeadtime(){
   const el=$('#v-leadtime');
-  if(!S.leadtime){
+  // ⚠️ O comprador viaja para o SERVIDOR (e entra na chave de cache local). Filtrar só as linhas
+  // aqui deixava os cards no número da empresa inteira — e "Lead real" é MEDIANA DE PEDIDOS:
+  // recalcular pelas linhas visíveis daria mediana de medianas, um número parecido e errado.
+  const ltKey=(S.cli.comprador||'TODOS');
+  if(!S.leadtime||S.leadtimeKey!==ltKey){
     el.innerHTML=`<div class="loader"><div class="spinner"></div>Calculando lead time dos fornecedores…</div>`;
-    try{ S.leadtime=await getJSON('/estoque/api/leadtime'); }
+    const p=new URLSearchParams(); if(S.cli.comprador) p.set('comprador_cod',S.cli.comprador);
+    try{ S.leadtime=await getJSON('/estoque/api/leadtime'+(p.toString()?'?'+p:'')); S.leadtimeKey=ltKey; }
     catch(e){ el.innerHTML=`<div class="empty">Falha ao carregar lead time: ${esc(e.message)}</div>`; return; }
   }
   const J=S.leadtime, R=J.resumo||{};
   const minPed=S.ltMin||5;
   let rows=(J.fornecedores||[]);
-  if(S.cli.comprador) rows=rows.filter(f=>String(f.codcomprador)===S.cli.comprador);
   if(S.cli.fornec)    rows=rows.filter(f=>String(f.codfornec)===S.cli.fornec);
   rows=rows.filter(f=>(f.n||0)>=minPed);
 
@@ -1811,16 +1834,19 @@ function ltDetRow(cod){
    filtros GLOBAIS de comprador e fornecedor do topo. */
 async function renderVerbas(){
   const el=$('#v-verbas');
-  if(!S.verbas){
+  // ⚠️ Comprador recortado no SERVIDOR (chave de cache local junto): os cards leem J.resumo, que
+  // é agregado lá. Filtrando só as linhas aqui, "Saldo a aplicar"/"Negociado 12m" continuavam no
+  // total da empresa ao lado de uma tabela já recortada — dois universos na mesma tela.
+  const vbKey=(S.cli.comprador||'TODOS');
+  if(!S.verbas||S.verbasKey!==vbKey){
     el.innerHTML=`<div class="loader"><div class="spinner"></div>Calculando verbas dos fornecedores…</div>`;
-    try{ S.verbas=await getJSON('/estoque/api/verbas'); }
+    const p=new URLSearchParams(); if(S.cli.comprador) p.set('comprador_cod',S.cli.comprador);
+    try{ S.verbas=await getJSON('/estoque/api/verbas'+(p.toString()?'?'+p:'')); S.verbasKey=vbKey; }
     catch(e){ el.innerHTML=`<div class="empty">Falha ao carregar verbas: ${esc(e.message)}</div>`; return; }
   }
   const J=S.verbas, R=J.resumo||{};
   let rows=(J.fornecedores||[]);
   let grandes=(J.grandes_sem_verba||[]);
-  if(S.cli.comprador){ rows=rows.filter(f=>String(f.codcomprador)===S.cli.comprador);
-    grandes=grandes.filter(f=>String(f.codcomprador)===S.cli.comprador); }
   if(S.cli.fornec){ rows=rows.filter(f=>String(f.codfornec)===S.cli.fornec);
     grandes=grandes.filter(f=>String(f.codfornec)===S.cli.fornec); }
 
@@ -2000,12 +2026,48 @@ function pedMedida(v,un,dig,faltam){
   return dec(v,dig)+' '+un+av;
 }
 
+/* ── Mês fechado no Orçamento (pergunta do diretor 08/2026) ──
+   "quando vira o mês, o orçamento do comprador zera... se ele estourou o mês passado, não
+   deveria arrastar o valor para diminuir do mês atual?"
+
+   O número passa a APARECER sempre — era isso que faltava. Descontá-lo da meta é opção
+   (`S.orcArrastar`), desligada por default: a meta é 65% da venda dos ÚLTIMOS 30 DIAS, uma
+   régua de fluxo (repor o que girou), não um budget anual. Quem estourou porque a venda subiu
+   seria punido duas vezes; quem estourou por antecipação tem a mercadoria no estoque e aí o
+   desconto é o controle de capital certo — quem sabe qual dos dois é o caso é o diretor, não
+   uma regra fixa. Sobra nunca vira crédito (ver core.orcamento_winthor). */
+function orcMesAnterior(r){
+  if(!r.mes_ant) return '';
+  const on=!!r.arrastar;
+  const toggle=`<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px">
+      <input type="checkbox" id="orc-arrasta" ${on?'checked':''}>
+      <span>descontar o estouro da meta deste mês</span></label>`;
+  if(r.meta_ant==null)
+    return `<div class="panel"><div class="count-line">Mês anterior (${esc(r.mes_ant)}):
+      comprado <b>${money(r.comprado_ant)}</b> · <span class="muted">meta do fechamento
+      indisponível, então o estouro não pôde ser apurado</span></div></div>`;
+  const est=r.saldo_ant<0;
+  return `<div class="panel" style="border-color:${est?C.orange:'var(--border)'}">
+    <div class="count-line" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+      <span><b>Mês anterior (${esc(r.mes_ant)})</b> · meta ${money(r.meta_ant)} ·
+        comprado ${money(r.comprado_ant)} ·
+        <b style="color:${est?C.red:C.green}">${est?'estourou '+money(-r.saldo_ant)
+                                                    :'sobrou '+money(r.saldo_ant)}</b></span>
+      ${est?toggle:'<span class="muted">nada a arrastar</span>'}
+    </div>
+    <div class="count-line muted">A meta é <b>65% da venda dos últimos 30 dias</b> — régua de
+      fluxo, não orçamento anual. Estouro por <b>venda maior</b> não deveria ser descontado (puniria
+      duas vezes); estouro por <b>antecipação de compra</b> deveria, porque a mercadoria está no
+      estoque. Sobra nunca vira crédito.</div></div>`;
+}
+
 async function renderOrcamento(useCache){
   const el=$('#v-orcamento');
   const comp=S.compradorNome||'TODOS';
   let o=useCache?S.orcamento:null;
   if(!o){ el.innerHTML=`<div class="loader"><div class="spinner"></div></div>`;
-    try{ o=await getJSON('/estoque/api/orcamento?comprador='+encodeURIComponent(comp)); }
+    try{ o=await getJSON('/estoque/api/orcamento?comprador='+encodeURIComponent(comp)
+                         +(S.orcArrastar?'&arrastar=1':'')); }
     catch(e){ el.innerHTML=`<div class="empty">Orçamento indisponível: ${e.message}</div>`; return; }
     S.orcamento=o; }
   const r=o.resumo;
@@ -2022,11 +2084,15 @@ async function renderOrcamento(useCache){
   el.innerHTML=`<h2 class="section"><span>Orçamento de compras — ${esc(comp)} · ${r.mes}${tipT('Meta de compras do mês vs. realizado (pedidos reais do Winthor). Verde = dentro; vermelho = estourou.')}</span>
       <span><button class="btn sm primary" id="btn-pedido">+ Pedido</button></span></h2>
     <div class="kpi-grid">
-      ${kpi('Meta do mês',money(r.meta),r.meta_auto?'65% da venda líq. 30d':'meta manual',C.accent)}
+      ${kpi('Meta do mês',money(r.meta),
+            r.arrastar&&r.arrasto_aplicado<0
+              ? `${money(r.meta_base)} − ${money(-r.arrasto_aplicado)} do mês passado`
+              : (r.meta_auto?'65% da venda líq. 30d':'meta manual'),C.accent)}
       ${kpi('Comprado (Winthor)',money(r.comprado),r.n_pedidos+' pedidos',C.accent2)}
       ${kpi('Saldo',money(r.saldo),'comprometido aberto '+moneyK(r.aberto),r.saldo<0?C.red:C.green)}
       ${kpi('Consumido',r.pct_consumido!=null?pct(r.pct_consumido):'—','',cor)}
     </div>
+    ${orcMesAnterior(r)}
     <div class="panel"><div class="bar big"><i style="width:${prog}%;background:${cor}"></i></div>
       <div class="count-line">${prog>=100?'⚠️ Meta estourada':(prog>=85?'Atenção: perto da meta':'Dentro do planejado')} · realizado lido direto do Winthor (pedido real).${
         // sem este aviso o valor cai e ninguém sabe por quê — vira a próxima desconfiança
@@ -2047,6 +2113,9 @@ async function renderOrcamento(useCache){
       <tbody>${manuaisS.map(pe=>`<tr><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc(pe.n_pedido||'')}</td><td class="num" title="${+pe.valor_nf>+pe.valor?`mercadoria ${money(+pe.valor)} + impostos ${money(+pe.valor_nf-+pe.valor)}`:'sem imposto previsto'}">${money(+pe.valor_nf||+pe.valor)}</td><td><a class="btn sm" href="/estoque/api/pedidos/${pe.id}.xlsx" title="Planilha de importação do Winthor (cód · preço · qtd)">⬇ Excel</a> <a class="btn sm" href="/estoque/api/pedidos/${pe.id}.pdf">⬇ PDF</a> <button class="btn sm" data-delped="${pe.id}">✕</button></td></tr>`).join('')}</tbody></table></div>
       <div class="count-line">Não somam no realizado — entram quando voltarem da base oficial (Winthor). <b>⬇ Excel</b> = planilha de importação de pedido do Winthor (v26+): código · preço unitário · quantidade (un).</div></div>`:''}`;
   $('#btn-pedido').onclick=()=>modalPedido(null);
+  // refaz o fetch: a meta ajustada é calculada no servidor, junto com a quebra por comprador
+  const _arr=$('#orc-arrasta');
+  if(_arr) _arr.onchange=e=>{ S.orcArrastar=e.target.checked; savePrefs(); renderOrcamento(); };
   wireSortTbl($('#orc-comp'),'orc_comp',()=>renderOrcamento(true));
   wireSortTbl($('#orc-abertos'),'orc_abertos',()=>renderOrcamento(true));
   wireSortTbl($('#orc-manuais'),'orc_manuais',()=>renderOrcamento(true));
@@ -2826,6 +2895,7 @@ async function init(){
   if(pr.view) S.view=pr.view;
   if(pr.repAll) S.repAll=true;                 // quem prefere a Abastecimento aberta não reclica todo dia
   if(pr.repOrd) S.repOrd=pr.repOrd;
+  if(pr.orcArrastar) S.orcArrastar=true;       // arraste do estouro do mês anterior (opt-in)
   applyNav();   // organiza os tabs já na 1ª pintura (antes do fetch) — evita o flash de todos os tabs
   document.body.classList.add('booted');   // revela os tabs (CSS esconde até aqui)
   try{

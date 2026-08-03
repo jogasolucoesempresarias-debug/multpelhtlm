@@ -543,6 +543,34 @@ FILTER(
 )"""
 
 
+# ───────────────────────── bloqueio POR FILIAL (pré-entrada × avaria) ──────────
+def q_bloqueio_filial(filiais=None):
+    """Posição de bloqueio no grão PRODUTO × FILIAL — a que `core.qt_em_transicao` precisa para
+    separar pré-entrada de avaria.
+
+    ⚠️ Query SEPARADA do `q_snapshot_estoque` de propósito. O snapshot é o coração do módulo
+    (toda tela depende dele); acrescentar colunas lá arriscaria derrubar tudo se o DAX novo não
+    agradasse ao modelo. Aqui, se falhar, o app degrada para a heurística agregada antiga.
+    É barata: só linhas com bloqueio (algumas centenas), não o catálogo inteiro.
+
+    `QTULTENT` (quantidade da última entrada) vem junto porque é ela que limita quanto do
+    bloqueio pode ser explicado pela entrada recente — sem esse teto, 200 un bloqueadas viram
+    "chegando" por causa de uma entrada de 12 un no mesmo dia."""
+    inner = """ADDCOLUMNS(
+        SUMMARIZE(PCEST, PCEST[CODPROD], PCEST[CODFILIAL]),
+        "qtbloq",   CALCULATE(SUM(PCEST[QTBLOQUEADA])),
+        "qtultent", CALCULATE(SUM(PCEST[QTULTENT])),
+        "dtultent", CALCULATE(MAX(PCEST[DTULTENT]))
+    )"""
+    lista = _lista_filiais_dax(filiais)
+    tabela = f"CALCULATETABLE({inner}, PCEST[CODFILIAL] IN {lista})" if lista else inner
+    return f"""EVALUATE
+FILTER(
+    {tabela},
+    [qtbloq] <> 0
+)"""
+
+
 # ───────────────────────── estoque endereçado (QTDISP oficial) ─────────────────
 def q_estoque_endereco(filiais=None):
     """SUM(PCESTENDERECO[QT]) por CODPROD, RUA<>99, filiais dadas (= ESTQ_ENDEREÇO do TI)."""

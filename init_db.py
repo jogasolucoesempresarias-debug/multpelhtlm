@@ -158,7 +158,10 @@ from estoque.store import DDL as ESTOQUE_DDL
 cur.execute(ESTOQUE_DDL)
 print("[OK] Tabelas estoque_* criadas/atualizadas.")
 
-admin_email = 'admin@multpel.com.br'
+# Email do admin semeado. É env var porque a instância de DEMO não deve exibir o domínio do
+# cliente na tela de login (a demo define ADMIN_EMAIL no compose). Default preservado para não
+# criar um segundo admin em produção, onde este usuário já existe.
+admin_email = os.getenv('ADMIN_EMAIL', 'admin@multpel.com.br')
 cur.execute("SELECT id FROM multpel_users WHERE email = %s", (admin_email,))
 if not cur.fetchone():
     cur.execute(

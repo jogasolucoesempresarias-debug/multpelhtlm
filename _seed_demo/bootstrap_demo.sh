@@ -54,7 +54,7 @@ c = psycopg2.connect(host=os.getenv("DB_HOST"), port=os.getenv("DB_PORT", "5432"
                      dbname=os.getenv("DB_NAME"), user=os.getenv("DB_USER"), password=os.getenv("DB_PASSWORD"))
 cur = c.cursor()
 cur.execute("UPDATE multpel_users SET areas=%s::jsonb, must_change_password=false WHERE email=%s",
-            (json.dumps(["comercial", "compras"]), "admin@multpel.com.br"))
+            (json.dumps(["comercial", "compras"]), os.getenv("ADMIN_EMAIL", "admin@multpel.com.br")))
 c.commit(); print("  admin liberado (comercial+compras)")
 PY
 
@@ -68,4 +68,4 @@ try:
 except Exception as e:
     print("  (redis flush pulado:", e, ")")
 PY
-echo "[bootstrap] DEMO PRONTA. Acesso: admin@multpel.com.br / admin123"
+echo "[bootstrap] DEMO PRONTA. Acesso: ${ADMIN_EMAIL:-admin@multpel.com.br} / admin123"

@@ -184,7 +184,7 @@ def previsao_giro_sazonal(saz, mes):
 DIAS_TRANSICAO = 7        # janela do bloqueio recente (ver qt_em_transicao)
 
 
-def qt_em_transicao(qtbloq, dtultent, hoje=None, dias=DIAS_TRANSICAO):
+def qt_em_transicao(qtbloq, dtultent, hoje=None, dias=DIAS_TRANSICAO, linhas=None):
     """Mercadoria que JÁ CHEGOU e está entre o pedido e o estoque disponível ("pré-entrada":
     recebida, aguardando conferência/liberação). Nas palavras do diretor: *"tá bloqueado pq sai
     de pedido e fica na transição para estoque disponível"*.
@@ -203,19 +203,49 @@ def qt_em_transicao(qtbloq, dtultent, hoje=None, dias=DIAS_TRANSICAO):
     independente (`PEDIDO_ENTRADA`, a data em que a NF do pedido entrou): **21 de 21** itens com
     bloqueio ≤3d têm NF entrando junto, contra **2 de 122** no bloqueio >30d.
 
+    `linhas` = posição do item POR FILIAL (`[{qtbloq, dtultent, qtultent}, ...]`) — o caminho bom
+    desde 08/2026, quando o diretor reportou itens em AVARIA aparecendo como pré-entrada.
+    Duas correções, e nenhuma delas é ajuste de limiar:
+
+    1. **Parear filial a filial.** O snapshot agrega o produto com `SUM(QTBLOQUEADA)` e
+       `MAX(DTULTENT)` — some as filiais dos dois lados e cruza o bloqueio de UMA com a data de
+       OUTRA. No Atacado (filiais 3+5) bastava uma entrada recente na Matriz para carimbar como
+       "chegando" uma avaria velha parada no Depósito. Não era mudança de rotina no ERP: a
+       agregação já misturava as duas coisas desde sempre.
+    2. **Teto na quantidade da última entrada (`QTULTENT`).** `DTULTENT` é a data da última
+       entrada de QUALQUER natureza, e nada garante que ela explique o que está bloqueado hoje.
+       Se há 200 un bloqueadas e a última entrada trouxe 12, no máximo 12 podem ser pré-entrada —
+       as outras 188 são avaria e devem continuar contando como ruptura (e sugerindo compra).
+       Cap, não filtro: descartar a linha inteira jogaria fora a parte legítima.
+
+    Sem `linhas` (fixtures antigas, modo BD sem a query) cai no comportamento anterior — errado
+    a favor de comprar de novo, que é o erro que já existia e não uma regressão nova.
+
     🔁 **Trocar por dado exato quando der:** `PCMOVPREENT` (107.566 linhas no Oracle) é a tabela
     da pré-entrada. Falta descobrir como marcar a que ainda está pendente e publicá-la no dataset
     (mesmo caminho da `TRIB_ENTRADA`). Aí só o corpo desta função muda — o resto do app não sabe
     de onde vem o número. (`PCNFENT.CONFERIDO` foi testado e é campo morto: 'N' em 2.287 linhas,
-    nulo em 26, nenhum 'S'.)"""
-    q = _n(qtbloq)
-    if q <= 0:
-        return 0.0
-    dt = _parse_dt(dtultent)
-    if dt is None:
-        return 0.0
+    nulo em 26, nenhum 'S'.) Pista forte ainda não explorada: no WMS a **RUA 99** é o endereço de
+    avaria (o app já a exclui do endereçado) — bloqueio endereçado ali é avaria por definição.
+
+    Retorna a quantidade em transição (float)."""
     hoje = hoje or date.today()
-    return q if (hoje - dt).days <= int(dias) else 0.0
+    lim = int(dias)
+
+    def _uma(qb, dt_raw, qult=None):
+        q = _n(qb)
+        if q <= 0:
+            return 0.0
+        dt = _parse_dt(dt_raw)
+        if dt is None or (hoje - dt).days > lim:
+            return 0.0
+        qu = _n(qult)
+        return min(q, qu) if qu > 0 else q
+
+    if linhas:
+        return float(sum(_uma(l.get("qtbloq"), l.get("dtultent"), l.get("qtultent"))
+                         for l in linhas))
+    return _uma(qtbloq, dtultent)
 
 
 def arredonda_caixa(qt, qtunitcx):
@@ -482,7 +512,7 @@ TRIB_FONTES_FIRMES = ("isento_cadastro", "trib_entrada")
 def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, venda_map, params,
                        hoje=None, venda_mensal_map=None, ja_pedida_map=None, embalagem_map=None,
                        preco_venda_map=None, venda_ant_map=None, venda_mensal_rs_map=None,
-                       tributacao_map=None, trib_entrada_map=None):
+                       tributacao_map=None, trib_entrada_map=None, bloqueio_map=None):
     """snapshot: linhas do PCEST; end_map: {cod: qt_end}; prod_map/forn_map: cadastro;
     comprador_map: {matricula: nome}; venda_map: {cod:{venda,custo,qtd}} líquido do RCA.
     venda_mensal_map: {cod:{AnoMes:qtd}} p/ forecast (opcional; só quando forecast ligado).
@@ -490,6 +520,9 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
     embalagem_map: {cod: {qtunit, volume, ...}} caixa/cubagem do PCEMBALAGEM.
     tributacao_map: saída de `montar_tributacao` — histórico de IPI/ST (fallback da cascata).
     trib_entrada_map: saída de `montar_trib_entrada` — tributação de entrada do ERP (primária).
+    bloqueio_map: {cod: [{qtbloq, dtultent, qtultent}]} — posição de bloqueio POR FILIAL, para
+      separar pré-entrada de avaria sem o falso positivo da agregação (ver `qt_em_transicao`).
+      Opcional: sem ele, a pré-entrada cai no cálculo agregado antigo.
     Mantém só produtos do cadastro (revenda/não-FL)."""
     hoje = hoje or date.today()
     base = params["base_estoque"]
@@ -609,7 +642,8 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         # + o que está EM TRANSIÇÃO (pré-entrada: chegou, aguarda liberação). Entra aqui e NÃO no
         # `qtdisp` de propósito: a mercadoria ainda não pode ser vendida, então continua contando
         # como ruptura e fora do valor de estoque — mas não se compra de novo o que já chegou.
-        qt_transicao = qt_em_transicao(r.get("qtbloq"), r.get("dtultent"), hoje=hoje)
+        qt_transicao = qt_em_transicao(r.get("qtbloq"), r.get("dtultent"), hoje=hoje,
+                                       linhas=(bloqueio_map or {}).get(cod))
         estoque_projetado = qtdisp + qtd_ja_pedida + qt_transicao
         cobertura_proj = (estoque_projetado / giro_dia) if giro_dia > 0 and estoque_projetado > 0 else None
         sugestao = max(0.0, est_alvo - estoque_projetado)
@@ -1280,9 +1314,28 @@ def _valor_sugerido_compra(p, campo="valor_sugerido_liq"):
     return 0.0
 
 
+def _sem_providencia(p):
+    """Item em ruptura para o qual NADA foi feito — a definição de "sem pedido".
+
+    ⚠️ Mercadoria em PRÉ-ENTRADA (`qt_transicao > 0`) não conta: ela já está no armazém,
+    aguardando liberação. Sem pedido em aberto? Sim — porque o Winthor já baixou o pedido ao
+    receber. Mas providência tomada há, e é isso que a métrica mede.
+
+    Achado pelo diretor em 08/2026: a aba Ruptura dizia "4 itens sem pedido" na curva A e a tela
+    Estoque zerado, filtrada em "Ruptura s/ pedido", mostrava 3 — porque `status_exec`
+    (`construir_produtos`) já tratava a pré-entrada como estado PRÓPRIO e exclusivo, e as
+    agregações de ruptura nunca foram atualizadas quando isso entrou. Duas contagens do mesmo
+    conceito com critérios diferentes; esta função passa a ser a fonte única do lado Python.
+
+    O item CONTINUA contando em `n_ruptura`: não há estoque vendável, a venda perdida é real.
+    O que ele deixa de ser é risco de omissão."""
+    return (p.get("qtd_ja_pedida") or 0) <= 0 and (p.get("qt_transicao") or 0) <= 0
+
+
 def ruptura_por_comprador(produtos):
     """Ruptura agregada por comprador (a mais rica). Ruptura = estoque ≤ 0 e giro > 0.
-    n_sem_pedido = ruptura ainda sem pedido de compra em aberto (risco real);
+    n_sem_pedido = ruptura ainda sem providência — sem pedido em aberto E sem mercadoria em
+    pré-entrada (ver `_sem_providencia`);
     venda_perdida = Σ giro_mes × custo (venda potencial/mês não atendida);
     sugestao_compra_valor = Σ valor_sugerido_liq de TODOS os itens a comprar do comprador —
     exatamente o total da aba Comprar→Abastecimento (decisão do diretor 07/2026: o card e a
@@ -1303,7 +1356,7 @@ def ruptura_por_comprador(produtos):
         g["sugestao_compra_nf"] += _valor_sugerido_compra(p, "valor_sugerido_nf")
         if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0:
             g["n_ruptura"] += 1
-            if (p.get("qtd_ja_pedida") or 0) <= 0:
+            if _sem_providencia(p):
                 g["n_sem_pedido"] += 1
             g["venda_perdida"] += (p.get("venda_perdida") or 0)   # acumulada na ruptura, a preço de venda
     saida = []
@@ -1403,14 +1456,43 @@ def _cnpj_raiz(v):
     return d[:8] if len(d) >= 8 else ""
 
 
+def mes_anterior(mes):
+    """'2026-08' → '2026-07'. Aceita 'YYYY-MM'; devolve None se não for esse formato."""
+    try:
+        a, m = str(mes).split("-")
+        a, m = int(a), int(m)
+    except (ValueError, AttributeError):
+        return None
+    return f"{a - 1}-12" if m == 1 else f"{a}-{m - 1:02d}"
+
+
 def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS",
                       pct=0.65, hoje=None, meta_override=None, lead_padrao=10,
-                      cnpj_empresa=None):
+                      cnpj_empresa=None, venda_comp_ant=None, arrastar=False):
     """Orçamento de compras a partir do pedido de compra REAL (PCPEDIDO).
     cab: linhas do cabeçalho; venda_comp: {nome_comprador: venda_liq_30d} (p/ a meta);
     comp_map: {matricula:nome}; forn_map: {codfornec: row}; mes: 'YYYY-MM'.
     meta = pct × venda_liq (override manual opcional); realizado = Σ VLTOTAL dos pedidos do mês;
     aberto = pedidos do mês ainda não recebidos (sem DTENTRADAESTOQUE).
+
+    **Mês anterior** (pergunta do diretor em 08/2026: *"se ele estourou o orçamento do mês
+    passado, não deveria arrastar o valor para diminuir do mês atual?"*). O mês fechado é sempre
+    APURADO e devolvido no resumo (`meta_ant`/`comprado_ant`/`saldo_ant`) — o número aparece na
+    tela mesmo com o arraste desligado, porque o problema imediato era ele ser invisível.
+
+    `arrastar=True` desconta o ESTOURO da meta do mês corrente. Fica desligado por default de
+    propósito: a meta é `pct × venda dos últimos 30 dias`, ou seja uma régua de FLUXO (repor o
+    que girou), não um budget anual. Quem estourou porque a venda subiu seria punido duas vezes.
+    Quem estourou por antecipação (lote/oportunidade) tem a mercadoria no estoque e aí o desconto
+    é exatamente o controle de capital que se quer — por isso é uma escolha, não um default.
+
+    Só o estouro viaja; SOBRA não vira crédito. Creditar sobra deixaria acumular um mês fraco
+    inteiro para estourar o seguinte, que é o oposto do que a régua de fluxo mede.
+
+    `venda_comp_ant`: {comprador: venda_liq_30d} medida no FIM do mês anterior — é a base que
+    valia naquele momento. Usar a venda de hoje para reconstruir a meta de ontem daria um estouro
+    contra uma meta que nunca existiu. Sem ele, o bloco do mês anterior sai zerado (`meta_ant`
+    None) em vez de sair errado.
 
     `cnpj_empresa`: CNPJ da própria empresa. Pedido cujo FORNECEDOR tem a **mesma raiz de CNPJ**
     é **transferência entre filiais**, não compra (o CD abastecendo as lojas) — fica FORA do
@@ -1421,8 +1503,11 @@ def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS
     hoje = hoje or date.today()
     todos = (not comprador or comprador == "TODOS")
     raiz_empresa = _cnpj_raiz(cnpj_empresa)
+    m_ant = mes_anterior(mes)
     pedidos = []
     realizado = aberto = 0.0
+    realizado_ant = 0.0
+    real_ant_c = {}                 # {comprador: comprado no mês anterior}
     tr_n = 0
     tr_valor = 0.0
     for r in cab:
@@ -1444,10 +1529,15 @@ def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS
         recebido = vlt > 0 and aberto_val <= max(1.0, vlt * 0.005)
         if recebido:
             aberto_val = 0.0
-        no_mes = bool(dtem) and dtem.strftime("%Y-%m") == mes
+        mes_do_pedido = dtem.strftime("%Y-%m") if dtem else None
+        no_mes = mes_do_pedido == mes
         if no_mes:
             realizado += vlt                     # comprado válido = tudo que foi pedido no mês
             aberto += aberto_val                 # comprometido aberto = ainda não entregue
+        elif m_ant and mes_do_pedido == m_ant:
+            # mês fechado: mesma régua do corrente (VLTOTAL, transferência já excluída acima)
+            realizado_ant += vlt
+            real_ant_c[nome or "Sem comprador"] = real_ant_c.get(nome or "Sem comprador", 0.0) + vlt
         # previsão de entrega (HÍBRIDO): usa a DTPREVENT do Winthor quando é previsão REAL
         # (posterior à emissão); senão = data do pedido + lead time do fornecedor (PRAZOENTREGA,
         # ou padrão). Evita marcar como atrasado pedido em que o Winthor só repetiu a emissão.
@@ -1486,11 +1576,26 @@ def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS
             "recebido": recebido,
         })
     if meta_override is not None and _n(meta_override) > 0:
-        meta = _n(meta_override)
+        meta_base = _n(meta_override)
     elif todos:
-        meta = sum(_n(v) for v in venda_comp.values()) * pct
+        meta_base = sum(_n(v) for v in venda_comp.values()) * pct
     else:
-        meta = _n(venda_comp.get(comprador)) * pct
+        meta_base = _n(venda_comp.get(comprador)) * pct
+
+    # ── mês anterior: apurado SEMPRE, descontado só se `arrastar` ──
+    def _meta_ant(vc):
+        if vc is None:
+            return None
+        return (sum(_n(v) for v in vc.values()) if todos else _n(vc.get(comprador))) * pct
+
+    meta_ant = _meta_ant(venda_comp_ant)
+    saldo_ant = (meta_ant - realizado_ant) if meta_ant is not None else None
+    # estouro é sempre ≤ 0 (sobra não vira crédito — ver docstring)
+    estouro_ant = min(0.0, saldo_ant) if saldo_ant is not None else 0.0
+    # piso em zero: meta negativa faria o % consumido explodir e o card mentir de outro jeito.
+    # Se o estouro passar da meta do mês, o excedente NÃO se acumula para o mês seguinte —
+    # arrastar em cascata transformaria a régua de fluxo num budget anual pela porta dos fundos.
+    meta = max(0.0, meta_base + estouro_ant) if arrastar else meta_base
     saldo = meta - realizado
     # quebra por comprador (tabela do Orçamento): meta = venda_liq×pct de cada comprador;
     # comprado/aberto = pedidos do mês. Inclui compradores com venda mas sem pedido.
@@ -1506,8 +1611,22 @@ def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS
     for nome_c, v in ((venda_comp or {}).items() if todos else []):
         a = agg_c.setdefault(nome_c, {"comprador": nome_c, "meta": 0.0, "comprado": 0.0, "aberto": 0.0})
         a["meta"] = _n(v) * pct
+    # o comprador que estourou o mês passado e não comprou nada neste ainda precisa aparecer,
+    # senão o arraste sumiria justamente com quem ele afeta
+    for nome_c in ((real_ant_c if todos else {})):
+        agg_c.setdefault(nome_c, {"comprador": nome_c, "meta": 0.0, "comprado": 0.0, "aberto": 0.0})
     por_comprador = []
     for a in agg_c.values():
+        m_a = (_n((venda_comp_ant or {}).get(a["comprador"])) * pct
+               if venda_comp_ant is not None else None)
+        c_a = _n(real_ant_c.get(a["comprador"]))
+        s_a = (m_a - c_a) if m_a is not None else None
+        a["meta_base"] = _round(a["meta"])
+        a["meta_ant"] = _round(m_a) if m_a is not None else None
+        a["comprado_ant"] = _round(c_a)
+        a["saldo_ant"] = _round(s_a) if s_a is not None else None
+        if arrastar and s_a is not None:
+            a["meta"] = max(0.0, a["meta"] + min(0.0, s_a))
         a["saldo"] = _round(a["meta"] - a["comprado"])
         a["pct_consumido"] = _round(a["comprado"] / a["meta"], 4) if a["meta"] > 0 else None
         a["meta"] = _round(a["meta"]); a["comprado"] = _round(a["comprado"]); a["aberto"] = _round(a["aberto"])
@@ -1529,6 +1648,14 @@ def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS
         "meta_auto": meta_override is None,
         # transferências entre filiais do mês, excluídas do orçamento (front avisa na tela)
         "transf_n": tr_n, "transf_valor": _round(tr_valor),
+        # ── mês fechado: informado sempre; só entra na meta se `arrastar` (ver docstring) ──
+        "mes_ant": m_ant,
+        "meta_ant": _round(meta_ant) if meta_ant is not None else None,
+        "comprado_ant": _round(realizado_ant),
+        "saldo_ant": _round(saldo_ant) if saldo_ant is not None else None,
+        "arrastar": bool(arrastar),
+        "meta_base": _round(meta_base),
+        "arrasto_aplicado": _round(estouro_ant) if arrastar else 0.0,
     }
     return {"resumo": resumo, "pedidos": pedidos, "abertos": abertos, "por_comprador": por_comprador}
 
@@ -1545,11 +1672,16 @@ _LEAD_MIN_PED = 5       # mínimo de pedidos reais p/ a mediana ser confiável
 
 
 def leadtime_fornecedores(cab, entrada_rows, forn_map, comp_map, hoje=None,
-                          min_ped=_LEAD_MIN_PED, cnpj_empresa=None):
+                          min_ped=_LEAD_MIN_PED, cnpj_empresa=None, comprador=None):
     """Lead time por fornecedor: 1º recebimento (PEDIDO_ENTRADA) − emissão (PCPEDIDO).
 
     cab: linhas do q_pedido_cab (12m); entrada_rows: linhas do q_pedido_entrada
     (ponte NUMPED→DTENTRADA); forn_map: {codfornec: row PCFORNEC}; comp_map: {matricula: nome}.
+
+    `comprador` (matrícula) recorta a base ANTES de agregar. Precisa ser aqui e não no cliente:
+    `mediana_real` é mediana de PEDIDOS, e filtrar as linhas prontas daria mediana de medianas —
+    número diferente, silenciosamente. Fornecedor sem CODCOMPRADOR no cadastro fica fora do
+    recorte (não tem a quem pertencer), como já acontece nas demais telas por comprador.
 
     Dois lead times por fornecedor (validado com o diretor 07/2026):
     - lead_todos = MÉDIA de TODOS os pedidos recebidos (inclui digitado na hora). Média, não
@@ -1562,6 +1694,7 @@ def leadtime_fornecedores(cab, entrada_rows, forn_map, comp_map, hoje=None,
     Lead negativo (NF antes do pedido) é descartado das medianas e contado no resumo."""
     hoje = hoje or date.today()
     raiz_empresa = _cnpj_raiz(cnpj_empresa)
+    comprador = int(_n(comprador)) or None
     entrada = {}
     for r in entrada_rows or []:
         numped = int(_n(r.get("NUMPED")))
@@ -1577,6 +1710,9 @@ def leadtime_fornecedores(cab, entrada_rows, forn_map, comp_map, hoje=None,
         forn = forn_map.get(cod)
         if raiz_empresa and _cnpj_raiz((forn or {}).get("CGC")) == raiz_empresa:
             n_transfer += 1
+            continue
+        # recorte por comprador: sai da base, não do resultado (ver docstring)
+        if comprador and int(_n((forn or {}).get("CODCOMPRADOR"))) != comprador:
             continue
         emis = _parse_dt(r.get("DTEMISSAO"))
         ent = entrada.get(int(_n(r.get("NUMPED"))))
@@ -1814,7 +1950,7 @@ def _verbas_prep(verbas, aplic_rows):
 
 def verbas_fornecedores(verbas, aplic_rows, forn_map, comp_map, compras_map=None,
                         lead_map=None, hoje=None, cnpj_empresa=None,
-                        compra_min_alerta=_VERBA_COMPRA_MIN_ALERTA):
+                        compra_min_alerta=_VERBA_COMPRA_MIN_ALERTA, comprador=None):
     """Visão Verbas: negociado × aplicado × saldo por fornecedor + consolidados.
 
     verbas/aplic_rows: linhas cruas de PCVERBA/PCAPLICVERBA (2024+); compras_map:
@@ -1827,13 +1963,29 @@ def verbas_fornecedores(verbas, aplic_rows, forn_map, comp_map, compras_map=None
       estoque, não fluxo; DTQUITACAO é campo morto nesta base, o status vem do saldo);
     - negociado/aplicado do placar = últimos 12 MESES (casa com a compra 12m do %V/C);
     - fornecedor entra no placar se tem verba 12m OU saldo em aberto (saldo antigo não some);
-    - compra alta sem verba nenhuma → lista de alerta (o argumento de negociação)."""
+    - compra alta sem verba nenhuma → lista de alerta (o argumento de negociação).
+
+    `comprador` (matrícula) recorta a base ANTES de agregar, para que o resumo (cards) fale do
+    mesmo universo que a tabela — filtrar só as linhas prontas deixaria os totais no valor da
+    empresa inteira. Fornecedor sem CODCOMPRADOR no cadastro fica fora do recorte."""
     hoje = hoje or date.today()
     corte_12m = hoje - timedelta(days=365)
     raiz_empresa = _cnpj_raiz(cnpj_empresa)
+    comprador = int(_n(comprador)) or None
     V, n_cancel, apl_validas, n_estornos = _verbas_prep(verbas, aplic_rows)
     V = [v for v in V if not (raiz_empresa
                               and _cnpj_raiz((forn_map.get(v["_forn"]) or {}).get("CGC")) == raiz_empresa)]
+    if comprador:
+        forns_comp = {cod for cod, f in (forn_map or {}).items()
+                      if int(_n((f or {}).get("CODCOMPRADOR"))) == comprador}
+        V = [v for v in V if v["_forn"] in forns_comp]
+        # as APLICAÇÕES também: elas alimentam o "Aplicado 12m" e o gráfico mensal, que ficariam
+        # no valor da empresa inteira ao lado de um negociado já recortado — o pior dos mundos.
+        # A ponte é NUMVERBA → CODFORNEC sobre as verbas CRUAS (inclui canceladas, como no global).
+        nv_forn = {int(_n(v.get("NUMVERBA"))): int(_n(v.get("CODFORNEC"))) for v in (verbas or [])}
+        apl_validas = [a for a in apl_validas
+                       if nv_forn.get(int(_n(a.get("NUMVERBA")))) in forns_comp]
+        compras_map = {cod: val for cod, val in (compras_map or {}).items() if cod in forns_comp}
 
     # por fornecedor
     agg = {}

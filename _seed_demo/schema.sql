@@ -219,6 +219,9 @@ CREATE TABLE IF NOT EXISTS pcest (
     custofin    NUMERIC(14,4),
     dtultsaida  DATE,
     dtultent    DATE,
+    -- quantidade da última entrada: é o TETO de quanto do bloqueio pode ser pré-entrada
+    -- (o resto é avaria). Ver core.qt_em_transicao. Nulo = sem teto (comportamento antigo).
+    qtultent    NUMERIC(14,3),
     PRIMARY KEY (codprod, codfilial)
 );
 
