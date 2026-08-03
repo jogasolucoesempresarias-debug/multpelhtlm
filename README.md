@@ -423,7 +423,7 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 ```bash
 cp .env.example .env        # preencher (ver variáveis abaixo)
 docker compose -f docker-compose.dev.yml up -d redis
-python -X utf8 init_db.py   # cria/migra schema + admin default (admin@multpel.com.br / admin123)
+python -X utf8 init_db.py   # cria/migra schema + admin default (ADMIN_EMAIL / ADMIN_SENHA)
 python -X utf8 server.py    # http://localhost:5000
 pytest -q                   # 392 passam, 5 falham (fixture de data + joga_demo local — não é regressão)
 ```
@@ -479,7 +479,7 @@ muitas instâncias; as env vars são o interruptor.
 - **SEM `POWERBI_*` de propósito** (a demo não tem como tocar o BI do cliente). `CRON_HABILITADO=false`
   (sem emails). `SECRET_KEY` e senha do Postgres **exclusivas** da demo. **1 banco** `joga_demo` serve
   analytics **e** auth (as tabelas não colidem).
-- **Login:** `admin@multpel.com.br / admin123`. Acompanhar os logs do serviço `demo-seed` até
+- **Login:** o `ADMIN_EMAIL` / `ADMIN_SENHA` definidos na stack. Acompanhar os logs do `demo-seed` até
   **`[bootstrap] DEMO PRONTA`** (durante o seed, o login falha — é o passo `init_db` que cria as tabelas de auth).
 - Base reprodutível (SEED=42) em `_seed_demo/`; runbook local (fumaça no navegador) em
   **`_seed_demo/FUMACA_DEMO.md`**; seeder de metas com **trava** (`DEMO_SEED=1` + recusa `multpel_db`).

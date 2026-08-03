@@ -27,7 +27,7 @@ Esse plano é grande demais pra ser executado num único chat sem estourar conte
 - Todos os arquivos vivem em `c:\Phyton-Projetos\Multpel HTML\`
 - Nomenclatura: `multpel_*` (não `auditoria_*`) em banco, classes Python, etc.
 - Banco Postgres: nome `multpel_db`
-- Email admin padrão: `admin@multpel.com.br` / senha temporária `admin123` (forçar troca no 1º login)
+- Admin padrão: `ADMIN_EMAIL` / `ADMIN_SENHA` (env; forçar troca no 1º login)
 
 ---
 
@@ -138,7 +138,7 @@ CREATE TABLE IF NOT EXISTS multpel_log (
     acessado_em   TIMESTAMP DEFAULT NOW()
 );
 
--- Admin padrão: admin@multpel.com.br / admin123 (TROCAR ao primeiro login)
+-- Admin padrão: ADMIN_EMAIL / ADMIN_SENHA (TROCAR ao primeiro login)
 ```
 
 ## Helpers core no server.py
@@ -601,7 +601,7 @@ tests/
 
 ## Verificação end-to-end (testes manuais)
 
-App rodando em `http://localhost:5000`. Login `admin@multpel.com.br / admin123`.
+App rodando em `http://localhost:5000`. Login: o admin semeado pelo `init_db.py`.
 
 **Fase 0**:
 - `python init_db.py` cria 2 tabelas + admin. Re-rodar não dá erro
@@ -1403,7 +1403,7 @@ if not cur.fetchone():
            VALUES (%s, %s, %s, 'admin', true)""",
         ('Administrador', admin_email, generate_password_hash('admin123'))
     )
-    print(f"✅ Admin criado: {admin_email} / admin123 — TROCAR no primeiro login!")
+    print(f"✅ Admin criado: {admin_email} — TROCAR no primeiro login!")
 else:
     print(f"✅ Admin {admin_email} já existe.")
 

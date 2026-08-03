@@ -158,18 +158,19 @@ from estoque.store import DDL as ESTOQUE_DDL
 cur.execute(ESTOQUE_DDL)
 print("[OK] Tabelas estoque_* criadas/atualizadas.")
 
-# Email do admin semeado. É env var porque a instância de DEMO não deve exibir o domínio do
-# cliente na tela de login (a demo define ADMIN_EMAIL no compose). Default preservado para não
-# criar um segundo admin em produção, onde este usuário já existe.
+# Admin semeado. Email e senha são ENV porque a instância de DEMO não deve exibir o domínio do
+# cliente na tela de login nem carregar uma senha em texto num repo PÚBLICO. Defaults preservados
+# para não criar um segundo admin em produção, onde este usuário já existe e já trocou a senha.
 admin_email = os.getenv('ADMIN_EMAIL', 'admin@multpel.com.br')
+admin_senha = os.getenv('ADMIN_SENHA', 'admin123')
 cur.execute("SELECT id FROM multpel_users WHERE email = %s", (admin_email,))
 if not cur.fetchone():
     cur.execute(
         """INSERT INTO multpel_users (nome, email, password_hash, role, must_change_password)
            VALUES (%s, %s, %s, 'admin', true)""",
-        ('Administrador', admin_email, generate_password_hash('admin123'))
+        ('Administrador', admin_email, generate_password_hash(admin_senha))
     )
-    print(f"[OK] Admin criado: {admin_email} / admin123 -- TROCAR no primeiro login!")
+    print(f"[OK] Admin criado: {admin_email} (senha via ADMIN_SENHA) -- TROCAR no primeiro login!")
 else:
     print(f"[OK] Admin {admin_email} ja existe.")
 

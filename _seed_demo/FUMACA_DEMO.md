@@ -30,7 +30,7 @@ Separado da produção (o seeder de metas RECUSA `multpel_db`). Criar o banco va
 ```
 $env:DB_NAME="multpel_demo"; & ".venv\Scripts\python.exe" -X utf8 init_db.py
 ```
-Isso cria o admin **`admin@multpel.com.br` / `admin123`** (com troca de senha forçada e SÓ área comercial).
+Isso cria o admin **`ADMIN_EMAIL` / `ADMIN_SENHA`** (com troca de senha forçada e SÓ área comercial).
 Liberar a área **compras** e dispensar a troca de senha pra fumaça (parametrizado, só aspas simples internas):
 ```
 $env:DB_NAME="multpel_demo"; & ".venv\Scripts\python.exe" -X utf8 -c "import os,json,psycopg2; from dotenv import load_dotenv; load_dotenv(); c=psycopg2.connect(host=os.getenv('DB_HOST','localhost'),port=os.getenv('DB_PORT','5432'),dbname='multpel_demo',user=os.getenv('DB_USER','postgres'),password=os.getenv('DB_PASSWORD','')); cur=c.cursor(); cur.execute('UPDATE multpel_users SET areas=%s::jsonb, must_change_password=false WHERE email=%s',(json.dumps(['comercial','compras']),'admin@multpel.com.br')); c.commit(); print('admin liberado (comercial+compras)')"
@@ -52,7 +52,7 @@ $env:DB_NAME="multpel_demo"      # auth da demo (NÃO a produção)
 # opcional: $env:ANALYTICS_HOJE="2026-07-24"  # ancora o "hoje" numa data fixa
 & ".venv\Scripts\python.exe" -X utf8 server.py
 ```
-Abrir **http://localhost:5000**, logar `admin@multpel.com.br / admin123`, escolher a área no portal.
+Abrir **http://localhost:5000**, logar com o admin criado acima, escolher a área no portal.
 
 > Se aparecer "Vars Power BI faltando" no log: tudo bem em modo postgres — o app não bate no BI.
 

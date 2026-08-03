@@ -49,7 +49,7 @@ stacks).
 docker exec $(docker ps -q -f name=painel-teste_painel-app) python -X utf8 init_db.py
 ```
 
-Cria o schema e o admin padrão `admin@multpel.com.br` / `admin123`.
+Cria o schema e o admin padrão (`ADMIN_EMAIL` / `ADMIN_SENHA`; defaults no `init_db.py`).
 
 > ⚠️ O domínio é público. **Troque essa senha no primeiro acesso** ou pule direto para o passo 4,
 > que traz os usuários reais e torna o admin padrão desnecessário.

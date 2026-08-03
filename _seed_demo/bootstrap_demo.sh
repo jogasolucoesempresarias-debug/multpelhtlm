@@ -68,4 +68,5 @@ try:
 except Exception as e:
     print("  (redis flush pulado:", e, ")")
 PY
-echo "[bootstrap] DEMO PRONTA. Acesso: ${ADMIN_EMAIL:-admin@multpel.com.br} / admin123"
+# não imprime a senha: log de container é lido por quem tem acesso ao Portainer e vira print
+echo "[bootstrap] DEMO PRONTA. Acesso: ${ADMIN_EMAIL:-admin@multpel.com.br} (senha = ADMIN_SENHA da stack)"

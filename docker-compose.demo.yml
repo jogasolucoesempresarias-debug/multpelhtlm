@@ -9,10 +9,15 @@
 # Primeiro boot leva ~3–4 min (gera ~1,17M linhas). Depois é instantâneo.
 #
 # ⚠️ Usa a MESMA imagem `:latest` da produção — não existe imagem "de demo". O que faz esta
-#    instância ser demo é o DATA_SOURCE=postgres abaixo. Login: ADMIN_EMAIL abaixo / admin123.
+#    instância ser demo é o DATA_SOURCE=postgres abaixo. Login: `ADMIN_EMAIL` / `ADMIN_SENHA`.
 #
 # 🔒 SEM POWERBI_* de propósito: a demo não tem como tocar o BI do cliente (defesa em
 #    profundidade). SECRET_KEY e a senha do Postgres são exclusivas da demo (isoladas da produção).
+#
+# 🔑 TRÊS variáveis vêm do ENV DA STACK (Portainer → Environment variables), nunca deste arquivo:
+#      DEMO_SECRET_KEY · DEMO_DB_PASSWORD · DEMO_ADMIN_SENHA
+#    Este compose é versionado num repo PÚBLICO. Segredo literal aqui vaza no ato — e o
+#    SECRET_KEY é o que assina o cookie de sessão: quem o tem forja um admin sem senha.
 # ─────────────────────────────────────────────────────────────────────────────
 version: "3.8"
 
@@ -25,7 +30,9 @@ services:
     environment:
       FLASK_ENV: "production"
       TZ: "America/Sao_Paulo"
-      SECRET_KEY: "95f0c08f955b3d6a5a4f65c8679a3668d147d629044d23c6474c711e92264fda"
+      # ⚠️ SEGREDO — vem do ENV DA STACK (Portainer → Environment variables), NUNCA literal aqui:
+      # este arquivo é versionado num repo PÚBLICO. Mesmo padrão do docker-compose.prod.yml.
+      SECRET_KEY: "${DEMO_SECRET_KEY}"
       MODULOS: "comercial,compras"
       # >>> O INTERRUPTOR <<<  lê o banco sintético, não o Power BI
       DATA_SOURCE: "postgres"
@@ -35,12 +42,13 @@ services:
       DB_PORT: "5432"
       DB_NAME: "joga_demo"
       DB_USER: "demo"
-      DB_PASSWORD: "3g3mF_I0yMbquxwgjjLGl2Ob8SB_PMfD"
+      DB_PASSWORD: "${DEMO_DB_PASSWORD}"
       REDIS_HOST: "demo-redis"
       REDIS_PORT: "6379"
       CRON_HABILITADO: "false"
       # Admin semeado — sem o domínio do cliente na tela de login da apresentação.
       ADMIN_EMAIL: "admin@jogasolucoes.com.br"
+      ADMIN_SENHA: "${DEMO_ADMIN_SENHA}"
       # Emitente do PDF de pedido de compra. Sem estas, o default do código é o cliente real —
       # é o único lugar da demo que ainda imprimiria dado dele. Fictício de propósito.
       EMPRESA_RAZAO: "ATACADO EXEMPLO DISTRIBUIDORA LTDA"
@@ -85,9 +93,10 @@ services:
       DB_NAME: "joga_demo"
       ANALYTICS_DB_NAME: "joga_demo"
       DB_USER: "demo"
-      DB_PASSWORD: "3g3mF_I0yMbquxwgjjLGl2Ob8SB_PMfD"
+      DB_PASSWORD: "${DEMO_DB_PASSWORD}"
       DEMO_SEED: "1"
       ADMIN_EMAIL: "admin@jogasolucoes.com.br"
+      ADMIN_SENHA: "${DEMO_ADMIN_SENHA}"
       REDIS_HOST: "demo-redis"
       REDIS_PORT: "6379"
     deploy:
@@ -111,7 +120,7 @@ services:
     environment:
       POSTGRES_DB: "joga_demo"
       POSTGRES_USER: "demo"
-      POSTGRES_PASSWORD: "3g3mF_I0yMbquxwgjjLGl2Ob8SB_PMfD"
+      POSTGRES_PASSWORD: "${DEMO_DB_PASSWORD}"
     volumes:
       - demo-pgdata:/var/lib/postgresql/data
     deploy:
