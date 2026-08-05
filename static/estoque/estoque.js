@@ -61,6 +61,8 @@ const S = {
   // A tela abre FECHADA (pedido do diretor 07/2026): a leitura de entrada é macro — quais
   // fornecedores preciso comprar e quanto — e os itens são o drill.
   repOpen:new Set(), repAll:false, repOrd:'valor',
+  // linha secundária do gráfico 12m do produto: 'unidades' (default) | 'clientes' (positivação)
+  d12:'unidades',
 };
 
 /* ───────── helpers ───────── */
@@ -2460,31 +2462,57 @@ function planoDrawer(plano,p){
   const tem=_temSerie(p&&p.serie_mensal_rs)||_temSerie(p&&p.serie_mensal);
   return `<div class="d-sec">Venda (12 meses)</div>
     <div class="count-line">${resumo}</div>
-    ${tem?`<div class="chart-box sm" style="height:175px"><canvas id="d-venda12"></canvas></div>
-        <div class="count-line" style="margin-top:4px">Inclui o <b>mês corrente</b> (barra mais clara) — ainda em andamento, então tende a ficar abaixo dos fechados.</div>`
+    ${tem?`${_temSerie(p&&p.serie_mensal_clientes)?`<div class="seg" id="d12-modo" style="margin:2px 0 6px">
+          <span class="seg-opt ${S.d12!=='clientes'?'on':''}" data-d12="unidades" title="Volume vendido no mês">Unidades</span>
+          <span class="seg-opt ${S.d12==='clientes'?'on':''}" data-d12="clientes" title="Positivação: clientes distintos que compraram ESTE item no mês. Venda caindo com clientes caindo = perda de base; venda caindo com clientes estável = os mesmos comprando menos.">Clientes</span>
+        </div>`:''}
+        <div class="chart-box sm" style="height:175px"><canvas id="d-venda12"></canvas></div>
+        <div class="count-line" style="margin-top:4px">Inclui o <b>mês corrente</b> (barra mais clara) — ainda em andamento, então tende a ficar abaixo dos fechados.${_temSerie(p&&p.serie_mensal_clientes)?' <b>Clientes</b> = positivação do item (quantos clientes distintos o compraram no mês); passe o mouse para ver os três números.':''}</div>`
         :'<div class="muted" style="font-size:.8rem">Sem venda registrada nos últimos 12 meses.</div>'}`;
 }
 function buildVendaChart(p){
   const meses=(p&&p.serie_mensal_meses)||[];
-  const rs=p&&p.serie_mensal_rs, un=p&&p.serie_mensal;
+  const rs=p&&p.serie_mensal_rs, un=p&&p.serie_mensal, cli=p&&p.serie_mensal_clientes;
   if(!meses.length||!(_temSerie(rs)||_temSerie(un))) return;
   // o último mês é o CORRENTE (parcial) → barra mais clara, p/ não ser lido como queda
   const _d=new Date(), hojeAM=_d.getFullYear()*100+(_d.getMonth()+1);
   const iParc=meses.indexOf(hojeAM);
   const corBar=meses.map((m,i)=>i===iParc?'rgba(56,189,248,.42)':C.accent);
+  // UMA linha secundária por vez (Unidades ou Clientes), nunca as duas.
+  // Desenhamos as três juntas para comparar: dois eixos à direita empilhados comem a largura, e
+  // unidades × clientes ficam sobrepostas quase o tempo todo (são correlacionadas). Pior: a linha
+  // de UNIDADES já duplica as barras — unidades ≈ venda ÷ preço, e o preço é estável. Por isso o
+  // alternador, com os TRÊS números sempre no tooltip: ninguém perde valor, só escolhe a
+  // tendência que quer ver desenhada.
+  const temCli=_temSerie(cli);
+  const modo=(S.d12==='clientes'&&temCli)?'clientes':'unidades';
+  const sec=modo==='clientes'?cli:un;
+  const secLbl=modo==='clientes'?'Clientes':'Unidades';
+  const secCor=modo==='clientes'?C.purple:C.green;
   const ds=[];
   if(_temSerie(rs)) ds.push({type:'bar',label:'Venda R$',yAxisID:'y',data:rs,backgroundColor:corBar,borderRadius:4,order:2});
-  if(_temSerie(un)) ds.push({type:'line',label:'Unidades',yAxisID:_temSerie(rs)?'y1':'y',data:un,
-    borderColor:C.green,backgroundColor:'transparent',tension:.25,pointRadius:2,borderWidth:2,order:1});
+  if(_temSerie(sec)) ds.push({type:'line',label:secLbl,yAxisID:_temSerie(rs)?'y1':'y',data:sec,
+    borderColor:secCor,backgroundColor:'transparent',tension:.25,pointRadius:2,borderWidth:2,order:1});
   const scales={y:{position:'left',ticks:{callback:v=>_temSerie(rs)?moneyK(v):int(v)}}};
-  if(_temSerie(rs)&&_temSerie(un)) scales.y1={position:'right',grid:{drawOnChartArea:false},ticks:{callback:v=>int(v)}};
+  if(_temSerie(rs)&&_temSerie(sec)) scales.y1={position:'right',grid:{drawOnChartArea:false},ticks:{callback:v=>int(v)}};
   chart('d-venda12',{data:{labels:meses.map(mesLbl12),datasets:ds},
     options:{maintainAspectRatio:false,
       plugins:{legend:{display:true,labels:{boxWidth:10,font:{size:9}}},
         tooltip:{callbacks:{
-          label:c=>c.dataset.yAxisID==='y1'||!_temSerie(rs)?('Unidades: '+int(c.raw)):('Venda: '+money(c.raw)),
-          afterBody:c=>(c&&c.length&&c[0].dataIndex===iParc)?'mês em andamento (parcial)':''}}},
+          label:c=>c.dataset.type==='bar'?('Venda: '+money(c.raw)):(secLbl+': '+int(c.raw)),
+          // os três números em TODO mês, independentemente da linha escolhida
+          afterBody:c=>{ if(!c||!c.length) return '';
+            const i=c[0].dataIndex, l=[];
+            if(_temSerie(un)&&modo!=='unidades') l.push('Unidades: '+int(un[i]));
+            if(temCli&&modo!=='clientes') l.push('Clientes: '+int(cli[i]));
+            if(i===iParc) l.push('mês em andamento (parcial)');
+            return l.join('\n'); }}}},
       scales}});
+  const seg=$('#d12-modo');
+  if(seg) seg.querySelectorAll('[data-d12]').forEach(b=>b.onclick=()=>{
+    S.d12=b.dataset.d12; buildVendaChart(p);
+    seg.querySelectorAll('[data-d12]').forEach(x=>x.classList.toggle('on',x.dataset.d12===S.d12));
+  });
 }
 
 /* ───────── ficha 360° exportável ─────────

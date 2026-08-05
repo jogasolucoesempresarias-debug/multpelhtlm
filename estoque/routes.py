@@ -589,26 +589,35 @@ def _vendas_forn_mensal_map(hoje, filiais=None, meses=24):
 
 
 def _vendas_mensal_rs_map(hoje, filiais=None):
-    """{cod: {AnoMes(int): venda_LÍQUIDA R$}} dos últimos 12 meses — alimenta SÓ o gráfico
-    "venda 12m" do drawer 360°. Mapa SEPARADO do de quantidade (que alimenta giro/forecast)
-    de propósito: mexer naquele quebraria a metodologia de giro já calibrada.
-    Líquida (bruta − devolução) p/ bater com o "Venda no período" do próprio drawer.
-    Buscado sob demanda (só quando abre um produto) e cacheado 12h p/ servir os demais."""
+    """({cod: {AnoMes: venda_LÍQUIDA R$}}, {cod: {AnoMes: clientes}}) dos últimos 12 meses —
+    alimenta SÓ o gráfico "venda 12m" do drawer 360°. Mapa SEPARADO do de quantidade (que
+    alimenta giro/forecast) de propósito: mexer naquele quebraria a metodologia de giro já
+    calibrada. Líquida (bruta − devolução) p/ bater com o "Venda no período" do próprio drawer.
+    Buscado sob demanda (só quando abre um produto) e cacheado 12h p/ servir os demais.
+
+    O 2º mapa é a POSITIVAÇÃO do item (clientes distintos no mês), pedido do diretor 07/2026
+    para separar queda por perda de BASE de queda por VOLUME. Vem da mesma query, sem custo de
+    linha. ⚠️ NÃO leva desconto de devolução: positivação é visita ("o cliente comprou este item
+    no mês"), e devolver não desfaz a visita — diferente do valor, que é líquido."""
     ini = (hoje.replace(day=1) - timedelta(days=1)).replace(day=1)
     for _ in range(12):
         ini = (ini - timedelta(days=1)).replace(day=1)
     key = f"vmesrs:{_filiais_key(filiais)}:{hoje.strftime('%Y-%m')}"
     hit = pbi._CACHE.get(key)
     if hit is not None:
-        return hit
+        # tolera entrada gravada pelo formato antigo (só o mapa de venda): o cache é em memória e
+        # morre no deploy, mas um processo de longa vida não pode quebrar por causa disso
+        return hit if isinstance(hit, tuple) else (hit, {})
     _pg = pbi.CONFIG["data_source"] == "postgres"
-    m = {}
+    m, cli = {}, {}
     try:
         venda_rows = PS.venda_produto_mensal(ini, filiais) if _pg else pbi.run_dax_rca(Q.q_venda_produto_mensal_rca(ini, filiais))
         for r in venda_rows:
             c = int(core._n(r["CODPROD"])); am = int(core._n(r.get("AnoMes")))
             if am:
                 m.setdefault(c, {})[am] = core._n(r.get("venda"))
+                if r.get("clientes") is not None:
+                    cli.setdefault(c, {})[am] = int(core._n(r.get("clientes")))
         devol_rows = PS.devol_produto_mensal(ini, filiais) if _pg else pbi.run_dax_rca(Q.q_devol_produto_mensal_rca(ini, filiais))
         for r in devol_rows:
             c = int(core._n(r["CODPROD"])); am = int(core._n(r.get("AnoMes")))
@@ -616,9 +625,9 @@ def _vendas_mensal_rs_map(hoje, filiais=None):
                 m[c][am] -= core._n(r.get("dev"))
     except Exception as e:
         print(f"[venda 12m] RCA indisponível ({e}). Gráfico de venda do 360° cai p/ unidades.")
-        m = {}
-    pbi._CACHE.set(key, m, 43200)  # 12h
-    return m
+        m, cli = {}, {}
+    pbi._CACHE.set(key, (m, cli), 43200)  # 12h
+    return m, cli
 
 
 def _vendas_mensal_map(meses, hoje, profundo=False, filiais=None):
@@ -1252,9 +1261,14 @@ def api_produto(codprod):
         # série de VENDA dos últimos 12 meses (R$ líquido + unidades) p/ o gráfico do 360°.
         # Buscada aqui (sob demanda) e não no snapshot inteiro — cacheada 12h p/ os próximos.
         meses = core._meses_ate(_hoje(), 12)   # inclui o mês corrente (venda em andamento)
-        rs = (_vendas_mensal_rs_map(_hoje(), _filiais_venda()) or {}).get(codprod) or {}
+        _mrs, _mcli = _vendas_mensal_rs_map(_hoje(), _filiais_venda())
+        rs = (_mrs or {}).get(codprod) or {}
+        cli = (_mcli or {}).get(codprod) or {}
         p["serie_mensal_meses"] = meses
         p["serie_mensal_rs"] = [core._round(core._n(rs.get(am)), 2) for am in meses] if rs else None
+        # positivação do item por mês. Mês sem venda = 0 clientes (não é dado faltando: ninguém
+        # comprou), então preenche com 0 em vez de null — o gráfico precisa da queda desenhada.
+        p["serie_mensal_clientes"] = [int(core._n(cli.get(am))) for am in meses] if cli else None
     top_vend = _top_vendedores_produto(codprod, request.args.get("venda_periodo", "mes"),
                                        _filiais_venda(), _hoje()) if p else []
     return jsonify({"ok": bool(p), "produto": p, "lotes": lotes, "enderecos": enderecos,

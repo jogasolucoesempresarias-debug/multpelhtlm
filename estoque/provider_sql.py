@@ -340,13 +340,20 @@ def vendas_mensal_qt(ini, filiais=None):
 
 
 def venda_produto_mensal(ini, filiais=None):
-    """Espelha q_venda_produto_mensal_rca: [{CODPROD, AnoMes, venda}] — VENDA BRUTA por produto×mês."""
+    """Espelha q_venda_produto_mensal_rca: [{CODPROD, AnoMes, venda, clientes}] — VENDA BRUTA e
+    POSITIVAÇÃO (clientes distintos) por produto×mês.
+
+    `clientes` conta codcli distinto sem filtrar por CODOPER: positivação é "o cliente comprou
+    este item no mês", e uma devolução não desfaz a visita. Espelha o DISTINCTCOUNT do DAX, que
+    também roda sobre o grupo inteiro."""
     fv = _fil(filiais)
     with analytics_conn() as c:
         cur = c.cursor()
-        cur.execute(f"""SELECT codprod, {_AM} am, {VB} FROM faturamento_vendas
+        cur.execute(f"""SELECT codprod, {_AM} am, {VB}, count(DISTINCT codcli)
+            FROM faturamento_vendas
             WHERE dtsaida >= %s{fv} GROUP BY codprod, am HAVING {VB} <> 0""", (ini,))
-        return [{"CODPROD": cod, "AnoMes": am, "venda": _f(v) or 0.0} for cod, am, v in cur.fetchall()]
+        return [{"CODPROD": cod, "AnoMes": am, "venda": _f(v) or 0.0, "clientes": int(cl or 0)}
+                for cod, am, v, cl in cur.fetchall()]
 
 
 def venda_fornecedor_mensal(ini, filiais=None):

@@ -386,7 +386,15 @@ def q_venda_produto_mensal_rca(data_ini, filiais=None):
     Alimenta SÓ o gráfico "venda 12m" do 360° — NÃO encosta no giro/forecast (que continua
     usando a q_vendas_mensal_rca, em QT). Mesmo padrão da q_venda_comprador_mensal_rca:
     measure oficial [VENDA BRUTA] + relacionamento DTSAIDA→CALENDARIO.
-    Líquida = esta − q_devol_produto_mensal_rca."""
+    Líquida = esta − q_devol_produto_mensal_rca.
+
+    `clientes` = POSITIVAÇÃO do item no mês (clientes distintos que o compraram). Pedido do
+    diretor 07/2026: "além da venda, estamos perdendo positivação em clientes?" — separa queda
+    por perda de BASE (menos clientes) de queda por VOLUME (os mesmos comprando menos), que são
+    problemas diferentes. Vem de carona nesta query: mesmo grão, mesmas linhas, nenhuma consulta
+    nova. O DISTINCTCOUNT custou +0,09s (+5%) medido no BI real em 3 rodadas alternadas — barato
+    porque a distinção acontece dentro de grupos pequenos (um produto, um mês), não na tabela
+    toda. ⚠️ É positivação DO PRODUTO; a do vendedor é outra métrica e vive no Comercial."""
     return f"""EVALUATE
 FILTER(
     SUMMARIZECOLUMNS(
@@ -394,7 +402,8 @@ FILTER(
         CALENDARIO[AnoMes],
         FILTER(FATURAMENTO_VENDAS,
             FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)}{_fv_and('FATURAMENTO_VENDAS', filiais)}),
-        "venda", [VENDA BRUTA]
+        "venda", [VENDA BRUTA],
+        "clientes", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI])
     ),
     [venda] <> 0
 )"""
