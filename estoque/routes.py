@@ -12,6 +12,7 @@ import io
 import os
 import re
 import csv
+import json
 from datetime import date, timedelta
 
 from flask import Blueprint, jsonify, request, send_from_directory, Response, session
@@ -151,16 +152,59 @@ def _filiais_key(filiais):
 # ⚠️ Rótulo sem marca de propósito ("Matriz", não "Multpel Matriz"): esta linha aparece no topo de
 # TODA tela, inclusive na instância de demonstração, que roda a mesma imagem. Dentro do app do
 # próprio cliente "Matriz" já é inequívoco — a marca ali só servia para vazar numa apresentação.
-NOMES_FILIAL = {"3": "Matriz", "4": "A&M", "5": "Deposito",
-                "7": "Telemarketing", "8": "Atacado", "9": "JID", "14": "AC"}
-UNIDADES = {
+#
+# ⚠️ São dado de INSTÂNCIA, não código — mesma régua já aplicada ao `EMPRESA_*` logo abaixo.
+# A estrutura de filiais é da Multpel, e demo e produção rodam a MESMA imagem: sem sobrescrita,
+# a instância de demonstração exibia "A&M", "JID", "AC" e "Telemarketing" para qualquer prospect,
+# e ainda oferecia três unidades que abrem VAZIAS (a base sintética só tem as filiais 3 e 5) —
+# tela em branco numa apresentação custa mais caro que nome estranho.
+# Sem as env vars o comportamento é idêntico ao de sempre: os defaults são os dicionários da
+# Multpel, então produção não precisa de configuração nenhuma.
+_NOMES_FILIAL_PADRAO = {"3": "Matriz", "4": "A&M", "5": "Deposito",
+                        "7": "Telemarketing", "8": "Atacado", "9": "JID", "14": "AC"}
+_UNIDADES_PADRAO = {
     "atacado": {"nome": "Atacado", "estoque": ["3", "5"],            "venda": ["3", "7", "8"]},
     "am":      {"nome": "A&M",     "estoque": ["4"],                 "venda": ["4"]},
     "ac":      {"nome": "AC",      "estoque": ["14"],                "venda": ["14"]},
     "jid":     {"nome": "JID",     "estoque": ["9"],                 "venda": ["9"]},
     "todas":   {"nome": "Todas",   "estoque": ["3", "5", "4", "14", "9"], "venda": ["3", "7", "8", "4", "14", "9"]},
 }
-UNIDADE_PADRAO = "atacado"
+
+
+def _env_json(nome, padrao, validar=None):
+    """Lê env var com JSON e cai no padrão se estiver ausente ou torta.
+
+    Nunca levanta: estas variáveis são editadas à mão no Portainer, e uma vírgula sobrando não
+    pode impedir o app de subir. Degrada para o default e AVISA no log — silêncio aqui seria
+    pior, porque a instância rodaria com a nomenclatura errada sem ninguém perceber."""
+    bruto = os.getenv(nome)
+    if not bruto:
+        return padrao
+    try:
+        val = json.loads(bruto)
+        if validar and not validar(val):
+            raise ValueError("estrutura inválida")
+        return val
+    except Exception as e:
+        print(f"[config] {nome} ignorada ({e}); usando o padrão.")
+        return padrao
+
+
+def _valida_unidades(u):
+    return (isinstance(u, dict) and u and all(
+        isinstance(v, dict) and v.get("nome")
+        and isinstance(v.get("estoque"), list) and isinstance(v.get("venda"), list)
+        for v in u.values()))
+
+
+NOMES_FILIAL = _env_json("NOMES_FILIAL_JSON", _NOMES_FILIAL_PADRAO,
+                         lambda d: isinstance(d, dict))
+UNIDADES = _env_json("UNIDADES_JSON", _UNIDADES_PADRAO, _valida_unidades)
+# padrão tem de EXISTIR no dicionário em uso: apontar para uma unidade inexistente faria toda
+# tela cair no KeyError de UNIDADES[_unidade()]
+UNIDADE_PADRAO = os.getenv("UNIDADE_PADRAO", "atacado")
+if UNIDADE_PADRAO not in UNIDADES:
+    UNIDADE_PADRAO = next(iter(UNIDADES))
 
 # Emitente do pedido de compra (cabeçalho do PDF, estilo relatório 211) + CNPJ que identifica
 # TRANSFERÊNCIA entre filiais no orçamento (mesma raiz de CNPJ ⇒ não é compra).

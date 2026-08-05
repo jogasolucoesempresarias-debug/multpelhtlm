@@ -61,6 +61,16 @@ services:
       EMPRESA_UF: "SP"
       EMPRESA_TEL: "(11) 4000-0000"
       EMPRESA_EMAIL: "compras@exemplo.com.br"
+      # Filiais e unidades de negócio. Sem estas, o default do código é a estrutura do cliente
+      # real ("A&M", "JID", "AC", "Telemarketing") e o seletor oferece três unidades que abrem
+      # VAZIAS — a base sintética só tem as filiais 3 e 5. As duas têm estoque completo (3.800
+      # produtos cada) e venda real, então viram duas unidades de verdade: trocar no seletor
+      # muda os números, que é o que faz o filtro valer a pena numa demonstração.
+      # ⚠️ A chave "todas" tem tratamento especial no rótulo do seletor (routes.py) — mantenha
+      # esse nome se quiser a opção combinada sem o prefixo de códigos de filial.
+      NOMES_FILIAL_JSON: '{"3":"Matriz","5":"Centro de Distribuição"}'
+      UNIDADES_JSON: '{"matriz":{"nome":"Matriz","estoque":["3"],"venda":["3"]},"cd":{"nome":"Centro de Distribuição","estoque":["5"],"venda":["5"]},"todas":{"nome":"Todas","estoque":["3","5"],"venda":["3","5"]}}'
+      UNIDADE_PADRAO: "todas"
       # (opcional) fixa o "hoje"; sem isto ancora sozinho no max(dtsaida) da base:
       # ANALYTICS_HOJE: "2026-07-24"
     deploy:
