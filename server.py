@@ -7661,13 +7661,19 @@ def api_admin_uso():
     cur.close()
     conn.close()
     ativos = sum(1 for r in linhas if r['acessos'] > 0)
+    nunca = sum(1 for r in linhas if not r['ultimo_acesso'])
+    # Os três se SOMAM ao total, sem sobreposição. A 1ª versão calculava "sem acesso no período"
+    # como total − ativos, o que incluía quem nunca entrou: o card dizia 7 com o subtítulo
+    # "entraram antes, mas não agora" enquanto o card ao lado dizia que os mesmos 7 nunca tinham
+    # entrado (visto em produção). Separar importa porque são problemas diferentes: quem nunca
+    # começou pede treinamento; quem usou e parou pede resgate.
     return jsonify({
         'ok': True, 'periodo': periodo, 'dias': dias, 'usuarios': linhas,
         'resumo': {
             'total': len(linhas),
             'ativos_periodo': ativos,
-            'nunca_acessaram': sum(1 for r in linhas if not r['ultimo_acesso']),
-            'sem_acesso_no_periodo': len(linhas) - ativos,
+            'nunca_acessaram': nunca,
+            'pararam_de_usar': len(linhas) - ativos - nunca,
         },
     })
 

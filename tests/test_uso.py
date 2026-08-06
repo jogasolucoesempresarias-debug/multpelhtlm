@@ -308,3 +308,29 @@ def test_front_nao_recalcula_dias_no_navegador():
     codigo = [l for l in linhas if not l.strip().startswith(('//', '*', '/*'))]
     assert not [l for l in codigo if 'Date.now()' in l]
     assert any('dias_sem_acessar' in l for l in codigo)
+
+
+def test_os_tres_cards_somam_o_total_sem_sobreposicao(client, usuario_admin, usuario_real):
+    """O card "sem acesso no período" era total − ativos, o que INCLUÍA quem nunca entrou: a tela
+    mostrava 7 com o subtítulo "entraram antes, mas não agora" ao lado de outro card dizendo que
+    os mesmos 7 nunca tinham entrado (visto em produção 08/2026).
+
+    Separar não é preciosismo: quem nunca começou pede treinamento, quem usou e parou pede
+    resgate. Somando ao total, dá para conferir a conta olhando a tela."""
+    _limpa_log(usuario_real['id'])
+    _log(usuario_real['id'], 'login:sucesso', datetime.now() - timedelta(days=200))
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+    r = client.get('/api/admin/uso?periodo=30d').get_json()['resumo']
+    assert r['ativos_periodo'] + r['pararam_de_usar'] + r['nunca_acessaram'] == r['total']
+    # quem entrou há 200 dias conta como "parou", nunca como "nunca entrou"
+    assert r['pararam_de_usar'] >= 1
+
+
+def test_quem_nunca_entrou_nao_conta_como_parou(client, usuario_admin, usuario_real):
+    _limpa_log(usuario_real['id'])
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+    j = client.get('/api/admin/uso?periodo=30d').get_json()
+    r = j['resumo']
+    nunca = [u for u in j['usuarios'] if not u['ultimo_acesso']]
+    assert r['nunca_acessaram'] == len(nunca)
+    assert r['ativos_periodo'] + r['pararam_de_usar'] + r['nunca_acessaram'] == r['total']

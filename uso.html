@@ -132,11 +132,14 @@ function selo(u) {
 
 function pintar(j) {
   const r = j.resumo;
+  // Os três últimos SOMAM o total, sem sobreposição — dá para conferir de cabeça olhando a tela.
+  // Antes "sem acesso no período" era total − ativos e engolia os "nunca entraram": os dois cards
+  // mostravam o mesmo 7 dizendo coisas contrárias.
   $('#kpis').innerHTML = [
     ['Usuários cadastrados', r.total, 'contas ativas e inativas'],
     ['Usaram no período', r.ativos_periodo, `de ${r.total} cadastrados`],
-    ['Sem acesso no período', r.sem_acesso_no_periodo, 'entraram antes, mas não agora'],
-    ['Nunca entraram', r.nunca_acessaram, 'conta criada e não usada'],
+    ['Pararam de usar', r.pararam_de_usar, 'já entraram antes, mas não no período'],
+    ['Nunca entraram', r.nunca_acessaram, 'conta criada e nunca usada'],
   ].map(([l, v, s]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="l" style="text-transform:none;letter-spacing:0;margin-top:2px">${s}</div></div>`).join('');
 
   const us = j.usuarios || [];
