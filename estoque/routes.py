@@ -575,14 +575,21 @@ def _vendas_liquidas(ini, fim, filiais=None):
         for r in pbi.run_dax_rca(Q.q_vendas_rca(ini, fim, filiais)):
             c = int(core._n(r["CODPROD"]))
             m[c] = {"venda": core._n(r.get("venda")), "custo": core._n(r.get("custo")), "qtd": core._n(r.get("qtd"))}
+        # ⚠️ A QUANTIDADE também é abatida (08/2026). Antes só valor e custo eram: a "Qtd vendida"
+        # saía bruta e qualquer preço médio (valor líquido ÷ qtd bruta) misturava duas réguas.
+        # Medido em julho no BI real: 140.608 un devolvidas contra 1.206.349 vendidas = 11,7%.
+        # `max(0, ...)` porque devolução por DTENT e venda por DTSAIDA são janelas diferentes:
+        # um item devolvido em julho pode ter saído em junho, e a subtração ficaria negativa.
         for r in pbi.run_dax_rca(Q.q_devol_rca(ini, fim, filiais)):
             c = int(core._n(r["CODPROD"]))
             if c in m:
                 m[c]["venda"] -= core._n(r.get("dev")); m[c]["custo"] -= core._n(r.get("cdev"))
+                m[c]["qtd"] = max(0.0, m[c]["qtd"] - core._n(r.get("qtdev")))
         for r in pbi.run_dax_rca(Q.q_devol_av_rca(ini, fim, filiais)):
             c = int(core._n(r["CODPROD"]))
             if c in m:
                 m[c]["venda"] -= core._n(r.get("devav")); m[c]["custo"] -= core._n(r.get("cdevav"))
+                m[c]["qtd"] = max(0.0, m[c]["qtd"] - core._n(r.get("qtdevav")))
     except Exception as e:
         print(f"[venda] RCA indisponível ({e}). Camada de vendas desabilitada.")
         m = {}
@@ -1242,6 +1249,20 @@ def _vendedores_nomes():
     return {}
 
 
+def _vendedores_tecnicos():
+    """Códigos que NÃO são vendedores de verdade (bonificação/brinde/transferência).
+
+    Lê do Comercial pelo módulo já carregado — mesma razão do `_vendedores_nomes`: em produção o
+    server.py é `__main__`, e um `from server import ...` traria uma segunda cópia do módulo.
+    Sem a lista, degrada para vazio: perder o filtro é feio, derrubar o drawer é pior."""
+    import sys
+    for nome_mod in ("server", "__main__"):
+        v = getattr(sys.modules.get(nome_mod), "VENDEDORES_TECNICOS", None)
+        if v:
+            return set(v)
+    return set()
+
+
 def _top_vendedores_produto(codprod, periodo, filiais_venda, hoje, n=3):
     """Top N vendedores DESTE produto no período: [{codusur, nome, qtd, valor}].
 
@@ -1270,12 +1291,20 @@ def _top_vendedores_produto(codprod, periodo, filiais_venda, hoje, n=3):
         print(f"[top vendedores {codprod}] indisponível ({e}).")
         return []
     nomes = _vendedores_nomes()
+    # Contas TÉCNICAS fora do ranking (08/2026). O diretor viu "2. RCA 999 — 37.440 un · R$ 0,00"
+    # no drawer: 999 é conta técnica (bonificação/brinde/transferência), não vendedor. Aparecia
+    # como "RCA 999" justamente porque o mapa de nomes do Comercial já a exclui, e o fallback a
+    # mostrava mesmo assim. A pergunta da seção é "para quem eu ligo para escoar este item" — e
+    # não existe ninguém para ligar. Mesma lista que o Comercial usa em todas as suas telas.
+    tecnicos = _vendedores_tecnicos()
     saida = []
     for r in rows:
         cu = core._n(r.get("CODUSUR"))
         if not cu:
             continue
         cu = int(cu)
+        if cu in tecnicos:
+            continue
         saida.append({"codusur": cu, "nome": nomes.get(str(cu)) or f"RCA {cu}",
                       "qtd": core._round(core._n(r.get("qtd"))),
                       "valor": core._round(core._n(r.get("valor")))})

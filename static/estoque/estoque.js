@@ -2386,7 +2386,7 @@ function modalPedido(opts){
 
   function draw(){
     $('#pd-itens').innerHTML = itens.length
-      ? `<div class="tbl-wrap" style="max-height:240px"><table><thead><tr>${
+      ? `<div class="tbl-wrap" style="max-height:46vh"><table><thead><tr>${
           _th('codprod', 'Cód')}${
           _th('descricao', 'Produto')}${
           _th('caixas', 'Caixas', 'num', tipT('Edite direto em CAIXAS — a quantidade em unidades ao lado recalcula sozinha (caixas × fator un/cx do item). Item sem fator de caixa cadastrado mostra "—": nele só dá para digitar unidade. O pedido é sempre enviado ao Winthor em UNIDADES.'))}${
@@ -2649,7 +2649,8 @@ async function openProduto(cod){
       <div class="d-sec">Venda no período</div>
       <div class="lote-row"><span>Venda</span><span>${money(p.venda)}</span></div>
       <div class="lote-row"><span>Lucro</span><span>${money(p.lucro)} ${p.margem!=null?`<small class="muted">(${dec(p.margem,1)}%)</small>`:''}</span></div>
-      <div class="lote-row"><span>Qtd vendida</span><span>${int(p.qtd_vendida)}</span></div>
+      <div class="lote-row"><span>Qtd vendida</span><span>${int(p.qtd_vendida)}<br><small class="muted">líquida de devolução</small></span></div>
+      ${p.preco_medio!=null?`<div class="lote-row"><span>Preço médio<br><small class="muted">no período</small></span><span class="lr-r">${money(p.preco_medio)}/un${p.caixa>1?`<br><small class="muted">${money(p.preco_medio*p.caixa)}/cx</small>`:''}</span></div>`:''}
       ${topVendedoresRow(j.top_vendedores)}
       <div class="d-sec">Situação</div>
       <div class="lote-row"><span>Abastecimento</span><span>${badge(p.status_abast)}</span></div>

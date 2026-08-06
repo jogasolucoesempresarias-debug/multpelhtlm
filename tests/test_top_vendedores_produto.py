@@ -177,3 +177,31 @@ def test_mapa_ausente_nao_derruba_o_ranking(monkeypatch):
     monkeypatch.setitem(sys.modules, "server", object())
     monkeypatch.setitem(sys.modules, "__main__", object())
     assert routes._vendedores_nomes() == {}
+
+
+# ─────────────────── contas técnicas fora do ranking (08/2026) ───────────────────
+def test_conta_tecnica_fica_fora_do_ranking(app_ctx, monkeypatch):
+    """O diretor viu "2. RCA 999 — 37.440 un · R$ 0,00" no drawer. O 999 é conta TÉCNICA
+    (bonificação/brinde/transferência), que o Comercial já exclui de toda lista de vendedor —
+    e era por isso que aparecia sem nome: o mapa não a tinha, e o fallback a exibia assim.
+
+    A seção responde "para quem eu ligo para escoar este item". Não existe ninguém para ligar,
+    e a conta ainda ocupava uma das três vagas com volume alto e faturamento zero."""
+    import server
+    _mock(monkeypatch, [
+        {"CODUSUR": 999, "qtd": 37440.0, "valor": 0.0},     # técnica: volume alto, R$ 0
+        {"CODUSUR": 900, "qtd": 5000.0, "valor": 100.0},    # técnica
+        {"CODUSUR": 12, "qtd": 100.0, "valor": 900.0},      # vendedor de verdade
+    ], nomes={"12": {"nome": "REAL"}})
+    monkeypatch.setattr(server, "VENDEDORES_TECNICOS", {999, 900, 4, 272})
+    top = _top(app_ctx)
+    assert [v["codusur"] for v in top] == [12]
+
+
+def test_sem_a_lista_de_tecnicos_o_drawer_nao_cai(app_ctx, monkeypatch):
+    """Perder o filtro é feio; derrubar o drawer inteiro por causa dele é pior."""
+    import sys
+    _mock(monkeypatch, [{"CODUSUR": 12, "qtd": 10.0, "valor": 90.0}])
+    monkeypatch.setitem(sys.modules, "server", object())
+    monkeypatch.setitem(sys.modules, "__main__", object())
+    assert routes._vendedores_tecnicos() == set()

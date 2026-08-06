@@ -717,6 +717,15 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         qtd_vendida = vd.get("qtd", 0.0)
         lucro = venda - custo_vendido
         margem = (lucro / venda) if venda else None
+        # Preço médio REALIZADO no período do seletor (pedido do diretor 08/2026: "o preço é muito
+        # volátil"). Média ponderada pela quantidade — um cliente grande comprando barato puxa
+        # para baixo, que é o certo: responde "quanto eu realizo por unidade", não preço de tabela.
+        # ⚠️ As duas pontas são LÍQUIDAS. Enquanto a quantidade vinha bruta, esta divisão saía
+        # ~12% baixa (a devolução foi 11,7% da quantidade em julho/2026) — foi por isso que abater
+        # a quantidade veio junto com este número, e não depois.
+        # Difere do `preco_venda` abaixo, que é fixo em 3 meses porque alimenta a venda perdida
+        # (tem de acompanhar a janela do giro, não a do seletor).
+        preco_medio = (venda / qtd_vendida) if qtd_vendida else None
 
         # crescimento vs. o MESMO período do ANO ANTERIOR (líquida × líquida — comparar com a
         # bruta inflaria o número). Sem venda no ano passado (item novo, ou período anterior a
@@ -836,6 +845,7 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "fatores_sazonais": saz["fatores"] if saz else None,
             "giro_cx": _round(giro_mes / qtunitcx, 2) if qtunitcx else None,
             "venda": _round(venda), "lucro": _round(lucro), "qtd_vendida": _round(qtd_vendida),
+            "preco_medio": _round(preco_medio, 4) if preco_medio is not None else None,
             "venda_ano_ant": _round(venda_ant) if venda_ant else None,
             "crescimento": _round(crescimento * 100, 1) if crescimento is not None else None,
             "serie_mensal_rs": serie_mensal_rs, "serie_mensal_meses": serie_meses,

@@ -271,17 +271,24 @@ def vendas_por_produto(ini, fim, filiais=None):
                     (ini, fim))
         m = {int(cod): {"venda": _f(v) or 0.0, "custo": _f(ct) or 0.0, "qtd": _f(q) or 0.0}
              for cod, v, ct, q in cur.fetchall() if cod is not None}
-        cur.execute(f"""SELECT codprod, {DEV}, {CDEV} FROM faturamento_devolucao
+        # a QUANTIDADE também é abatida — espelha o caminho DAX (ver _vendas_liquidas).
+        # max(0, ...): devolução por dtent e venda por dtsaida são janelas diferentes, então um
+        # item devolvido no período pode ter saído antes dele e a subtração ficaria negativa.
+        cur.execute(f"""SELECT codprod, {DEV}, {CDEV}, coalesce(sum(qt),0)
+            FROM faturamento_devolucao
             WHERE dtent BETWEEN %s AND %s{fv} GROUP BY codprod""", (ini, fim))
-        for cod, dev, cdev in cur.fetchall():
+        for cod, dev, cdev, qdev in cur.fetchall():
             if cod is not None and int(cod) in m:
                 m[int(cod)]["venda"] -= float(dev or 0); m[int(cod)]["custo"] -= float(cdev or 0)
-        cur.execute(f"""SELECT codprod, coalesce(sum(vldevolucao),0), coalesce(sum(vlcusto),0)
+                m[int(cod)]["qtd"] = max(0.0, m[int(cod)]["qtd"] - float(qdev or 0))
+        cur.execute(f"""SELECT codprod, coalesce(sum(vldevolucao),0), coalesce(sum(vlcusto),0),
+                               coalesce(sum(qt),0)
             FROM faturamento_devolucao_avulsa WHERE dtent BETWEEN %s AND %s{fv} GROUP BY codprod""",
                     (ini, fim))
-        for cod, dav, cdav in cur.fetchall():
+        for cod, dav, cdav, qdav in cur.fetchall():
             if cod is not None and int(cod) in m:
                 m[int(cod)]["venda"] -= float(dav or 0); m[int(cod)]["custo"] -= float(cdav or 0)
+                m[int(cod)]["qtd"] = max(0.0, m[int(cod)]["qtd"] - float(qdav or 0))
     return m
 
 

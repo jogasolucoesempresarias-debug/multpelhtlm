@@ -282,7 +282,13 @@ FILTER(
 
 
 def q_devol_rca(data_ini, data_fim, filiais=None):
-    """Devolução (valor+custo) por CODPROD no período (DTENT) — alinha receita líquida do RCA."""
+    """Devolução (valor+custo+QUANTIDADE) por CODPROD no período (DTENT) — alinha receita líquida.
+
+    `qtdev` entrou em 08/2026: a devolução era abatida do VALOR mas não da QUANTIDADE, então
+    "Qtd vendida" saía inflada e qualquer preço médio (valor líquido ÷ qtd bruta) saía baixo.
+    Não é resíduo: medido em julho/2026 no BI real, a devolução foi 140.608 un contra 1.206.349
+    vendidas — **11,7% da quantidade**. Vem de carona na query que já rodava (mesmo grão, mesmas
+    linhas); a measure oficial cuida do valor, e a quantidade é SUM da coluna do fato."""
     return f"""EVALUATE
 FILTER(
     SUMMARIZECOLUMNS(
@@ -290,7 +296,8 @@ FILTER(
         FILTER(FATURAMENTO_DEVOLUCAO,
             FATURAMENTO_DEVOLUCAO[DTENT] >= {_d(data_ini)} && FATURAMENTO_DEVOLUCAO[DTENT] <= {_d(data_fim)}{_fv_and('FATURAMENTO_DEVOLUCAO', filiais)}),
         "dev",  [TOTAL DEVOLUCAO],
-        "cdev", [CUSTO TOTAL DEVOLUCAO]
+        "cdev", [CUSTO TOTAL DEVOLUCAO],
+        "qtdev", SUM(FATURAMENTO_DEVOLUCAO[QT])
     ),
     [dev] <> 0
 )"""
@@ -520,7 +527,8 @@ FILTER(
         FILTER(FATURAMENTO_DEVOLUCAO_AVULSA,
             FATURAMENTO_DEVOLUCAO_AVULSA[DTENT] >= {_d(data_ini)} && FATURAMENTO_DEVOLUCAO_AVULSA[DTENT] <= {_d(data_fim)}{_fv_and('FATURAMENTO_DEVOLUCAO_AVULSA', filiais)}),
         "devav",  [TOTAL DEVOLUCAO AVULSA],
-        "cdevav", [CUSTO TOTAL DEVOLUCAO AVULSA]
+        "cdevav", [CUSTO TOTAL DEVOLUCAO AVULSA],
+        "qtdevav", SUM(FATURAMENTO_DEVOLUCAO_AVULSA[QT])
     ),
     [devav] <> 0
 )"""
