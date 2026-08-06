@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>JOGA Analytics — Uso da ferramenta</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/static/joga-mark.svg" type="image/svg+xml">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="/static/fetch-resiliente.js"></script>
+<link rel="stylesheet" href="/static/tema.css">
+<script>try{var t=localStorage.getItem("joga:tema");if(t==="claro")document.documentElement.dataset.tema=t;}catch(e){}</script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  /* Cabeçalho: as MESMAS regras das outras páginas. O joga-header.js só injeta a marcação —
+     quem dá tamanho à marca e forma aos links é o CSS da página. Sem este bloco o componente
+     renderiza com o logo em tamanho natural (hexágono gigante) e o menu como texto azul
+     corrido. Visto no navegador; não aparece em teste nenhum. */
+  .top-bar { padding: 14px 26px; display: flex; justify-content: space-between; align-items: center;
+             gap: 16px; flex-wrap: wrap; border-bottom: 1px solid var(--border);
+             background: rgba(var(--surface-rgb), 0.7); backdrop-filter: blur(6px); }
+  .top-bar .brand { display: flex; align-items: center; gap: 12px; }
+  .top-bar .brand .mark {
+    width: 36px; height: 36px; border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; color: var(--sobre-accent); font-size: 1.05rem;
+  }
+  .top-bar h1 {
+    font-size: 1.3rem; font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .meta { font-size: 0.74rem; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; }
+  .nav { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn-sm {
+    padding: 7px 14px; background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); font-family: 'DM Sans', sans-serif; font-weight: 500;
+    font-size: 0.78rem; border-radius: 7px; cursor: pointer; transition: all 0.15s;
+    text-decoration: none; display: inline-block;
+  }
+  .btn-sm:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm.active { border-color: var(--accent); color: var(--accent); }
+  .container { max-width: 1180px; margin: 0 auto; padding: 26px 22px 60px; }
+  h1 { font-size: 1.35rem; margin-bottom: 4px; }
+  .sub { color: var(--text-dim); font-size: .85rem; margin-bottom: 18px; }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .kpi .l { font-size: .68rem; text-transform: uppercase; letter-spacing: .5px; color: var(--text-dim); }
+  .kpi .v { font-size: 1.5rem; font-weight: 700; margin-top: 4px; }
+  .painel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 12px; }
+  label { font-size: .68rem; text-transform: uppercase; letter-spacing: .5px; color: var(--text-dim); display: block; margin-bottom: 3px; }
+  select { background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+           border-radius: 8px; padding: 7px 10px; font-family: inherit; font-size: .85rem; }
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { font-size: .68rem; text-transform: uppercase; letter-spacing: .5px; color: var(--text-dim); font-weight: 600; }
+  td.num, th.num { text-align: right; font-family: 'JetBrains Mono', monospace; }
+  tr.frio td { color: var(--text-dim); }
+  .badge { font-size: .7rem; padding: 2px 8px; border-radius: 20px; display: inline-block; }
+  .nunca { background: rgba(248,113,113,.16); color: #f87171; }
+  .parado { background: rgba(251,146,60,.16); color: #fb923c; }
+  .ok { background: rgba(52,211,153,.16); color: #34d399; }
+  .nota { color: var(--text-dim); font-size: .76rem; margin-top: 14px; line-height: 1.5; }
+  .vazio { color: var(--text-dim); padding: 22px; text-align: center; }
+</style>
+</head>
+<!-- Página FORA DO MENU de propósito (decisão 07/2026): não está em joga-header.js (MENU) nem em
+     portal.html. Ocultar é higiene de interface — quem protege é o @admin_required na rota.
+     ⚠️ Zero dado embutido aqui: o HTML da raiz é servido cru por /./uso.html sem autenticação
+     (Flask com static_folder='.'), então tudo tem de vir das APIs protegidas. -->
+<body data-page="uso">
+<div class="top-bar" data-joga-header data-titulo="Uso da ferramenta"></div>
+<script src="/static/joga-header.js"></script>
+
+<div class="container">
+  <h1>Uso da ferramenta</h1>
+  <div class="sub">Quem está entrando, com que frequência e o que baixa. Mede <b>adoção</b>, não tempo de tela.</div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="painel">
+    <div class="row">
+      <div>
+        <label>Período</label>
+        <select id="periodo">
+          <option value="30d">Últimos 30 dias</option>
+          <option value="90d" selected>Últimos 90 dias</option>
+          <option value="12m">Últimos 12 meses</option>
+        </select>
+      </div>
+    </div>
+    <div id="tabela"><div class="vazio">Carregando…</div></div>
+  </div>
+
+  <div class="nota">
+    <b>Último acesso</b> é o login mais recente, de qualquer época — independe do período escolhido.
+    <b>Acessos</b> e <b>dias ativos</b> contam só dentro do período; dias ativos mede hábito melhor que
+    o total de logins, que sobe quando a sessão cai e a pessoa entra de novo.
+    <b>Downloads</b> são relatórios em Excel/PDF gerados pela pessoa.<br>
+    Não medimos tempo de sessão: o app não tem evento de saída (ninguém clica em sair, fecha a aba),
+    então qualquer "tempo de uso" confundiria aba esquecida aberta com trabalho.<br>
+    Os acessos ao sistema são registrados para fins de segurança e de acompanhamento de adoção.
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const fmtData = s => {
+  if (!s) return null;
+  const d = new Date(s);
+  return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+};
+const diasDesde = s => s ? Math.floor((Date.now() - new Date(s)) / 864e5) : null;
+const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// Semáforo por RECÊNCIA, não por volume: a pergunta é "essa pessoa ainda usa?".
+// Quem entrou 200 vezes e sumiu há 3 meses é um problema, não um campeão.
+function selo(u) {
+  if (!u.ultimo_acesso) return '<span class="badge nunca">nunca entrou</span>';
+  const d = diasDesde(u.ultimo_acesso);
+  if (d >= 30) return `<span class="badge parado">há ${d} dias</span>`;
+  return `<span class="badge ok">há ${d} dia${d === 1 ? '' : 's'}</span>`;
+}
+
+function pintar(j) {
+  const r = j.resumo;
+  $('#kpis').innerHTML = [
+    ['Usuários cadastrados', r.total, 'contas ativas e inativas'],
+    ['Usaram no período', r.ativos_periodo, `de ${r.total} cadastrados`],
+    ['Sem acesso no período', r.sem_acesso_no_periodo, 'entraram antes, mas não agora'],
+    ['Nunca entraram', r.nunca_acessaram, 'conta criada e não usada'],
+  ].map(([l, v, s]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="l" style="text-transform:none;letter-spacing:0;margin-top:2px">${s}</div></div>`).join('');
+
+  const us = j.usuarios || [];
+  if (!us.length) { $('#tabela').innerHTML = '<div class="vazio">Nenhum usuário.</div>'; return; }
+  $('#tabela').innerHTML = `<table>
+    <thead><tr>
+      <th>Usuário</th><th>Papel</th><th>Situação</th><th>Último acesso</th>
+      <th class="num">Acessos</th><th class="num">Dias ativos</th>
+      <th class="num">Downloads</th><th>Último download</th>
+    </tr></thead>
+    <tbody>${us.map(u => `<tr class="${u.acessos ? '' : 'frio'}">
+      <td><b>${esc(u.nome)}</b><br><span style="font-size:.75rem;color:var(--text-dim)">${esc(u.email)}${u.ativo ? '' : ' · inativo'}</span></td>
+      <td>${esc(u.role || '—')}</td>
+      <td>${selo(u)}</td>
+      <td>${fmtData(u.ultimo_acesso) || '—'}</td>
+      <td class="num">${u.acessos}</td>
+      <td class="num">${u.dias_ativos}</td>
+      <td class="num">${u.downloads}</td>
+      <td>${fmtData(u.ultimo_download) || '—'}</td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+async function carregar() {
+  $('#tabela').innerHTML = '<div class="vazio">Carregando…</div>';
+  try {
+    const r = await fetch('/api/admin/uso?periodo=' + $('#periodo').value);
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'falhou');
+    pintar(j);
+  } catch (e) {
+    $('#tabela').innerHTML = `<div class="vazio">Não foi possível carregar: ${esc(e.message)}</div>`;
+  }
+}
+$('#periodo').onchange = carregar;
+carregar();
+</script>
+</body>
+</html>

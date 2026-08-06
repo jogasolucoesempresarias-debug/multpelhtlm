@@ -150,6 +150,24 @@ cur.execute("ALTER TABLE multpel_log DROP CONSTRAINT IF EXISTS multpel_log_usuar
 cur.execute("""ALTER TABLE multpel_log ADD CONSTRAINT multpel_log_usuario_id_fkey
                FOREIGN KEY (usuario_id) REFERENCES multpel_users(id) ON DELETE SET NULL;""")
 
+# ── Índices (07/2026) ──
+# A tabela nasceu write-only e ficou anos SEM ÍNDICE nenhum além do PK. Com a página /uso ela
+# passou a ser lida, e a consulta é sempre "eventos de um tipo, num período, agrupados por
+# usuário" — sem estes dois índices a tela degrada conforme o log cresce, exatamente no cliente
+# que mais usa o app.
+cur.execute("""CREATE INDEX IF NOT EXISTS ix_log_usuario_data
+               ON multpel_log (usuario_id, acessado_em DESC);""")
+cur.execute("""CREATE INDEX IF NOT EXISTS ix_log_rota_data
+               ON multpel_log (rota, acessado_em DESC);""")
+
+# ── Expurgo (07/2026) ──
+# Também não havia limpeza: o log crescia para sempre. 12 meses cobrem a comparação ano-a-ano de
+# adoção e mantêm a tabela pequena. Roda a cada deploy (idempotente) E diariamente pelo scheduler
+# (server._expurgar_log), para não depender de haver deploy.
+cur.execute("DELETE FROM multpel_log WHERE acessado_em < NOW() - INTERVAL '12 months';")
+if cur.rowcount and cur.rowcount > 0:
+    print(f"[OK] multpel_log: {cur.rowcount} registros com mais de 12 meses expurgados.")
+
 # ── Tabelas do módulo Compras (estoque_*) ──
 # O DDL vive no próprio módulo (estoque/store.py) e é importado aqui — fonte de verdade única.
 # Antes ele rodava no import do app; migration é o lugar certo. O store.ensure() em runtime

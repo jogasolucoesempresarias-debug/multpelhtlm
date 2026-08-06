@@ -343,6 +343,11 @@ _ROTAS_NEUTRAS = {
     '/login', '/api/login', '/logout', '/health', '/portal', '/api/me',
     '/api/me/area-padrao', '/trocar-senha', '/api/trocar-senha', '/api/status',
     '/multpel-logo.png',
+    # /uso (adoção da ferramenta) é administrativa como o /admin: não pertence a área nenhuma.
+    # Sem estar aqui, a guarda a trataria como página do Comercial e ela sairia 404 em instância
+    # só-Compras e 403 para o admin sem a área comercial — quebrando justamente para quem deve
+    # abrir. Quem protege é o @admin_required. (`/api/admin/uso` já entra por _PREFIXOS_NEUTROS.)
+    '/uso',
 }
 
 # Administração do sistema NÃO pertence a nenhuma área: a tela gerencia usuários das duas
@@ -812,6 +817,30 @@ def _log_background(rota, duracao_ms=None, erro=None):
         conn.close()
     except Exception:
         pass
+
+
+@app.after_request
+def _log_download(resp):
+    """Registra QUALQUER download num ponto só (pedido do diretor 07/2026: saber quem usa).
+
+    Existem **33 pontos** que devolvem `Content-Disposition` entre Comercial e Compras — Excel,
+    PDF, CSV, planilha do Winthor, fichas 360°. Instrumentar um a um seria frágil e esqueceria os
+    próximos; o hook pega todos, inclusive os que ainda não existem.
+
+    Registra só o CAMINHO, nunca o conteúdo nem os filtros: a tela /uso mede adoção ("essa
+    ferramenta pegou?"), não vigia o que a pessoa consultou.
+
+    ⚠️ Roda em TODA resposta do app. Nada aqui pode levantar — um erro de log derrubaria o
+    download que já estava pronto. Por isso o try/except abraça tudo e o `resp` volta sempre.
+    """
+    try:
+        if 200 <= resp.status_code < 300 and session.get('user_id'):
+            disp = resp.headers.get('Content-Disposition') or ''
+            if 'attachment' in disp.lower():
+                log_request(f'export:{request.path}')
+    except Exception:
+        pass
+    return resp
 
 
 _EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
@@ -7535,6 +7564,115 @@ def admin_page():
     return send_from_directory('.', 'admin.html')
 
 
+# ──────────────────────────────────────────────────────────────────────
+# /uso — adoção da ferramenta (quem entra, com que frequência, o que baixa)
+#
+# Pedido do diretor 07/2026: "conseguimos saber quem está usando a nossa ferramenta? última vez
+# que acessou, ranking de uso". Ele também pediu TEMPO DE USO — deliberadamente fora: não existe
+# evento de saída (ninguém clica em sair, fecha a aba), então o número seria a distância entre o
+# primeiro e o último clique, tratando "deixou aberto no almoço" igual a "trabalhou quatro horas".
+# Medir de verdade exigiria heartbeat contínuo, que é outra coisa.
+#
+# A tela mede ADOÇÃO, não presença. Ranking por acesso e download: responde "a ferramenta pegou?"
+# sem virar placar de produtividade — que se corrompe sozinho (as pessoas passam a usar para
+# aparecer no placar) e trabalha contra a adoção que se quer aumentar.
+#
+# FORA DO MENU de propósito: não está em joga-header.js (MENU) nem em portal.html (AREAS/ADMIN).
+# Mas ocultar é higiene de interface, não segurança — quem protege é o @admin_required.
+# ──────────────────────────────────────────────────────────────────────
+
+# Contas de teste da suíte automatizada. Sem este filtro elas dominam o ranking: o log de
+# desenvolvimento tem milhares de logins de `*-test@`, todos do pytest.
+_USO_EMAILS_IGNORADOS = ("%-test@%", "%@teste.local", "%-teste@%")
+
+_USO_PERIODOS = {'30d': 30, '90d': 90, '12m': 365}
+
+
+@app.route('/uso')
+@admin_required
+def uso_page():
+    return send_from_directory('.', 'uso.html')
+
+
+@app.route('/api/admin/uso')
+@admin_required
+def api_admin_uso():
+    """Adoção por usuário no período. Envelope no padrão dos demais endpoints de Admin."""
+    periodo = request.args.get('periodo', '90d')
+    dias = _USO_PERIODOS.get(periodo, 90)
+    ignora = " AND ".join(["u.email NOT ILIKE %s"] * len(_USO_EMAILS_IGNORADOS))
+    conn = get_db()
+    cur = conn.cursor()
+    # LEFT JOIN: quem NUNCA acessou tem de aparecer — é a linha mais acionável da tela
+    # (licença paga e não usada). Um INNER JOIN esconderia exatamente esse caso.
+    #
+    # Só `login:sucesso` conta como acesso: tentativa falha também está logada
+    # (login:senha_incorreta, login:ip_bloqueado) e contá-la premiaria quem esquece a senha.
+    #
+    # `dias_ativos` (dias DISTINTOS com acesso) vem junto de propósito: mede hábito melhor que o
+    # total de logins, que sobe com quem cai a sessão e entra de novo cinco vezes na mesma manhã.
+    cur.execute(f"""
+        SELECT u.id, u.nome, u.email, u.role, u.ativo, u.areas,
+               MAX(l.acessado_em) FILTER (WHERE l.rota = 'login:sucesso')                  AS ultimo_acesso,
+               COUNT(*)           FILTER (WHERE l.rota = 'login:sucesso' AND l.acessado_em >= %s) AS acessos,
+               COUNT(DISTINCT l.acessado_em::date)
+                                  FILTER (WHERE l.rota = 'login:sucesso' AND l.acessado_em >= %s) AS dias_ativos,
+               COUNT(*)           FILTER (WHERE l.rota LIKE 'export:%%'  AND l.acessado_em >= %s) AS downloads,
+               MAX(l.acessado_em) FILTER (WHERE l.rota LIKE 'export:%%')                  AS ultimo_download
+          FROM multpel_users u
+          LEFT JOIN multpel_log l ON l.usuario_id = u.id
+         WHERE {ignora}
+         GROUP BY u.id, u.nome, u.email, u.role, u.ativo, u.areas
+         ORDER BY ultimo_acesso ASC NULLS FIRST, u.nome
+    """, (_dt_corte(dias), _dt_corte(dias), _dt_corte(dias)) + _USO_EMAILS_IGNORADOS)
+    linhas = []
+    for (uid, nome, email, role, ativo, areas, ult, ac, da, dl, ultdl) in cur.fetchall():
+        linhas.append({
+            'id': uid, 'nome': nome, 'email': email, 'role': role, 'ativo': ativo,
+            'areas': areas or [],
+            'ultimo_acesso': ult.isoformat() if ult else None,
+            'acessos': ac or 0, 'dias_ativos': da or 0,
+            'downloads': dl or 0,
+            'ultimo_download': ultdl.isoformat() if ultdl else None,
+        })
+    cur.close()
+    conn.close()
+    ativos = sum(1 for r in linhas if r['acessos'] > 0)
+    return jsonify({
+        'ok': True, 'periodo': periodo, 'dias': dias, 'usuarios': linhas,
+        'resumo': {
+            'total': len(linhas),
+            'ativos_periodo': ativos,
+            'nunca_acessaram': sum(1 for r in linhas if not r['ultimo_acesso']),
+            'sem_acesso_no_periodo': len(linhas) - ativos,
+        },
+    })
+
+
+def _dt_corte(dias):
+    return datetime.now() - timedelta(days=dias)
+
+
+def _expurgar_log(meses=12):
+    """Apaga registro de auditoria mais velho que `meses`. Roda no init_db (deploy) e diariamente
+    pelo scheduler — sem o job, um ambiente sem deploy acumularia log para sempre."""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM multpel_log WHERE acessado_em < NOW() - INTERVAL %s;",
+                    (f'{int(meses)} months',))
+        n = cur.rowcount or 0
+        conn.commit()
+        cur.close()
+        conn.close()
+        if n:
+            print(f'[expurgo] multpel_log: {n} registros com mais de {meses} meses removidos.')
+        return n
+    except Exception as e:
+        print(f'[expurgo] falhou ({e}).')
+        return 0
+
+
 @app.route('/api/admin/users', methods=['GET'])
 @admin_required
 def api_admin_users_list():
@@ -8702,6 +8840,12 @@ def _start_scheduler():
         from apscheduler.schedulers.background import BackgroundScheduler
         _scheduler = BackgroundScheduler(daemon=True, timezone='America/Sao_Paulo')
         _scheduler.add_job(_disparar_relatorios_agendados, 'interval', minutes=5, id='envio_relatorios')
+        # Expurgo do log de auditoria (12 meses). Também roda no init_db a cada deploy — o job
+        # existe para o caso de um ambiente ficar meses sem deploy, que era a situação em que a
+        # tabela crescia indefinidamente. 3h da manhã: fora de qualquer janela de uso.
+        # NÃO depende de CRON_HABILITADO: aquele interruptor é para não disparar e-mail, e
+        # limpeza de banco não manda nada para ninguém.
+        _scheduler.add_job(_expurgar_log, 'cron', hour=3, minute=20, id='expurgo_log')
         _scheduler.start()
         status = 'ATIVO' if CRON_HABILITADO else 'aguardando CRON_HABILITADO=true'
         print(f"[CRON] Scheduler iniciado ({status})")
