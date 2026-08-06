@@ -2355,9 +2355,45 @@ function modalPedido(opts){
     const cl=$('#pd-itens .count-line'); if(cl) cl.innerHTML=rodape();
     const v=$('#pd-valor'); if(itens.length) v.value=total().toFixed(2);
   }
+  // ───── ordenação das colunas (pedido do diretor 08/2026, "principalmente em ordem alfabética")
+  // Ordena o ARRAY, não só a exibição: os inputs se ligam por índice (data-qi/data-cxi), então
+  // mexer só na tela faria o que o comprador digitasse cair no item errado.
+  // Só no clique do cabeçalho — redesenhar durante a digitação destrói o input e rouba o foco
+  // (é a mesma razão pela qual o oninput abaixo NÃO chama draw()).
+  // A ordem inicial é preservada de propósito: vem da Abastecimento, por cobertura projetada, ou
+  // seja, o mais urgente primeiro. Quem quiser conferir contra uma lista clica em Produto.
+  let ord = {col: null, dir: 1};
+  const _ordVal = (x, col) => ({
+    codprod: +x.codprod || 0,
+    descricao: (x.descricao || '').toLowerCase(),
+    caixas: x.qtunitcx > 1 ? Math.ceil((+x.qtd || 0) / x.qtunitcx) : -1,
+    qtd: +x.qtd || 0,
+    custo_unit: +x.custo_unit || 0,
+    perc_ipi: +x.perc_ipi || 0,
+    nf: linhaNF(x),
+  }[col]);
+  function ordenar(col){
+    ord = (ord.col === col) ? {col, dir: -ord.dir} : {col, dir: 1};
+    itens.sort((a, b) => {
+      const x = _ordVal(a, col), y = _ordVal(b, col);
+      return (typeof x === 'string' ? x.localeCompare(y, 'pt-BR') : x - y) * ord.dir;
+    });
+    draw();
+  }
+  const _seta = col => ord.col === col ? (ord.dir < 0 ? ' ↓' : ' ↑') : '';
+  const _th = (col, rotulo, cls, tip) =>
+    `<th class="${cls || ''}" data-ord="${col}" style="cursor:pointer" title="Ordenar por ${esc(rotulo)}">${rotulo}${tip || ''}${_seta(col)}</th>`;
+
   function draw(){
     $('#pd-itens').innerHTML = itens.length
-      ? `<div class="tbl-wrap" style="max-height:240px"><table><thead><tr><th>Cód</th><th>Produto</th><th class="num">Caixas${tipT('Edite direto em CAIXAS — a quantidade em unidades ao lado recalcula sozinha (caixas × fator un/cx do item). Item sem fator de caixa cadastrado mostra "—": nele só dá para digitar unidade. O pedido é sempre enviado ao Winthor em UNIDADES.')}</th><th class="num">Qtd (un)</th><th class="num">Custo</th><th class="num">IPI %${tipT('Alíquota que o Winthor deve aplicar na entrada. Vem da tributação de entrada do ERP; quando o item não tem regra fiscal para a UF do fornecedor, é ESTIMATIVA (marcada com ≈) — confira e corrija aqui, o total da NF recalcula.')}</th><th class="num">Valor NF</th><th></th></tr></thead><tbody>`+
+      ? `<div class="tbl-wrap" style="max-height:240px"><table><thead><tr>${
+          _th('codprod', 'Cód')}${
+          _th('descricao', 'Produto')}${
+          _th('caixas', 'Caixas', 'num', tipT('Edite direto em CAIXAS — a quantidade em unidades ao lado recalcula sozinha (caixas × fator un/cx do item). Item sem fator de caixa cadastrado mostra "—": nele só dá para digitar unidade. O pedido é sempre enviado ao Winthor em UNIDADES.'))}${
+          _th('qtd', 'Qtd (un)', 'num')}${
+          _th('custo_unit', 'Custo', 'num')}${
+          _th('perc_ipi', 'IPI %', 'num', tipT('Alíquota que o Winthor deve aplicar na entrada. Vem da tributação de entrada do ERP; quando o item não tem regra fiscal para a UF do fornecedor, é ESTIMATIVA (marcada com ≈) — confira e corrija aqui, o total da NF recalcula.'))}${
+          _th('nf', 'Valor NF', 'num')}<th></th></tr></thead><tbody>`+
         // Caixa vem ANTES da unidade de propósito (pedido do diretor 07/2026): é nela que o
         // comprador raciocina e é ela que o fornecedor fatura. A unidade continua visível e
         // editável porque é ela que vai no payload/PDF/planilha — ver o handler de [data-cxi].
@@ -2373,6 +2409,7 @@ function modalPedido(opts){
         `</tbody></table></div><div class="count-line" style="text-align:right">${rodape()}</div>`
       : `<div class="count-line">Nenhum item — adicione produtos acima${opts.itens?'':' (ou lance só com o valor)'}.</div>`;
     const v=$('#pd-valor'); if(itens.length){ v.value=total().toFixed(2); v.disabled=true; } else { v.disabled=false; }
+    $('#pd-itens').querySelectorAll('th[data-ord]').forEach(th=>th.onclick=()=>ordenar(th.dataset.ord));
     $('#pd-itens').querySelectorAll('[data-qi]').forEach(inp=>inp.oninput=()=>{
       // NÃO chamar draw() aqui: reconstruir a tabela a cada tecla destruía o input e roubava o
       // foco (não dava pra digitar). Atualiza modelo + as células derivadas (Cx/Valor) na mão.
@@ -2557,6 +2594,22 @@ async function baixarFichaPdf(tipo,cod,btn){
   finally{ btn.disabled=false; btn.textContent=rotulo; }
 }
 
+/* Giro do KPI do drawer em CAIXAS (pedido do diretor 08/2026: "consegue trocar esse giro de
+   unidade para cx?"). Usa o `giro_cx` que o core já calcula (giro_mes ÷ qtunitcx).
+
+   Mostra os DOIS, com a caixa em destaque e a unidade embaixo — não substitui. É a mesma razão
+   pela qual o campo "Caixas" do modal de pedido é só uma view: a unidade é a fonte de verdade
+   em todo o módulo, e ter uma tela falando só em caixa convida a comparar grandezas diferentes
+   com as outras telas (que seguem em unidade).
+   Item sem fator de caixa não tem giro_cx — aí a unidade é o único número possível. */
+function giroKpi(p){
+  const cx=p.giro_cx;
+  if(cx==null||!(p.caixa>1)) return int(p.giro_mes);
+  // 1 casa abaixo de 10 cx: arredondar para inteiro faria um item que gira 0,4 caixa por mês
+  // aparecer como "0 cx" — ou seja, parado, quando ele vende. O core já manda com 2 casas.
+  return `${dec(cx, cx<10?1:0)} cx<div class="l" style="margin-top:2px">${int(p.giro_mes)} un</div>`;
+}
+
 /* Top 3 vendedores do item — UM campo dentro de "Venda no período", não seção própria
    (decisão do diretor 07/2026: "é só o campo com os três vendedores, não precisa abrir uma nova
    aba do drawer pra tão pouca coisa"). Quantidade primeiro, porque é ela que escoa estoque; o
@@ -2585,7 +2638,7 @@ async function openProduto(cod){
       <div class="d-kpis">
         <div class="d-kpi"><div class="l">Disponível</div><div class="v">${int(p.qtdisp)}</div></div>
         <div class="d-kpi"><div class="l">Valor</div><div class="v">${money(p.valor)}</div></div>
-        <div class="d-kpi"><div class="l">Giro/mês ${spark((p.serie_mensal&&p.serie_mensal.length?p.serie_mensal:p.serie_giro))}</div><div class="v">${int(p.giro_mes)}</div></div>
+        <div class="d-kpi"><div class="l">Giro/mês ${spark((p.serie_mensal&&p.serie_mensal.length?p.serie_mensal:p.serie_giro))}</div><div class="v">${giroKpi(p)}</div></div>
         <div class="d-kpi"><div class="l">Cobertura</div><div class="v">${cob(p.cobertura)}</div></div>
       </div>
       <div class="bar"><i style="width:${cobPct}%"></i></div>
