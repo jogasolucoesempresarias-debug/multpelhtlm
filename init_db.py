@@ -150,6 +150,28 @@ cur.execute("ALTER TABLE multpel_log DROP CONSTRAINT IF EXISTS multpel_log_usuar
 cur.execute("""ALTER TABLE multpel_log ADD CONSTRAINT multpel_log_usuario_id_fkey
                FOREIGN KEY (usuario_id) REFERENCES multpel_users(id) ON DELETE SET NULL;""")
 
+# ── Fuso (08/2026) ──
+# `acessado_em` nasceu TIMESTAMP WITHOUT TIME ZONE. O NOW() executa no servidor do BANCO — que é
+# outra stack (postgres_postgres) e roda em UTC — enquanto o app roda em America/Sao_Paulo. Sem
+# fuso na coluna, o valor viajava cru e o navegador o lia como hora local: todo horário aparecia
+# 3h adiantado, e o acesso mais recente chegava a ficar "no futuro" (a tela mostrou "há -1 dias").
+# Passa a TIMESTAMPTZ interpretando o histórico no fuso do próprio banco — que é exatamente o que
+# o NOW() usou ao gravar, então a conversão preserva o instante real de cada registro.
+# Guardado por tipo: reaplicar sobre uma coluna já convertida faria a volta e corromperia tudo.
+cur.execute("""
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'multpel_log' AND column_name = 'acessado_em'
+                  AND data_type = 'timestamp without time zone') THEN
+        ALTER TABLE multpel_log
+            ALTER COLUMN acessado_em TYPE TIMESTAMPTZ
+            USING acessado_em AT TIME ZONE current_setting('TimeZone');
+        RAISE NOTICE 'multpel_log.acessado_em convertida para TIMESTAMPTZ';
+    END IF;
+END $$;
+""")
+
 # ── Índices (07/2026) ──
 # A tabela nasceu write-only e ficou anos SEM ÍNDICE nenhum além do PK. Com a página /uso ela
 # passou a ser lida, e a consulta é sempre "eventos de um tipo, num período, agrupados por

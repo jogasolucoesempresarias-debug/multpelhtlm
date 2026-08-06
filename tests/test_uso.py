@@ -245,3 +245,66 @@ def test_expurgo_nao_derruba_o_app_se_o_banco_falhar(monkeypatch):
         raise RuntimeError('sem banco')
     monkeypatch.setattr(server, 'get_db', _boom)
     assert server._expurgar_log() == 0
+
+
+# ─────────────────────── fuso horário (bug 08/2026) ───────────────────────
+# O diretor viu "há -1 dias" no acesso mais recente. Causa: `acessado_em` era TIMESTAMP WITHOUT
+# TIME ZONE e o NOW() executa no servidor do BANCO — outra stack, em UTC — enquanto o app roda em
+# America/Sao_Paulo. O horário chegava ao navegador sem fuso, era lido como hora local e ficava 3h
+# adiantado; o último acesso virava "futuro" e a subtração dava negativo.
+def test_coluna_de_data_carrega_fuso():
+    """Sem fuso na coluna, o navegador adivinha — e adivinha errado sempre que o banco não estiver
+    no mesmo fuso do app. É a raiz do bug, não o sintoma."""
+    import server
+    conn = server.get_db()
+    cur = conn.cursor()
+    cur.execute("""SELECT data_type FROM information_schema.columns
+                    WHERE table_name = 'multpel_log' AND column_name = 'acessado_em'""")
+    tipo = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+    assert tipo == 'timestamp with time zone'
+
+
+def test_acesso_no_futuro_nao_vira_dias_negativos(client, usuario_admin, usuario_real):
+    """Defesa contra desvio de relógio entre app e banco: o piso é hoje, nunca -1."""
+    _limpa_log(usuario_real['id'])
+    _log(usuario_real['id'], 'login:sucesso', datetime.now() + timedelta(hours=3))
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+    u = next(x for x in client.get('/api/admin/uso').get_json()['usuarios']
+             if x['email'] == usuario_real['email'])
+    assert u['dias_sem_acessar'] == 0
+
+
+def test_dias_sem_acessar_vem_do_servidor(client, usuario_admin, usuario_real):
+    """O front NÃO pode recalcular a partir da string: comparar o relógio do navegador com um
+    horário de outro fuso foi exatamente o que produziu o "-1"."""
+    _limpa_log(usuario_real['id'])
+    _log(usuario_real['id'], 'login:sucesso', datetime.now() - timedelta(days=5, hours=1))
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+    u = next(x for x in client.get('/api/admin/uso').get_json()['usuarios']
+             if x['email'] == usuario_real['email'])
+    assert u['dias_sem_acessar'] == 5
+
+
+def test_horario_viaja_com_offset(client, usuario_admin, usuario_real):
+    """Com TIMESTAMPTZ o isoformat() sai com …-03:00 e o navegador converte certo."""
+    _limpa_log(usuario_real['id'])
+    _log(usuario_real['id'], 'login:sucesso')
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+    u = next(x for x in client.get('/api/admin/uso').get_json()['usuarios']
+             if x['email'] == usuario_real['email'])
+    iso = u['ultimo_acesso']
+    assert iso and ('+' in iso[10:] or '-' in iso[10:]), f'sem offset: {iso}'
+
+
+def test_front_nao_recalcula_dias_no_navegador():
+    """Gate de código: se alguém reintroduzir a subtração com Date.now(), o bug volta — e volta
+    invisível em desenvolvimento, onde banco e app costumam estar no mesmo fuso."""
+    from pathlib import Path
+    linhas = Path('uso.html').read_text(encoding='utf-8').splitlines()
+    # ignora comentário: o bloco que explica o bug cita o padrão proibido de propósito, para quem
+    # for mexer entender por que ele não pode voltar
+    codigo = [l for l in linhas if not l.strip().startswith(('//', '*', '/*'))]
+    assert not [l for l in codigo if 'Date.now()' in l]
+    assert any('dias_sem_acessar' in l for l in codigo)

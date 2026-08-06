@@ -7587,6 +7587,10 @@ _USO_EMAILS_IGNORADOS = ("%-test@%", "%@teste.local", "%-teste@%")
 
 _USO_PERIODOS = {'30d': 30, '90d': 90, '12m': 365}
 
+# Fuso do NEGÓCIO, usado para decidir a que DIA um acesso pertence. O banco é outra stack e roda
+# em UTC; sem isto, login das 21h30 viraria o dia seguinte e inflaria "dias ativos".
+TZ_APP = os.getenv('TZ', 'America/Sao_Paulo')
+
 
 @app.route('/uso')
 @admin_required
@@ -7603,6 +7607,10 @@ def api_admin_uso():
     ignora = " AND ".join(["u.email NOT ILIKE %s"] * len(_USO_EMAILS_IGNORADOS))
     conn = get_db()
     cur = conn.cursor()
+    # ⚠️ TODA conta de data acontece no SQL, nunca comparando com um datetime do Python.
+    # O app roda em America/Sao_Paulo e o banco é outra stack (UTC): misturar os dois relógios foi
+    # o que fez o último acesso aparecer "no futuro" e o selo mostrar "há -1 dias" (08/2026).
+    # No SQL os dois lados são o mesmo relógio, então a diferença é sempre verdadeira.
     # LEFT JOIN: quem NUNCA acessou tem de aparecer — é a linha mais acionável da tela
     # (licença paga e não usada). Um INNER JOIN esconderia exatamente esse caso.
     #
@@ -7612,25 +7620,40 @@ def api_admin_uso():
     # `dias_ativos` (dias DISTINTOS com acesso) vem junto de propósito: mede hábito melhor que o
     # total de logins, que sobe com quem cai a sessão e entra de novo cinco vezes na mesma manhã.
     cur.execute(f"""
-        SELECT u.id, u.nome, u.email, u.role, u.ativo, u.areas,
-               MAX(l.acessado_em) FILTER (WHERE l.rota = 'login:sucesso')                  AS ultimo_acesso,
-               COUNT(*)           FILTER (WHERE l.rota = 'login:sucesso' AND l.acessado_em >= %s) AS acessos,
-               COUNT(DISTINCT l.acessado_em::date)
-                                  FILTER (WHERE l.rota = 'login:sucesso' AND l.acessado_em >= %s) AS dias_ativos,
-               COUNT(*)           FILTER (WHERE l.rota LIKE 'export:%%'  AND l.acessado_em >= %s) AS downloads,
-               MAX(l.acessado_em) FILTER (WHERE l.rota LIKE 'export:%%')                  AS ultimo_download
-          FROM multpel_users u
-          LEFT JOIN multpel_log l ON l.usuario_id = u.id
-         WHERE {ignora}
-         GROUP BY u.id, u.nome, u.email, u.role, u.ativo, u.areas
-         ORDER BY ultimo_acesso ASC NULLS FIRST, u.nome
-    """, (_dt_corte(dias), _dt_corte(dias), _dt_corte(dias)) + _USO_EMAILS_IGNORADOS)
+        WITH base AS (
+            SELECT u.id, u.nome, u.email, u.role, u.ativo, u.areas,
+                   MAX(l.acessado_em) FILTER (WHERE l.rota = 'login:sucesso') AS ultimo_acesso,
+                   COUNT(*) FILTER (WHERE l.rota = 'login:sucesso'
+                                      AND l.acessado_em >= NOW() - make_interval(days => %s)) AS acessos,
+                   -- o DIA é o do fuso do app, não o do banco: em UTC um login das 21h30 cairia no
+                   -- dia seguinte e inflaria "dias ativos" de quem trabalha à noite
+                   COUNT(DISTINCT (l.acessado_em AT TIME ZONE %s)::date)
+                        FILTER (WHERE l.rota = 'login:sucesso'
+                                  AND l.acessado_em >= NOW() - make_interval(days => %s)) AS dias_ativos,
+                   COUNT(*) FILTER (WHERE l.rota LIKE 'export:%%'
+                                      AND l.acessado_em >= NOW() - make_interval(days => %s)) AS downloads,
+                   MAX(l.acessado_em) FILTER (WHERE l.rota LIKE 'export:%%') AS ultimo_download
+              FROM multpel_users u
+              LEFT JOIN multpel_log l ON l.usuario_id = u.id
+             WHERE {ignora}
+             GROUP BY u.id, u.nome, u.email, u.role, u.ativo, u.areas
+        )
+        SELECT *,
+               -- GREATEST(0, ...) porque um desvio de relógio de segundos entre app e banco não
+               -- pode virar "há -1 dias" na tela; o piso é hoje
+               GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - ultimo_acesso)) / 86400))::int AS dias_sem_acessar
+          FROM base
+         ORDER BY ultimo_acesso ASC NULLS FIRST, nome
+    """, (dias, TZ_APP, dias, dias) + _USO_EMAILS_IGNORADOS)
     linhas = []
-    for (uid, nome, email, role, ativo, areas, ult, ac, da, dl, ultdl) in cur.fetchall():
+    for (uid, nome, email, role, ativo, areas, ult, ac, da, dl, ultdl, dsa) in cur.fetchall():
         linhas.append({
             'id': uid, 'nome': nome, 'email': email, 'role': role, 'ativo': ativo,
             'areas': areas or [],
+            # com a coluna em TIMESTAMPTZ o isoformat() sai COM offset (…-03:00), então o navegador
+            # converte certo em vez de adivinhar que a string é hora local
             'ultimo_acesso': ult.isoformat() if ult else None,
+            'dias_sem_acessar': dsa,
             'acessos': ac or 0, 'dias_ativos': da or 0,
             'downloads': dl or 0,
             'ultimo_download': ultdl.isoformat() if ultdl else None,
@@ -7647,10 +7670,6 @@ def api_admin_uso():
             'sem_acesso_no_periodo': len(linhas) - ativos,
         },
     })
-
-
-def _dt_corte(dias):
-    return datetime.now() - timedelta(days=dias)
 
 
 def _expurgar_log(meses=12):
