@@ -2386,7 +2386,13 @@ function modalPedido(opts){
 
   function draw(){
     $('#pd-itens').innerHTML = itens.length
-      ? `<div class="tbl-wrap" style="max-height:46vh"><table><thead><tr>${
+      // larguras MEDIDAS no navegador, não estimadas: com 104px a etiqueta "cx" ao lado do campo
+      // era cortada em "..", e com 44px o botão de remover também. O produto é a única coluna
+      // elástica, então ela absorve a diferença.
+      ? `<div class="tbl-wrap" style="max-height:46vh"><table class="pd-tab"><colgroup>
+          <col style="width:74px"><col><col style="width:124px"><col style="width:96px">
+          <col style="width:104px"><col style="width:92px"><col style="width:124px"><col style="width:56px">
+        </colgroup><thead><tr>${
           _th('codprod', 'Cód')}${
           _th('descricao', 'Produto')}${
           _th('caixas', 'Caixas', 'num', tipT('Edite direto em CAIXAS — a quantidade em unidades ao lado recalcula sozinha (caixas × fator un/cx do item). Item sem fator de caixa cadastrado mostra "—": nele só dá para digitar unidade. O pedido é sempre enviado ao Winthor em UNIDADES.'))}${

@@ -331,6 +331,20 @@ td .prod { max-width: 340px; overflow: hidden; text-overflow: ellipsis; display:
    comprador conferia o pedido sem enxergar o valor da linha. `min(...)` em vez de largura fixa
    para não estourar em tela pequena — abaixo de ~1300px ele acompanha a janela. */
 .modal.wide { width: min(1240px, 96vw); max-height: 92vh; overflow-y: auto; }
+
+/* Tabela de itens do pedido: layout FIXO com larguras declaradas no <colgroup>.
+   Alargar o modal não bastava — com layout automático a tabela tem a largura do CONTEÚDO, então
+   ela crescia junto e a coluna "Valor NF" continuava escondida atrás da barra de rolagem
+   (reportado pelo diretor 08/2026 mesmo depois de eu ir de 880px para 1240px).
+   Com `table-layout: fixed` + `width:100%` a tabela passa a ser EXATAMENTE a largura disponível
+   e a rolagem lateral fica estruturalmente impossível, em qualquer resolução. O que cede é o
+   nome do produto, que trunca — é a única coluna sem largura fixa no colgroup. */
+.pd-tab { table-layout: fixed; width: 100%; }
+.pd-tab td, .pd-tab th { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* dentro desta tabela o .prod ocupa a célula inteira (o limite de 340px do global brigaria
+   com a coluna elástica e voltaria a empurrar a largura) */
+.pd-tab td .prod { max-width: 100%; }
+.pd-tab input { max-width: 100%; }
 .modal.wide .row { display: flex; gap: 10px 14px; flex-wrap: wrap; align-items: flex-end; }
 .modal.wide .fb-group { display: flex; flex-direction: column; gap: 3px; }
 .modal h3 { margin-bottom: 12px; }
