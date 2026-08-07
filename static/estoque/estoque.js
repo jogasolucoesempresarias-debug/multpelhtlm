@@ -2149,12 +2149,22 @@ function resumoCard(titulo,rows,cor,tipTxt,nota){
     ${nota?`<div class="count-line" style="margin-top:6px;color:${C.orange}">${nota}</div>`:''}
     ${cor?`<div class="bar" style="margin-top:8px"><i style="width:0;background:${cor}"></i></div>`:''}</div>`;
 }
-async function injectResumos(sel){
-  const el=$(sel); if(!el) return;
+// Buscar, montar e desenhar viraram três funções separadas (antes era um `injectResumos` que fazia
+// as três e se injetava sozinho no DOM). A aba Painel gerencial precisa do DADO antes de pintar
+// qualquer coisa — ver renderGerencial.
+async function fetchResumos(){
   const comp=S.compradorNome||'TODOS';
   // `comprador` (nome) é p/ o orçamento; os demais filtros vão em filtrosQS() e recortam os produtos
-  let o; try{ o=await getJSON('/estoque/api/resumos?'+filtrosQS()+'&comprador='+encodeURIComponent(comp)); }
-  catch(e){ el.innerHTML=`<div class="count-line">Resumos indisponíveis: ${e.message}</div>`; return; }
+  return getJSON('/estoque/api/resumos?'+filtrosQS()+'&comprador='+encodeURIComponent(comp));
+}
+// Régua do estoque ideal: lida pelo HTML e pelo gráfico. Derivar nos dois lugares faria os rótulos
+// e a rosquinha discordarem se o limiar mudasse no servidor.
+function _resumosIdeal(o){
+  const ei=o.estoque_ideal||{};
+  return {iId:ei.ideal||{}, iRis:ei.em_risco||{}, iSem:ei.sem_giro||{},
+          lim:ei.limiar!=null?ei.limiar:45, metaPct:ei.meta_pct||0.90, alerta:!!ei.alerta};
+}
+function resumosHTML(o){
   const orc=o.orcamento||{}, rup=o.ruptura||{};
   const dentro=(orc.saldo||0)>=0;
   const cardOrc=resumoCard('Orçamento de compras — comprado × meta'+tipT('Meta do mês = 65% da venda líquida dos últimos 30 dias por comprador. “Comprado” = pedidos reais lançados no Winthor no mês.'),[
@@ -2181,9 +2191,8 @@ async function injectResumos(sel){
   // Fronteira INCLUSIVA (ajuste 07/2026): cobertura == limiar já é ideal, porque o limiar é o
   // próprio alvo de compra — quem repôs no alvo acertou. Rótulos derivam de `ei.limiar` p/ não
   // voltarem a mentir se o limiar mudar no servidor.
-  const ei=o.estoque_ideal||{}, iId=ei.ideal||{}, iRis=ei.em_risco||{}, iSem=ei.sem_giro||{};
-  const lim=ei.limiar!=null?ei.limiar:45;
-  const metaPct=ei.meta_pct||0.90, alerta=!!ei.alerta, corIdeal=alerta?C.red:C.green;
+  const {iId,iRis,iSem,lim,metaPct,alerta}=_resumosIdeal(o);
+  const corIdeal=alerta?C.red:C.green;
   const idealPanel=`<div class="panel" id="gg-ideal-panel"${alerta?` style="border-color:${C.red}"`:''}>
       <h3><span>Estoque ideal — cobertura mínima${tipT(`% dos SKUs que giram por faixa de cobertura. Ideal = ${lim} dias ou mais; risco = menos de ${lim}. Meta: ≥${dec(metaPct*100,0)}% na faixa ideal. Os dois valores são editáveis em ⚙ Parâmetros (“Estoque ideal”) e só MEDEM — não alteram a sugestão de compra, que usa a Cobertura alvo. “Sem giro” fica à parte e não entra no %.`)}</span>${alerta
         ?`<span class="badge" style="background:${C.red}22;color:${C.red}">⚠ abaixo da meta (≥${dec(metaPct*100,0)}%)</span>`
@@ -2205,7 +2214,7 @@ async function injectResumos(sel){
           <div class="count-line">% de SKUs <b>que giram</b> por faixa de cobertura (ARREDONDA.CIMA(estoque ÷ giro diário)). Meta: <b>≥${dec(metaPct*100,0)}%</b> com cobertura <b>ideal (≥${int(lim)} dias)</b>. ${alerta?`<b style="color:${C.red}">⚠ Só ${iId.pct!=null?pct(iId.pct):'—'} atingem a cobertura ideal — abaixo da meta.</b>`:`<b style="color:${C.green}">✓ Meta atingida.</b>`} "Sem giro" (${int(iSem.n)} SKUs) fica à parte e não entra no %.</div>
         </div>
       </div></div>`;
-  el.innerHTML=`<h2 class="section"><span>Painel gerencial — resumos${tipT('Visão executiva do estoque: orçamento de compras, ruptura, validade, cobertura e lucro por comprador.')}</span></h2>
+  return `<h2 class="section"><span>Painel gerencial — resumos${tipT('Visão executiva do estoque: orçamento de compras, ruptura, validade, cobertura e lucro por comprador.')}</span></h2>
     <div class="gg-grid">${cardOrc}${cardRup}</div>
     ${idealPanel}
     <div class="gg-grid">
@@ -2216,6 +2225,10 @@ async function injectResumos(sel){
       </div>
     </div>
     <div class="count-line">Comprado = pedido real do Winthor (pode divergir do manual da planilha). Cobertura/ruptura no escopo de produtos de revenda; números acompanham o estoque ao vivo.</div>`;
+}
+// Só depois do innerHTML: o Chart.js precisa do <canvas> já no DOM.
+function resumosCharts(o){
+  const {iId,iRis,lim}=_resumosIdeal(o);
   chart('gg-ideal',{type:'doughnut',data:{labels:[`Ideal (≥${int(lim)}d)`,`Em risco (<${int(lim)}d)`],datasets:[{data:[iId.n||0,iRis.n||0],backgroundColor:[C.green,C.red],borderColor:getComputedStyle(document.documentElement).getPropertyValue('--surface').trim()||'#111827',borderWidth:2,hoverOffset:4}]},
     options:{cutout:'66%',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.label+': '+int(c.raw)+' SKUs'}}}}});
 }
@@ -2223,10 +2236,24 @@ async function injectResumos(sel){
 // paleta p/ o donut de lucro por comprador
 const PAL_COMP=[C.accent,C.green,C.purple,C.orange,C.accent2,C.yellow,C.red,C.dim];
 // Aba "Painel gerencial": os 5 pilares (orçamento, ruptura, validade, cobertura + participação de lucro por comprador).
-function renderGerencial(P){
+// ⚠️ A aba abre INTEIRA ou não abre. As duas metades têm origens diferentes: a rosquinha de lucro
+// sai do snapshot (já em memória, pinta na hora) e os 5 pilares vêm de /api/resumos (rede). A 1ª
+// versão pintava a rosquinha e injetava os resumos quando chegassem — a tela crescia sozinha por
+// segundos e, pior, o gerente lia um painel gerencial que AINDA IA MUDAR. Aqui a espera é o
+// recurso: um spinner só, e o conteúdo aparece de uma vez.
+let _ggSeq=0;
+async function renderGerencial(P){
   const el=$('#v-gerencial');
-  el.innerHTML=`<div id="gg-resumos"><div class="count-line">Carregando resumos gerenciais…</div></div>
-    <h2 class="section"><span>Participação de lucro por comprador${tipT('Lucro (venda líquida − custo) de cada comprador no período; % = fatia do lucro total.')}</span></h2>
+  // Trocar de filtro/aba durante a busca dispara outra render. Sem este selo, a resposta mais
+  // LENTA venceria a mais nova e a tela ficaria com o dado do filtro anterior.
+  const meu=++_ggSeq;
+  el.innerHTML=`<div class="loader"><div class="spinner"></div></div>`;
+  let o;
+  try{ o=await fetchResumos(); }
+  catch(e){ if(meu===_ggSeq) el.innerHTML=`<div class="empty">Resumos gerenciais indisponíveis: ${e.message}</div>`; return; }
+  if(meu!==_ggSeq) return;
+  el.innerHTML=resumosHTML(o)+
+    `<h2 class="section"><span>Participação de lucro por comprador${tipT('Lucro (venda líquida − custo) de cada comprador no período; % = fatia do lucro total.')}</span></h2>
     <div class="row"><div class="panel grow">
       <div class="row" style="align-items:center">
         <div style="width:230px"><div class="chart-box sm" style="height:210px"><canvas id="ch-lucrocomp"></canvas></div></div>
@@ -2234,7 +2261,7 @@ function renderGerencial(P){
       </div>
       <div class="count-line" style="margin-top:6px">Lucro (venda líquida − custo) por comprador no período de venda selecionado; respeita os filtros do topo. A rosquinha mostra só participações positivas.</div>
     </div></div>`;
-  injectResumos('#gg-resumos');
+  resumosCharts(o);
   // lucro por comprador — agrega os produtos filtrados
   const by={};
   P.forEach(p=>{ const nome=p.comprador||'Sem comprador'; by[nome]=(by[nome]||0)+(p.lucro||0); });
