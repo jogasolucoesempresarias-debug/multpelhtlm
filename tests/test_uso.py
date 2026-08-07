@@ -52,6 +52,33 @@ def _limpa_log(uid):
     conn.close()
 
 
+def _log_dia(uid, rota, dias_atras, hora='12:00'):
+    """Injeta um evento em `dias_atras` DIAS DE CALENDÁRIO, a uma hora de parede escolhida.
+
+    O horário é montado NO BANCO, no fuso do negócio (TZ_APP) — o mesmo relógio que o endpoint
+    usa. Montar com `datetime.now()` do processo de teste amarraria o gate ao fuso de quem roda
+    o pytest: o banco é outra stack (UTC) e o app é America/Sao_Paulo, então "início de hoje"
+    em Python não é "início de hoje" no SQL, e o teste passaria a mentir conforme a máquina.
+
+    A HORA é parâmetro de propósito: é ela que separa dia de calendário de bloco de 24h.
+    """
+    import server
+    conn = server.get_db()
+    cur = conn.cursor()
+    cur.execute(
+        """INSERT INTO multpel_log (usuario_id, rota, acessado_em) VALUES (%s, %s,
+               ((((NOW() AT TIME ZONE %s)::date - %s) + TIME %s) AT TIME ZONE %s))""",
+        (uid, rota, server.TZ_APP, dias_atras, hora, server.TZ_APP))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def _dias_sem_acessar(client, email):
+    u = next(x for x in client.get('/api/admin/uso').get_json()['usuarios'] if x['email'] == email)
+    return u['dias_sem_acessar']
+
+
 # ─────────────────────── a página é oculta, mas protegida ───────────────────────
 def test_pagina_exige_admin(client, usuario_vendedor):
     """Ocultar do menu é higiene; quem barra é o papel. Um vendedor que descubra a URL não entra."""
@@ -278,13 +305,16 @@ def test_acesso_no_futuro_nao_vira_dias_negativos(client, usuario_admin, usuario
 
 def test_dias_sem_acessar_vem_do_servidor(client, usuario_admin, usuario_real):
     """O front NÃO pode recalcular a partir da string: comparar o relógio do navegador com um
-    horário de outro fuso foi exatamente o que produziu o "-1"."""
+    horário de outro fuso foi exatamente o que produziu o "-1".
+
+    ⚠️ A hora é ancorada ao MEIO-DIA de propósito. A 1ª versão usava `now() - 5 dias e 1 hora`,
+    que sob a régua de calendário viraria 6 dias sempre que o pytest rodasse entre 00h e 01h —
+    teste que falha de madrugada e passa de manhã ensina a ignorar o teste.
+    """
     _limpa_log(usuario_real['id'])
-    _log(usuario_real['id'], 'login:sucesso', datetime.now() - timedelta(days=5, hours=1))
+    _log_dia(usuario_real['id'], 'login:sucesso', 5, hora='12:00')
     login_as(client, usuario_admin['email'], usuario_admin['senha'])
-    u = next(x for x in client.get('/api/admin/uso').get_json()['usuarios']
-             if x['email'] == usuario_real['email'])
-    assert u['dias_sem_acessar'] == 5
+    assert _dias_sem_acessar(client, usuario_real['email']) == 5
 
 
 def test_horario_viaja_com_offset(client, usuario_admin, usuario_real):
@@ -296,6 +326,60 @@ def test_horario_viaja_com_offset(client, usuario_admin, usuario_real):
              if x['email'] == usuario_real['email'])
     iso = u['ultimo_acesso']
     assert iso and ('+' in iso[10:] or '-' in iso[10:]), f'sem offset: {iso}'
+
+
+# ─────────────────── dia de calendário × bloco de 24h (bug 08/2026) ───────────────────
+# O diretor viu "hoje" no dia 07 para um acesso do dia 06. A conta dividia os segundos decorridos
+# por 86400: 15h30 de ontem, olhado às 9h30, dava 18h/24h → FLOOR 0 → "hoje". Errava TODA linha
+# antiga em -1 dia (04/08 saía "há 2 dias"), mas só o "hoje" denuncia, porque é o único selo que
+# afirma uma data — os outros erram calados.
+def test_ontem_tarde_da_noite_nao_pode_virar_hoje(client, usuario_admin, usuario_real):
+    """O caso exato do bug: ontem no calendário, MENOS de 24h decorridas.
+
+    23h59 de ontem é a pior hora possível para a régua velha — em qualquer momento do dia de
+    hoje faltam menos de 24h, então ela responderia 0. É ontem, e tem de dizer 1.
+    """
+    _limpa_log(usuario_real['id'])
+    _log_dia(usuario_real['id'], 'login:sucesso', 1, hora='23:59')
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+    assert _dias_sem_acessar(client, usuario_real['email']) == 1
+
+
+def test_hoje_de_madrugada_continua_hoje(client, usuario_admin, usuario_real):
+    """O outro lado da mesma régua: 00h01 de hoje pode ter quase 24h de idade e ainda é hoje.
+    Sem este par, "somar 1 a tudo" passaria como correção."""
+    _limpa_log(usuario_real['id'])
+    _log_dia(usuario_real['id'], 'login:sucesso', 0, hora='00:01')
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+    assert _dias_sem_acessar(client, usuario_real['email']) == 0
+
+
+def test_dias_antigos_nao_saem_encurtados(client, usuario_admin, usuario_real):
+    """A linha do MARCOS PAIVA no print: 3 dias atrás, tarde da noite, saía "há 2 dias".
+    O erro não era só no selo "hoje" — a coluna inteira vinha um dia curta."""
+    _limpa_log(usuario_real['id'])
+    _log_dia(usuario_real['id'], 'login:sucesso', 3, hora='23:00')
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+    assert _dias_sem_acessar(client, usuario_real['email']) == 3
+
+
+def test_sql_nao_volta_a_dividir_por_86400():
+    """Gate de código. A régua de 24h é plausível e passa despercebida: o valor só erra em 1 e
+    a borda inferior (`GREATEST(0, ...)`) sempre parece certa. Se voltar, tem de quebrar aqui."""
+    from pathlib import Path
+    sql = Path('server.py').read_text(encoding='utf-8')
+    trecho = sql[sql.index('AS dias_sem_acessar') - 900:sql.index('AS dias_sem_acessar')]
+    codigo = [l for l in trecho.splitlines() if not l.strip().startswith('--')]
+    assert not [l for l in codigo if '86400' in l or 'EXTRACT(EPOCH' in l], \
+        'dias_sem_acessar voltou a contar blocos de 24h em vez de dia de calendário'
+
+
+def test_selo_de_ontem_nao_diz_hoje():
+    """Gate de código no front: com a régua de calendário, `d === 1` é ONTEM. Se alguém colapsar
+    o caso 1 no 0 (foi o efeito visível do bug), o selo volta a afirmar uma data errada."""
+    from pathlib import Path
+    html = Path('uso.html').read_text(encoding='utf-8')
+    assert 'ontem' in html, 'o selo de d === 1 sumiu do uso.html'
 
 
 def test_front_nao_recalcula_dias_no_navegador():

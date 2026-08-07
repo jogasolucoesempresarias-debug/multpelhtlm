@@ -7639,12 +7639,18 @@ def api_admin_uso():
              GROUP BY u.id, u.nome, u.email, u.role, u.ativo, u.areas
         )
         SELECT *,
-               -- GREATEST(0, ...) porque um desvio de relógio de segundos entre app e banco não
-               -- pode virar "há -1 dias" na tela; o piso é hoje
-               GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - ultimo_acesso)) / 86400))::int AS dias_sem_acessar
+               -- ⚠️ DIA DE CALENDÁRIO, não bloco de 24h. A 1ª versão dividia os segundos decorridos
+               -- por 86400: um login das 15h30 de ontem, visto às 9h30, dava 18h/24h = 0 e o selo
+               -- dizia "hoje" no dia seguinte (visto em produção 07/08/2026). Errava TODA linha
+               -- antiga em -1 dia, mas só o "hoje" denuncia, porque é o único selo que afirma
+               -- uma data. Mesmo tratamento de `dias_ativos` acima: o dia é o do fuso do NEGÓCIO.
+               -- GREATEST(0, ...) fica: acesso gravado no futuro (desvio de relógio) não pode
+               -- virar "há -1 dias"; o piso é hoje.
+               GREATEST(0, (NOW() AT TIME ZONE %s)::date - (ultimo_acesso AT TIME ZONE %s)::date)::int
+                   AS dias_sem_acessar
           FROM base
          ORDER BY ultimo_acesso ASC NULLS FIRST, nome
-    """, (dias, TZ_APP, dias, dias) + _USO_EMAILS_IGNORADOS)
+    """, (dias, TZ_APP, dias, dias) + _USO_EMAILS_IGNORADOS + (TZ_APP, TZ_APP))
     linhas = []
     for (uid, nome, email, role, ativo, areas, ult, ac, da, dl, ultdl, dsa) in cur.fetchall():
         linhas.append({
