@@ -9,6 +9,7 @@ Técnicas: Days of Supply, ABC (Pareto), XYZ (variabilidade), matriz ABC-XYZ,
 ponto de reposição (ROP) com lead time por fornecedor, ruptura, dead stock, FEFO.
 """
 
+import calendar
 import math
 import statistics
 from datetime import datetime, date, timedelta
@@ -2109,15 +2110,24 @@ def verbas_fornecedores(verbas, aplic_rows, forn_map, comp_map, compras_map=None
     meses, _m = [], date(corte_12m.year, corte_12m.month, 1)
     while _m <= hoje:
         k = _m.strftime("%Y-%m")
+        # ⚠️ AS DUAS PONTAS são parciais, e as duas precisam avisar:
+        # · a 1ª porque a janela são 365 DIAS corridos e começa no meio do mês (medido:
+        #   R$ 13.019,12 emitidos antes do dia do corte ficam de fora);
+        # · a ÚLTIMA porque o mês corrente ainda está correndo — em 09/08 ela tinha 9 de 31
+        #   dias e R$ 2.970 contra R$ 63.261 de julho, o que se lê como desabamento da
+        #   negociação quando é só o mês pela metade.
+        # Número que parece um fato sem ser comparável é o mesmo defeito das duas vezes.
+        _ult = calendar.monthrange(_m.year, _m.month)[1]
+        _ini = corte_12m.day if k == corte_12m.strftime("%Y-%m") else 1
+        _fim = hoje.day if k == hoje.strftime("%Y-%m") else _ult
+        _cob = max(0, _fim - _ini + 1)
         meses.append({
             "mes": k,
             "negociado": _round(neg_mes.get(k, 0.0)),
             "aplicado": _round(apl_mes.get(k, 0.0)),
-            # a janela são 365 DIAS corridos, então ela começa no meio do mês: a 1ª barra é
-            # parcial e a tela avisa. Medido: R$ 13.019,12 emitidos antes do dia do corte
-            # ficam de fora — quem comparasse essa barra com o mês fechado no ERP acharia
-            # a diferença e desconfiaria da tela inteira.
-            "parcial": k == corte_12m.strftime("%Y-%m") and corte_12m.day > 1,
+            "dias_cobertos": _cob,
+            "dias_mes": _ult,
+            "parcial": _cob < _ult,
         })
         _m = date(_m.year + (_m.month == 12), (_m.month % 12) + 1, 1)
 

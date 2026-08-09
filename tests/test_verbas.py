@@ -290,13 +290,27 @@ def test_eixo_e_calendario_continuo_sem_pular_mes():
     assert ms[0] == "2025-07" and ms[-1] == "2026-07"
 
 
-def test_primeira_barra_marcada_como_parcial():
-    """A janela são 365 DIAS, então começa no meio do mês. Sem a marca, quem comparasse a
-    barra com o mês fechado do ERP acharia diferença (R$ 13.019,12 no caso real) e
-    desconfiaria da tela inteira."""
-    r = _cenario_janela()
-    assert r["meses"][0]["parcial"] is True
-    assert not any(m["parcial"] for m in r["meses"][1:])
+def test_as_duas_pontas_saem_marcadas_como_parciais():
+    """A 1ª barra porque a janela são 365 DIAS e começa no meio do mês; a ÚLTIMA porque o mês
+    corrente ainda está correndo. Em 09/08 a última tinha 9 de 31 dias e R$ 2.970 contra
+    R$ 63.261 de julho — sem a marca, lê-se como desabamento da negociação."""
+    r = _cenario_janela()                                  # HOJE = 23/07/2026, corte 23/07/2025
+    pri, ult = r["meses"][0], r["meses"][-1]
+    assert pri["parcial"] is True and pri["dias_cobertos"] == 9 and pri["dias_mes"] == 31
+    assert ult["parcial"] is True and ult["dias_cobertos"] == 23 and ult["dias_mes"] == 31
+    assert not any(m["parcial"] for m in r["meses"][1:-1])  # o miolo é mês fechado
+    assert all(m["dias_cobertos"] == m["dias_mes"] for m in r["meses"][1:-1])
+
+
+def test_eixo_usa_mes_por_extenso_nao_data():
+    """Gate de código. O eixo saía "26-08" (YYYY-MM cortado) e o diretor leu "26 de agosto":
+    em pt-BR aquilo é uma DATA. O app inteiro já rotula mês como 'ago/26' (MES_ABREV)."""
+    from pathlib import Path
+    js = Path('static/estoque/estoque.js').read_text(encoding='utf-8')
+    trecho = js[js.index('async function renderVerbas'):]
+    trecho = trecho[:trecho.index('function vbDetRow')]
+    assert 'MES_ABREV' in trecho, 'gráfico de Verbas parou de usar o rótulo de mês do app'
+    assert "m.mes.slice(2)" not in trecho, 'voltou o rótulo YY-MM, que se lê como dia/mês'
 
 
 def test_saldo_por_conta_continua_sendo_posicao():

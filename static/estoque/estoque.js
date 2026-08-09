@@ -1873,7 +1873,12 @@ async function renderVerbas(){
 
   // declarados ANTES do innerHTML: o aviso de mês parcial é montado dentro do template
   const ms=J.meses||[];
-  const temParcial=ms.some(m=>m.parcial);
+  const parciais=ms.filter(m=>m.parcial);
+  const temParcial=parciais.length>0;
+  // ⚠️ Mês por EXTENSO no eixo (mesma convenção do resto do app: MES_ABREV / mesLbl12).
+  // O eixo saía "26-08" e o diretor leu "26 de agosto" — em pt-BR aquilo é uma DATA, não um
+  // mês. A série inteira virava uma sequência de dias sem sentido. Não voltar ao YYYY-MM cru.
+  const mesRot=k=>MES_ABREV[+k.slice(5)-1]+'/'+k.slice(2,4);
 
   el.innerHTML=head('Verbas por fornecedor — negociado × aplicado × saldo','verbas')+
     `<div class="count-line">Rotina <b>1801</b> do Winthor · negociado/aplicado = últimos <b>12 meses</b> · saldo em aberto = posição atual (qualquer emissão) · canceladas e estornos fora · alinhado ao extrato <b>1826</b>.</div>
@@ -1886,7 +1891,7 @@ async function renderVerbas(){
     <div class="row" style="align-items:flex-start">
       <div class="panel grow"><h3><span>Negociado × aplicado por mês <small class="muted">· 12 meses</small>${tipT('Mesma janela dos cards: somar as barras azuis dá exatamente o "Negociado 12m". Barras azuis = verbas emitidas no mês; verdes = valor aplicado no mês. Mês sem barra = mês sem verba (o eixo é calendário, não pula mês). Aplicação abaixo da negociação por vários meses = saldo acumulando.')}</span></h3>
         <div class="chart-box sm" style="height:190px"><canvas id="ch-verbas"></canvas></div>
-        ${temParcial?`<div class="count-line" style="margin-top:2px">* mês <b>parcial</b>: a janela são 365 dias corridos, então começa no meio do mês — esta barra não é o mês fechado do ERP.</div>`:''}</div>
+        ${temParcial?`<div class="count-line" style="margin-top:2px">* <b>mês parcial</b> — ${parciais.map(m=>`${mesRot(m.mes)} (${int(m.dias_cobertos)} de ${int(m.dias_mes)} dias)`).join(' · ')}. A janela são 365 dias corridos: começa no meio do mês e termina hoje. Não compare estas barras com o mês fechado do ERP.</div>`:''}</div>
       <div class="panel" style="flex:0 0 340px;max-width:340px" id="vb-contas"></div>
     </div>
     <div class="panel" id="vb-grandes"></div>
@@ -1911,12 +1916,14 @@ async function renderVerbas(){
   // A série vem do servidor já na janela dos cards (12m) e com o eixo de CALENDÁRIO contínuo —
   // somar as barras azuis TEM de dar o "Negociado 12m". Mês parcial (o do corte) leva "*".
   chart('ch-verbas',{type:'bar',
-    data:{labels:ms.map(m=>m.mes.slice(2)+(m.parcial?'*':'')),
+    data:{labels:ms.map(m=>mesRot(m.mes)+(m.parcial?'*':'')),
       datasets:[
         {label:'Negociado',data:ms.map(m=>m.negociado),backgroundColor:C.accent,borderRadius:4,maxBarThickness:26},
         {label:'Aplicado',data:ms.map(m=>m.aplicado),backgroundColor:C.green,borderRadius:4,maxBarThickness:26}]},
     options:{maintainAspectRatio:false,plugins:{legend:{display:true,position:'bottom'},
-      tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${money(c.parsed.y)}`}}},
+      tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${money(c.parsed.y)}`,
+        footer:it=>{const m=ms[it[0].dataIndex];
+          return m&&m.parcial?`mês parcial: ${int(m.dias_cobertos)} de ${int(m.dias_mes)} dias`:'';}}}},
       scales:{y:{beginAtZero:true,ticks:{callback:v=>moneyK(v)}}}}});
 
   // painel: por conta (a "campanha")
