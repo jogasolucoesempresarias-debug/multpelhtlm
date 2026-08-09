@@ -1871,6 +1871,10 @@ async function renderVerbas(){
   const sk=S.sort['verbas']||{key:'negociado',dir:-1};
   const sorted=_sortArr(rows.map(f=>({...f,sit:sitKey(f)})),sk);
 
+  // declarados ANTES do innerHTML: o aviso de mês parcial é montado dentro do template
+  const ms=J.meses||[];
+  const temParcial=ms.some(m=>m.parcial);
+
   el.innerHTML=head('Verbas por fornecedor — negociado × aplicado × saldo','verbas')+
     `<div class="count-line">Rotina <b>1801</b> do Winthor · negociado/aplicado = últimos <b>12 meses</b> · saldo em aberto = posição atual (qualquer emissão) · canceladas e estornos fora · alinhado ao extrato <b>1826</b>.</div>
     <div class="kpi-grid" style="grid-template-columns:repeat(5,1fr)">
@@ -1880,8 +1884,9 @@ async function renderVerbas(){
       ${kpi('Aplicado 12m',money(R.aplicado_12m),'abatimentos efetivados',C.green)}
       ${kpi('Compram sem dar verba',int(R.n_grandes_sem_verba),`compra 12m > ${moneyK(R.compra_min_alerta)}`,C.purple)}</div>
     <div class="row" style="align-items:flex-start">
-      <div class="panel grow"><h3><span>Negociado × aplicado por mês${tipT('Barras azuis = verbas emitidas no mês; verdes = valor aplicado no mês. Aplicação abaixo da negociação por vários meses = saldo acumulando.')}</span></h3>
-        <div class="chart-box sm" style="height:190px"><canvas id="ch-verbas"></canvas></div></div>
+      <div class="panel grow"><h3><span>Negociado × aplicado por mês <small class="muted">· 12 meses</small>${tipT('Mesma janela dos cards: somar as barras azuis dá exatamente o "Negociado 12m". Barras azuis = verbas emitidas no mês; verdes = valor aplicado no mês. Mês sem barra = mês sem verba (o eixo é calendário, não pula mês). Aplicação abaixo da negociação por vários meses = saldo acumulando.')}</span></h3>
+        <div class="chart-box sm" style="height:190px"><canvas id="ch-verbas"></canvas></div>
+        ${temParcial?`<div class="count-line" style="margin-top:2px">* mês <b>parcial</b>: a janela são 365 dias corridos, então começa no meio do mês — esta barra não é o mês fechado do ERP.</div>`:''}</div>
       <div class="panel" style="flex:0 0 340px;max-width:340px" id="vb-contas"></div>
     </div>
     <div class="panel" id="vb-grandes"></div>
@@ -1903,9 +1908,10 @@ async function renderVerbas(){
     <div class="count-line">${sorted.length} fornecedores · clique na linha para <b>auditar</b> as verbas uma a uma · <b>% V/C</b> = verba ÷ compra (compare pares: é o argumento de negociação) · o tripé completo: compra × lead × verba.</div>`;
 
   // gráfico mensal: 2 séries → legenda presente; cores fixas por entidade (negociado/aplicado)
-  const ms=J.meses||[];
+  // A série vem do servidor já na janela dos cards (12m) e com o eixo de CALENDÁRIO contínuo —
+  // somar as barras azuis TEM de dar o "Negociado 12m". Mês parcial (o do corte) leva "*".
   chart('ch-verbas',{type:'bar',
-    data:{labels:ms.map(m=>m.mes.slice(2)),
+    data:{labels:ms.map(m=>m.mes.slice(2)+(m.parcial?'*':'')),
       datasets:[
         {label:'Negociado',data:ms.map(m=>m.negociado),backgroundColor:C.accent,borderRadius:4,maxBarThickness:26},
         {label:'Aplicado',data:ms.map(m=>m.aplicado),backgroundColor:C.green,borderRadius:4,maxBarThickness:26}]},
@@ -1915,10 +1921,10 @@ async function renderVerbas(){
 
   // painel: por conta (a "campanha")
   const cts=J.contas||[], ctMax=Math.max(1,...cts.map(c=>c.negociado));
-  // ⚠️ Janela DIFERENTE dos KPIs: aqui é 2024+ (toda a base publicada), lá é 12m. Some no
-  // agregado da empresa, mas com um fornecedor filtrado os dois ficam lado a lado e a diferença
-  // salta (RAZZO: R$ 103.803,23 aqui × R$ 37.586,43 no card). Por isso o rótulo é explícito.
-  $('#vb-contas').innerHTML=`<h3><span>Por conta <small class="muted">· desde 2024</small>${tipT('Soma TODA a base publicada (2024 em diante), não os 12 meses dos cards — é a composição histórica do que o fornecedor dá. 250009 = rebaixa de custo · 250008 = conta corrente (é onde o saldo encalha) · 200013 = premiações e campanhas.')}</span></h3>
+  // Negociado aqui é 12m (fecha com o card); o SALDO de cada conta continua POSIÇÃO — é
+  // estoque, não fluxo, e verba velha em aberto não pode sumir por causa da janela. Por isso
+  // a linha de saldo pode ser maior que o valor negociado da própria conta.
+  $('#vb-contas').innerHTML=`<h3><span>Por conta <small class="muted">· 12 meses</small>${tipT('Composição do "Negociado 12m" por tipo de verba — a soma das contas dá exatamente o card. Já o "saldo em aberto" de cada linha é POSIÇÃO (qualquer emissão), então pode ser maior que o negociado da janela. 250009 = rebaixa de custo · 250008 = conta corrente (é onde o saldo encalha) · 200013 = premiações e campanhas.')}</span></h3>
     ${cts.map(c=>`<div style="margin:7px 0;font-size:.85em">
       <div style="display:flex;justify-content:space-between"><span>${esc(c.conta)} <small class="muted">· ${int(c.n)}</small></span><b>${moneyK(c.negociado)}</b></div>
       <span style="display:block;height:8px;background:var(--surface3);border-radius:4px;margin-top:3px"><span style="display:block;height:8px;width:${Math.round(100*c.negociado/ctMax)}%;background:${C.accent};border-radius:4px"></span></span>

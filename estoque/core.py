@@ -2067,29 +2067,59 @@ def verbas_fornecedores(verbas, aplic_rows, forn_map, comp_map, compras_map=None
                         "compra_12m": _round(_n(compra))})
     grandes.sort(key=lambda x: -x["compra_12m"])
 
-    # por conta (2024+) e evolução mensal (14 meses)
+    # ── por conta e evolução mensal: MESMA janela dos cards (12m) ──
+    # ⚠️ INVARIANTE DA PÁGINA: `negociado_12m` do card = Σ coluna Negociado da tabela
+    # = Σ barras azuis do gráfico = Σ do "por conta". Um número, quatro lugares.
+    # Até 08/2026 os dois últimos somavam a base inteira (2024+) e não fechavam com nada:
+    # medido no BI, o "por conta" da empresa dava R$ 2.137.441 contra R$ 819.002 do card
+    # (2,6×) e o gráfico dava R$ 915.676. O rodapé da aba já prometia "negociado/aplicado =
+    # últimos 12 meses" — eram estes dois que não cumpriam.
+    # O SALDO é exceção proposital e continua sendo POSIÇÃO (qualquer emissão): saldo é
+    # estoque, não fluxo — verba velha em aberto não pode sumir por causa da janela.
     por_conta = {}
     for v in V:
         c = int(_n(v.get("CODCONTA")))
         pc = por_conta.setdefault(c, {"codconta": c, "conta": CONTAS_VERBA.get(c, f"Conta {c}"),
                                       "n": 0, "negociado": 0.0, "saldo": 0.0})
-        pc["n"] += 1
-        pc["negociado"] += v["_valor"]
+        if v["_emis"] and v["_emis"] >= corte_12m:
+            pc["n"] += 1
+            pc["negociado"] += v["_valor"]
         pc["saldo"] += v["_saldo"] if v["_saldo"] > 0.01 else 0.0
     contas = sorted(({**c, "negociado": _round(c["negociado"]), "saldo": _round(c["saldo"])}
-                     for c in por_conta.values()), key=lambda x: -x["negociado"])
+                     for c in por_conta.values()
+                     # conta só com verba antiga já aplicada não vira linha de zeros
+                     if c["negociado"] > 0 or c["saldo"] > 0.01),
+                    key=lambda x: -x["negociado"])
+
+    # ⚠️ O eixo é de CALENDÁRIO, montado a partir do PERÍODO — não dos dados. A 1ª versão
+    # listava os 14 meses QUE TIVERAM MOVIMENTO: mês sem verba não existia, e o Chart.js
+    # desenhava as barras coladas como se fossem consecutivas. Na RAZZO isso virou 27 meses
+    # de calendário em 14 barras (13 escondidos) — 96% dos fornecedores têm buraco, então
+    # o defeito aparecia em quase todo filtro. Mês zerado é INFORMAÇÃO num gráfico de verba.
     neg_mes, apl_mes = {}, {}
     for v in V:
-        if v["_emis"]:
+        if v["_emis"] and v["_emis"] >= corte_12m:
             m = v["_emis"].strftime("%Y-%m")
             neg_mes[m] = neg_mes.get(m, 0.0) + v["_valor"]
     for a in apl_validas:
         d = _parse_dt(a.get("DTAPLIC"))
-        if d:
+        if d and d >= corte_12m:
             m = d.strftime("%Y-%m")
             apl_mes[m] = apl_mes.get(m, 0.0) + _n(a.get("VLAPLIC"))
-    meses = [{"mes": m, "negociado": _round(neg_mes.get(m, 0.0)), "aplicado": _round(apl_mes.get(m, 0.0))}
-             for m in sorted(set(neg_mes) | set(apl_mes))[-14:]]
+    meses, _m = [], date(corte_12m.year, corte_12m.month, 1)
+    while _m <= hoje:
+        k = _m.strftime("%Y-%m")
+        meses.append({
+            "mes": k,
+            "negociado": _round(neg_mes.get(k, 0.0)),
+            "aplicado": _round(apl_mes.get(k, 0.0)),
+            # a janela são 365 DIAS corridos, então ela começa no meio do mês: a 1ª barra é
+            # parcial e a tela avisa. Medido: R$ 13.019,12 emitidos antes do dia do corte
+            # ficam de fora — quem comparasse essa barra com o mês fechado no ERP acharia
+            # a diferença e desconfiaria da tela inteira.
+            "parcial": k == corte_12m.strftime("%Y-%m") and corte_12m.day > 1,
+        })
+        _m = date(_m.year + (_m.month == 12), (_m.month % 12) + 1, 1)
 
     abertas = [v for v in V if v["_saldo"] > 0.01]
     idades = [(hoje - v["_emis"]).days for v in abertas if v["_emis"]]

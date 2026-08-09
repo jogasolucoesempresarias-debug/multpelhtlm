@@ -168,7 +168,10 @@ def test_fornec_recorta_resumo_grafico_e_contas():
     assert r["resumo"]["saldo_aberto"] == 400
     jun = next(m for m in r["meses"] if m["mes"] == "2026-06")
     assert jun["negociado"] == 1000                  # não 1500 (10 + 20)
-    assert len(r["meses"]) == 1                      # maio era só do fornecedor 30
+    # o eixo vem da JANELA, não dos dados: maio era só do fornecedor 30 e agora sai zerado,
+    # em vez de desaparecer e colar as barras vizinhas
+    assert len(r["meses"]) == 13
+    assert next(m for m in r["meses"] if m["mes"] == "2026-05")["negociado"] == 0
     assert [c["negociado"] for c in r["contas"]] == [1000]
 
 
@@ -194,7 +197,8 @@ def test_comprador_recorta_os_agregados():
     r = _run(comprador=8)
     assert [f["codfornec"] for f in r["fornecedores"]] == [30]
     assert r["resumo"]["negociado_12m"] == 700 and r["resumo"]["aplicado_12m"] == 700
-    assert [m["mes"] for m in r["meses"]] == ["2026-05"]
+    assert next(m for m in r["meses"] if m["mes"] == "2026-05")["negociado"] == 700
+    assert round(sum(m["negociado"] for m in r["meses"]), 2) == 700
 
 
 def test_comprador_e_fornec_compoem_em_intersecao():
@@ -202,7 +206,9 @@ def test_comprador_e_fornec_compoem_em_intersecao():
     (que é do comprador 8) tem de ver VAZIO — não o fornecedor 30, nem a carteira inteira do 7.
     ⚠️ É o caso que um `if escopo:` (em vez de `is not None`) devolveria como 'sem filtro'."""
     r = _run(comprador=7, fornec=30)
-    assert r["fornecedores"] == [] and r["meses"] == [] and r["contas"] == []
+    assert r["fornecedores"] == [] and r["contas"] == []
+    # o eixo do gráfico é propriedade da JANELA, então continua existindo — zerado
+    assert sum(m["negociado"] for m in r["meses"]) == 0
     assert r["resumo"]["negociado_12m"] == 0 and r["resumo"]["saldo_aberto"] == 0
     r_ok = _run(comprador=7, fornec=10)
     assert [f["codfornec"] for f in r_ok["fornecedores"]] == [10]
@@ -230,3 +236,85 @@ def test_cache_do_servidor_separa_por_fornecedor():
     key = next(l for l in src.splitlines() if l.strip().startswith('key ='))
     assert 'fornec' in key, f'fornecedor fora da chave de cache do servidor: {key.strip()}'
     assert 'comprador' in key, f'comprador fora da chave de cache do servidor: {key.strip()}'
+
+
+# ─────────── coerência de janela na página (bug 08/2026, achado pelo diretor) ───────────
+# Ele olhou o gráfico com a RAZZO filtrada e perguntou "essa data está certa?". Estavam duas
+# coisas erradas: o eixo listava os 14 meses QUE TIVERAM MOVIMENTO (27 meses de calendário em
+# 14 barras, 13 escondidos) e o "por conta" somava a base inteira (2024+). Nenhum dos dois
+# fechava com os cards — na empresa, R$ 915.676 e R$ 2.137.441 contra R$ 819.002 do card.
+# O rodapé da aba já prometia "negociado/aplicado = últimos 12 meses"; eram eles que mentiam.
+def _cenario_janela():
+    """Verbas dentro e fora dos 12m, com meses vazios no meio (o que o eixo escondia)."""
+    verbas = [
+        _vb(1, "2024-03-10", 10, 5000.0),   # fora dos 12m (base 2024+)
+        _vb(2, "2025-01-15", 10, 3000.0),   # fora dos 12m
+        _vb(3, "2025-09-10", 10, 1000.0),   # dentro
+        _vb(4, "2026-02-20", 10, 2000.0),   # dentro (com meses vazios antes e depois)
+        _vb(5, "2026-07-05", 20, 700.0, conta=250008),   # dentro, outra conta
+    ]
+    aplics = [_ap(1, "2024-04-01", 5000.0), _ap(3, "2025-10-01", 400.0)]
+    return core.verbas_fornecedores(verbas, aplics, FORN, COMP, compras_map={10: 90000.0},
+                                    hoje=HOJE, cnpj_empresa=CNPJ_EMPRESA)
+
+
+def test_invariante_um_numero_quatro_lugares():
+    """O contrato da página: card = coluna da tabela = barras do gráfico = 'por conta'.
+    É a conferência que o diretor tentou fazer de cabeça e não fechava."""
+    r = _cenario_janela()
+    kpi = r["resumo"]["negociado_12m"]
+    assert kpi == 3700                                            # 1000 + 2000 + 700
+    assert round(sum(f["negociado"] for f in r["fornecedores"]), 2) == kpi
+    assert round(sum(m["negociado"] for m in r["meses"]), 2) == kpi
+    assert round(sum(c["negociado"] for c in r["contas"]), 2) == kpi
+
+
+def test_aplicado_do_grafico_fecha_com_o_card():
+    """Mesma invariante do lado verde: aplicação fora da janela não pode entrar na série."""
+    r = _cenario_janela()
+    assert r["resumo"]["aplicado_12m"] == 400                     # o de 2024 fica fora
+    assert round(sum(m["aplicado"] for m in r["meses"]), 2) == 400
+
+
+def test_eixo_e_calendario_continuo_sem_pular_mes():
+    """Mês sem verba TEM de aparecer com zero. Sem isso o Chart.js cola barras não
+    consecutivas e o eixo mente sobre o espaçamento — 96% dos fornecedores têm buraco."""
+    r = _cenario_janela()
+    ms = [m["mes"] for m in r["meses"]]
+    assert ms == sorted(ms)
+    for a, b in zip(ms, ms[1:]):                                  # sempre +1 mês, nunca um salto
+        ya, ma = int(a[:4]), int(a[5:])
+        assert b == f"{ya + (ma == 12)}-{(ma % 12) + 1:02d}"
+    assert "2025-11" in ms and next(m for m in r["meses"] if m["mes"] == "2025-11")["negociado"] == 0
+    # e a janela é a dos cards: começa no mês do corte e termina no mês de hoje
+    assert ms[0] == "2025-07" and ms[-1] == "2026-07"
+
+
+def test_primeira_barra_marcada_como_parcial():
+    """A janela são 365 DIAS, então começa no meio do mês. Sem a marca, quem comparasse a
+    barra com o mês fechado do ERP acharia diferença (R$ 13.019,12 no caso real) e
+    desconfiaria da tela inteira."""
+    r = _cenario_janela()
+    assert r["meses"][0]["parcial"] is True
+    assert not any(m["parcial"] for m in r["meses"][1:])
+
+
+def test_saldo_por_conta_continua_sendo_posicao():
+    """Exceção proposital à janela: saldo é ESTOQUE. Verba de 2024 ainda em aberto tem de
+    seguir no saldo mesmo sem entrar no negociado 12m — senão ela desaparece da cobrança."""
+    r = _cenario_janela()
+    c9 = next(c for c in r["contas"] if c["codconta"] == 250009)
+    assert c9["negociado"] == 3000                                # 12m: só nv3 + nv4
+    # saldo = posição: nv2 (2025-01, fora da janela) + o que sobrou de nv3 + nv4.
+    # Repare que o SALDO é MAIOR que o negociado da própria conta — é esperado, e é a razão
+    # de a tela precisar dizer que as duas colunas falam janelas diferentes.
+    assert c9["saldo"] == 5600                                    # 3000 + 600 + 2000
+    assert r["resumo"]["saldo_aberto"] == 6300                    # + os 700 do fornecedor 20
+
+
+def test_conta_so_com_verba_antiga_ja_aplicada_nao_vira_linha_de_zeros():
+    """Cortar o negociado para 12m não pode encher o painel de contas zeradas."""
+    verbas = [_vb(1, "2024-03-10", 10, 5000.0, conta=250008), _vb(2, "2026-05-10", 10, 900.0)]
+    r = core.verbas_fornecedores(verbas, [_ap(1, "2024-04-01", 5000.0)], FORN, COMP,
+                                 hoje=HOJE, cnpj_empresa=CNPJ_EMPRESA)
+    assert [c["codconta"] for c in r["contas"]] == [250009]
