@@ -476,14 +476,18 @@ def _forn_extra_map(hoje, periodo, filiais):
     return out
 
 
-def _verbas_res(hoje, comprador=None):
+def _verbas_res(hoje, comprador=None, fornec=None):
     """Agregado da aba Verbas (core.verbas_fornecedores) — fecha o TRIPÉ cruzando com a
     compra 12m e o lead real já calculados. Degrada p/ vazio se o BI cair. Cache 30min.
 
-    `comprador` recorta no CORE (não no cliente) para o resumo dos cards falar do mesmo
-    universo da tabela. A chave de cache carrega o comprador; o raw (a query cara) é
-    compartilhado entre todos, então o recorte custa só a reagregação em memória."""
-    key = f"verbas:{hoje.isoformat()}:{comprador or 'todos'}"
+    `comprador` e `fornec` recortam no CORE (não no cliente) para o resumo dos cards, o gráfico
+    mensal e o "por conta" falarem do mesmo universo da tabela. O raw (a query cara) é
+    compartilhado entre todos, então o recorte custa só a reagregação em memória.
+
+    ⚠️ A chave de cache carrega os DOIS. Recorte novo que não entre aqui faz o primeiro
+    fornecedor consultado ser servido a todos os outros por 30 min — e números plausíveis do
+    fornecedor errado não denunciam nada na tela."""
+    key = f"verbas:{hoje.isoformat()}:{comprador or 'todos'}:{fornec or 'todos'}"
     hit = pbi._CACHE.get(key)
     if hit is not None:
         return hit
@@ -496,7 +500,7 @@ def _verbas_res(hoje, comprador=None):
                                        _compradores_map(), compras_map=_compras_12m_map(hoje),
                                        lead_map=lead_map, hoje=hoje,
                                        cnpj_empresa=MULTPEL_EMPRESA["cnpj"],
-                                       comprador=comprador)
+                                       comprador=comprador, fornec=fornec)
     except Exception as e:
         print(f"[verbas] indisponível ({e}).")
     pbi._CACHE.set(key, res, 1800)
@@ -958,8 +962,10 @@ def api_leadtime():
 def api_verbas():
     """Verbas de fornecedor (rotina 1801): negociado × aplicado × saldo + tripé com
     compra 12m e lead time — ver core.verbas_fornecedores.
-    `?comprador_cod=` recorta a base (inclusive o resumo dos cards)."""
-    res = _verbas_res(_hoje(), comprador=request.args.get("comprador_cod"))
+    `?comprador_cod=` e `?fornec=` recortam a base (inclusive resumo, gráfico e "por conta").
+    O nome `fornec` acompanha o resto do módulo (export e /api/verbas/detalhe), não `fornec_cod`."""
+    res = _verbas_res(_hoje(), comprador=request.args.get("comprador_cod"),
+                      fornec=request.args.get("fornec"))
     return jsonify({"ok": True, "gerado_em": date.today().isoformat(),
                     "bi_refresh": pbi.get_dataset_refresh(), **res})
 
@@ -1812,14 +1818,11 @@ def _export_data(view):
         cols = ["codfornec", "fornecedor", "comprador", "n", "na_hora", "pct_na_hora",
                 "lead_todos", "lead_real", "prazo_manual", "delta", "situacao"]
     elif view == "verbas":
-        # espelha a tela: filtros globais de comprador/fornecedor
-        linhas = _verbas_res(_hoje())["fornecedores"]
-        cc = request.args.get("comprador_cod")
-        if cc:
-            linhas = [l for l in linhas if str(l.get("codcomprador")) == cc]
-        fn = request.args.get("fornec")
-        if fn:
-            linhas = [l for l in linhas if str(l.get("codfornec")) == fn]
+        # espelha a tela: filtros globais de comprador/fornecedor. O recorte é o MESMO do
+        # endpoint (feito no core) — refiltrar aqui era uma 2ª implementação do mesmo conceito,
+        # livre para divergir da tela sem ninguém perceber.
+        linhas = _verbas_res(_hoje(), comprador=request.args.get("comprador_cod"),
+                             fornec=request.args.get("fornec"))["fornecedores"]
         cols = ["codfornec", "fornecedor", "comprador", "n_verbas", "negociado", "aplicado",
                 "saldo", "idade_saldo", "compra_12m", "pct_vc", "lead_real"]
     elif view == "vencidos":

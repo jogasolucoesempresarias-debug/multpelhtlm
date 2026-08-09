@@ -1836,21 +1836,27 @@ function ltDetRow(cod){
    filtros GLOBAIS de comprador e fornecedor do topo. */
 async function renderVerbas(){
   const el=$('#v-verbas');
-  // ⚠️ Comprador recortado no SERVIDOR (chave de cache local junto): os cards leem J.resumo, que
-  // é agregado lá. Filtrando só as linhas aqui, "Saldo a aplicar"/"Negociado 12m" continuavam no
-  // total da empresa ao lado de uma tabela já recortada — dois universos na mesma tela.
-  const vbKey=(S.cli.comprador||'TODOS');
+  // ⚠️ Comprador E fornecedor recortados no SERVIDOR (a chave de cache local carrega os dois):
+  // os cards leem J.resumo, o gráfico lê J.meses e o "por conta" lê J.contas — os três são
+  // agregados lá. Filtrando só as linhas aqui, eles continuavam no total da empresa ao lado de
+  // uma tabela já recortada — dois universos na mesma tela. Foi o que aconteceu com o fornecedor
+  // até 08/2026: RAZZO selecionada, tabela com 1 fornecedor e gráfico com todos.
+  // ⚠️ Se entrar filtro novo aqui, ele TEM de entrar no vbKey também, senão a 1ª resposta fica
+  // cacheada e é servida para os outros recortes.
+  const vbKey=(S.cli.comprador||'TODOS')+'|'+(S.cli.fornec||'TODOS');
   if(!S.verbas||S.verbasKey!==vbKey){
     el.innerHTML=`<div class="loader"><div class="spinner"></div>Calculando verbas dos fornecedores…</div>`;
-    const p=new URLSearchParams(); if(S.cli.comprador) p.set('comprador_cod',S.cli.comprador);
+    const p=new URLSearchParams();
+    if(S.cli.comprador) p.set('comprador_cod',S.cli.comprador);
+    if(S.cli.fornec)    p.set('fornec',S.cli.fornec);
     try{ S.verbas=await getJSON('/estoque/api/verbas'+(p.toString()?'?'+p:'')); S.verbasKey=vbKey; }
     catch(e){ el.innerHTML=`<div class="empty">Falha ao carregar verbas: ${esc(e.message)}</div>`; return; }
   }
   const J=S.verbas, R=J.resumo||{};
+  // sem refiltro local: o servidor já devolveu o recorte (dois filtros no mesmo dado = convite
+  // a divergir, e o de cá só alcançaria a tabela)
   let rows=(J.fornecedores||[]);
   let grandes=(J.grandes_sem_verba||[]);
-  if(S.cli.fornec){ rows=rows.filter(f=>String(f.codfornec)===S.cli.fornec);
-    grandes=grandes.filter(f=>String(f.codfornec)===S.cli.fornec); }
 
   const sitKey=f=>f.saldo>0?((f.idade_saldo||0)>120?'parado':'aberto'):'ok';
   const SIT={parado:['Saldo PARADO',C.red],aberto:['Saldo em aberto',C.orange],ok:['Aplicada',C.green]};
@@ -1909,7 +1915,10 @@ async function renderVerbas(){
 
   // painel: por conta (a "campanha")
   const cts=J.contas||[], ctMax=Math.max(1,...cts.map(c=>c.negociado));
-  $('#vb-contas').innerHTML=`<h3><span>Por conta (tipo de verba)${tipT('250009 = rebaixa de custo · 250008 = conta corrente (é onde o saldo encalha) · 200013 = premiações e campanhas.')}</span></h3>
+  // ⚠️ Janela DIFERENTE dos KPIs: aqui é 2024+ (toda a base publicada), lá é 12m. Some no
+  // agregado da empresa, mas com um fornecedor filtrado os dois ficam lado a lado e a diferença
+  // salta (RAZZO: R$ 103.803,23 aqui × R$ 37.586,43 no card). Por isso o rótulo é explícito.
+  $('#vb-contas').innerHTML=`<h3><span>Por conta <small class="muted">· desde 2024</small>${tipT('Soma TODA a base publicada (2024 em diante), não os 12 meses dos cards — é a composição histórica do que o fornecedor dá. 250009 = rebaixa de custo · 250008 = conta corrente (é onde o saldo encalha) · 200013 = premiações e campanhas.')}</span></h3>
     ${cts.map(c=>`<div style="margin:7px 0;font-size:.85em">
       <div style="display:flex;justify-content:space-between"><span>${esc(c.conta)} <small class="muted">· ${int(c.n)}</small></span><b>${moneyK(c.negociado)}</b></div>
       <span style="display:block;height:8px;background:var(--surface3);border-radius:4px;margin-top:3px"><span style="display:block;height:8px;width:${Math.round(100*c.negociado/ctMax)}%;background:${C.accent};border-radius:4px"></span></span>
@@ -1954,9 +1963,10 @@ function vbDetRow(cod){
     return `<span class="badge" style="background:${(parado?C.red:C.orange)}22;color:${parado?C.red:C.orange}">saldo ${money(v.saldo)} · ${int(v.idade_saldo)}d${parado?' · PARADO':''}</span>`;};
   return wrap(
     `<div style="margin-bottom:10px">
-      ${chip('Verbas (2024+):',int(st.n_verbas))}${chip('Negociado:',money(st.negociado))}
+      ${chip('Verbas:',int(st.n_verbas))}${chip('Negociado:',money(st.negociado))}
       ${chip('Aplicado:',money(st.aplicado))}${chip('Saldo em aberto:',st.saldo>0?`<span style="color:${C.orange}">${money(st.saldo)}</span>`:'R$ 0')}
-      ${chip('Em aberto:',int(st.n_abertas))}</div>
+      ${chip('Em aberto:',int(st.n_abertas))}
+      <div class="muted" style="margin-top:6px;font-size:.82em">⚠️ Janela deste drill: <b>todas as emissões desde 2024</b> — a linha da tabela soma <b>12 meses</b>. Números diferentes aqui e ali é isso, não divergência.</div></div>
     <div class="tbl-wrap" style="max-height:300px;overflow:auto"><table style="font-size:.85em">
     <thead><tr><th>Verba</th><th>Emissão</th><th>Venc.</th><th>Conta</th><th>Campanha (texto da 1801)</th><th>Pgto</th>
       <th class="num">Valor</th><th class="num">Aplicado</th><th class="num">Aplicações</th><th>Status</th></tr></thead>

@@ -121,3 +121,112 @@ def test_detalhe_verba_a_verba():
     assert v2["idade_saldo"] == (HOJE - date(2026, 3, 1)).days
     # mais recente primeiro
     assert d["verbas"][0]["numverba"] == 1
+
+
+# ───────────── recorte no SERVIDOR: comprador e fornecedor (bug 08/2026) ─────────────
+# O diretor filtrou a RAZZO e viu a barra de julho em ~R$ 40k, quando a verba dela era
+# R$ 10.054,80. Causa: `S.cli.fornec` filtrava só a TABELA no cliente; resumo, gráfico mensal e
+# "por conta" vinham agregados do servidor no universo inteiro — dois universos na mesma tela.
+# É o MESMO defeito que já tinha levado o recorte por comprador para o core, e que não tinha
+# gate nenhum (estes testes cobrem os dois).
+FORN_MULTI = {
+    10: {"FORNECEDOR": "ACME LTDA", "CGC": "11.111.111/0001-11", "CODCOMPRADOR": 7},
+    20: {"FORNECEDOR": "BETA SA", "CGC": "22.222.222/0001-22", "CODCOMPRADOR": 7},
+    30: {"FORNECEDOR": "GAMA ME", "CGC": "33.333.333/0001-33", "CODCOMPRADOR": 8},
+    40: {"FORNECEDOR": "DELTA SA", "CGC": "44.444.444/0001-44", "CODCOMPRADOR": 7},
+}
+COMP_MULTI = {7: "Carlos Andrade", 8: "Ana Souza"}
+# 10 e 20 do comprador 7; 30 do comprador 8; 40 compra alto e não dá verba nenhuma.
+VB_MULTI = [_vb(1, "2026-06-01", 10, 1000.0), _vb(2, "2026-06-15", 20, 500.0),
+            _vb(3, "2026-05-10", 30, 700.0)]
+AP_MULTI = [_ap(1, "2026-06-10", 600.0), _ap(2, "2026-06-20", 500.0),
+            _ap(3, "2026-05-20", 700.0)]
+CM_MULTI = {10: 50000.0, 20: 40000.0, 30: 30000.0, 40: 900000.0}
+
+
+def _run(**kw):
+    return core.verbas_fornecedores(VB_MULTI, AP_MULTI, FORN_MULTI, COMP_MULTI,
+                                    compras_map=CM_MULTI, hoje=HOJE,
+                                    cnpj_empresa=CNPJ_EMPRESA, **kw)
+
+
+def test_sem_filtro_soma_o_universo_inteiro():
+    """Âncora: sem recorte, os agregados somam todo mundo. É contra ESTES números que os
+    recortes abaixo têm de diferir — senão o teste passaria com o filtro sendo ignorado."""
+    r = _run()
+    assert r["resumo"]["negociado_12m"] == 2200      # 1000 + 500 + 700
+    assert r["resumo"]["aplicado_12m"] == 1800       # 600 + 500 + 700
+    assert len(r["fornecedores"]) == 3
+
+
+def test_fornec_recorta_resumo_grafico_e_contas():
+    """O bug em uma linha: com um fornecedor filtrado, os TRÊS agregados do servidor têm de
+    acompanhar a tabela — não só ela."""
+    r = _run(fornec=10)
+    assert [f["codfornec"] for f in r["fornecedores"]] == [10]
+    assert r["resumo"]["negociado_12m"] == 1000      # não 2200
+    assert r["resumo"]["saldo_aberto"] == 400
+    jun = next(m for m in r["meses"] if m["mes"] == "2026-06")
+    assert jun["negociado"] == 1000                  # não 1500 (10 + 20)
+    assert len(r["meses"]) == 1                      # maio era só do fornecedor 30
+    assert [c["negociado"] for c in r["contas"]] == [1000]
+
+
+def test_fornec_recorta_tambem_as_aplicacoes():
+    """A parte que se esquece: a APLICAÇÃO não tem CODFORNEC, a ponte é NUMVERBA → CODFORNEC.
+    Sem cortá-la, "Aplicado 12m" e a barra verde ficam no total da empresa ao lado de um
+    negociado já recortado — pior que o bug original, porque as duas séries mentem juntas."""
+    r = _run(fornec=10)
+    assert r["resumo"]["aplicado_12m"] == 600        # não 1100 (junho inteiro), nem 1800
+    jun = next(m for m in r["meses"] if m["mes"] == "2026-06")
+    assert jun["aplicado"] == 600
+
+
+def test_fornec_recorta_grandes_sem_verba():
+    """`compras_map` alimenta "compram e não dão verba"; sem cortá-lo, o painel seguiria
+    listando fornecedor de fora do recorte."""
+    assert [g["codfornec"] for g in _run()["grandes_sem_verba"]] == [40]
+    assert _run(fornec=10)["grandes_sem_verba"] == []
+
+
+def test_comprador_recorta_os_agregados():
+    """Gate que faltava desde 07/2026: o recorte por comprador nunca foi travado por teste."""
+    r = _run(comprador=8)
+    assert [f["codfornec"] for f in r["fornecedores"]] == [30]
+    assert r["resumo"]["negociado_12m"] == 700 and r["resumo"]["aplicado_12m"] == 700
+    assert [m["mes"] for m in r["meses"]] == ["2026-05"]
+
+
+def test_comprador_e_fornec_compoem_em_intersecao():
+    """Os dois filtros se somam, não se substituem: o comprador 7 pedindo o fornecedor 30
+    (que é do comprador 8) tem de ver VAZIO — não o fornecedor 30, nem a carteira inteira do 7.
+    ⚠️ É o caso que um `if escopo:` (em vez de `is not None`) devolveria como 'sem filtro'."""
+    r = _run(comprador=7, fornec=30)
+    assert r["fornecedores"] == [] and r["meses"] == [] and r["contas"] == []
+    assert r["resumo"]["negociado_12m"] == 0 and r["resumo"]["saldo_aberto"] == 0
+    r_ok = _run(comprador=7, fornec=10)
+    assert [f["codfornec"] for f in r_ok["fornecedores"]] == [10]
+
+
+def test_front_manda_fornec_e_carrega_a_chave_de_cache():
+    """Gate de código. A resposta é cacheada por 30min no servidor e memoizada em S.verbas no
+    cliente: se o fornecedor não entrar nas DUAS chaves, o primeiro recorte consultado é servido
+    aos demais — e número plausível do fornecedor errado não denuncia nada na tela."""
+    from pathlib import Path
+    js = Path('static/estoque/estoque.js').read_text(encoding='utf-8')
+    trecho = js[js.index('async function renderVerbas'):][:1600]
+    assert "p.set('fornec'" in trecho, 'renderVerbas parou de mandar o fornecedor ao servidor'
+    vbkey = next(l for l in trecho.splitlines() if 'const vbKey' in l)
+    assert 'S.cli.fornec' in vbkey, f'fornecedor fora da chave de cache do cliente: {vbkey}'
+
+
+def test_cache_do_servidor_separa_por_fornecedor():
+    """O par do gate acima, do lado do servidor: `_verbas_res` cacheia 30min. Chave sem o
+    fornecedor = a primeira resposta serve todos os recortes seguintes."""
+    import inspect
+
+    from estoque import routes
+    src = inspect.getsource(routes._verbas_res)
+    key = next(l for l in src.splitlines() if l.strip().startswith('key ='))
+    assert 'fornec' in key, f'fornecedor fora da chave de cache do servidor: {key.strip()}'
+    assert 'comprador' in key, f'comprador fora da chave de cache do servidor: {key.strip()}'

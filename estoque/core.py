@@ -1960,7 +1960,8 @@ def _verbas_prep(verbas, aplic_rows):
 
 def verbas_fornecedores(verbas, aplic_rows, forn_map, comp_map, compras_map=None,
                         lead_map=None, hoje=None, cnpj_empresa=None,
-                        compra_min_alerta=_VERBA_COMPRA_MIN_ALERTA, comprador=None):
+                        compra_min_alerta=_VERBA_COMPRA_MIN_ALERTA, comprador=None,
+                        fornec=None):
     """Visão Verbas: negociado × aplicado × saldo por fornecedor + consolidados.
 
     verbas/aplic_rows: linhas cruas de PCVERBA/PCAPLICVERBA (2024+); compras_map:
@@ -1975,27 +1976,42 @@ def verbas_fornecedores(verbas, aplic_rows, forn_map, comp_map, compras_map=None
     - fornecedor entra no placar se tem verba 12m OU saldo em aberto (saldo antigo não some);
     - compra alta sem verba nenhuma → lista de alerta (o argumento de negociação).
 
-    `comprador` (matrícula) recorta a base ANTES de agregar, para que o resumo (cards) fale do
-    mesmo universo que a tabela — filtrar só as linhas prontas deixaria os totais no valor da
-    empresa inteira. Fornecedor sem CODCOMPRADOR no cadastro fica fora do recorte."""
+    `comprador` (matrícula) e `fornec` (CODFORNEC) recortam a base ANTES de agregar, para que o
+    resumo (cards), o gráfico mensal e o "por conta" falem do mesmo universo que a tabela —
+    filtrar só as linhas prontas deixaria os totais no valor da empresa inteira. Fornecedor sem
+    CODCOMPRADOR no cadastro fica fora do recorte por comprador.
+
+    ⚠️ Os dois COMPÕEM (interseção): comprador X olhando o fornecedor Y vê Y só se Y for dele.
+    O `fornec` nasceu em 08/2026 porque a tela filtrava fornecedor só no cliente: com a RAZZO
+    selecionada, a tabela mostrava 1 fornecedor e o gráfico ao lado seguia somando a empresa
+    inteira (a barra de julho dizia ~R$ 40k onde a verba da RAZZO era R$ 10.054,80) — o MESMO
+    defeito que motivou o recorte por comprador vir para cá."""
     hoje = hoje or date.today()
     corte_12m = hoje - timedelta(days=365)
     raiz_empresa = _cnpj_raiz(cnpj_empresa)
     comprador = int(_n(comprador)) or None
+    fornec = int(_n(fornec)) or None
     V, n_cancel, apl_validas, n_estornos = _verbas_prep(verbas, aplic_rows)
     V = [v for v in V if not (raiz_empresa
                               and _cnpj_raiz((forn_map.get(v["_forn"]) or {}).get("CGC")) == raiz_empresa)]
+    # Escopo = interseção dos filtros ativos, aplicada UMA vez. `None` = sem recorte (universo
+    # inteiro); conjunto vazio = recorte que não casa com nada, e aí a tela sai vazia de propósito
+    # — diferente de "sem filtro", que é o que um `if escopo:` faria por engano.
+    escopo = None
     if comprador:
-        forns_comp = {cod for cod, f in (forn_map or {}).items()
-                      if int(_n((f or {}).get("CODCOMPRADOR"))) == comprador}
-        V = [v for v in V if v["_forn"] in forns_comp]
+        escopo = {cod for cod, f in (forn_map or {}).items()
+                  if int(_n((f or {}).get("CODCOMPRADOR"))) == comprador}
+    if fornec:
+        escopo = {fornec} if escopo is None else (escopo & {fornec})
+    if escopo is not None:
+        V = [v for v in V if v["_forn"] in escopo]
         # as APLICAÇÕES também: elas alimentam o "Aplicado 12m" e o gráfico mensal, que ficariam
         # no valor da empresa inteira ao lado de um negociado já recortado — o pior dos mundos.
         # A ponte é NUMVERBA → CODFORNEC sobre as verbas CRUAS (inclui canceladas, como no global).
         nv_forn = {int(_n(v.get("NUMVERBA"))): int(_n(v.get("CODFORNEC"))) for v in (verbas or [])}
         apl_validas = [a for a in apl_validas
-                       if nv_forn.get(int(_n(a.get("NUMVERBA")))) in forns_comp]
-        compras_map = {cod: val for cod, val in (compras_map or {}).items() if cod in forns_comp}
+                       if nv_forn.get(int(_n(a.get("NUMVERBA")))) in escopo]
+        compras_map = {cod: val for cod, val in (compras_map or {}).items() if cod in escopo}
 
     # por fornecedor
     agg = {}
