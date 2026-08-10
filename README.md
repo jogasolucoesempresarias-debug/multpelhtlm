@@ -170,6 +170,22 @@ lugares, diferença 0,00.
   fluxo. Por isso o saldo de uma conta pode ser maior que o negociado dela. O **drawer** segue
   2024+ (auditoria), com a janela escrita na tela. Gate: `tests/test_verbas.py`.
 
+**Orçamento — "Buscar produto" recorta os pedidos em aberto** (08/2026, pedido do diretor:
+"saber se existe pedido para aquele item, a quantidade e quando foi feito"). O termo vai ao
+servidor (`?busca=`, na chave de cache junto do comprador e do arraste) e o corte acontece em
+`core.logistica_pedidos(busca=…)`, que já percorria as linhas de PCITEM — **nenhuma query nova**.
+- ⚠️ **O recorte vale para a LISTA e para os AGREGADOS** (`core.recorta_abertos_por_produto`).
+  Os cards de prazo leem a **contagem** do resumo e o **valor** da lista no cliente: recortar só
+  um deixaria "15 entregas atrasadas" ao lado de uma tabela com um pedido.
+- ⚠️ **Os KPIs de orçamento NÃO entram** — meta/comprado/saldo são do comprador no mês, não do
+  item. A tela escreve isso quando há filtro ativo.
+- **Duas quantidades por linha**: `pedida` responde "eu já pedi?", `a chegar` responde "está
+  chegando?". Item **já entregue** dentro de pedido ainda aberto aparece com "a chegar" zerado
+  em vez de sumir — sumir levaria o comprador a pedir de novo o que já recebeu.
+- ⚠️ Busca por **descrição casa a FAMÍLIA** (`EMB.GALV.G65` → 5 pedidos, 28.701 un contra 24 un
+  do código exato); a janela é de **180 dias**. As duas coisas estão escritas na tela.
+  Gate: `tests/test_orcamento_filtro_produto.py`.
+
 **Meta de ruptura — uma meta por curva** (07/2026). Era A (2%) × B+C (5%); virou **A / B / C**
 (2% / 5% / 10%), editáveis em ⚙ Parâmetros. ⚠️ Separar **afrouxa o placar sem ninguém mexer na
 operação**: os itens C que estouravam o teto do bloco passam a ter orçamento próprio. Comparar
@@ -414,7 +430,7 @@ ANALYTICS_DB_NAME=joga_demo   # banco analítico (ANALYTICS_DB_* faz fallback pr
 > demo **não envelhece** sem regenerar. O default powerbi usa `TODAY()` normal.
 
 **Gates:** `tests/test_provider_*.py` (Dashboard, Comercial, Metas, Mix, Radar, Estoque, RBAC) +
-`test_medida_compat.py`. Baseline **489 passam / 5 falham** (3 de fixture de data + 2 do
+`test_medida_compat.py`. Baseline **498 passam / 5 falham** (3 de fixture de data + 2 do
 `test_provider_estoque` que dependem de um `joga_demo` local com venda no mês corrente).
 
 ---
@@ -470,7 +486,7 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 ├── estoque/provider_sql.py         # 🆕 modo postgres do Compras
 ├── docker-compose.demo.yml         # 🆕 stack da instância DEMO (Portainer)
 ├── _seed_demo/                     # 🆕 base sintética reprodutível (joga_demo) + bootstrap + seeder
-└── tests/                          # pytest (489 passam; 5 falham por ambiente/fixture — não é regressão)
+└── tests/                          # pytest (498 passam; 5 falham por ambiente/fixture — não é regressão)
 ```
 
 ---
@@ -482,7 +498,7 @@ cp .env.example .env        # preencher (ver variáveis abaixo)
 docker compose -f docker-compose.dev.yml up -d redis
 python -X utf8 init_db.py   # cria/migra schema + admin default (ADMIN_EMAIL / ADMIN_SENHA)
 python -X utf8 server.py    # http://localhost:5000
-pytest -q                   # 489 passam, 5 falham (fixture de data + joga_demo local — não é regressão)
+pytest -q                   # 498 passam, 5 falham (fixture de data + joga_demo local — não é regressão)
 ```
 
 Variáveis novas da fusão no `.env` (além das do Power BI/DB/Redis/Resend):
@@ -630,7 +646,7 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 5. **Checagem de API usa `'/api/' in path`, não `startswith`** — por causa de `/estoque/api/...`.
 6. **Não editar `MultpelEstoque/`** (repo congelado) nem publicar em `:latest` sem intenção.
 7. **3 testes falham por fixture de data** (radar/mix/cohort) — pré-existentes, **não** são regressão.
-   O baseline é **489 passam / 5 falham** (+2 do `test_provider_estoque`, que precisam de um
+   O baseline é **498 passam / 5 falham** (+2 do `test_provider_estoque`, que precisam de um
    `joga_demo` local com venda no mês corrente — falham no HEAD limpo também).
 8. **Verificação visual de tema não confia em captura** das telas de dados (Power BI muda o conteúdo
    entre capturas) — comparar cor computada (`getComputedStyle`), não pixels.

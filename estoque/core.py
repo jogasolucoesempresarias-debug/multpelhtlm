@@ -2409,8 +2409,44 @@ def resumo_estoque_ideal(produtos, limiar_dias=45, meta_pct=0.90):
 # `vol_unitario` foi absorvida por `medidas_unitarias` (08/2026): peso e volume saem da MESMA
 # fonte e passam pela MESMA guarda. Duas funções para o mesmo conceito foi o que deixou o
 # volume com fallback pro cadastro e o peso preso na PCEMBALAGEM vazia por meses.
+def casa_busca(cad, busca):
+    """Mesma regra de busca da tela e do export: `codprod` OU `descricao`, case-insensitive.
+    Regra única de propósito — três implementações do mesmo filtro é como as telas divergem."""
+    b = (busca or "").strip().lower()
+    if not b:
+        return True
+    return b in str((cad or {}).get("CODPROD") or "") or b in str((cad or {}).get("DESCRICAO") or "").lower()
+
+
+def recorta_abertos_por_produto(res, por_pedido):
+    """Aplica o recorte de PRODUTO ao bloco de pedidos em aberto do Orçamento.
+
+    `por_pedido`: {numped: {"qt_pedida", "qt_aberta"}} — de `logistica_pedidos(busca=…)`.
+
+    ⚠️ Recorta a lista E **recalcula** os agregados que a tela mostra ao lado dela
+    (`n_abertos`, `n_atrasados`, `n_chega7`, `valor_aberto`). Os cards de atraso leem a
+    CONTAGEM do resumo e o VALOR da lista no cliente: recortar só um dos dois deixaria "15
+    entregas atrasadas" ao lado de uma tabela com um pedido — o mesmo defeito de dois
+    universos que a aba Verbas teve duas vezes em 08/2026.
+
+    ⚠️ Os KPIs de ORÇAMENTO (meta, comprado, saldo, consumido) ficam INTACTOS de propósito:
+    são do comprador no mês, não do item. Recortá-los por produto não significaria nada.
+    """
+    abertos = [p for p in res["abertos"] if p["numped"] in por_pedido]
+    for p in abertos:
+        p["qt_produto_pedida"] = _round(por_pedido[p["numped"]]["qt_pedida"], 2)
+        p["qt_produto_aberta"] = _round(por_pedido[p["numped"]]["qt_aberta"], 2)
+    r = dict(res["resumo"])
+    r["n_abertos"] = len(abertos)
+    r["n_atrasados"] = sum(1 for p in abertos if p["status_prazo"] == "atrasado")
+    r["n_chega7"] = sum(1 for p in abertos if p["status_prazo"] == "chega_7")
+    r["valor_aberto"] = _round(sum(p["valor_aberto"] for p in abertos))
+    r["filtro_produto"] = True
+    return {**res, "resumo": r, "abertos": abertos}
+
+
 def logistica_pedidos(cab, itens, prod_map, embalagem_map, comp_map, forn_map, hoje=None,
-                      capacidade_m3=60.0, baixa_ate=0.1, dias=180):
+                      capacidade_m3=60.0, baixa_ate=0.1, dias=180, busca=None):
     """Cubagem/ocupação por pedido em ABERTO (o que ainda vai chegar).
     cubagem = Σ (qtd_aberta × volume_unitário); ocupação = cubagem ÷ capacidade do veículo."""
     hoje = hoje or date.today()
@@ -2425,15 +2461,23 @@ def logistica_pedidos(cab, itens, prod_map, embalagem_map, comp_map, forn_map, h
             continue  # já recebido
         cab_by[int(_n(r.get("NUMPED")))] = r
     ped = {}
+    # {numped: {qt_pedida, qt_aberta}} do produto buscado — alimenta a coluna de quantidade
+    # do Orçamento. Preenchido ANTES do corte de `oq > 0`: item já entregue dentro de um
+    # pedido ainda aberto responde "eu já pedi?" mesmo não respondendo "está chegando?".
+    do_produto = {}
     for r in itens:
         np_ = int(_n(r.get("NUMPED")))
         if np_ not in cab_by:
             continue
-        oq = _n(r.get("qtped")) - _n(r.get("qtentregue"))
-        if oq <= 0:
-            continue
         cod = int(_n(r.get("CODPROD")))
         cad = prod_map.get(cod) or {}
+        oq = _n(r.get("qtped")) - _n(r.get("qtentregue"))
+        if busca and casa_busca(cad, busca):
+            _d = do_produto.setdefault(np_, {"qt_pedida": 0.0, "qt_aberta": 0.0})
+            _d["qt_pedida"] += _n(r.get("qtped"))
+            _d["qt_aberta"] += max(0.0, oq)
+        if oq <= 0:
+            continue
         emb = (embalagem_map or {}).get(cod) or {}
         _cx_emb = _n(emb.get("qtunit"))
         cx = (_cx_emb if _cx_emb > 1 else _n(cad.get("QTUNITCX"))) or 1
@@ -2491,7 +2535,7 @@ def logistica_pedidos(cab, itens, prod_map, embalagem_map, comp_map, forn_map, h
         "n_baixa": sum(1 for p in out if p["status"] == "baixa"),
         "capacidade_m3": capacidade_m3, "baixa_ate": baixa_ate,
     }
-    return {"resumo": resumo, "pedidos": out}
+    return {"resumo": resumo, "pedidos": out, "do_produto": do_produto}
 
 
 # ───────────────────────── validade / FEFO ─────────────────────────

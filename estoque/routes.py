@@ -2472,10 +2472,14 @@ def api_orcamento():
                                  venda_comp_ant=venda_comp_ant, arrastar=arrastar)
     # peso + cubagem por pedido: mesma fonte (PCPEDIDO/PCITEM) já carregada → NENHUMA query nova.
     # Só existe p/ pedido em ABERTO (logistica_pedidos ignora o recebido) — que é o que a tabela mostra.
+    # `?busca=` recorta o bloco de PEDIDOS EM ABERTO ao produto procurado (pedido do diretor
+    # 08/2026: "saber se existe pedido para aquele item, a quantidade e quando foi feito").
+    # Os KPIs de orçamento NÃO entram no recorte — ver core.recorta_abertos_por_produto.
+    busca = (request.args.get("busca") or "").strip()
     try:
         _log = core.logistica_pedidos(pdata["cab"], pdata["itens"], _cadastro_produtos(),
                                       _embalagem_map(), _compradores_map(), _cadastro_fornecedores(),
-                                      hoje=hoje)
+                                      hoje=hoje, busca=busca or None)
         _lmap = {p["numped"]: p for p in _log["pedidos"]}
         for _pe in res["pedidos"]:      # 'abertos' referencia os MESMOS dicts
             _l = _lmap.get(_pe["numped"])
@@ -2484,8 +2488,14 @@ def api_orcamento():
                 _pe["peso_kg"] = _l["peso_kg"]
                 _pe["sem_cubagem_itens"] = _l["sem_cubagem_itens"]
                 _pe["sem_peso_itens"] = _l["sem_peso_itens"]
+        if busca:
+            res = core.recorta_abertos_por_produto(res, _log["do_produto"])
     except Exception as e:
         print(f"[orcamento] peso/cubagem indisponível ({e}).")
+        if busca:
+            # ⚠️ Degradar em silêncio aqui devolveria a lista INTEIRA para quem filtrou um
+            # produto — o usuário leria "existem 46 pedidos deste item". A tela avisa.
+            res["resumo"] = {**res["resumo"], "filtro_produto_falhou": True}
     manuais = store.pedidos_pendentes(mes, comprador) if store.ensure() else []
     return jsonify({"ok": True, "resumo": res["resumo"], "pedidos": res["pedidos"],
                     "abertos": res["abertos"], "por_comprador": res.get("por_comprador", []),

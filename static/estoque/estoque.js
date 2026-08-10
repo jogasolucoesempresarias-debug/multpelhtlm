@@ -2093,12 +2093,18 @@ function orcMesAnterior(r){
 async function renderOrcamento(useCache){
   const el=$('#v-orcamento');
   const comp=S.compradorNome||'TODOS';
-  let o=useCache?S.orcamento:null;
+  // "Buscar produto" recorta os PEDIDOS EM ABERTO no servidor (a lista de itens de cada
+  // pedido não vem para cá). Entra na chave de cache junto do comprador e do arraste —
+  // sem isso a 1ª busca ficaria cacheada e serviria as seguintes.
+  const bq=(S.cli.busca||'').trim();
+  const orcKey=comp+'|'+(S.orcArrastar?'1':'0')+'|'+bq;
+  let o=(useCache&&S.orcKey===orcKey)?S.orcamento:null;
   if(!o){ el.innerHTML=`<div class="loader"><div class="spinner"></div></div>`;
     try{ o=await getJSON('/estoque/api/orcamento?comprador='+encodeURIComponent(comp)
-                         +(S.orcArrastar?'&arrastar=1':'')); }
+                         +(S.orcArrastar?'&arrastar=1':'')
+                         +(bq?'&busca='+encodeURIComponent(bq):'')); }
     catch(e){ el.innerHTML=`<div class="empty">Orçamento indisponível: ${e.message}</div>`; return; }
-    S.orcamento=o; }
+    S.orcamento=o; S.orcKey=orcKey; }
   const r=o.resumo;
   const prog=r.pct_consumido!=null?Math.min(100,r.pct_consumido*100):0;
   const cor=prog>=100?C.red:(prog>=85?C.orange:C.green);
@@ -2107,7 +2113,12 @@ async function renderOrcamento(useCache){
   const skC=S.sort['orc_comp'], pcS=skC?_sortArr(o.por_comprador||[],skC):(o.por_comprador||[]);
   const colsC=[{k:'comprador',label:'Comprador'},{k:'meta',label:'Meta',num:1},{k:'comprado',label:'Comprado',num:1},{k:'aberto',label:'Aberto',num:1},{k:'saldo',label:'Saldo',num:1},{k:'pct_consumido',label:'Consumido',num:1}];
   const skA=S.sort['orc_abertos'], abertosS=skA?_sortArr(abertos,skA):abertos;
-  const colsA=[{k:'numped',label:'Nº',num:1},{k:'data_pedido',label:'Data'},{k:'fornecedor',label:'Fornecedor'},{k:'comprador',label:'Comprador'},{k:'valor',label:'Valor',num:1},{k:'valor_aberto',label:'A entregar',num:1},{k:'peso_kg',label:'Peso',num:1},{k:'cubagem_m3',label:'Cubagem',num:1},{k:'dias_para_chegar',label:'Previsão entrega'},{k:'status_prazo',label:'Status'}];
+  // com filtro de produto ativo entram as DUAS quantidades do item: "pedida" responde
+  // "eu já pedi?" e "a entregar" responde "está chegando?" — o diretor pediu as duas coisas
+  // na mesma frase, e mostrar só uma faria ler 500 caixas onde faltam 20.
+  const colsA=[{k:'numped',label:'Nº',num:1},{k:'data_pedido',label:'Data'},{k:'fornecedor',label:'Fornecedor'},{k:'comprador',label:'Comprador'}]
+    .concat(bq?[{k:'qt_produto_pedida',label:'Qtd pedida',num:1},{k:'qt_produto_aberta',label:'Qtd a chegar',num:1}]:[])
+    .concat([{k:'valor',label:'Valor',num:1},{k:'valor_aberto',label:'A entregar',num:1},{k:'peso_kg',label:'Peso',num:1},{k:'cubagem_m3',label:'Cubagem',num:1},{k:'dias_para_chegar',label:'Previsão entrega'},{k:'status_prazo',label:'Status'}]);
   const skM=S.sort['orc_manuais'], manuaisS=skM?_sortArr(manuais,skM):manuais;
   const colsM=[{k:'data_pedido',label:'Data'},{k:'fornecedor',label:'Fornecedor'},{k:'n_pedido',label:'Pedido'},{k:'valor',label:'Valor',num:1}];
   el.innerHTML=`<h2 class="section"><span>Orçamento de compras — ${esc(comp)} · ${r.mes}${tipT('Meta de compras do mês vs. realizado (pedidos reais do Winthor). Verde = dentro; vermelho = estourou.')}</span>
@@ -2129,13 +2140,15 @@ async function renderOrcamento(useCache){
     ${pcS.length?`<div class="panel" id="orc-comp"><h3><span>Orçamento por comprador${tipT('Meta e realizado de cada comprador no mês.')}</span> <small class="muted">· meta = 65% da venda líq. 30d por comprador</small></h3>
       <div class="tbl-wrap"><table><thead><tr>${sortTh(colsC,skC||{})}</tr></thead>
       <tbody>${pcS.map(c=>`<tr><td><span class="prod">${esc(c.comprador)}</span></td><td class="num">${money(c.meta)}</td><td class="num">${money(c.comprado)}</td><td class="num">${money(c.aberto)}</td><td class="num" style="color:${c.saldo<0?C.red:C.green}">${money(c.saldo)}</td><td class="num">${c.pct_consumido!=null?pct(c.pct_consumido):'—'}</td></tr>`).join('')}</tbody></table></div></div>`:''}
+    ${r.filtro_produto_falhou?`<div class="count-line" style="color:${C.red};border-left:3px solid ${C.red};padding-left:8px">⚠️ <b>O filtro de produto NÃO foi aplicado</b> (falha ao ler os itens dos pedidos). A lista abaixo é de <b>todos</b> os pedidos em aberto — não a leia como se fosse deste item.</div>`:''}
+    ${(bq&&!r.filtro_produto_falhou)?`<div class="count-line" style="border-left:3px solid ${C.accent};padding-left:8px">🔎 Filtrando por <b>${esc(bq)}</b>: o bloco de <b>pedidos em aberto</b> abaixo (e os cards de prazo) mostra só pedidos que contêm o que casa com a busca, dos <b>últimos 180 dias</b>. Busca por <b>descrição</b> casa a família inteira — as quantidades somam todos os produtos que casaram; para um item só, busque pelo <b>código</b>. Os cards de <b>orçamento</b> acima seguem inteiros — meta e comprado são do comprador no mês, não do item.</div>`:''}
     ${(r.n_atrasados||r.n_chega7)?`<div class="alerts">
       ${r.n_atrasados?alertCard(r.n_atrasados,'Entregas atrasadas',sum2(abertos.filter(p=>p.status_prazo==='atrasado'),'valor_aberto'),C.red,'orcamento',{}):''}
       ${r.n_chega7?alertCard(r.n_chega7,'Chegam em ≤7 dias',sum2(abertos.filter(p=>p.status_prazo==='chega_7'),'valor_aberto'),C.orange,'orcamento',{}):''}
     </div>`:''}
     <div class="panel" id="orc-abertos"><h3><span>Acompanhamento de pedidos em aberto${tipT('Pedidos de compra ainda não recebidos e a previsão de entrega de cada um.')}</span> <small class="muted">· ${abertos.length} em aberto · ${moneyK(r.valor_aberto)} a entregar</small></h3>
       ${abertos.length?`<div class="tbl-wrap"><table><thead><tr>${sortTh(colsA,skA||{})}</tr></thead>
-      <tbody>${abertosS.map(pe=>`<tr data-numped="${pe.numped}" style="cursor:pointer" title="ver itens comprados"><td class="num">${pe.numped}</td><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc((pe.comprador||'').split(' ')[0]||'—')}</td><td class="num">${money(pe.valor)}</td><td class="num">${money(pe.valor_aberto)}</td><td class="num">${pedMedida(pe.peso_kg,'kg',1,pe.sem_peso_itens)}</td><td class="num">${pedMedida(pe.cubagem_m3,'m³',2,pe.sem_cubagem_itens)}</td><td>${dt(pe.dt_previsao)}${pe.dias_para_chegar!=null?` <small class="muted">(${pe.dias_para_chegar}d)</small>`:''}</td><td>${prazoBadge(pe.status_prazo)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Nenhum pedido em aberto.</div>'}
+      <tbody>${abertosS.map(pe=>`<tr data-numped="${pe.numped}" style="cursor:pointer" title="ver itens comprados"><td class="num">${pe.numped}</td><td>${dt(pe.data_pedido)}</td><td><span class="prod">${esc(pe.fornecedor||'')}</span></td><td>${esc((pe.comprador||'').split(' ')[0]||'—')}</td>${bq?`<td class="num"><b>${dec(pe.qt_produto_pedida||0,0)}</b></td><td class="num">${(pe.qt_produto_aberta||0)>0?dec(pe.qt_produto_aberta,0):'<span class="muted" title="item já entregue neste pedido">entregue</span>'}</td>`:''}<td class="num">${money(pe.valor)}</td><td class="num">${money(pe.valor_aberto)}</td><td class="num">${pedMedida(pe.peso_kg,'kg',1,pe.sem_peso_itens)}</td><td class="num">${pedMedida(pe.cubagem_m3,'m³',2,pe.sem_cubagem_itens)}</td><td>${dt(pe.dt_previsao)}${pe.dias_para_chegar!=null?` <small class="muted">(${pe.dias_para_chegar}d)</small>`:''}</td><td>${prazoBadge(pe.status_prazo)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Nenhum pedido em aberto.</div>'}
     </div>
     ${manuais.length?`<div class="panel" id="orc-manuais" style="border-color:var(--accent2)"><h3><span>Pedidos da nossa plataforma${tipT('Pedidos lançados aqui, pendentes de envio ao Winthor — não somam no realizado até voltarem da base oficial.')}</span> <small class="muted">· pendentes de envio ao Winthor</small></h3>
       <div class="tbl-wrap"><table><thead><tr>${sortTh(colsM,skM||{})}<th></th></tr></thead>
