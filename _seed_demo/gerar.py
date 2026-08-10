@@ -165,7 +165,9 @@ def prod_rows(prods):
                p["codepto"], p["codsec"], "UN", p["qtunitcx"], f"{rng.randint(10**7, 10**8)}",
                p["marca"], p["codmarca"], p["prazoval"], "S" if p["controla_val"] else "N",
                p["volume"], round(rng.uniform(.05, .4), 4), round(rng.uniform(.05, .4), 4),
-               round(rng.uniform(.05, .4), 4), p["peso"], "S", None)
+               # líquido = bruto menos a embalagem (~3%), como no cadastro real
+               round(rng.uniform(.05, .4), 4), p["peso"], round(p["peso"] * 0.97, 4),
+               "S", None)
 
 
 def gen_clientes(vendedores):
@@ -219,7 +221,7 @@ if __name__ == "__main__":
             "pcsuperv": copy_load(cur, "pcsuperv", ["codsupervisor", "nome", "tiposupervisor"], supervisores),
             "pcusuari": copy_load(cur, "pcusuari", ["codusur", "nome", "codsupervisor", "tipovend", "cidade", "estado", "bloqueio"], vendedores),
             "pcfornec": copy_load(cur, "pcfornec", ["codfornec", "fornecedor", "fantasia", "codcomprador", "prazoentrega", "vlminpedcompra", "cgc", "ie", "numeroend", "bairro", "cep", "cidade", "estado", "email"], fornecedores),
-            "pcprodut": copy_load(cur, "pcprodut", ["codprod", "descricao", "codfab", "percipi", "codfornec", "codepto", "codsec", "embalagem", "qtunitcx", "classificfiscal", "marca", "codmarca", "prazoval", "controlavalidadedolote", "volume", "alturam3", "larguram3", "comprimentom3", "pesobruto", "revenda", "obs2"], prod_rows(produtos)),
+            "pcprodut": copy_load(cur, "pcprodut", ["codprod", "descricao", "codfab", "percipi", "codfornec", "codepto", "codsec", "embalagem", "qtunitcx", "classificfiscal", "marca", "codmarca", "prazoval", "controlavalidadedolote", "volume", "alturam3", "larguram3", "comprimentom3", "pesobruto", "pesoliq", "revenda", "obs2"], prod_rows(produtos)),
             "pcclient": copy_load(cur, "pcclient", ["codcli", "cliente", "fantasia", "municent", "municcob", "estent", "telcelent", "telent", "codusur1", "bloqueio"], cli_rows(clientes)),
         }
         c.commit()

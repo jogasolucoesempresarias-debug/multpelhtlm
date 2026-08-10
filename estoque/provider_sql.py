@@ -110,7 +110,12 @@ def cadastro_produto():
         cur.execute("""
             SELECT codprod, descricao, codfab, percipi, codfornec, codepto, codsec, embalagem,
                    qtunitcx, classificfiscal, marca, prazoval, controlavalidadedolote, volume,
-                   alturam3, larguram3, comprimentom3, pesobruto
+                   alturam3, larguram3, comprimentom3, pesobruto,
+                   -- ⚠️ via to_jsonb DE PROPÓSITO: `pesoliq` entrou em 08/2026 e as bases
+                   -- sintéticas já criadas NÃO têm a coluna. Referenciá-la direto derrubaria
+                   -- o módulo inteiro em modo BD com "column does not exist"; assim a chave
+                   -- ausente vira NULL e a demo degrada só na linha de peso líquido.
+                   (to_jsonb(pcprodut) ->> 'pesoliq')::numeric
             FROM pcprodut WHERE revenda = 'S' AND coalesce(obs2, '') <> 'FL'
         """)
         out = {}
@@ -121,6 +126,10 @@ def cadastro_produto():
                 "QTUNITCX": _f(r[8]), "NCM": r[9], "MARCA": r[10], "PRAZOVAL": r[11],
                 "CTRL_VALIDADE": r[12], "VOLUME": _f(r[13]), "ALTURAM3": _f(r[14]),
                 "LARGURAM3": _f(r[15]), "COMPRIMENTOM3": _f(r[16]), "PESOBRUTO": _f(r[17]),
+                # PESOLIQ entrou em 08/2026 com o peso do pedido. Sem ele aqui, o modo BD
+                # perderia a linha "Peso líquido" do PDF em silêncio — é a armadilha
+                # loader→core do README (chave que o core lê e o provider não devolve).
+                "PESOLIQ": _f(r[18]),
             }
         return out
 

@@ -147,6 +147,29 @@ anterior sobreposto**, ciclo × lead, pedidos em aberto, a comprar (c/ impostos)
 - `lead_confiavel=False` → a tela mostra `~26d (amostra fraca)`, não o número seco. Gate:
   `tests/test_fornecedor_360.py`.
 
+**Aba Verbas — a página inteira fala UMA janela** (08/2026). O rodapé da aba sempre prometeu
+"negociado/aplicado = últimos 12 meses · saldo = posição atual", mas dois elementos não cumpriam.
+Hoje vale a **invariante**: `KPI Negociado 12m` = Σ coluna Negociado da tabela = Σ barras azuis do
+gráfico = Σ do "Por conta". Validado no BI: 819.001,73 (empresa) e 37.586,43 (RAZZO), nos quatro
+lugares, diferença 0,00.
+- ⚠️ **Filtro de fornecedor recorta no SERVIDOR** (`core.verbas_fornecedores(fornec=…)`), junto do
+  comprador e em **interseção**. Filtrar só as linhas no cliente deixava tabela de 1 fornecedor ao
+  lado de gráfico da empresa toda (a barra de julho dizia ~R$ 63k onde a verba da RAZZO era
+  R$ 10.054,80). O parâmetro é **`fornec`** (não `fornec_cod`) e entra **nas duas chaves de cache**
+  — servidor e cliente; sem isso o 1º fornecedor consultado é servido aos demais por 30 min.
+- ⚠️ **O eixo do gráfico é de CALENDÁRIO, montado do PERÍODO — não dos dados.** Listar "os meses
+  que tiveram movimento" colava barras não consecutivas: 27 meses de calendário em 14 barras, e
+  **96% dos fornecedores têm buraco**. Mês zerado é informação.
+- ⚠️ **Rótulo de mês por extenso (`ago/26`), nunca `26-08`** — em pt-BR aquilo se lê como *26 de
+  agosto*. O app já tinha a convenção (`MES_ABREV`/`mesLbl12`); só as Verbas ficaram de fora.
+- ⚠️ **As DUAS pontas são parciais** e as duas avisam com `*`: a 1ª porque a janela são 365 dias
+  corridos (começa no meio do mês — R$ 13.019,12 ficam de fora), a última porque o mês corrente
+  ainda corre. Não dá para mudar para meses fechados: o `Negociado 12m` tem de casar com o
+  `Compra 12m` (também 365d) que forma o **% V/C**.
+- **Saldo é exceção proposital**: continua **posição** (qualquer emissão), porque é estoque, não
+  fluxo. Por isso o saldo de uma conta pode ser maior que o negociado dela. O **drawer** segue
+  2024+ (auditoria), com a janela escrita na tela. Gate: `tests/test_verbas.py`.
+
 **Meta de ruptura — uma meta por curva** (07/2026). Era A (2%) × B+C (5%); virou **A / B / C**
 (2% / 5% / 10%), editáveis em ⚙ Parâmetros. ⚠️ Separar **afrouxa o placar sem ninguém mexer na
 operação**: os itens C que estouravam o teto do bloco passam a ter orçamento próprio. Comparar
@@ -165,6 +188,22 @@ Doc completa das fórmulas em **`docs/estoque/planilha_v3.md`**.
   cód 69174, entrada há 243d, saída há 15d, cobertura 753d → estoque velho, não compra ruim.
 - **Giro** = média 3 meses (`QTVENDMES1..3`/3), toggle p/ forecast (RCA). **Custo** = `CUSTOFIN`. **Comprador** = `PCFORNEC.CODCOMPRADOR → PCEMPR.NOME`.
 - **Sugestão de compra** desconta o **pedido REAL em aberto** (PCPEDIDO/PCITEM, últimos 180d) e sai **em caixas** (`QTUNIT`/PCEMBALAGEM); sem fator de caixa → em unidades (pendências em `estoque/itens_sem_fator_caixa.csv`).
+- **Peso e cubagem: fonte única `core.medidas_unitarias`, e a fonte é o `PCPRODUT`.** Os três
+  valores (`VOLUME`, `PESOBRUTO`, `PESOLIQ`) são **por UNIDADE**; a caixa é `× fator`, e o total
+  do pedido é `quantidade em UNIDADES × unitário`. Validado contra o **rodapé do 211** no pedido
+  565848 (fornec. 9406, 22 itens): líquido **14.482,02**, bruto **14.497,64**, volume **23,50 m³**
+  — os três exatos. O PDF traz os três, iguais ao ERP, e por isso deixou de dizer "estimado".
+  ⚠️ **Fator de caixa**: `PCEMBALAGEM[QTUNIT]` **só quando > 1**, senão `PCPRODUT[QTUNITCX]`
+  (`core.py`, `caixa = qtunit_emb if qtunit_emb > 1 else qtunitcx`). Os dois **divergem em 152
+  produtos** e 120 têm `QTUNIT = 1` — usar `emb or cad` derruba esses 120 para fator 1.
+  Qual dos dois está certo nos 152 **não está resolvido**: `QTFATORCONVERSAO` é campo morto
+  (zerado) e `QTPEDIDA/QTDIGITADA` acerta só 36% dos casos conhecidos.
+- **Guarda de plausibilidade** (`MAX_M3_CAIXA`=1,5 · `MAX_KG_CAIXA`=50): caixa implicada
+  impossível → `medidas_confiaveis=False`, a tela mostra `—` e diz **quantos itens ficaram de
+  fora**. São cadastros em que o dado do **máster** foi gravado no registro da **unidade**
+  (66919: 5,3 kg e 0,09879 m³ na unidade ⇒ 530 kg/caixa). **70 produtos** listados em
+  `cubagem_a_corrigir.csv` (fora do repo — o repo é público). ⚠️ Os limiares são calibração,
+  não fato: 33 itens estão 5× acima deles (indiscutíveis), 15 a menos de 1,5×.
 - **Orçamento** = meta `65% da venda líq. 30d` por comprador × realizado do Winthor. **Transferência entre filiais NÃO é compra**: pedido cujo fornecedor tem a **mesma raiz de CNPJ** (8 díg., contra `MULTPEL_EMPRESA`) fica fora do orçamento.
   - **Mês fechado** (08/2026, pergunta do diretor "quando vira o mês o orçamento zera; quem
     estourou não deveria arrastar?"): o mês anterior passa a ser **apurado e exibido sempre**
@@ -187,6 +226,24 @@ Doc completa das fórmulas em **`docs/estoque/planilha_v3.md`**.
 - **Lista de compradores** ≠ folha inteira: deriva da base (`compradores_reais()` — fornecedor com produto de revenda → `CODCOMPRADOR`). Usar `PCEMPR` cru traz vendedores/financeiro.
 
 **Armadilhas de dados (landmines — não repita):**
+- ⚠️ **NÃO tire peso nem cubagem da `PCEMBALAGEM`.** Ela parece a fonte certa (é a tabela de
+  embalagens) e está publicada com todas as colunas, mas **`PESOBRUTO` vem vazio em 75,6%** dos
+  produtos de revenda e **`VOLUME` em 100%** — 13 linhas preenchidas em 191.804. Foi ela a fonte
+  do peso até 08/2026: o PDF dizia **6.758 kg** onde o ERP dizia **14.497,64** (−53%), porque o
+  item mais pesado do pedido (49447, 350 caixas, metade do valor) simplesmente **contava zero**.
+  Ninguém percebeu porque o total *parecia* completo. Segundo defeito da mesma fonte: `qtunit` e
+  `pesobruto` vinham de **dois `MAX()` INDEPENDENTES** de uma tabela com uma linha por embalagem,
+  então o fator de uma linha casava com o peso de outra (cód. 46661: fator 24 × peso do pacote
+  de 12). Gate: `tests/test_peso_cubagem.py`.
+- ⚠️ **O rótulo da unidade sai do TEXTO da embalagem; o FATOR, não.** `FD/8X192/UN` imprime
+  **FD** (`core._rotulo_master`), mas o número segue o `QTUNITCX` — os dois divergem em cadastros
+  reais (cód. 57474: texto diz `CX/0100/UN`, fator real 10). Antes saía "CX" em tudo que tivesse
+  fator, e o comprador **confere o PDF contra o 211 linha a linha**.
+- ⚠️ **Coluna nova de cadastro tem de entrar TAMBÉM no `estoque/provider_sql.py`** e no
+  `_seed_demo/` (schema + gerador). Chave que o `core` lê e o provider não devolve **zera a tela
+  em silêncio** no modo BD. E coluna nova referenciada direto no SQL **derruba o módulo inteiro**
+  nas bases sintéticas já criadas (`column does not exist`) — por isso `pesoliq` é lido via
+  `to_jsonb(pcprodut) ->> 'pesoliq'`, que devolve NULL em vez de estourar.
 - ⚠️ **Vencidos: join por `NUMTRANSVENDA`, NUNCA por `NUMNOTA`.** `NUMNOTA` repete ao longo dos anos e infla o resultado ~3,5× (o `SELECT DISTINCT` **não** corrige).
 - ⚠️ **ABC-XYZ: as `<option>` do `#f-xyz` precisam de `value` explícito (`X`/`Y`/`Z`).** Sem ele o filtro casa nada e devolve **zero produtos em silêncio**.
 - ⚠️ **Pedido de compra: o preço converte JUNTO com a quantidade** (o Winthor faz `B×C` literal). Converter só a qtd colocaria o pedido no ERP com valor ~50× menor. Fonte única `core.item_master` (PDF + planilha).
@@ -357,7 +414,7 @@ ANALYTICS_DB_NAME=joga_demo   # banco analítico (ANALYTICS_DB_* faz fallback pr
 > demo **não envelhece** sem regenerar. O default powerbi usa `TODAY()` normal.
 
 **Gates:** `tests/test_provider_*.py` (Dashboard, Comercial, Metas, Mix, Radar, Estoque, RBAC) +
-`test_medida_compat.py`. Baseline **392 passam / 5 falham** (3 de fixture de data + 2 do
+`test_medida_compat.py`. Baseline **489 passam / 5 falham** (3 de fixture de data + 2 do
 `test_provider_estoque` que dependem de um `joga_demo` local com venda no mês corrente).
 
 ---
@@ -413,7 +470,7 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 ├── estoque/provider_sql.py         # 🆕 modo postgres do Compras
 ├── docker-compose.demo.yml         # 🆕 stack da instância DEMO (Portainer)
 ├── _seed_demo/                     # 🆕 base sintética reprodutível (joga_demo) + bootstrap + seeder
-└── tests/                          # pytest (392 passam; 5 falham por ambiente/fixture — não é regressão)
+└── tests/                          # pytest (489 passam; 5 falham por ambiente/fixture — não é regressão)
 ```
 
 ---
@@ -425,7 +482,7 @@ cp .env.example .env        # preencher (ver variáveis abaixo)
 docker compose -f docker-compose.dev.yml up -d redis
 python -X utf8 init_db.py   # cria/migra schema + admin default (ADMIN_EMAIL / ADMIN_SENHA)
 python -X utf8 server.py    # http://localhost:5000
-pytest -q                   # 392 passam, 5 falham (fixture de data + joga_demo local — não é regressão)
+pytest -q                   # 489 passam, 5 falham (fixture de data + joga_demo local — não é regressão)
 ```
 
 Variáveis novas da fusão no `.env` (além das do Power BI/DB/Redis/Resend):
@@ -573,7 +630,7 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 5. **Checagem de API usa `'/api/' in path`, não `startswith`** — por causa de `/estoque/api/...`.
 6. **Não editar `MultpelEstoque/`** (repo congelado) nem publicar em `:latest` sem intenção.
 7. **3 testes falham por fixture de data** (radar/mix/cohort) — pré-existentes, **não** são regressão.
-   O baseline é **392 passam / 5 falham** (+2 do `test_provider_estoque`, que precisam de um
+   O baseline é **489 passam / 5 falham** (+2 do `test_provider_estoque`, que precisam de um
    `joga_demo` local com venda no mês corrente — falham no HEAD limpo também).
 8. **Verificação visual de tema não confia em captura** das telas de dados (Power BI muda o conteúdo
    entre capturas) — comparar cor computada (`getComputedStyle`), não pixels.

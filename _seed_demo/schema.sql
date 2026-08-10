@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS pcprodut (
     larguram3               NUMERIC(12,4),
     comprimentom3           NUMERIC(12,4),
     pesobruto               NUMERIC(12,4),
+    pesoliq                 NUMERIC(12,4),   -- peso líquido do rodapé do 211 (08/2026)
     revenda                 CHAR(1) DEFAULT 'S',
     obs2                    TEXT
 );

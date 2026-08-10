@@ -258,7 +258,45 @@ def arredonda_caixa(qt, qtunitcx):
     return cx * qtunitcx, cx
 
 
-def item_master(qtd_un, qtunitcx, custo_unit):
+# ───────────────── medidas logísticas (peso e cubagem) — FONTE ÚNICA ─────────────────
+# Caixa maior que isto é fisicamente impossível no negócio: não passa em palete/porta, e
+# ninguém movimenta na mão. Serve de GUARDA contra cadastro em que alguém gravou o dado do
+# MÁSTER no registro da unidade — aí o "× fator de caixa" infla o resultado pelo fator inteiro.
+MAX_M3_CAIXA = 1.5
+MAX_KG_CAIXA = 50.0
+
+
+def medidas_unitarias(cad, fator=1):
+    """Volume (m³), peso bruto e peso líquido de UMA unidade + se o cadastro é confiável.
+
+    ⚠️ A fonte é o **PCPRODUT**, não a PCEMBALAGEM. Validado contra o pedido 565848 do
+    Winthor (fornecedor 9406, 22 itens): `PCPRODUT × quantidade em UNIDADES` reproduz os
+    TRÊS totais do rodapé do 211 ao centavo — líquido 14.482,02, bruto 14.497,64 e volume
+    23,50 m³. A PCEMBALAGEM não serve: `PESOBRUTO` está vazio em **75,6%** dos produtos de
+    revenda e `VOLUME` em **100%**. Era ela a fonte do peso até 08/2026, e por isso o PDF
+    saía com 6.758 kg onde o ERP dizia 14.497,64 (−53%) — o item de maior peso do pedido
+    (49447, 350 caixas) simplesmente contava zero.
+
+    ⚠️ Havia um segundo defeito na fonte antiga: `qtunit` e `pesobruto` vinham de dois
+    `MAX()` INDEPENDENTES da PCEMBALAGEM, que tem uma linha por embalagem. O fator de uma
+    linha casava com o peso de outra (cód. 46661: fator 24 com o peso do pacote de 12).
+
+    `confiavel=False` quando a caixa implicada é impossível — a tela mostra "—" e diz
+    quantos itens ficaram de fora, em vez de exibir 730 kg/caixa como se fosse fato.
+    Os cadastros nessa situação estão em `cubagem_a_corrigir.csv` (70 produtos, 08/2026).
+    """
+    cad = cad or {}
+    f = fator if fator and fator > 1 else 1
+    vol, bruto, liq = _n(cad.get("VOLUME")), _n(cad.get("PESOBRUTO")), _n(cad.get("PESOLIQ"))
+    if vol <= 0:   # sem VOLUME, deriva das dimensões (A×L×C em cm → m³)
+        a, l, c = _n(cad.get("ALTURAM3")), _n(cad.get("LARGURAM3")), _n(cad.get("COMPRIMENTOM3"))
+        vol = (a * l * c) / 1e6 if (a > 0 and l > 0 and c > 0) else 0.0
+    confiavel = not ((vol > 0 and vol * f > MAX_M3_CAIXA)
+                     or (bruto > 0 and bruto * f > MAX_KG_CAIXA))
+    return {"vol": vol, "bruto": bruto, "liq": liq, "confiavel": confiavel}
+
+
+def item_master(qtd_un, qtunitcx, custo_unit, embalagem=None):
     """Converte um item do pedido (gravado sempre em UNIDADES) para a **unidade master**,
     que é como o pedido tem de sair no PDF e na planilha de importação do Winthor.
 
@@ -271,14 +309,25 @@ def item_master(qtd_un, qtunitcx, custo_unit):
     • com fator (`qtunitcx` > 1): qtd em CAIXAS e preço da CAIXA (`custo_unit × fator`);
     • sem fator: a unidade do Winthor já É a master → devolve como está ("un").
     O fator vem do `QTUNITCX`/`QTUNIT`, não do texto da embalagem — os dois divergem em alguns
-    cadastros (ex.: cód. 57474, embalagem diz CX/0100/UN mas o fator real é 10)."""
+    cadastros (ex.: cód. 57474, embalagem diz CX/0100/UN mas o fator real é 10).
+
+    ⚠️ Só o RÓTULO da unidade sai do texto da `embalagem` (`FD/8X192/UN` → "FD"); o NÚMERO
+    continua vindo do fator, pelo motivo acima. Antes devolvia "CX" sempre que houvesse
+    fator, e o comprador — que confere o PDF da JOGA contra o 211 linha a linha — via "CX"
+    onde o Winthor imprime "FD" (achado 08/2026, comparando o pedido 565848)."""
     q = _n(qtd_un)
     cx = _n(qtunitcx)
     custo = _n(custo_unit)
     if cx > 1 and q > 0:
         n_cx = math.ceil(q / cx)
-        return n_cx, _round(custo * cx, 4), "CX"
+        return n_cx, _round(custo * cx, 4), _rotulo_master(embalagem)
     return int(round(q)), _round(custo, 4), "UN"
+
+
+def _rotulo_master(embalagem):
+    """"FD/8X192/UN" → "FD". Só letras, no máx. 3; qualquer coisa estranha cai em "CX"."""
+    pref = (str(embalagem or "").split("/")[0] or "").strip().upper()
+    return pref if (pref.isalpha() and 1 <= len(pref) <= 3) else "CX"
 
 
 def _round(v, n=2):
@@ -780,7 +829,9 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         # na embalagem), deriva do PCPRODUT[VOLUME] (unitário × fator de caixa) — mesma fonte
         # que a aba Logística usa. Assim a cubagem deixa de vir vazia p/ a maioria.
         _fator_cx = caixa if caixa and caixa > 1 else 1
-        cub_caixa = _n(emb.get("volume")) or (_n(cad.get("VOLUME")) * _fator_cx)
+        _med = medidas_unitarias(cad, _fator_cx)
+        cub_caixa = _med["vol"] * _fator_cx if _med["confiavel"] else 0.0
+        peso_caixa = _med["bruto"] * _fator_cx if _med["confiavel"] else 0.0
 
         # VENDA PERDIDA acumulada na ruptura = dias em ruptura × giro/dia × PREÇO DE VENDA.
         # dias em ruptura: proxy = dias_sem_venda (dias desde a última venda), com TETO de 60 dias.
@@ -882,7 +933,8 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "trib_firme": trib_fonte in TRIB_FONTES_FIRMES,
             "status_exec": status_exec, "acao_rec": acao_rec,
             "cubagem_caixa_m3": _round(cub_caixa, 5) if cub_caixa else None,
-            "peso_caixa_kg": _round(_n(emb.get("pesobruto")), 3) if emb.get("pesobruto") else None,
+            "peso_caixa_kg": _round(peso_caixa, 3) if peso_caixa else None,
+            "medidas_confiaveis": _med["confiavel"],
             "compra_suspensa": compra_suspensa,
             "status_abast": status_abast,
             "status_ruptura": status_ruptura, "estoque_zero": estoque_zero,
@@ -2354,15 +2406,9 @@ def resumo_estoque_ideal(produtos, limiar_dias=45, meta_pct=0.90):
 
 
 # ───────────────────────── logística / cubagem (pedido real) ─────────────────────────
-def vol_unitario(cad):
-    """Volume unitário em m³ (PCPRODUT.VOLUME; fallback dims/1e6). 0 se sem cadastro."""
-    v = _n((cad or {}).get("VOLUME"))
-    if v > 0:
-        return v
-    a, l, c = _n(cad.get("ALTURAM3")), _n(cad.get("LARGURAM3")), _n(cad.get("COMPRIMENTOM3"))
-    return (a * l * c) / 1e6 if (a > 0 and l > 0 and c > 0) else 0.0
-
-
+# `vol_unitario` foi absorvida por `medidas_unitarias` (08/2026): peso e volume saem da MESMA
+# fonte e passam pela MESMA guarda. Duas funções para o mesmo conceito foi o que deixou o
+# volume com fallback pro cadastro e o peso preso na PCEMBALAGEM vazia por meses.
 def logistica_pedidos(cab, itens, prod_map, embalagem_map, comp_map, forn_map, hoje=None,
                       capacidade_m3=60.0, baixa_ate=0.1, dias=180):
     """Cubagem/ocupação por pedido em ABERTO (o que ainda vai chegar).
@@ -2389,22 +2435,24 @@ def logistica_pedidos(cab, itens, prod_map, embalagem_map, comp_map, forn_map, h
         cod = int(_n(r.get("CODPROD")))
         cad = prod_map.get(cod) or {}
         emb = (embalagem_map or {}).get(cod) or {}
-        uv = vol_unitario(cad)
-        cx = _n(emb.get("qtunit")) or _n(cad.get("QTUNITCX")) or 1
-        # peso: PCEMBALAGEM[PESOBRUTO] é o peso da CAIXA → multiplica pelas caixas do item
-        # (mesma regra da contagem de caixas: sem fator de caixa, a "caixa" é a própria unidade).
-        peso_cx = _n(emb.get("pesobruto"))
+        _cx_emb = _n(emb.get("qtunit"))
+        cx = (_cx_emb if _cx_emb > 1 else _n(cad.get("QTUNITCX"))) or 1
+        # peso e volume por UNIDADE, do PCPRODUT (ver medidas_unitarias): a PCEMBALAGEM tem
+        # PESOBRUTO vazio em 75,6% e VOLUME em 100%, e era ela a fonte do peso aqui.
+        med = medidas_unitarias(cad, cx)
+        uv = med["vol"] if med["confiavel"] else 0.0
+        peso_un = med["bruto"] if med["confiavel"] else 0.0
         cxs = (oq / cx if cx > 1 else oq)
         d = ped.setdefault(np_, {"cubagem": 0.0, "skus": 0, "caixas": 0.0, "unid": 0.0,
                                  "sem_vol": 0, "peso": 0.0, "sem_peso": 0})
         d["cubagem"] += oq * uv
         d["unid"] += oq
         d["caixas"] += cxs
-        d["peso"] += cxs * peso_cx
+        d["peso"] += oq * peso_un
         d["skus"] += 1
         if uv <= 0:
             d["sem_vol"] += 1
-        if peso_cx <= 0:
+        if peso_un <= 0:
             d["sem_peso"] += 1
     out = []
     for np_, d in ped.items():

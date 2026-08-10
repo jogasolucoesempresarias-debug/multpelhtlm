@@ -2565,6 +2565,14 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
         except (ValueError, TypeError):
             return "—"
 
+    def _dec2(v):
+        """2 casas no padrão pt-BR — peso e volume do rodapé são conferidos contra o 211,
+        que imprime 14.497,64; arredondar para inteiro faria parecer que não bate."""
+        try:
+            return f"{float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        except (ValueError, TypeError):
+            return "—"
+
     def _sug(it):
         q = core._n(it.get("qtd")); cx = core._n(it.get("qtunitcx"))
         if cx > 1 and q > 0:
@@ -2668,7 +2676,13 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
 
         header = ["Cód", "Descrição", "Embalagem", "Un", "Cód.Fab", "Qtde", "Custo un.", "IPI %", "Vlr. Total"]
         data = [header]
-        total = 0.0; total_kg = 0.0; total_ipi = 0.0; total_st = 0.0
+        total = 0.0; total_ipi = 0.0; total_st = 0.0
+        # ⚠️ Os três totais logísticos são calculados sobre a quantidade em UNIDADES, que é
+        # como o pedido é gravado — é assim que o Winthor chega aos números do rodapé do 211
+        # (validado no pedido 565848: 14.482,02 / 14.497,64 / 23,50, exatos).
+        # A 1ª versão só somava peso quando `un == "CX"`, então item sem fator de caixa
+        # ficava fora do total inteiro, além do buraco da fonte.
+        total_liq = 0.0; total_bru = 0.0; total_m3 = 0.0; sem_medida = 0
         for it in itens:
             _vl = core._n(it.get("valor"))
             total += _vl
@@ -2680,10 +2694,15 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
             # precisam bater linha a linha. `custo_master` é o preço da CAIXA nas linhas CX,
             # senão "Qtde × Custo un." não fecharia com o "Vlr. Total" impresso ao lado.
             q_master, custo_master, un = core.item_master(it.get("qtd"), it.get("qtunitcx"),
-                                                          it.get("custo_unit"))
+                                                          it.get("custo_unit"),
+                                                          it.get("embalagem"))
             qtde = f"{q_master}" if q_master else "—"
-            if un == "CX":
-                total_kg += q_master * core._n(it.get("peso_caixa"))
+            _qun = core._n(it.get("qtd"))
+            total_liq += _qun * core._n(it.get("peso_liq_un"))
+            total_bru += _qun * core._n(it.get("peso_bruto_un"))
+            total_m3 += _qun * core._n(it.get("vol_un"))
+            if core._n(it.get("peso_bruto_un")) <= 0:
+                sem_medida += 1
             ipi = core._n(it.get("percipi"))
             data.append([_i(it.get("codprod")), Paragraph(_e(str(it.get("descricao") or "")[:52]), cel_desc),
                          _e(it.get("embalagem") or "—"), un,
@@ -2736,7 +2755,20 @@ def _gerar_pdf_pedido(pe, itens=None, forn=None):
         tbl.setStyle(TableStyle(estilo))
         story.append(tbl)
         story.append(Spacer(1, 0.2 * cm))
-        _kg = f" &nbsp;·&nbsp; Peso total estimado: <b>{_i(total_kg)} kg</b>" if total_kg > 0 else ""
+        # Mesmo conjunto de medidas do rodapé do 211, para o comprador conferir documento
+        # contra documento sem ter de calcular nada. Deixou de se chamar "estimado": bate com
+        # o ERP ao centavo. Item sem cadastro confiável NÃO entra e a tela diz quantos são —
+        # total incompleto apresentado como completo foi o defeito original.
+        _p = []
+        if total_liq > 0:
+            _p.append(f"Peso líquido <b>{_dec2(total_liq)} kg</b>")
+        if total_bru > 0:
+            _p.append(f"Peso bruto <b>{_dec2(total_bru)} kg</b>")
+        if total_m3 > 0:
+            _p.append(f"Volume <b>{_dec2(total_m3)} m³</b>")
+        if sem_medida:
+            _p.append(f"<i>{sem_medida} item(ns) sem cadastro de peso — total incompleto</i>")
+        _kg = (" &nbsp;·&nbsp; " + " &nbsp;·&nbsp; ".join(_p)) if _p else ""
         # o total que o comprador confere contra o ERP é o da NF; a mercadoria fica ao lado
         # porque é ela que vira preço na planilha de importação.
         _tot = (f"Total da NF: <b>{_m(total_nf)}</b> &nbsp;·&nbsp; mercadoria {_m(total)}"
@@ -2833,7 +2865,16 @@ def api_pedido_pdf(pid):
             it["percst"] = it.get("perc_st") or 0
             # embalagem = a da CAIXA (PCEMBALAGEM, igual à tela do Abastecimento); fallback no cadastro
             it["embalagem"] = (emb_map.get(cod) or {}).get("embalagem") or c.get("EMBALAGEM")
-            it["peso_caixa"] = (emb_map.get(cod) or {}).get("pesobruto")
+            # peso/volume por UNIDADE, do PCPRODUT (core.medidas_unitarias). Até 08/2026 vinha
+            # do PCEMBALAGEM[PESOBRUTO], vazio em 75,6% dos produtos: o PDF dizia 6.758 kg
+            # onde o Winthor dizia 14.497,64. O fator segue a regra do resto do módulo
+            # (PCEMBALAGEM só quando > 1, senão QTUNITCX).
+            _cxe = core._n((emb_map.get(cod) or {}).get("qtunit"))
+            _fat = (_cxe if _cxe > 1 else core._n(c.get("QTUNITCX"))) or 1
+            _md = core.medidas_unitarias(c, _fat)
+            it["peso_bruto_un"] = _md["bruto"] if _md["confiavel"] else 0.0
+            it["peso_liq_un"] = _md["liq"] if _md["confiavel"] else 0.0
+            it["vol_un"] = _md["vol"] if _md["confiavel"] else 0.0
     # dados do fornecedor (PCFORNEC) p/ o bloco do cabeçalho
     forn = None
     if pe.get("codfornec") not in (None, ""):

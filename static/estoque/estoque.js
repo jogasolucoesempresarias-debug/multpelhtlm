@@ -737,6 +737,10 @@ function renderReposicao(P){
   // agrupa por fornecedor (+ cubagem do pedido sugerido = Σ caixas sugeridas × volume da caixa)
   const cubItem=p=>(p.sugestao_cx||0)*(p.cubagem_caixa_m3||0);
   const pesoItem=p=>(p.sugestao_cx||0)*(p.peso_caixa_kg||0);
+  // item sem cadastro de peso/volume, ou com cadastro reprovado pela guarda do servidor
+  // (`medidas_confiaveis`), entra no total como ZERO — o cabeçalho tem de avisar, senão o
+  // comprador fecha carga com um total incompleto achando que está completo.
+  const semMedida=p=>(p.medidas_confiaveis===false)||!(p.peso_caixa_kg>0);
   // IPI+ST previstos da linha. O title revela a FONTE: alíquota tirada do pedido real daquele
   // fornecedor (confiável) x perfil do fornecedor x cadastro (estimativa) — o comprador precisa
   // saber quando o número é praticado e quando é palpite.
@@ -755,7 +759,7 @@ function renderReposicao(P){
   // duas réguas: `valor` = mercadoria (vira preço na planilha do Winthor) e `valorNF` =
   // mercadoria + IPI + ST previstos, que é o que o Orçamento mede (PCPEDIDO[VLTOTAL]).
   // O card mostra a NF em destaque: era aí que o comprador planejava R$ 39,5k e consumia R$ 45,0k.
-  const g={}; rep.forEach(p=>{(g[p.codfornec]=g[p.codfornec]||{cod:p.codfornec,forn:p.fornecedor||('Forn '+p.codfornec),itens:[],valor:0,valorNF:0,incerto:0,cub:0,peso:0,zerados:0}); g[p.codfornec].itens.push(p); g[p.codfornec].valor+=valReporMerc(p); g[p.codfornec].valorNF+=valReporNF(p); g[p.codfornec].incerto+=valReporIncerto(p); g[p.codfornec].cub+=cubItem(p); g[p.codfornec].peso+=pesoItem(p); if(emRuptura(p)) g[p.codfornec].zerados++;});
+  const g={}; rep.forEach(p=>{(g[p.codfornec]=g[p.codfornec]||{cod:p.codfornec,forn:p.fornecedor||('Forn '+p.codfornec),itens:[],valor:0,valorNF:0,incerto:0,cub:0,peso:0,semMed:0,zerados:0}); g[p.codfornec].itens.push(p); g[p.codfornec].valor+=valReporMerc(p); g[p.codfornec].valorNF+=valReporNF(p); g[p.codfornec].incerto+=valReporIncerto(p); g[p.codfornec].cub+=cubItem(p); g[p.codfornec].peso+=pesoItem(p); if(semMedida(p)) g[p.codfornec].semMed++; if(emRuptura(p)) g[p.codfornec].zerados++;});
   // ordenação da LISTA de fornecedores. Default = maior pedido primeiro (era a ordem fixa antiga).
   // Com a lista fechada, "vejo todos" só vira "sei por onde começar" se der para reordenar.
   const ORD={valor:['Valor sugerido (maior)',(a,b)=>b.valorNF-a.valorNF],
@@ -845,7 +849,7 @@ function renderReposicao(P){
         <tbody>${gr.itens.sort((a,b)=>(a.cobertura_proj||0)-(b.cobertura_proj||0)).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td>${embCell(p)}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida):'—'}${p.qt_transicao>0?` <b title="+${int(p.qt_transicao)} recebido, em pré-entrada (aguardando liberação)">+${int(p.qt_transicao)}</b>`:''}</td><td class="num">${cob(p.cobertura_proj)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${sugCxN(p)}</td><td class="num">${cubItem(p)>0?dec(cubItem(p),3):'—'}</td><td class="num">${money(p.valor_sugerido_liq)}</td><td class="num">${impCell(p)}</td><td>${statExec(p.status_exec)}</td></tr>`).join('')}</tbody></table></div>`:'';
       return `<div class="panel forn-grp${op?' on':''}">
         <h3 class="forn-hd" data-forngrp="${gr.cod}" style="cursor:pointer" title="${op?'Fechar':'Abrir'} os itens deste fornecedor">
-          <span><span class="muted" style="display:inline-block;width:1em">${op?'▾':'▸'}</span>${esc(gr.forn)} <small class="muted">· ${gr.cod} · ${gr.itens.length} itens${gr.zerados?` · <b style="color:${C.red}">${int(gr.zerados)} zerado${gr.zerados>1?'s':''}</b>`:''}${gr.cub>0?` · ${dec(gr.cub,2)} m³`:''}${gr.peso>0?` · ${dec(gr.peso,1)} kg`:''} · ${leadCell(gr.cod)}</small></span>
+          <span><span class="muted" style="display:inline-block;width:1em">${op?'▾':'▸'}</span>${esc(gr.forn)} <small class="muted">· ${gr.cod} · ${gr.itens.length} itens${gr.zerados?` · <b style="color:${C.red}">${int(gr.zerados)} zerado${gr.zerados>1?'s':''}</b>`:''}${gr.cub>0?` · ${dec(gr.cub,2)} m³`:''}${gr.peso>0?` · ${dec(gr.peso,1)} kg`:''}${gr.semMed?` <span title="${gr.semMed} item(ns) sem cadastro confiável de peso/volume no Winthor — os totais acima estão incompletos" style="color:${C.orange}">⚠</span>`:''} · ${leadCell(gr.cod)}</small></span>
           <span>${gr.valorNF>gr.valor+0.005?`${money(gr.valorNF)} <small class="muted">previsto c/ impostos · merc. ${money(gr.valor)}</small>`:money(gr.valor)}${notaIncerteza(gr.valorNF,gr.incerto)} <button class="btn sm primary rowact" data-fornped="${gr.cod}">Gerar pedido</button></span></h3>
         ${corpo}
       </div>`;}).join('')+
