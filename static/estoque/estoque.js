@@ -2744,10 +2744,14 @@ function giroKpi(p){
    (decisão do diretor 07/2026: "é só o campo com os três vendedores, não precisa abrir uma nova
    aba do drawer pra tão pouca coisa"). Quantidade primeiro, porque é ela que escoa estoque; o
    faturamento ao lado revela quando os dois discordam (muita unidade barata × pouca cara). */
-function topVendedoresRow(tops){
+function topVendedoresRow(tops,opt){
   if(!tops||!tops.length) return '';
+  // ⚠️ `qtd:false` no FORNECEDOR: ali a quantidade soma unidades de produtos diferentes (uma
+  // caixa de bobina com um pote de 60ml) — número sem significado físico. No produto a unidade
+  // é a mesma para todos, e por isso lá ela aparece e até manda na ordenação.
+  const comQtd=!(opt&&opt.qtd===false);
   const linha=(v,i)=>`<div${i?' style="margin-top:3px"':''}>${i+1}. ${esc(v.nome)}
-     <small class="muted">${int(v.qtd)} un · ${moneyK(v.valor)}</small></div>`;
+     <small class="muted">${comQtd?int(v.qtd)+' un · ':''}${moneyK(v.valor)}</small></div>`;
   return `<div class="lote-row"><span>Top vendedores<br><small class="muted">no período</small></span>
     <span class="lr-r" style="text-align:right">${tops.map(linha).join('')}</span></div>`;
 }
@@ -2831,6 +2835,7 @@ async function openFornecedor(cod){
       ${kv('Venda líquida',`<b>${money(f.venda)}</b>`, yoy!=null?`${yoy>=0?'▲':'▼'} ${dec(Math.abs(yoy),1)}% vs ano anterior`:'')}
       ${kv('Lucro bruto',money(f.lucro), f.margem!=null?`margem ${dec(f.margem,1)}%`:'')}
       ${f.verba?kv('Verba negociada',money(f.verba), f.verba_campanha?`inclui ${money(f.verba_campanha)} de campanha`:''):''}
+      ${topVendedoresRow(j.top_vendedores,{qtd:false})}
       <div class="d-sec">Estoque e reposição</div>
       ${kv('Valor em estoque',money(f.estoque))}
       ${kv('A comprar',`<b>${money(f.sugestao_nf)}</b>`,'sugestão c/ impostos')}

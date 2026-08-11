@@ -444,6 +444,39 @@ FILTER(
 )"""
 
 
+def q_vendedores_do_fornecedor_rca(codfornec, data_ini, data_fim, filiais=None):
+    """Quem vendeu deste FORNECEDOR no período: CODUSUR × (qtd, valor). Alimenta o "top
+    vendedores" do drawer 360° do fornecedor (pedido do diretor 08/2026, "igual traz nos
+    produtos").
+
+    ⚠️ Filtra por `FATURAMENTO_VENDAS[CODFORNEC]`, e **não** pela lista de produtos do cadastro.
+    A lista parece equivalente e não é: ela só tem o que é revenda HOJE, então perde o item que
+    saiu de linha — é o bug do YoY (`core.yoy_fornecedor`) em miniatura. Medido no MAGNATECH
+    (10471, 90d): lista de produtos R$ 16.017,39 / 616 un contra R$ 16.055,89 / 617 un no fato.
+    Sempre no mesmo sentido: a lista SUBESTIMA. De quebra a query cai de ~2.100 para ~300
+    caracteres e não depende do cadastro de revenda.
+
+    Agrupa por CODUSUR no servidor, então voltam ~40 linhas mesmo num fornecedor de 300
+    produtos — longe do corte de 100.000 do `executeQueries` (a armadilha que já mordeu no
+    PCEST). Medido: 1,1s no maior fornecedor da base.
+
+    Bruta, sem parear devolução — mesma decisão da versão por produto: o objetivo é o ranking
+    de "quem sabe vender", não fechar centavo com o RCA."""
+    return f"""EVALUATE
+FILTER(
+    SUMMARIZECOLUMNS(
+        FATURAMENTO_VENDAS[CODUSUR],
+        FILTER(FATURAMENTO_VENDAS,
+            FATURAMENTO_VENDAS[CODFORNEC] = {int(codfornec)}
+            && FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)}
+            && FATURAMENTO_VENDAS[DTSAIDA] <= {_d(data_fim)}{_fv_and('FATURAMENTO_VENDAS', filiais)}),
+        "qtd",   SUM(FATURAMENTO_VENDAS[QT]),
+        "valor", [VENDA BRUTA]
+    ),
+    [qtd] <> 0 || [valor] <> 0
+)"""
+
+
 def q_venda_fornecedor_mensal_rca(data_ini, filiais=None):
     """Venda BRUTA por CODFORNEC × mês desde data_ini — série do drawer 360° do FORNECEDOR.
 

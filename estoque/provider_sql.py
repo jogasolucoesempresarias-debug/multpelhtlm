@@ -372,6 +372,22 @@ def venda_produto_mensal(ini, filiais=None):
                 for cod, am, v, cl in cur.fetchall()]
 
 
+def vendedores_do_fornecedor(codfornec, ini, fim, filiais=None):
+    """Espelha q_vendedores_do_fornecedor_rca: [{CODUSUR, qtd, valor}].
+    Filtra por `codfornec` no FATO — a lista de produtos do cadastro perderia item fora de
+    linha (mesma razão de `venda_fornecedor_mensal`)."""
+    fv = _fil(filiais)
+    with analytics_conn() as c:
+        cur = c.cursor()
+        cur.execute(f"""SELECT codusur, coalesce(sum(qt) FILTER (WHERE codoper='S'),0), {VB}
+            FROM faturamento_vendas
+            WHERE codfornec = %s AND dtsaida BETWEEN %s AND %s{fv}
+            GROUP BY codusur""", (int(codfornec), ini, fim))
+        return [{"CODUSUR": cu, "qtd": _f(q) or 0.0, "valor": _f(v) or 0.0}
+                for cu, q, v in cur.fetchall()
+                if cu is not None and ((_f(q) or 0) != 0 or (_f(v) or 0) != 0)]
+
+
 def venda_fornecedor_mensal(ini, filiais=None):
     """Espelha q_venda_fornecedor_mensal_rca: [{CODFORNEC, AnoMes, venda}] — série do drawer do
     fornecedor. Agrega no FATO (o sintético tem `codfornec`), igual ao DAX: somar por produto

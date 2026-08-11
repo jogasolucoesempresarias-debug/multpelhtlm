@@ -205,3 +205,88 @@ def test_sem_a_lista_de_tecnicos_o_drawer_nao_cai(app_ctx, monkeypatch):
     monkeypatch.setitem(sys.modules, "server", object())
     monkeypatch.setitem(sys.modules, "__main__", object())
     assert routes._vendedores_tecnicos() == set()
+
+
+# ═══════════ mesma seção no drawer do FORNECEDOR (pedido do diretor 08/2026) ═══════════
+# "trazer aqui no fornecedor o Top 3 vendedores em venda, igual traz nos produtos".
+#
+# ⚠️ Os gates ficam NESTE arquivo de propósito. A curva ABC acabou de ensinar o custo de
+# separar: `faa95c1` corrigiu o Pareto na aba Fornecedores, criou 8 gates só para aquele
+# caminho, e o cálculo gêmeo de outra tela sobreviveu 11 dias até o diretor reclamar de novo.
+# Quem mexer no ranking de vendedores tem de ver os dois caminhos no mesmo lugar.
+def _top_forn(app_ctx, **kw):
+    with app_ctx.test_request_context("/estoque/api/fornecedor/9161"):
+        return routes._top_vendedores_fornecedor(9161, "mes", ["3"], datetime.date(2026, 7, 31), **kw)
+
+
+def test_query_do_fornecedor_filtra_no_FATO_nao_pela_lista_de_produtos():
+    """A lista de produtos do cadastro parece equivalente e não é: só tem o que é revenda HOJE,
+    então perde item fora de linha. Medido no MAGNATECH (10471, 90d): R$ 16.017,39 pela lista
+    contra R$ 16.055,89 no fato — sempre subestimando. É o bug do YoY em miniatura."""
+    q = Q.q_vendedores_do_fornecedor_rca(9161, datetime.date(2026, 1, 1),
+                                         datetime.date(2026, 7, 31), ["3"])
+    assert "FATURAMENTO_VENDAS[CODFORNEC] = 9161" in q
+    assert "CODPROD" not in q, 'voltou a filtrar por lista de produtos'
+    assert "FATURAMENTO_VENDAS[CODUSUR]" in q          # agrupa no servidor
+    assert len(q) < 1000, 'query grande demais: sinal de lista de produtos embutida'
+
+
+def test_ordena_por_VALOR_no_fornecedor(app_ctx, monkeypatch):
+    """Diferente do produto, que ordena por quantidade. No fornecedor a qtd soma unidades de
+    produtos diferentes (caixa de bobina + pote de 60ml) — número sem significado físico, e o
+    pedido foi "Top 3 vendedores em VENDA"."""
+    _mock(monkeypatch, [{"CODUSUR": 1, "qtd": 900, "valor": 100.0},
+                        {"CODUSUR": 2, "qtd": 10, "valor": 5000.0}],
+          nomes={"1": "MUITA UNIDADE BARATA", "2": "POUCA UNIDADE CARA"})
+    assert [v["nome"] for v in _top_forn(app_ctx)] == ["POUCA UNIDADE CARA", "MUITA UNIDADE BARATA"]
+
+
+def test_corta_no_top_3_do_fornecedor(app_ctx, monkeypatch):
+    _mock(monkeypatch, [{"CODUSUR": i, "qtd": 1, "valor": 100 - i} for i in range(1, 8)])
+    assert len(_top_forn(app_ctx)) == 3
+
+
+def test_conta_tecnica_fora_do_ranking_do_fornecedor(app_ctx, monkeypatch):
+    """Mesma regra do produto — o "RCA 999" que o diretor viu em 08/2026 não pode voltar por
+    uma porta nova."""
+    import server
+    _mock(monkeypatch, [{"CODUSUR": 999, "qtd": 9999, "valor": 0.0},
+                        {"CODUSUR": 7, "qtd": 5, "valor": 900.0}], nomes={"7": "REAL"})
+    monkeypatch.setattr(server, "VENDEDORES_TECNICOS", {999}, raising=False)
+    assert [v["codusur"] for v in _top_forn(app_ctx)] == [7]
+
+
+def test_reusa_o_resolvedor_de_nomes_endurecido():
+    """Gate de código. `_vendedores_nomes` carrega a cicatriz do "RCA 950" (em produção o
+    server.py é __main__ e um `from server import` traz 2ª cópia do módulo → mapa vazio).
+    Reimplementar aqui reintroduziria o bug num lugar que os gates de lá não olham."""
+    import inspect
+    src = inspect.getsource(routes._top_vendedores_fornecedor)
+    assert "_vendedores_nomes()" in src and "_vendedores_tecnicos()" in src
+    # só LINHAS DE CÓDIGO: a docstring cita o padrão proibido de propósito, para quem for
+    # mexer entender por que ele não pode voltar (mesma técnica de test_nao_importa_server_de_novo)
+    linhas = [l.strip() for l in src.splitlines()]
+    assert not [l for l in linhas
+                if l.startswith("from server") or l.startswith("import server")]
+
+
+def test_RCA_fora_nao_derruba_o_drawer_do_fornecedor(app_ctx, monkeypatch):
+    _mock(monkeypatch, [], explode=True)
+    assert _top_forn(app_ctx) == []
+
+
+def test_modo_postgres_tem_provider_espelhado_para_fornecedor():
+    """Contrato loader→core: sem o espelho, o modo BD zera a seção em silêncio."""
+    from estoque import provider_sql as PS
+    assert callable(getattr(PS, "vendedores_do_fornecedor", None))
+    import inspect
+    src = inspect.getsource(PS.vendedores_do_fornecedor)
+    assert "codfornec = %s" in src, 'o provider tem de filtrar no fato, como o DAX'
+
+
+def test_front_esconde_a_quantidade_no_fornecedor():
+    """Gate de código: somar unidades de produtos diferentes não significa nada, e um número
+    sem significado numa tela de decisão é pior que nenhum."""
+    from pathlib import Path
+    js = Path('static/estoque/estoque.js').read_text(encoding='utf-8')
+    assert "topVendedoresRow(j.top_vendedores,{qtd:false})" in js

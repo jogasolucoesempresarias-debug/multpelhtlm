@@ -1248,7 +1248,11 @@ def api_fornecedor(codfornec):
         pedidos = []
 
     resumo = _resumo_fornecedor(codfornec, itens, forn, extra, lead)
+    # Top 3 vendedores do fornecedor no período — segue o seletor "Venda" do topo, como os KPIs
+    # (a série é que é sempre 24m). Degrada para [] se o RCA cair: o drawer não some por isso.
+    top_vend = _top_vendedores_fornecedor(codfornec, periodo, _filiais_venda(), hoje)
     return jsonify({"ok": True, "fornecedor": resumo, "meses": meses,
+                    "top_vendedores": top_vend,
                     "serie": serie, "serie_ant": serie_ant,
                     "top_produtos": [{k: p.get(k) for k in
                                       ("codprod", "descricao", "venda", "lucro", "margem",
@@ -1347,6 +1351,55 @@ def _top_vendedores_produto(codprod, periodo, filiais_venda, hoje, n=3):
     # O faturamento viaja junto na tela para o comprador ver quando os dois discordam — vender
     # muita unidade barata e vender pouca cara são conversas diferentes.
     saida.sort(key=lambda x: (-(x["qtd"] or 0), -(x["valor"] or 0)))
+    saida = saida[:n]
+    pbi._CACHE.set(key, saida, 1800)
+    return saida
+
+
+def _top_vendedores_fornecedor(codfornec, periodo, filiais_venda, hoje, n=3):
+    """Top N vendedores DESTE fornecedor no período: [{codusur, nome, qtd, valor}].
+
+    Pedido do diretor 08/2026: "trazer aqui no fornecedor o Top 3 vendedores em venda, igual
+    traz nos produtos". Mesma mecânica de `_top_vendedores_produto`, com UMA diferença que não
+    é detalhe: filtra por `CODFORNEC` no FATO, não pela lista de produtos do cadastro. A lista
+    só tem o que é revenda HOJE e perderia item fora de linha — medido no MAGNATECH, 90d:
+    R$ 16.017,39 pela lista contra R$ 16.055,89 no fato, sempre subestimando. Ver a docstring
+    de `q_vendedores_do_fornecedor_rca`.
+
+    Nome e lista de técnicos vêm de `_vendedores_nomes`/`_vendedores_tecnicos` — reusados, NÃO
+    reimplementados. Aquele caminho já carrega a cicatriz do "RCA 950": em produção o server.py
+    é `__main__`, e um `from server import ...` traz uma 2ª cópia do módulo e devolve mapa
+    vazio. Repetir o import aqui reintroduziria o bug num lugar que os gates de lá não olham."""
+    ini, fim = _venda_datas(periodo, hoje)
+    key = f"topvendforn:{codfornec}:{periodo}:{_filiais_key(filiais_venda)}:{hoje.isoformat()}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    try:
+        rows = (PS.vendedores_do_fornecedor(codfornec, ini, fim, filiais_venda) if _pg()
+                else pbi.run_dax_rca(Q.q_vendedores_do_fornecedor_rca(codfornec, ini, fim,
+                                                                      filiais_venda)))
+    except Exception as e:
+        print(f"[top vendedores forn {codfornec}] indisponível ({e}).")
+        return []
+    nomes = _vendedores_nomes()
+    tecnicos = _vendedores_tecnicos()
+    saida = []
+    for r in rows:
+        cu = core._n(r.get("CODUSUR"))
+        if not cu:
+            continue
+        cu = int(cu)
+        if cu in tecnicos:
+            continue
+        saida.append({"codusur": cu, "nome": nomes.get(str(cu)) or f"RCA {cu}",
+                      "qtd": core._round(core._n(r.get("qtd"))),
+                      "valor": core._round(core._n(r.get("valor")))})
+    # ⚠️ Ordena por VALOR aqui, não por quantidade como no produto. O pedido foi "Top 3
+    # vendedores em VENDA", e no fornecedor a quantidade soma unidades de produtos diferentes
+    # (uma caixa de bobina com um pote de 60ml) — número sem significado físico. No produto a
+    # unidade é a mesma para todos, e por isso lá a quantidade manda.
+    saida.sort(key=lambda x: (-(x["valor"] or 0), -(x["qtd"] or 0)))
     saida = saida[:n]
     pbi._CACHE.set(key, saida, 1800)
     return saida
