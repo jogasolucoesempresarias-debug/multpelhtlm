@@ -2092,13 +2092,18 @@ function renderComprasVendas(P){
       ${kpi('Estoque (compras)',money(totE),'',C.accent)}${kpi('Venda',money(totV),'',C.green)}
       ${kpi('Lucro',money(totL),'',C.accent2)}${kpi('Margem',totV?dec(totL/totV*100,1)+'%':'—','',C.purple)}</div>`;
     html+=`<div class="tbl-wrap"><table><thead><tr>${ck.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${tip(S.view,c.label)}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('')}</tr></thead><tbody>`+
-      rows.map(r=>`<tr><td><span class="prod">${esc(r.nome)}</span></td>${dim==='fornecedor'?`<td>${badge(r.curva_abc)}</td>`:''}<td class="num">${int(r.n)}</td><td class="num">${money(r.estoque)}</td><td class="num">${money(r.venda)}</td><td class="num">${money(r.lucro)}</td><td class="num">${r.margem==null?'—':dec(r.margem,1)+'%'}</td><td class="num">${r.turn==null?'—':dec(r.turn,2)+'×'}</td><td class="num">${int(r.rupt)}</td><td class="num">${dec(r.pct_rupt||0,1)}%</td><td class="num">${money(r.parado)}</td></tr>`).join('')+
+      rows.map(r=>`<tr${dim==='fornecedor'?` data-forn="${r.key}" style="cursor:pointer" title="ver o 360° do fornecedor"`:''}><td><span class="prod">${esc(r.nome)}</span></td>${dim==='fornecedor'?`<td>${badge(r.curva_abc)}</td>`:''}<td class="num">${int(r.n)}</td><td class="num">${money(r.estoque)}</td><td class="num">${money(r.venda)}</td><td class="num">${money(r.lucro)}</td><td class="num">${r.margem==null?'—':dec(r.margem,1)+'%'}</td><td class="num">${r.turn==null?'—':dec(r.turn,2)+'×'}</td><td class="num">${int(r.rupt)}</td><td class="num">${dec(r.pct_rupt||0,1)}%</td><td class="num">${money(r.parado)}</td></tr>`).join('')+
       `</tbody></table></div><div class="count-line">${rows.length} ${dim==='fornecedor'?'fornecedores':'compradores'} · "Venda/Estoque" = quantas vezes o capital girou no período.</div>`;
     el.innerHTML=html;
     el.querySelectorAll('thead th[data-k]').forEach(th=>th.onclick=()=>{const k=th.dataset.k,cur=S.sort[skk]||{};S.sort[skk]={key:k,dir:cur.key===k?-cur.dir:-1};render();});
   }
   el.querySelectorAll('#cv-seg .seg-opt').forEach(o=>o.onclick=()=>{S.cvDim=o.dataset.d;render();});
   el.querySelectorAll('tbody tr[data-cod]').forEach(tr=>tr.onclick=()=>openProduto(tr.dataset.cod));
+  // ⚠️ Só a dimensão FORNECEDOR abre drawer (pedido do diretor 08/2026: "colocar aquela tela
+  // lateral nesse relatório também"). "Por comprador" NÃO ganha `data-forn` nem cursor de mão
+  // de propósito: não existe drawer de comprador no app, e linha que parece clicável e não
+  // responde é reportada como bug — o clique tem de se anunciar ou não existir.
+  el.querySelectorAll('tbody tr[data-forn]').forEach(tr=>tr.onclick=()=>openFornecedor(tr.dataset.forn));
 }
 
 /* ───────── Orçamento ───────── */

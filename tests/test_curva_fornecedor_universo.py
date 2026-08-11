@@ -132,3 +132,26 @@ def test_a_unica_fonte_do_pareto_parte_do_universo():
     js = _js()
     fn = js[js.index('function abcFornecedorMap'):js.index('function renderFornecedores')]
     assert 'S.produtosAll' in fn, 'abcFornecedorMap deixou de partir do universo'
+
+
+# ─────────── drawer 360° em Compras × Vendas (pedido do diretor 08/2026) ───────────
+# "colocar para aparecer aquela tela lateral aqui nesse relatório também".
+def test_compras_x_vendas_abre_o_drawer_do_fornecedor():
+    """A linha do fornecedor tem de carregar `data-forn` (o `r.key`, que é o codfornec — a mesma
+    chave que a curva ABC usa) e o wiring para `openFornecedor`, reusando o endpoint da aba
+    Fornecedores. Nada novo no servidor."""
+    js = _js()
+    bloco = js[js.index('function renderComprasVendas'):]
+    bloco = bloco[:bloco.index('\n}\n', bloco.index("data-forn"))]
+    assert 'data-forn="${r.key}"' in bloco
+    assert "tr[data-forn]" in bloco and "openFornecedor(tr.dataset.forn)" in bloco
+
+
+def test_por_comprador_nao_finge_ser_clicavel():
+    """Não existe drawer de comprador no app. Linha com cursor de mão que não responde é
+    reportada como bug — o clique tem de se anunciar ou não existir. O `data-forn` e o
+    `cursor:pointer` saem condicionados a `dim==='fornecedor'`."""
+    js = _js()
+    linha = next(l for l in js.splitlines() if 'data-forn="${r.key}"' in l)
+    assert "dim==='fornecedor'?" in linha, \
+        'a afordância de clique deixou de ser condicionada à dimensão fornecedor'
