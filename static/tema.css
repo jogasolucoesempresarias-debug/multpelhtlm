@@ -14,6 +14,14 @@
  */
 
 :root {
+  /* ⚠️ Declara o esquema para o NAVEGADOR, não só para o nosso CSS. O que é desenhado pelo
+     sistema — barra de rolagem, a LISTA que abre num <select>, checkbox, seletor de data —
+     ignora as variáveis daqui e sai no modo claro por padrão. Sem esta linha, o tema escuro
+     (que é o default do app) mostrava gatilho de select escuro abrindo popup BRANCO, e barra
+     de rolagem clara sobre fundo quase preto, em todas as telas do Comercial. O módulo
+     Compras não sofria só porque tem regra própria de barra (estoque.css). */
+  color-scheme: dark;
+
   /* ── Fundo e superfícies ── */
   --bg: #0a0e17;         /* fundo da página */
   --surface: #111827;    /* cartões, painéis */
@@ -88,6 +96,7 @@
  * verde e o laranja do escuro reprovavam sobre branco e precisaram descer de tom.
  * ══════════════════════════════════════════════════════════════════════════════════════════ */
 :root[data-tema="claro"] {
+  color-scheme: light;   /* explícito: o par do `dark` acima, para a troca ser simétrica */
   --bg: #f5f7fa;
   --surface: #ffffff;
   --surface2: #eef1f6;

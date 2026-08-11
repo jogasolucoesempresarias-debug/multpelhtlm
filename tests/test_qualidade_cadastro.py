@@ -139,3 +139,23 @@ def test_barra_da_pagina_tem_token_proprio_e_contraste():
     assert len(thumbs) == 2 and len(bgs) >= 2
     for thumb, bg in zip(thumbs, bgs[:2]):
         assert _ct(bg, thumb) >= 3.0, f'{thumb} sobre {bg} = {_ct(bg, thumb):.2f}:1 (mínimo 3:1)'
+
+
+def test_color_scheme_declarado_nos_dois_temas():
+    """O que o NAVEGADOR desenha — barra de rolagem, a lista que abre num <select>, checkbox,
+    seletor de data — ignora as variáveis do tema.css e sai no modo claro por padrão. Sem esta
+    declaração, o tema escuro (default do app) mostrava nas 17 telas do Comercial gatilho de
+    select escuro abrindo popup BRANCO, e barra clara sobre fundo quase preto. Verificado no
+    navegador em /, /carteira, /vendedores, /metas e /estoque/: computa `dark` e `light`.
+
+    ⚠️ Tem de existir nos DOIS: declarar só o escuro deixaria o claro no default implícito, e
+    a troca de tema pararia de ser simétrica."""
+    from pathlib import Path
+    css = Path('static/tema.css').read_text(encoding='utf-8')
+    # ancora na REGRA (com a chave), não no seletor solto: o comentário do cabeçalho do
+    # arquivo cita `:root[data-tema="claro"]` em prosa, antes de qualquer regra
+    corte = css.index(':root[data-tema="claro"] {')
+    escuro = css[css.index(':root {'):corte]
+    claro = css[corte:]
+    assert 'color-scheme: dark' in escuro, 'tema escuro sem color-scheme'
+    assert 'color-scheme: light' in claro, 'tema claro sem color-scheme'
