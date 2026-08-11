@@ -88,3 +88,47 @@ def test_export_de_fornecedores_usa_o_universo(chamador):
     trecho = src[src.index('elif view == "fornecedores"'):src.index('elif view == "compradores"')]
     assert "curva_abc_fornecedores(produtos" in trecho, \
         "a curva do export tem de sair de `produtos` (universo), não da lista filtrada"
+
+
+# ─────────── reincidência de 08/2026: o gêmeo que ficou no JavaScript ───────────
+# O diretor reportou a MESMA BOMBRIL como C onze dias depois da correção, agora na aba
+# Compras × Vendas. O commit faa95c1 trocou o Pareto local por `abcFornecedorMap` na aba
+# Fornecedores, corrigiu o core e o export — e deixou de pé um cálculo GÊMEO em
+# `renderComprasVendas`, que agrega fornecedor só no cliente.
+#
+# Os 8 gates acima não podiam pegar: são Python, e aquele cálculo vive no JS. Gate protegendo
+# só o caminho corrigido dá a sensação de assunto encerrado, e foi ela que deixou o gêmeo passar.
+def _js():
+    from pathlib import Path
+    return Path('static/estoque/estoque.js').read_text(encoding='utf-8')
+
+
+def test_nenhuma_tela_recalcula_a_curva_a_partir_da_lista_visivel():
+    """Gate de CÓDIGO no front. `abcFornecedorMap` é a única autorizada a rodar o Pareto,
+    porque é a única que parte de `S.produtosAll` (o universo)."""
+    js = _js()
+    ini = js.index('function abcFornecedorMap')
+    fim = js.index('function renderFornecedores')
+    fora = js[:ini] + js[fim:]
+    # a assinatura do Pareto: acumulado ÷ total, comparado com as faixas 80/95
+    suspeitas = [ln.strip() for ln in fora.splitlines()
+                 if "<=80?'A'" in ln.replace(' ', '') or '<=80?"A"' in ln.replace(' ', '')]
+    assert not suspeitas, ('Pareto de curva ABC fora de abcFornecedorMap — a lista de origem '
+                           'quase certamente já está filtrada:\n  ' + '\n  '.join(suspeitas))
+
+
+def test_compras_x_vendas_usa_o_mapa_do_universo():
+    """A aba onde o bug reincidiu, travada nominalmente."""
+    js = _js()
+    bloco = js[js.index('function renderComprasVendas'):]
+    bloco = bloco[:bloco.index('function renderQualCadastro')] if 'function renderQualCadastro' in bloco else bloco[:20000]
+    assert 'abcFornecedorMap()' in bloco, \
+        'renderComprasVendas parou de usar a curva do universo'
+
+
+def test_a_unica_fonte_do_pareto_parte_do_universo():
+    """Se `abcFornecedorMap` deixar de ler `S.produtosAll`, todas as telas erram juntas —
+    e aí nenhum dos gates acima acusa, porque o core continuaria certo."""
+    js = _js()
+    fn = js[js.index('function abcFornecedorMap'):js.index('function renderFornecedores')]
+    assert 'S.produtosAll' in fn, 'abcFornecedorMap deixou de partir do universo'

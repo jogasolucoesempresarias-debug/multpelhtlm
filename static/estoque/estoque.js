@@ -2074,8 +2074,12 @@ function renderComprasVendas(P){
       // ruptura = critério oficial (estoque<=0 & giro>0); cobertura baixa é atenção, não ruptura
       if((p.qtdisp<=0)&&(p.giro_dia>0))o.rupt++; if(p.status_parado)o.parado+=(p.valor||0);});
     const rows0=Object.values(g).map(o=>({...o,margem:o.venda?o.lucro/o.venda*100:null,turn:o.estoque?o.venda/o.estoque:null,pct_rupt:o.n?o.rupt/o.n*100:0}));
-    if(dim==='fornecedor'){const _tv=rows0.reduce((s,o)=>s+(o.venda||0),0)||1;let _ac=0;   // curva ABC do fornecedor por venda
-      [...rows0].sort((a,b)=>(b.venda||0)-(a.venda||0)).forEach(o=>{_ac+=(o.venda||0);const _p=_ac/_tv*100;o.curva_abc=_p<=80?'A':(_p<=95?'B':'C');});}
+    // ⚠️ Curva do UNIVERSO (abcFornecedorMap), NUNCA Pareto sobre esta lista — ela já veio
+    // filtrada. Este era o último sobrevivente do bug corrigido em faa95c1 (31/07/2026), que
+    // trocou o Pareto local na aba Fornecedores e deixou o gêmeo aqui: com um fornecedor na
+    // tela o acumulado dele é 100% e a curva vira C, seja ele quem for. O diretor reportou a
+    // MESMA BOMBRIL como C pela segunda vez em 11/08/2026.
+    if(dim==='fornecedor'){const _m=abcFornecedorMap(); rows0.forEach(o=>{o.curva_abc=_m[o.key]||'C';});}
     const ck=[{k:'nome',label:dim==='fornecedor'?'Fornecedor':'Comprador'},...(dim==='fornecedor'?[{k:'curva_abc',label:'ABC',badge:1}]:[]),{k:'n',label:'Itens',num:1},
       {k:'estoque',label:'Estoque R$',num:1},{k:'venda',label:'Venda R$',num:1},{k:'lucro',label:'Lucro R$',num:1},
       {k:'margem',label:'Margem',num:1},{k:'turn',label:'Venda/Estoque',num:1},{k:'rupt',label:'Ruptura',num:1},{k:'pct_rupt',label:'% Rupt.',num:1},{k:'parado',label:'Parado R$',num:1}];
