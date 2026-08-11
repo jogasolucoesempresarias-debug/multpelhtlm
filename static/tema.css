@@ -20,6 +20,11 @@
   --surface2: #1a2235;   /* controles, cabeçalho de tabela, estados hover */
   --surface3: #222d44;   /* 3º nível — usado pelo módulo Compras */
   --border: #1e293b;
+  /* Polegar da barra de rolagem da PÁGINA. Token próprio porque nenhuma cor de superfície
+     serve: `--surface3` dava 1,40:1 no escuro e 1,15:1 no claro (invisível — reclamação do
+     diretor 08/2026), e `--text-dim` dava 13,6:1 no claro, uma barra quase preta. Calibrado
+     logo acima do mínimo de 3:1 da WCAG p/ componente de UI: visível sem pesar. */
+  --scroll-thumb: #5b6a82;   /* 3,52:1 sobre --bg */
 
   /* ── Texto ── */
   --text: #e2e8f0;       /* corpo */
@@ -87,6 +92,7 @@
   --surface: #ffffff;
   --surface2: #eef1f6;
   --surface3: #e3e8f0;
+  --scroll-thumb: #7c8798;   /* 3,39:1 sobre --bg */
   --border: #d5dce6;
 
   --text: #0f172a;

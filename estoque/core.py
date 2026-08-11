@@ -2409,6 +2409,71 @@ def resumo_estoque_ideal(produtos, limiar_dias=45, meta_pct=0.90):
 # `vol_unitario` foi absorvida por `medidas_unitarias` (08/2026): peso e volume saem da MESMA
 # fonte e passam pela MESMA guarda. Duas funções para o mesmo conceito foi o que deixou o
 # volume com fallback pro cadastro e o peso preso na PCEMBALAGEM vazia por meses.
+# ── qualidade do CADASTRO logístico (base inteira) ──
+# Categorias e a ordem em que a tela as mostra. O `fn` recebe (cad, medidas, fator).
+QUAL_CADASTRO = [
+    ("cadastro_impossivel", "Cadastro impossível",
+     lambda cad, med, fat: not med["confiavel"]),
+    ("sem_cubagem", "Sem cubagem",
+     lambda cad, med, fat: med["vol"] <= 0),
+]
+
+
+def qualidade_cadastro(prod_map, emb_map=None, forn_map=None, comp_map=None, comprador=None):
+    """Produtos com problema no CADASTRO LOGÍSTICO, sobre a **base inteira**.
+
+    ⚠️ Universo DIFERENTE do resto da aba Qualidade de propósito, e a tela escreve isso.
+    As checagens antigas dependem de estoque ("sem giro c/ estoque", "estoque negativo") e por
+    isso rodam sobre o snapshot, que é recortado por FILIAL. Estas não dependem: o erro está no
+    produto, exista ele em qual filial for. Medido em 08/2026: 72 produtos na base inteira
+    contra **21** dentro do snapshot do Atacado — ligar a checagem no snapshot faria a tela
+    mostrar 21 e a planilha enviada ao cliente dizer 70, e alguém perguntaria cadê o resto.
+
+    Substitui o `cubagem_a_corrigir.csv` gerado à mão: duas fontes da mesma lista divergem no
+    primeiro cadastro que o TI corrigir.
+    """
+    emb_map = emb_map or {}
+    forn_map = forn_map or {}
+    comp_map = comp_map or {}
+    comprador = int(_n(comprador)) or None
+    linhas, contagem = [], {k: 0 for k, _, _ in QUAL_CADASTRO}
+    for cod, cad in (prod_map or {}).items():
+        f = forn_map.get(int(_n((cad or {}).get("CODFORNEC")))) or {}
+        codcomp = int(_n(f.get("CODCOMPRADOR"))) or None
+        if comprador and codcomp != comprador:
+            continue
+        qe = _n((emb_map.get(cod) or {}).get("qtunit"))
+        fat = (qe if qe > 1 else _n((cad or {}).get("QTUNITCX"))) or 1
+        med = medidas_unitarias(cad, fat)
+        probs = [(k, lbl) for k, lbl, fn in QUAL_CADASTRO if fn(cad, med, fat)]
+        if not probs:
+            continue
+        for k, _lbl in probs:
+            contagem[k] += 1
+        linhas.append({
+            "codprod": cod,
+            "descricao": (cad.get("DESCRICAO") or "").strip(),
+            "fornecedor": f.get("FORNECEDOR"),
+            "codcomprador": codcomp,
+            "comprador": comp_map.get(codcomp) if codcomp else None,
+            "un_por_cx": int(fat) if fat > 1 else None,
+            "peso_un_kg": _round(med["bruto"], 4) or None,
+            "volume_un_m3": _round(med["vol"], 6) or None,
+            # é a CAIXA implicada que denuncia o cadastro — 5,3 kg por unidade parece
+            # plausível; 530 kg por caixa, não.
+            "caixa_kg": _round(med["bruto"] * fat, 1) if med["bruto"] > 0 else None,
+            "caixa_m3": _round(med["vol"] * fat, 3) if med["vol"] > 0 else None,
+            "categorias": [k for k, _ in probs],
+            "problemas": " · ".join(lbl for _, lbl in probs),
+        })
+    linhas.sort(key=lambda x: (-(x["caixa_m3"] or 0), -(x["caixa_kg"] or 0), x["codprod"]))
+    return {"resumo": {"total": len(linhas), "base": len(prod_map or {}),
+                       "contagem": contagem,
+                       "rotulos": {k: lbl for k, lbl, _ in QUAL_CADASTRO},
+                       "max_m3_caixa": MAX_M3_CAIXA, "max_kg_caixa": MAX_KG_CAIXA},
+            "produtos": linhas}
+
+
 def casa_busca(cad, busca):
     """Mesma regra de busca da tela e do export: `codprod` OU `descricao`, case-insensitive.
     Regra única de propósito — três implementações do mesmo filtro é como as telas divergem."""

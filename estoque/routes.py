@@ -958,6 +958,35 @@ def api_leadtime():
                     "bi_refresh": pbi.get_dataset_refresh(), **res})
 
 
+def _qualidade_cadastro_res(comprador=None):
+    """Bloco de cadastro logístico da aba Qualidade. Sem query nova — o cadastro de produtos
+    e o mapa de embalagem já estão em cache. Cache 30min, chave por comprador."""
+    key = f"qualcad:{comprador or 'todos'}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    res = {"resumo": {"total": 0, "base": 0, "contagem": {}, "rotulos": {}}, "produtos": []}
+    try:
+        res = core.qualidade_cadastro(_cadastro_produtos(), _embalagem_map(),
+                                      _cadastro_fornecedores(), _compradores_map(),
+                                      comprador=comprador)
+    except Exception as e:
+        print(f"[qualidade] cadastro indisponível ({e}).")
+    pbi._CACHE.set(key, res, 1800)
+    return res
+
+
+@bp.route("/api/qualidade-cadastro")
+def api_qualidade_cadastro():
+    """Problemas de CADASTRO logístico sobre a BASE INTEIRA — ver core.qualidade_cadastro.
+
+    ⚠️ Universo diferente do resto da aba Qualidade (que roda sobre o snapshot, recortado por
+    filial). É proposital e a tela declara: 72 produtos na base contra 21 no snapshot do
+    Atacado. `?comprador_cod=` recorta por comprador do fornecedor."""
+    res = _qualidade_cadastro_res(request.args.get("comprador_cod"))
+    return jsonify({"ok": True, "gerado_em": date.today().isoformat(), **res})
+
+
 @bp.route("/api/verbas")
 def api_verbas():
     """Verbas de fornecedor (rotina 1801): negociado × aplicado × saldo + tripé com
@@ -1864,6 +1893,15 @@ def _export_data(view):
         if _tp:
             linhas = [l for l in linhas if l.get("tipo") == _tp]
         cols = ["endereco", "tipo", "codprod", "descricao"]
+    elif view == "qualidade_cadastro":
+        # base INTEIRA (nao o snapshot) — ver core.qualidade_cadastro. `cat` filtra 1 categoria.
+        _q = _qualidade_cadastro_res(request.args.get("comprador_cod"))
+        linhas = _q["produtos"]
+        cat = request.args.get("cat")
+        if cat:
+            linhas = [l for l in linhas if cat in l.get("categorias", [])]
+        cols = ["codprod", "descricao", "fornecedor", "comprador", "un_por_cx",
+                "peso_un_kg", "volume_un_m3", "caixa_kg", "caixa_m3", "problemas"]
     elif view == "qualidade":
         # produtos com cadastro/saldo inconsistente. cat opcional filtra 1 categoria.
         produtos = _aplicar_filtros_cliente(_build_produtos()[0])
@@ -2072,6 +2110,11 @@ _PDF_COLS = {
                     ("dtval", "Validade", "text"), ("situacao", "Situação", "text")],
     "vazias": [("endereco", "Endereço", "text"), ("tipo", "Tipo", "text"), ("codprod", "Cód", "text"),
                ("descricao", "Produto que reservou a vaga", "text", 46)],
+    "qualidade_cadastro": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 34),
+                  ("fornecedor", "Fornecedor", "text", 20), ("comprador", "Comprador", "text", 14),
+                  ("un_por_cx", "Un/cx", "int"), ("peso_un_kg", "Peso un.", "num"),
+                  ("volume_un_m3", "Vol. un.", "num"), ("caixa_kg", "Caixa kg", "num"),
+                  ("caixa_m3", "Caixa m³", "num"), ("problemas", "Problemas", "text", 24)],
     "qualidade": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 36), ("fornecedor", "Fornecedor", "text", 22),
                   ("comprador", "Comprador", "text", 16), ("qtdisp", "Estoque", "int"), ("custo_unit", "Custo", "money"),
                   ("giro_mes", "Giro/mês", "int"), ("problemas", "Problemas", "text", 34)],

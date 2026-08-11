@@ -719,16 +719,69 @@ function renderQualidade(P){
     <div class="k-value">${int(counts[k])}</div></div>`;
   const qqs=exportQS()+(cat?'&cat='+encodeURIComponent(cat):'');
   $('#v-qualidade').innerHTML=head('Qualidade da base — produtos com cadastro/saldo inconsistente'+tipT('Produtos com cadastro ou saldo inconsistente. Corrigir na origem (Winthor) melhora todas as telas.'))+
+    `<div class="count-line">⬍ Este bloco segue o <b>snapshot</b>: só produtos da unidade selecionada e com registro de estoque — as checagens dependem de saldo. O bloco de <b>cadastro logístico</b>, mais abaixo, olha a <b>base inteira</b>.</div>`+
     `<div style="display:flex;gap:8px;margin:0 0 10px"><a class="btn sm" href="/estoque/api/export/qualidade.xlsx?${qqs}">⬇ Excel</a><a class="btn sm" href="/estoque/api/export/qualidade.pdf?${qqs}">⬇ PDF</a></div>
      <div class="kpi-grid">${keys.map(card).join('')}</div>
      <div class="count-line">${int(flagged.length)} produtos${cat?` na categoria <b>${QUAL_CHK[cat].lbl}</b> · <a href="#" id="qual-clear">limpar</a>`:' com ao menos um problema'}. Corrigir na origem (Winthor) melhora todas as telas.</div>
      <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Fornecedor</th><th>Comprador</th><th class="num">Estoque${tip('qualidade','Estoque')}</th><th class="num">Custo${tip('qualidade','Custo')}</th><th class="num">Giro/mês${tip('qualidade','Giro/mês')}</th><th>Problemas${tip('qualidade','Problemas')}</th></tr></thead>
      <tbody>${flagged.slice(0,400).map(({p,probs})=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td><span class="prod">${esc(p.fornecedor||'—')}</span></td><td>${esc((p.comprador||'').split(' ')[0]||'—')}</td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.custo_unit?money(p.custo_unit):'—'}</td><td class="num">${int(p.giro_mes)}</td><td>${probs.map(badge1).join(' ')}</td></tr>`).join('')}</tbody></table>
      ${flagged.length>400?`<div class="count-line">Mostrando 400 de ${int(flagged.length)}.</div>`:''}</div>`;
+  $('#v-qualidade').insertAdjacentHTML('beforeend','<div id="qual-cadastro" style="margin-top:22px"></div>');
+  renderQualCadastro();
   const el=$('#v-qualidade');
   el.querySelectorAll('[data-cat]').forEach(c=>c.onclick=()=>{const k=c.dataset.cat;S.cli.qualCat=(cat===k)?'':k;render();});
   const qc=$('#qual-clear'); if(qc)qc.onclick=e=>{e.preventDefault();S.cli.qualCat='';render();};
   el.querySelectorAll('tbody tr').forEach(tr=>tr.onclick=()=>openProduto(tr.dataset.cod));
+}
+
+/* ── Qualidade: bloco de CADASTRO LOGÍSTICO (base inteira) ──
+   ⚠️ Universo diferente do bloco de cima, DE PROPÓSITO, e por isso escrito na tela: as
+   checagens antigas dependem de saldo e seguem o snapshot (recortado por filial); estas são
+   do produto e valem em qualquer filial. Medido: 72 na base contra 21 no snapshot do Atacado.
+   Substitui o CSV que era gerado à mão — duas fontes da mesma lista divergem no primeiro
+   cadastro que o TI corrigir. */
+async function renderQualCadastro(){
+  const el=$('#qual-cadastro'); if(!el) return;
+  const key=S.cli.comprador||'TODOS';
+  if(!S.qualCad||S.qualCadKey!==key){
+    el.innerHTML='<div class="loader"><div class="spinner"></div>Verificando o cadastro logístico…</div>';
+    const q=S.cli.comprador?('?comprador_cod='+encodeURIComponent(S.cli.comprador)):'';
+    try{ S.qualCad=await getJSON('/estoque/api/qualidade-cadastro'+q); S.qualCadKey=key; }
+    catch(e){ el.innerHTML=`<div class="empty">Cadastro logístico indisponível: ${esc(e.message)}</div>`; return; }
+  }
+  const J=S.qualCad, R=J.resumo||{}, rot=R.rotulos||{}, cnt=R.contagem||{};
+  const cat=S.cli.qualCadCat||'';
+  let linhas=(J.produtos||[]);
+  if(cat) linhas=linhas.filter(p=>(p.categorias||[]).includes(cat));
+  const COR={cadastro_impossivel:C.red,sem_cubagem:C.orange};
+  const card=k=>`<div class="card kpi" data-qc="${k}" style="cursor:pointer;outline:${cat===k?'2px solid '+COR[k]:'none'}">
+    <div class="k-label"><span class="dot" style="background:${COR[k]||C.accent}"></span>${esc(rot[k]||k)}</div>
+    <div class="k-value">${int(cnt[k]||0)}</div></div>`;
+  const qs=(S.cli.comprador?'comprador_cod='+encodeURIComponent(S.cli.comprador)+'&':'')+(cat?'cat='+encodeURIComponent(cat):'');
+  el.innerHTML=head('Cadastro logístico — peso e cubagem'+tipT('Erros no cadastro do produto que fazem o peso e o m³ saírem errados no pedido e nas telas. Corrigir no Winthor (rotina de dados logísticos) resolve em todas as telas de uma vez.'))+
+    `<div class="count-line">🌐 <b>Base inteira</b> (${int(R.base)} produtos de revenda) — <b>não</b> segue a unidade nem o estoque, porque o erro está no cadastro do produto. Por isso este número é maior que o do bloco acima.</div>
+     <div style="display:flex;gap:8px;margin:0 0 10px">
+       <a class="btn sm" href="/estoque/api/export/qualidade_cadastro.xlsx?${qs}">⬇ Excel</a>
+       <a class="btn sm" href="/estoque/api/export/qualidade_cadastro.pdf?${qs}">⬇ PDF</a></div>
+     <div class="kpi-grid">${Object.keys(rot).map(card).join('')}</div>
+     <div class="count-line">${int(linhas.length)} produtos${cat?` em <b>${esc(rot[cat])}</b> · <a href="#" id="qc-clear">limpar</a>`:' com problema de cadastro logístico'}.
+       <b>Cadastro impossível</b> = a caixa implicada passa de ${dec(R.max_m3_caixa,1)} m³ ou ${int(R.max_kg_caixa)} kg — sinal de que o dado do <b>máster</b> foi gravado no registro da <b>unidade</b>.</div>
+     <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Fornecedor</th><th>Comprador</th>
+       <th class="num">Un/cx</th><th class="num">Peso un.</th><th class="num">Vol. un.</th>
+       <th class="num">Caixa</th><th>Problema</th></tr></thead>
+     <tbody>${linhas.slice(0,400).map(p=>`<tr data-cod="${p.codprod}" style="cursor:pointer">
+       <td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td>
+       <td><span class="prod">${esc(p.fornecedor||'—')}</span></td><td>${esc((p.comprador||'').split(' ')[0]||'—')}</td>
+       <td class="num">${p.un_por_cx?int(p.un_por_cx):'—'}</td>
+       <td class="num">${p.peso_un_kg?dec(p.peso_un_kg,3)+' kg':'—'}</td>
+       <td class="num">${p.volume_un_m3?dec(p.volume_un_m3,5):'—'}</td>
+       <td class="num">${[p.caixa_kg?dec(p.caixa_kg,1)+' kg':null,p.caixa_m3?dec(p.caixa_m3,2)+' m³':null].filter(Boolean).join(' · ')||'—'}</td>
+       <td>${(p.categorias||[]).map(k=>`<span class="badge" style="background:${COR[k]||C.accent}22;color:${COR[k]||C.accent}">${esc(rot[k]||k)}</span>`).join(' ')}</td></tr>`).join('')
+       ||'<tr><td colspan="9" class="muted">Nenhum problema no recorte atual.</td></tr>'}</tbody></table>
+     ${linhas.length>400?`<div class="count-line">Mostrando 400 de ${int(linhas.length)}.</div>`:''}</div>`;
+  el.querySelectorAll('[data-qc]').forEach(c=>c.onclick=()=>{const k=c.dataset.qc;S.cli.qualCadCat=(cat===k)?'':k;renderQualCadastro();});
+  const cl=$('#qc-clear'); if(cl) cl.onclick=e=>{e.preventDefault();S.cli.qualCadCat='';renderQualCadastro();};
+  el.querySelectorAll('tbody tr[data-cod]').forEach(tr=>tr.onclick=()=>openProduto(tr.dataset.cod));
 }
 
 function renderReposicao(P){

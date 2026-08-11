@@ -186,6 +186,24 @@ servidor (`?busca=`, na chave de cache junto do comprador e do arraste) e o cort
   do código exato); a janela é de **180 dias**. As duas coisas estão escritas na tela.
   Gate: `tests/test_orcamento_filtro_produto.py`.
 
+**Qualidade da base — 2 blocos, 2 universos, cada um declarado** (08/2026, pedido do diretor:
+"a lista dos itens com erro de cadastro não dá para deixar numa aba, para consultar tudo que
+está errado no sistema?"). Substitui o CSV gerado à mão: duas fontes da mesma lista divergem no
+primeiro cadastro que o TI corrigir.
+- **Bloco 1 (saldo)** — as 5 checagens antigas (`_QUAL_CHECKS`). Dependem de estoque, então
+  rodam sobre o **snapshot**, recortado por FILIAL.
+- **Bloco 2 (cadastro logístico)** — `core.qualidade_cadastro`, endpoint `/api/qualidade-cadastro`,
+  sobre a **BASE INTEIRA**. Sem query nova: cadastro e embalagem já estão em cache.
+- ⚠️ **É por isso que os dois números não batem, e a tela escreve os dois escopos.** Medido:
+  **72** cadastros impossíveis na base contra **21** dentro do snapshot do Atacado. Ligar a
+  checagem no snapshot faria a tela dizer 21 enquanto a planilha enviada ao cliente dizia 70.
+- Categorias: `cadastro_impossivel` (72 — caixa implicada acima de `MAX_M3_CAIXA`/`MAX_KG_CAIXA`,
+  sinal de dado do máster gravado na unidade) e `sem_cubagem` (241). Os limiares **viajam do core
+  para a tela**, senão a explicação do critério mentiria ao mudar a guarda.
+- ❌ **Não** virou card: "sem peso" (**0** produtos) e "sem fator de caixa" (1.744 = 38,7%, mas
+  **todos** com `QTUNITCX = 1` explícito — venda em unidade é legítima, e um card com 1.744
+  ensinaria a ignorar a aba). Gate: `tests/test_qualidade_cadastro.py`.
+
 **Meta de ruptura — uma meta por curva** (07/2026). Era A (2%) × B+C (5%); virou **A / B / C**
 (2% / 5% / 10%), editáveis em ⚙ Parâmetros. ⚠️ Separar **afrouxa o placar sem ninguém mexer na
 operação**: os itens C que estouravam o teto do bloco passam a ter orçamento próprio. Comparar
