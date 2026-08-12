@@ -590,7 +590,6 @@ function extrairCodigo(valor) {
 }
 
 function atualizarVisibilidadeRoleFields() {
-  const role = document.getElementById('f_role').value;
   // "Função" e seus campos governam o RBAC do COMERCIAL — não fazem sentido para quem só
   // acessa Compras. Some tudo em bloco em vez de deixar campo morto na tela.
   const temComercial = document.getElementById('f_area_comercial').checked;
@@ -598,9 +597,23 @@ function atualizarVisibilidadeRoleFields() {
 
   const mostrar = (id, ok) => { const el = document.getElementById(id); if (el) el.style.display = ok ? '' : 'none'; };
 
+  // ⚠️ Esconder NÃO é limpar. Com o Comercial desmarcado o select some, mas continuava com
+  // "vendedor" (a 1ª opção), e o formulário mandava role=vendedor com codusur vazio — o
+  // servidor recusava com "Vendedor exige codusur", falando de um papel que o usuário nunca
+  // escolheu, num campo que não estava na tela. Foi o que impediu o PRIMEIRO acesso só-Compras
+  // (produção, 08/2026).
+  // Só `vendedor` e `supervisor` são neutralizados: eles EXIGEM campo do Comercial. `admin` e
+  // `viewer` ficam como estão — admin com acesso só a Compras é legítimo, porque a
+  // Administração é área neutra (ver README).
+  const selRole = document.getElementById('f_role');
+  if (!temComercial && (selRole.value === 'vendedor' || selRole.value === 'supervisor')) {
+    selRole.value = 'viewer';
+  }
+  const roleEfetivo = selRole.value;   // relê: a linha acima pode ter trocado o papel
+
   mostrar('ff_role', temComercial);
-  mostrar('ff_codusur',       temComercial && role === 'vendedor');
-  mostrar('ff_codsupervisor', temComercial && role === 'supervisor');
+  mostrar('ff_codusur',       temComercial && roleEfetivo === 'vendedor');
+  mostrar('ff_codsupervisor', temComercial && roleEfetivo === 'supervisor');
   mostrar('ff_segmentos',     temComercial);
 
   mostrar('ff_codcomprador',       temCompras);

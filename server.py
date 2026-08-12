@@ -7775,13 +7775,22 @@ def api_admin_users_create():
     # Patch K — filtro de segmento RFM (vazio = carteira completa)
     segmentos_rfm = _normalizar_segmentos_rfm(data.get('segmentos_rfm'))
 
-    if role == 'vendedor' and not codusur:
-        return jsonify({'ok': False, 'error': 'Vendedor exige codusur'}), 400
-    if role == 'supervisor' and not codsupervisores:
-        return jsonify({'ok': False, 'error': 'Supervisor exige ao menos uma área (codsupervisor)'}), 400
-
     # ── Fusão: acesso por área + vínculo/relatórios do módulo Compras ──
     areas = normalizar_areas(data.get('areas'))
+
+    # ⚠️ `codusur`/`codsupervisor` são RBAC do COMERCIAL — exigi-los de quem não acessa o
+    # Comercial bloqueava criar usuário só de Compras. Achado em produção (08/2026), na
+    # tentativa de dar o PRIMEIRO acesso só-Compras: o formulário esconde o select de papel
+    # quando o Comercial é desmarcado, mas o valor continua "vendedor" (a 1ª opção do select),
+    # e o campo de código, invisível, vai vazio. O usuário via "Vendedor exige codusur"
+    # falando de um papel que ele nunca escolheu, num campo que não estava na tela.
+    # Segunda linha de defesa: o front foi corrigido, mas a API também é chamada por script.
+    if 'comercial' in areas:
+        if role == 'vendedor' and not codusur:
+            return jsonify({'ok': False, 'error': 'Vendedor exige codusur'}), 400
+        if role == 'supervisor' and not codsupervisores:
+            return jsonify({'ok': False,
+                            'error': 'Supervisor exige ao menos uma área (codsupervisor)'}), 400
     codcomprador = data.get('codcomprador') or None
     relatorios_estoque = _normalizar_relatorios_estoque(data.get('relatorios_estoque'))
     erro_area = _validar_area_compras(areas, relatorios_estoque)
