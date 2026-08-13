@@ -8168,8 +8168,9 @@ def _carregar_metas_realizado(ano, mes, supervisores):
         # REALIZADO de venda = BRUTO (com bônus) = [Tem Pedido] = [Realizado Sem Bonus]+[Venda Bonus].
         # É o que o BI mostra em "($) REALIZADO" (provado: [Projecao] = bruto × DiasMes/Decorridos,
         # então projeção÷realizado do BI = 23/12 exato). O app antes mostrava [Realizado Sem Bonus]
-        # → ficava ~R$27k menor que o BI. `venda_sb` (sem bônus) é carregado só p/ o denominador da
-        # margem, que foi calibrada como lucro÷receita-sem-bônus — não muda com esta troca.
+        # → ficava ~R$27k menor que o BI. `venda_sb` (sem bônus) NÃO entra em nenhuma conta exibida
+        # (a margem usa o bruto, como o BI): fica carregado só como auditoria — a diferença
+        # bruto − venda_sb é o bônus do recorte, que é o que explica qualquer divergência de margem.
         venda_expr    = '[Tem Pedido]'
         venda_sb_expr = '[Realizado Sem Bonus]'
         rentab_expr = '[MARGEM META(%)]'
@@ -8408,9 +8409,16 @@ def _montar_metas_resposta(ano, mes, supervisores):
             'rentabilidade': metas.linha_metrica(mt['rentab'], rz['rentabilidade'], dm, dd, dr),
             'clientes':      metas.linha_metrica(mt['cli'],    rz['clientes'],      dm, dd, dr),
             'mix':           metas.linha_metrica(mt['mix'],    rz['mix'],           dm, dd, dr),
-            # Margem = lucro realizado / receita realizada SEM bônus (calibrada assim vs BI; usa
-            # venda_sb, não o realizado bruto exibido, p/ não mudar o % já validado).
-            'margem':        metas.pct(rz['rentabilidade'], rz.get('venda_sb') or rz['venda']),
+            # Margem = lucro ÷ realizado BRUTO (com bônus) — é a régua da medida oficial
+            # `[MARGEM(%)]` do dataset META (= [LUCRO TOTAL] ÷ [VENDA TOTAL], e [VENDA TOTAL] ≡
+            # [Tem Pedido]). Conferido ao vivo em 13/08/2026 nos 9 supervisores: bate na 4ª casa
+            # (LOJAS 19,85%, total da empresa 18,8068%). Derivar sai igual à medida e não custa
+            # query nova — e funciona no mês fechado, onde o realizado vem do RCA e a medida não existe.
+            # ⚠️ NÃO dividir por `venda_sb`: de 07 a 08/2026 dividia, e a margem saía inflada em
+            # até 6,3 p.p. (FABIANE 30,48% contra 24,22% do BI). O erro cresce com o bônus do time
+            # e some onde o bônus é zero (TIME RJ batia). Sintoma: um % que não se reproduz com
+            # NENHUM número da própria tela — o realizado exibido é o bruto.
+            'margem':        metas.pct(rz['rentabilidade'], rz['venda']),
         })
     supervisores_out.sort(key=lambda s: s['venda']['realizado'], reverse=True)
 
@@ -8425,8 +8433,8 @@ def _montar_metas_resposta(ano, mes, supervisores):
         'rentabilidade': metas.linha_metrica(meta_rentab_t, rt['rentabilidade'], dm, dd, dr),
         'clientes':      metas.linha_metrica(meta_cli_t,    rt['clientes'],      dm, dd, dr),
         'mix':           metas.linha_metrica(meta_mix_t,    rt['mix'],           dm, dd, dr),
-        # Margem do total = lucro realizado / receita realizada SEM bônus (denominador calibrado)
-        'margem':        metas.pct(rt['rentabilidade'], rt.get('venda_sb') or rt['venda']),
+        # Margem do total = mesma régua do BI (lucro ÷ realizado bruto) — ver nota acima
+        'margem':        metas.pct(rt['rentabilidade'], rt['venda']),
     }
     return {'ok': True, 'ano': int(ano), 'mes': int(mes), 'dias': dias,
             'supervisores': supervisores_out, 'total': total}
@@ -8505,7 +8513,8 @@ def api_metas_vendedores():
             'rentabilidade': metas.linha_metrica(m.get('rentabilidade_meta'),rz.get('rentabilidade'),dm, dd, dr),
             'clientes':      metas.linha_metrica(m.get('clientes_meta'),     rz.get('clientes'),     dm, dd, dr),
             'mix':           metas.linha_metrica(m.get('mix_meta'),          rz.get('mix'),          dm, dd, dr),
-            'margem':        metas.pct(rz.get('rentabilidade'), rz.get('venda_sb') or rz.get('venda')),
+            # lucro ÷ realizado bruto, igual ao BI (nota em _montar_metas_resposta)
+            'margem':        metas.pct(rz.get('rentabilidade'), rz.get('venda')),
         })
     linhas.sort(key=lambda x: x['venda']['realizado'], reverse=True)
     return jsonify({'ok': True, 'codsupervisor': codsup, 'dias': dias, 'vendedores': linhas})

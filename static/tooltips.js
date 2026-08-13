@@ -43,7 +43,7 @@
       'Projeção': 'Projeção de fechamento do mês pelo ritmo atual: realizado × dias úteis do mês ÷ dias úteis decorridos.',
       '%': '% da meta já realizada (realizado ÷ meta).',
       '% Proj.': '% da meta projetada para o fim do mês (projeção ÷ meta).',
-      '% Margem': 'Margem = rentabilidade ÷ venda.',
+      '% Margem': 'Margem = rentabilidade ÷ venda realizada (a mesma da coluna Realizado da aba Venda, com bonificação). Mesma régua do BI.',
       'Mix': 'Mix de produtos: nº de itens/produtos distintos vendidos. Não soma entre vendedores (é contagem distinta).',
       'Clientes': 'Nº de clientes distintos atendidos. Não soma entre vendedores (é contagem distinta).'
     },

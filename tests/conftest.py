@@ -134,6 +134,22 @@ def usuario_viewer():
     _remover_usuario(email)
 
 
+def _mock_refresh_history(monkeypatch, server):
+    """Neutraliza o refresh history do Power BI nos testes (helper, NÃO é fixture).
+
+    Sem isto, mockar só o `get_token_cached` deixa o `_get_dataset_refresh` fazer uma chamada
+    HTTPS REAL pra api.powerbi.com com o 'fake-token' → 403 a cada teste (~0,94s cada, e leva os
+    GUIDs de grupo/dataset do cliente pra fora em CI). Pior: como o 403 cai no except, os testes
+    exercitavam SEMPRE o fallback de `_meta_refresh_tag`, deixando a branch real — a que amarra o
+    cache do realizado ao refresh do BI — sem cobertura nenhuma. Aqui devolvemos um refresh fixo,
+    então os testes rodam o caminho de verdade e a chave de cache fica determinística.
+    """
+    REFRESH_FAKE = {'end': '2026-01-01T03:00:00-03:00',
+                    'end_fmt': '01/01/2026 03:00', 'in_progress': False}
+    monkeypatch.setattr(server, '_get_dataset_refresh',
+                        lambda dataset_id=None, cache_key='multpel:pbi:refresh': dict(REFRESH_FAKE))
+
+
 @pytest.fixture
 def mock_dax_capture(monkeypatch):
     """Captura todas as queries DAX + retorna respostas mockadas por substring routing.
@@ -168,6 +184,7 @@ def mock_dax_capture(monkeypatch):
 
     monkeypatch.setattr(server, 'execute_dax', _fake_execute)
     monkeypatch.setattr(server, 'get_token_cached', lambda: 'fake-token')
+    _mock_refresh_history(monkeypatch, server)
     return captor
 
 
@@ -191,6 +208,7 @@ def mock_dax(monkeypatch):
 
         monkeypatch.setattr(server, 'execute_dax', _fake_execute)
         monkeypatch.setattr(server, 'get_token_cached', _fake_token)
+        _mock_refresh_history(monkeypatch, server)
         return payload
 
     return _make

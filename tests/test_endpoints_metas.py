@@ -26,12 +26,16 @@ def _rotas_metas():
                      'PCUSUARI[CODSUPERVISOR]': 17, 'PCUSUARI[TIPOVEND]': 'R',
                      'PCUSUARI[CIDADE]': 'VITORIA', 'PCUSUARI[ESTADO]': 'ES', 'PCUSUARI[BLOQUEIO]': 'N'}])
     dias = _pl([{'[mes]': 21, '[decorridos]': 19, '[restantes]': 2}])
+    # `[venda_sb]` (sem bônus) SEMPRE diferente de `[venda]` (bruto): é o que faz as asserções de
+    # margem morderem. Com os dois iguais o teste passa mesmo com a fórmula errada — ver
+    # tests/test_margem_bonus.py.
     por_sup = _pl([{'PCSUPERV[CODSUPERVISOR]': 17, 'PCSUPERV[NOME]': 'AFONSO ES-SUL',
-                    '[venda]': 2591058.95, '[rentab]': 466476.24, '[proj]': 2867280.70,
-                    '[cli]': 804, '[mix]': 1350}])
-    totais = _pl([{'[venda]': 6587356.73, '[rentab]': 1316297.72, '[proj]': 7354084.45,
-                   '[cli]': 2966, '[mix]': 2181}])
-    vr_usur = _pl([{'PCUSUARI[CODUSUR]': 879, '[venda]': 400000.0, '[rentab]': 96000.0, '[proj]': 442105.0}])
+                    '[venda]': 2591058.95, '[venda_sb]': 2565148.31, '[rentab]': 466476.24,
+                    '[proj]': 2867280.70, '[cli]': 804, '[mix]': 1350}])
+    totais = _pl([{'[venda]': 6587356.73, '[venda_sb]': 6521483.16, '[rentab]': 1316297.72,
+                   '[proj]': 7354084.45, '[cli]': 2966, '[mix]': 2181}])
+    vr_usur = _pl([{'PCUSUARI[CODUSUR]': 879, '[venda]': 400000.0, '[venda_sb]': 396000.0,
+                    '[rentab]': 96000.0, '[proj]': 442105.0}])
     cli_usur = _pl([{'PCPEDC[CODUSUR]': 879, '[v]': 55}])
     mix_usur = _pl([{'PCPEDI[CODUSUR]': 879, '[v]': 200}])
     # ordem importa (first match): mais específico primeiro. Quando o realizado é escopado
@@ -68,7 +72,8 @@ def test_api_metas_estrutura_e_totais(client, usuario_admin, mock_dax_capture, c
     # projeção oficial passada direto pra venda
     assert round(t['venda']['projecao'], 2) == 7354084.45
 
-    # margem de lucro bruto = lucro realizado / receita realizada (pedido do diretor)
+    # margem = lucro realizado ÷ realizado BRUTO (com bônus), igual à medida [MARGEM(%)] do BI —
+    # não pelo `venda_sb` (6.521.483,16), que daria 20,18% em vez de 19,98%
     assert t['margem'] == pytest.approx(1316297.72 / 6587356.73, abs=1e-9)
 
     # supervisor AFONSO presente com realizado correto
@@ -138,6 +143,33 @@ def test_metas_rbac_frag():
 
 def test_metas_exige_login(client, clean_redis):
     assert client.get('/api/metas').status_code == 401
+
+
+def test_meta_refresh_tag_segue_o_refresh_do_bi(monkeypatch, clean_redis):
+    """A tag do cache do realizado tem de MUDAR quando o BI atualiza — é o que faz o app parar de
+    servir número de um refresh anterior (BO de 16/07/2026). Até 08/2026 nenhum teste cobria esta
+    branch: o mock deixava o refresh history estourar 403 e caía sempre no fallback."""
+    ref = {'end': '2026-08-13T11:08:00-03:00'}
+    monkeypatch.setattr(server, '_get_dataset_refresh', lambda *a, **k: dict(ref))
+    tag1 = server._meta_refresh_tag()
+    assert tag1 == '2026-08-13T11:08:00-03:00'
+
+    ref['end'] = '2026-08-13T13:08:00-03:00'          # BI atualizou → chave de cache nova
+    assert server._meta_refresh_tag() != tag1
+
+    # refresh history indisponível → fallback de bucket de 30min (não explode)
+    monkeypatch.setattr(server, '_get_dataset_refresh', lambda *a, **k: None)
+    fb = server._meta_refresh_tag()
+    assert fb and fb[-1] in ('H', 'L') and len(fb) == 11
+
+
+def test_meta_refresh_tag_estatica_em_modo_postgres(monkeypatch, clean_redis):
+    """Modo BD não tem dataset PBI — a tag não pode tentar rede nenhuma."""
+    monkeypatch.setitem(server.CONFIG, 'data_source', 'postgres')
+    def _boom(*a, **k):
+        raise AssertionError('não deve consultar o Power BI em modo postgres')
+    monkeypatch.setattr(server, '_get_dataset_refresh', _boom)
+    assert server._meta_refresh_tag() == 'postgres'
 
 
 def test_admin_metas_save_exige_admin(client, usuario_vendedor, clean_redis):

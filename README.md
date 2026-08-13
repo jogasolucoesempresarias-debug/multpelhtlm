@@ -72,6 +72,17 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
 - **Mix abandonado** — clientes que pararam de comprar um depto há X dias; drill top 5 deptos perdidos; export CSV.
 - **Tendências** — cohort retention heatmap (M+0..M+12) com filtros vendedor/supervisor em cascata.
 - **Metas** — réplica das 4 telas META (Venda/Rentab/Clientes/Mix): meta própria (Postgres) × realizado (2º dataset META) × projeção, drill de vendedores, editor admin.
+  - ⚠️ **A `% Margem` divide pelo realizado BRUTO** (com bonificação), nunca por `venda_sb`
+    (`[Realizado Sem Bonus]`). É a régua da medida oficial `[MARGEM(%)]` do dataset META
+    (`[LUCRO TOTAL] ÷ [VENDA TOTAL]`, com `[VENDA TOTAL]` ≡ `[Tem Pedido]`) — conferida ao vivo nos
+    9 supervisores, batendo na 4ª casa. Dividir pelo sem-bônus inflava em até **6,3 p.p.**
+    (FABIANE BA 30,48% contra 24,22% do BI) e passou 4 semanas em produção porque o erro **cresce
+    com o bônus do time**: em jun/2026 a bonificação era 1% da venda e a conta errada parecia certa;
+    em ago/2026 é 7,5%. Regra geral pra qualquer % novo: se ele **não se reproduz com os números
+    que a própria tela mostra**, ele está errado. Gate: `tests/test_margem_bonus.py`.
+  - ⚠️ **Mock de metas sem `[venda_sb]` não testa nada de margem** — o `or` do fallback usa o bruto
+    e o teste passa mesmo com a fórmula errada. Foi assim que o gate ficou cego. Todo fixture de
+    metas leva `[venda_sb]` **diferente** de `[venda]`.
 - **Admin** — CRUD usuários, cron de email, multi-CC, segmento RFM, editor de metas. **+ acesso por área, comprador vinculado e relatórios de Compras** (ver abaixo).
 
 ## 📦 Módulo Compras (features)

@@ -336,7 +336,9 @@ function renderKpis(t) {
     ['% Atingido', PCT(t.pct_realizado), ''],
   ];
   if (m === 'rentabilidade') {
-    kpis.push(['% Margem', PCT(_dados.total.margem), 'lucro bruto ÷ receita']);
+    // denominador = o MESMO realizado exibido na aba Venda (bruto, com bonificação) — régua da
+    // medida [MARGEM(%)] do BI. O rótulo diz isso pra o número ser conferível na própria tela.
+    kpis.push(['% Margem', PCT(_dados.total.margem), 'lucro ÷ realizado (c/ bônus)']);
   }
   document.getElementById('kpis').innerHTML = kpis.map(k =>
     `<div class="kpi"><div class="k-lbl">${k[0]}</div><div class="k-val">${k[1]}</div><div class="k-sub">${k[2]}</div></div>`).join('');
