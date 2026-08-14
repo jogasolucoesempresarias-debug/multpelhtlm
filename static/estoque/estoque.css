@@ -121,6 +121,12 @@ h2.section { font-size: 1rem; margin: 4px 0 14px; font-weight: 700; }
 .kpi .k-value { font-size: 1.5rem; font-weight: 700; letter-spacing: -.5px; }
 .kpi .k-sub { font-size: .72rem; color: var(--text-mute); margin-top: 5px; }
 .kpi .dot { width:8px; height:8px; border-radius: 50%; display:inline-block; }
+/* KPI que leva a uma lista (drill). Mesma afordância do .alert: sobe no hover e mostra "ver →",
+   senão o card parece só mais um número e ninguém descobre que ele é clicável. */
+.kpi-go { cursor: pointer; transition: all .15s; }
+.kpi-go:hover { transform: translateY(-2px); border-color: var(--accent); }
+.kpi-go .k-go { font-size: .68rem; color: var(--text-mute); margin-top: 8px; }
+.kpi-go:hover .k-go { color: var(--accent); }
 
 /* alert cards */
 .alerts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap: 13px; margin-bottom: 18px; }
@@ -199,6 +205,9 @@ td .prod { max-width: 340px; overflow: hidden; text-overflow: ellipsis; display:
 .b-atencao,.b-estoque_alto,.b-medio { background: rgba(var(--yellow-rgb), .16); color: var(--yellow); }
 .b-critico,.b-urgente,.b-alto,.b-ruptura { background: rgba(var(--red-rgb), .16); color: var(--red); }
 .b-muito_critico,.b-critico_sem_giro,.b-sem_giro,.b-sem_saida,.b-giro_zero { background: rgba(var(--purple-compras-rgb), .16); color: var(--purple-compras); }
+/* "novo" = recém-chegado que ainda não vendeu. Azul do accent, igual ao card da aba Parado —
+   e deliberadamente NÃO nas cores de alerta: ele não é problema, é mercadoria sem histórico. */
+.b-novo { background: rgba(var(--accent-rgb), .16); color: var(--accent); }
 .b-X { background: rgba(var(--green-rgb), .16); color: var(--green); }
 .b-Y { background: rgba(var(--yellow-rgb), .16); color: var(--yellow); }
 .b-Z { background: rgba(var(--red-rgb), .16); color: var(--red); }

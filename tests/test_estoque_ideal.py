@@ -7,7 +7,8 @@ O que estes testes travam:
 3. a FRONTEIRA CONTINUA INCLUSIVA em qualquer limiar (armadilha do README: cobertura == limiar
    já é ideal; contá-la como risco punia quem repôs exatamente no alvo);
 4. a meta move só o GATILHO de alerta, nunca a contagem;
-5. o clamp da querystring (o limiar chega do usuário — 0 faria tudo virar "ideal" em silêncio).
+5. o clamp da querystring (o limiar chega do usuário — 0 faria tudo virar "ideal" em silêncio);
+6. (08/2026) o card "Em risco" virou CLICÁVEL → card e lista têm de dar o mesmo número.
 """
 from estoque import core
 
@@ -109,3 +110,63 @@ def test_meta_aceita_fracionaria():
     """O campo tem step 1, mas a querystring aceita 92,5% — não pode virar int e truncar."""
     p = core.merge_params({"ideal_dias": "30", "ideal_meta_pct": "92.5"})
     assert core.regua_estoque_ideal(p) == (30, 0.925)
+
+
+# ────────── 6. o card "Em risco" é clicável: card e lista TÊM de dar o mesmo número ──────────
+# Pedido do diretor 08/2026 ("clicar aqui e já trazer os itens abaixo dessa cobertura"). O clique
+# leva à aba Produtos com `cobertura ≤ limiar−1`, que filtra por `p["cobertura_dias"]` — o mesmo
+# campo que o export (`cob_max` em `_aplicar_filtros_cliente`) e a aba Cobertura leem.
+
+def _p_real(cobertura_dias, qtdisp, giro_dia, valor=100.0):
+    """Produto como o `construir_produtos` entrega: `cobertura_dias` calculado com os valores
+    CRUS, ao lado de `qtdisp`/`giro_dia` já ARREDONDADOS para exibição."""
+    return {"cobertura_dias": cobertura_dias, "qtdisp": qtdisp, "giro_dia": giro_dia,
+            "valor": valor}
+
+
+def test_resumo_segue_o_cobertura_dias_do_produto_e_nao_o_recalculo():
+    """O bug que o drill expôs: recalcular `ceil(qtdisp ÷ giro_dia)` a partir dos campos
+    ARREDONDADOS dá outro dia que o `cobertura_dias` calculado com os crus.
+
+    Caso REAL medido no BI (cód. 44398): 104 un ÷ giro cru 4,3333… = 24,0 exatos → 24d; mas
+    ÷ 4,333 (arredondado, que é o que vai no dict) = 24,0018 → ceil 25d. Com limiar 25 o item
+    é "em risco" pela lista e "ideal" pelo recálculo — card e lista discordavam em 2 SKUs."""
+    p = _p_real(cobertura_dias=24, qtdisp=104.0, giro_dia=4.333)
+    assert core.cobertura_dias_oficial(104.0, 4.333) == 25, "premissa do caso real mudou"
+    r = core.resumo_estoque_ideal([p], 25, 0.90)
+    assert r["em_risco"]["n"] == 1, "o card tem de seguir o cobertura_dias (24d), não o recálculo"
+    assert r["ideal"]["n"] == 0
+
+
+def test_card_em_risco_bate_com_a_lista_que_o_clique_abre():
+    """Invariante do drill, em vários limiares: nº de SKUs e VALOR do card == os da lista.
+    A lista é o filtro `cob_max` (front e export): `cobertura_dias != None and <= limiar−1`."""
+    produtos = [
+        _p_real(24, 104.0, 4.333, valor=209.63),    # o caso real do 44398
+        _p_real(0, 0.0, 2.0, valor=50.0),           # ruptura: 0d entra em risco
+        _p_real(25, 50.0, 2.0, valor=300.0),        # pousa no limiar 25 → ideal (fronteira inclusiva)
+        _p_real(80, 160.0, 2.0, valor=700.0),
+        {"giro_dia": 0.0, "qtdisp": 10.0, "valor": 900.0, "cobertura_dias": 9999},   # sem giro
+    ]
+    for lim in (10, 25, 30, 45, 60):
+        r = core.resumo_estoque_ideal(produtos, lim, 0.90)
+        lista = [p for p in produtos
+                 if p.get("cobertura_dias") is not None and p["cobertura_dias"] <= lim - 1]
+        assert len(lista) == r["em_risco"]["n"], f"card × lista divergem no limiar {lim}"
+        assert round(sum(p["valor"] for p in lista), 2) == r["em_risco"]["valor"]
+
+
+def test_sem_giro_nunca_vaza_para_a_lista_do_drill():
+    """`cobertura_dias` = 9999 no item sem giro — é o que mantém ele fora do `cob_max` mesmo
+    num limiar alto. Se vazasse, a lista traria itens que o card conta na caixa 'Sem giro'."""
+    sem_giro = {"giro_dia": 0.0, "qtdisp": 10.0, "valor": 100.0, "cobertura_dias": 9999}
+    r = core.resumo_estoque_ideal([sem_giro], 90, 0.90)
+    assert r["sem_giro"]["n"] == 1 and r["em_risco"]["n"] == 0
+    assert [p for p in [sem_giro] if p["cobertura_dias"] <= 89] == []
+
+
+def test_fallback_para_quem_nao_tem_cobertura_dias():
+    """Produto sintético (sem o campo) tem de continuar sendo classificado pelo recálculo —
+    é o que os demais testes deste arquivo montam."""
+    r = core.resumo_estoque_ideal([_p(20), _p(60)], 45, 0.90)
+    assert r["em_risco"]["n"] == 1 and r["ideal"]["n"] == 1

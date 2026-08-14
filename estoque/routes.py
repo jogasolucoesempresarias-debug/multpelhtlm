@@ -1839,7 +1839,7 @@ def _export_data(view):
             _a["sugestao_nf"] += core._valor_sugerido_compra(_p, "valor_sugerido_nf")
             if (_p.get("qtdisp") or 0) <= 0 and (_p.get("giro_dia") or 0) > 0:
                 _a["n_ruptura"] += 1
-            if _p.get("status_parado"):
+            if core.eh_parado(_p):        # fonte única — `novo` não é capital parado
                 _a["valor_parado"] += (_p.get("valor") or 0)
         try:
             _lead = {f.get("codfornec"): f for f in _leadtime_res(_hoje()).get("fornecedores", [])}

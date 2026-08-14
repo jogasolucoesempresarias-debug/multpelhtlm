@@ -215,6 +215,40 @@ primeiro cadastro que o TI corrigir.
   **todos** com `QTUNITCX = 1` explícito — venda em unidade é legítima, e um card com 1.744
   ensinaria a ignorar a aba). Gate: `tests/test_qualidade_cadastro.py`.
 
+**Estoque parado — card "Novos"** (08/2026, achado pelo diretor: "os produtos novos estão caindo
+como itens parados, sem venda… hoje eles vão para 121+"). Causa: em `core.parado_faixa_de`, quem
+**nunca vendeu** (`DTULTSAIDA` vazia) entrava como "parado há infinito" e caía direto no 121+,
+mesmo tendo chegado ontem.
+- **A régua: quem nunca vendeu conta os dias a partir da ENTRADA** (`dias_sem_entrada`), não do
+  infinito. Nunca vendeu + entrada dentro de `novo_dias` (⚙ Parâmetros, default **15**) → faixa
+  **`novo`**; entrada mais velha → a faixa VERDADEIRA da chegada. Medido no BI: dos 272 itens em
+  121+, **41 nunca venderam** e só 23 tinham entrada de fato antiga — os outros 18 estavam
+  rotulados "parado 121+ dias" com chegada de 3 a 90 dias. **Total da aba intacto**: 923 itens /
+  R$ 437.164,45 antes e depois, sobre os mesmos dados; **18 itens moveram, todos saindo do 121+**
+  (10 para `novo`, 8 para a faixa real) e **nenhum** deles tinha venda.
+- ⚠️ **NÃO basta "chegou há menos de 15 dias"** — foi a leitura literal do pedido, e ela pega **85**
+  itens dos quais **75 já venderam antes** (é reposição de item normal). Pior: o cód. 57071
+  (última venda há **1.249 dias**, chegado há 9, R$ 2.607) sairia do 121+ para um card chamado
+  "Produtos novos", escondendo exatamente a compra que precisa aparecer. A regra exige
+  **nunca ter vendido**, não só entrada recente.
+- ⚠️ **São DOIS eixos e os dois mudaram**: `parado_faixa` (aba Estoque parado) e `status_parado`
+  (Cockpit). Corrigir só um é a armadilha da Ruptura de novo. `status_parado` ganhou o valor
+  **`novo`**, então **`status_parado` deixou de ser booleano** — quem testar a verdade do campo
+  volta a somar produto recém-chegado como dead stock. Fonte única: **`core.eh_parado(p)`**
+  (`ehParado` no JS), usada no capital parado, no alerta 120+, nos "maiores ofensores" e na coluna
+  de valor parado da aba Fornecedores.
+- Efeito no **Cockpit**: alerta "Parado 120+ dias" 278 → **260** itens (R$ 119.812 → 105.747) e
+  capital parado R$ 188.435 → **174.494**. ⚠️ Isso **afrouxa o placar sem ninguém mexer na
+  operação** — comparar antes×depois uma vez, senão parece ganho de gestão.
+- Item que nunca vendeu e **não tem data de entrada** continua em 121+ (0 casos hoje) — lado
+  conservador: na dúvida ele aparece, não some atrás de "novo". `novo_dias` tem clamp em
+  `merge_params` (0 esvaziaria o card em silêncio, sem erro).
+- Detalhes de tela: a faixa `novo` é a 1ª do bloco e **entra na soma** (não é bloco à parte — ela
+  não acrescenta itens, TIRA do 121+ os rotulados errado); `FX_PARADO` virou `fxParado()` porque o
+  rótulo carrega a janela em dias; a coluna "Dias parado" mostra **"chegou há Xd"** em vez de
+  "nunca" nesses itens, e ganhou a coluna ordenável **"Chegou há"**.
+  Gate: `tests/test_parado_novos.py` (18 testes, incluindo a partição das faixas).
+
 **Meta de ruptura — uma meta por curva** (07/2026). Era A (2%) × B+C (5%); virou **A / B / C**
 (2% / 5% / 10%), editáveis em ⚙ Parâmetros. ⚠️ Separar **afrouxa o placar sem ninguém mexer na
 operação**: os itens C que estouravam o teto do bloco passam a ter orçamento próprio. Comparar
@@ -302,9 +336,32 @@ Doc completa das fórmulas em **`docs/estoque/planilha_v3.md`**.
   antes de fixar o número. **Continuam desligados do "Cobertura alvo"** de propósito: um é o alvo de
   COMPRA, o outro é só a RÉGUA DE MEDIÇÃO do Painel gerencial — mexer num não mexe no outro.
   Clamp da querystring em `core.regua_estoque_ideal` (limiar 0 faria tudo virar "ideal" em silêncio).
-  Gate: `tests/test_estoque_ideal.py` (11 testes, incluindo "sem params sai igual ao de antes").
+  Gate: `tests/test_estoque_ideal.py` (16 testes, incluindo "sem params sai igual ao de antes").
   ⚠️ Os parâmetros são **por navegador** (`localStorage`): enquanto o valor não for fechado, o
   painel pode significar coisas diferentes para cada pessoa. Ao definir, promover a default do servidor.
+  - **O card "Em risco" é um DRILL** (08/2026, pedido do diretor: "clicar aqui e já trazer os itens
+    que estão abaixo dessa cobertura"). Leva à aba **Análise → Produtos** com o filtro
+    `Cobertura ≤ limiar−1` — que é o `cob_max`, filtro que **já existia e já viajava no
+    `exportQS()`**, então o Excel/PDF da lista sai com o mesmo recorte sem código novo. Convenção
+    do clique: `kpiGo()` emite `data-view`/`data-filt` igual ao `alertCard`, e o `wireAlerts`
+    passou a casar `[data-view][data-filt]` — um fio só para os dois, em vez de dois que saem de
+    sincronia. O `goView` **zera o `cobMax`** quando ele não vem no filtro, senão o próximo drill
+    herdaria o recorte do anterior.
+  - ⚠️ **O resumo lê o `cobertura_dias` do produto — NÃO recalcule `ceil(qtdisp ÷ giro_dia)` aqui.**
+    O `construir_produtos` calcula com os valores **crus**; o dict guarda `qtdisp`/`giro_dia` já
+    **arredondados**, e refazer a conta a partir deles muda o `ceil`. Medido no BI real com limiar
+    25: o card dizia **789 SKUs** e a lista (que sempre leu `cobertura_dias`, como o export e a aba
+    Cobertura) tinha **791** — cód. 44398, 104 un ÷ giro cru 4,3333… = 24d exatos, mas ÷ 4,333 =
+    24,0018 → 25d. No limiar 45 os dois coincidiam **por sorte**, e foi por isso que passou
+    despercebido até o card virar clicável. Conferido depois do fix em 7 limiares (10→90), SKUs e
+    valor iguais nos dois lados, e o fechamento ideal+risco+sem giro = universo.
+    ⚠️ **O mesmo recálculo continua no `core.resumo_cobertura`** (tabela "Cobertura de estoque",
+    mesmo painel) — conhecido, **não corrigido** por decisão de escopo; corrigir muda os números
+    daquela tabela. Se for mexer, é a mesma linha.
+  - Só o "Em risco" é clicável. "Cobertura ideal" exigiria um filtro `cobertura ≥ X` que não
+    existe, e "Sem giro" tem universo próprio: o painel conta **346** (todo item com giro 0) e o
+    filtro `status_abast='sem_giro'` conta **303** (só com estoque) — ligar sem resolver isso daria
+    card e lista com números diferentes, que é exatamente o que este drill veio consertar.
 - ⚠️ **Mercadoria em PRÉ-ENTRADA conta no estoque projetado** (`core.qt_em_transicao`). Na
   pré-entrada o Winthor baixa o `PCITEM[QTENTREGUE]` (o item sai de "já pedido") e joga a
   quantidade em `QTESTGER` **e** `QTBLOQUEADA` (disponível = 0) — some das duas contas e o app

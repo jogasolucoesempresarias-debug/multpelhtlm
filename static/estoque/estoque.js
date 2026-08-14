@@ -49,7 +49,7 @@ const S = {
   compradorNome:'',
   cli:{comprador:'',curva:[],xyz:[],fornec:'',depto:'',busca:'',abast:[],margem:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]},
   // idealDias/idealMeta = régua do "Estoque ideal" do Painel gerencial (só mede; a compra usa `cob`)
-  params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1,metaA:2,metaB:5,metaC:10,idealDias:45,idealMeta:90},
+  params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1,metaA:2,metaB:5,metaC:10,idealDias:45,idealMeta:90,novoDias:15},
   charts:{}, sort:{}, valFaixa:null,
   orcArrastar:false,   // Orçamento: descontar o estouro do mês anterior da meta (opt-in)
   vencidos:null, vencidosQS:'', venMes:null, venPer:'2026',   // aba Vencidos: cache por QS, mês selecionado, período (2026|12m|tudo)
@@ -362,6 +362,9 @@ function serverQS(){
   // régua do Estoque ideal (Painel gerencial) — vai no serverQS porque o filtrosQS() do /api/resumos
   // é construído em cima dele; a meta viaja em % (0-100) e o servidor converte p/ fração.
   p.set('ideal_dias', S.params.idealDias); p.set('ideal_meta_pct', S.params.idealMeta);
+  // janela do "produto novo" (aba Estoque parado) — o `parado_faixa` sai do BACKEND, então
+  // sem isto na querystring o card Novos ficaria preso em 15d por mais que o campo mudasse.
+  p.set('novo_dias', S.params.novoDias);
   return p.toString();
 }
 
@@ -416,7 +419,7 @@ function agg(P){
   const valor_total=sum(P,p=>p.valor);
   const comGiro=P.filter(p=>(p.giro_dia||0)>0);
   const semGiro=P.filter(p=>(p.giro_dia||0)<=0&&(p.qtdisp||0)>0);
-  const parados=P.filter(p=>p.status_parado);
+  const parados=P.filter(ehParado);   // `novo` NÃO é capital parado (espelha core.eh_parado)
   const repor=P.filter(p=>(p.sugestao_compra||0)>0&&(p.giro_dia||0)>0&&!p.compra_suspensa);
   const rupt=P.filter(p=>p.status_ruptura);
   const zerados=P.filter(p=>p.estoque_zero&&(p.giro_dia||0)>0);   // ruptura real (estoque ≤ 0 e giro > 0)
@@ -519,7 +522,17 @@ function head(title,view){ return `<h2 class="section"><span>${title}${view?tip(
 /* ───────── VIEWS ───────── */
 function kpi(l,v,sub,dot){ return `<div class="card kpi"><div class="k-label">${dot?`<span class="dot" style="background:${dot}"></span>`:''}${l}</div><div class="k-value">${v}</div>${sub?`<div class="k-sub">${sub}</div>`:''}</div>`; }
 function alertCard(qt,label,valor,color,view,filt){ return `<div class="alert" style="--c:${color}" data-view="${view}" data-filt='${esc(JSON.stringify(filt||{}))}'><div class="a-top"><div class="a-qt">${int(qt)}</div><div class="a-valor">${moneyK(valor)}</div></div><div class="a-label">${label}</div><div class="a-go">ver →</div></div>`; }
-function wireAlerts(el){ el.querySelectorAll('.alert').forEach(a=>a.onclick=()=>goView(a.dataset.view,JSON.parse(a.dataset.filt||'{}'))); }
+// KPI que também é drill (mesma convenção do alertCard: data-view + data-filt, fiado pelo wireAlerts).
+// `hint` vira o title do card — quem passa o mouse lê PARA ONDE vai antes de clicar.
+function kpiGo(l,v,sub,dot,view,filt,hint){
+  return `<div class="card kpi kpi-go" data-view="${view}" data-filt='${esc(JSON.stringify(filt||{}))}' title="${esc(hint||'')}">
+    <div class="k-label">${dot?`<span class="dot" style="background:${dot}"></span>`:''}${l}</div>
+    <div class="k-value">${v}</div>${sub?`<div class="k-sub">${sub}</div>`:''}
+    <div class="k-go">ver os itens →</div></div>`;
+}
+// Seleciona por [data-view] (não por `.alert`): o mesmo fio serve os cards de alerta do Cockpit
+// e os KPIs-drill do Painel gerencial, em vez de duas wiring functions que saem de sincronia.
+function wireAlerts(el){ el.querySelectorAll('[data-view][data-filt]').forEach(a=>a.onclick=()=>goView(a.dataset.view,JSON.parse(a.dataset.filt||'{}'))); }
 
 // cores por SEMÂNTICA de cobertura: ruptura(vermelho) → saudável(verde) → excesso(roxo)
 const COR_FAIXA={'0-30':C.red,'31-60':C.green,'61-90':'#22c55e','91-120':C.yellow,'121+':C.purple,'sem giro':C.dim};
@@ -582,7 +595,7 @@ function renderCockpit(P){
   chart('ch-abc-itens',{type:'doughnut',data:{labels:['Curva A','Curva B','Curva C'],datasets:[{data:['A','B','C'].map(c=>k.abc[c].qt),backgroundColor:[C.green,C.accent,C.dim],borderColor:getComputedStyle(document.documentElement).getPropertyValue('--surface').trim()||'#111827',borderWidth:2,hoverOffset:4}]},options:{cutout:'64%',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.label+': '+int(c.raw)+' itens ('+dec(totItens?c.raw/totItens*100:0,1)+'%)'}}}}});
   const _abcLeg=$('#abc-itens-leg'); if(_abcLeg) _abcLeg.innerHTML=['A','B','C'].map((c,i)=>`<div style="display:flex;align-items:center;gap:8px;font-size:.82rem;white-space:nowrap"><span style="width:11px;height:11px;border-radius:3px;background:${[C.green,C.accent,C.dim][i]};flex:none"></span><b>Curva ${c}</b> <span style="color:var(--text-dim)">${int(k.abc[c].qt)} · ${dec(k.abc[c].qt/totItens*100,0)}%</span></div>`).join('');
   document.querySelectorAll('[data-abclens]').forEach(b=>b.onclick=()=>{S.abcLens=b.dataset.abclens;render();});
-  const topPar=P.filter(p=>p.status_parado).sort((a,b)=>b.valor-a.valor).slice(0,6);
+  const topPar=P.filter(ehParado).sort((a,b)=>b.valor-a.valor).slice(0,6);   // `novo` fora
   const topVen=_LF.slice().sort((a,b)=>b.valor_risco-a.valor_risco).slice(0,6);
   $('#cp-parado').innerHTML=topPar.map(p=>`<div class="lote-row" data-cod="${p.codprod}" style="cursor:pointer"><span class="prod">${esc(p.descricao)}</span><span class="lr-r">${money(p.valor)}<br><small class="muted">${p.dias_sem_venda==null?'sem saída':p.dias_sem_venda+'d s/ venda'}</small></span></div>`).join('')||'<div class="empty">Nada parado 🎉</div>';
   $('#cp-venc').innerHTML=topVen.map(l=>`<div class="lote-row" data-cod="${l.codprod}" style="cursor:pointer"><span class="prod">${esc(l.descricao)}</span><span class="lr-r">${money(l.valor_risco)}<br><small class="muted">vence ${l.dias_para_vencer}d</small></span></div>`).join('')||'<div class="empty">Sem risco no horizonte 🎉</div>';
@@ -1268,44 +1281,63 @@ function drawFaixaChart(id,faixas,onPick){
       plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+faixas[c.dataIndex].qt+' itens'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
 }
 
-// "dias parados" = dias sem venda; nunca-vendeu (null) conta como o pior (infinito → cai em 121+)
-function paradoDias(p){ return (p.dias_sem_venda==null) ? Infinity : p.dias_sem_venda; }
-// faixas FIXAS do gráfico-indicador (partição inteira, ≥ início, sem gap nem sobreposição)
-const FX_PARADO=[{label:'15-30',lo:15,hi:30,color:C.green},{label:'31-60',lo:31,hi:60,color:C.yellow},
-  {label:'61-90',lo:61,hi:90,color:C.orange},{label:'91-120',lo:91,hi:120,color:C.red},
-  {label:'121+',lo:121,hi:Infinity,color:C.purple}];
-function paradoFaixaLabel(p){ const d=paradoDias(p); const f=FX_PARADO.find(f=>d>=f.lo&&d<=f.hi); return f?f.label:null; }
+// Faixas do gráfico-indicador. ⚠️ `key` é o valor que o BACKEND grava em `p.parado_faixa`
+// (`core.parado_faixa_de`) e `label` é só o rótulo da tela — separados desde que "Novos" entrou,
+// porque o rótulo carrega a janela em dias (`Novos (<15d)`) e ela é parâmetro.
+// "Novos" vem PRIMEIRO: é a leitura cronológica (acabou de chegar → parado há mais tempo) e
+// deixa claro que ele não é uma faixa de "dias parado", e sim a caixa que os tira da conta.
+const fxParado=()=>[
+  {key:'novo',label:`Novos (<${int(S.params.novoDias)}d)`,color:C.accent},
+  {key:'15-30',label:'15-30',color:C.green},{key:'31-60',label:'31-60',color:C.yellow},
+  {key:'61-90',label:'61-90',color:C.orange},{key:'91-120',label:'91-120',color:C.red},
+  {key:'121+',label:'121+',color:C.purple}];
+// `novo` NÃO é capital parado (espelha `core.eh_parado` — mexeu num, mexa no outro)
+const ehParado=p=>!!p.status_parado&&p.status_parado!=='novo';
+// "dias parado" da COLUNA: quem nunca vendeu conta da chegada, igual ao backend. Sem isto a
+// linha do produto novo dizia "nunca" ao lado de um card que acabou de chamá-lo de recém-chegado.
+function paradoDiasCel(p){
+  if(p.dias_sem_venda!=null) return int(p.dias_sem_venda);
+  if(p.dias_sem_entrada!=null) return `chegou há ${int(p.dias_sem_entrada)}d`;
+  return 'nunca';
+}
 function setParMin(v){ S.params.parado=v; const i=$('#p-parado'); if(i)i.value=v; render(); savePrefs(); }
 
 const parFaixaLabel=arr=>!arr.length?'Todas':(arr.length===1?arr[0]:`${arr.length} faixas`);
 function parToggle(k){ const a=S.cli.parFaixa||[]; S.cli.parFaixa=a.includes(k)?a.filter(x=>x!==k):[...a,k]; render(); }
 function renderParado(P){
-  // universo do PARADO = itens com estoque e ≥15 dias sem venda (parado_faixa != null, nunca-vendeu
-  // em 121+), partido nas faixas 15-30…121+. As faixas SOMAM o total (reconcilia como a Cobertura).
+  // universo do PARADO = itens com estoque e ≥15 dias parado, MAIS os "Novos" (nunca venderam e
+  // chegaram há pouco), partido nas faixas Novos…121+. As faixas SOMAM o total (reconcilia como a
+  // Cobertura) — por isso o card Novos entra AQUI e não num bloco à parte: ele não acrescenta
+  // itens, ele TIRA do 121+ os que estavam rotulados errado.
   const universo=P.filter(p=>p.parado_faixa);
-  const faixas=FX_PARADO.map(f=>{const it=universo.filter(p=>p.parado_faixa===f.label);
-    return{...f,key:f.label,valor:it.reduce((s,p)=>s+(p.valor||0),0),qt:it.length};});
+  const FXP=fxParado();
+  const faixas=FXP.map(f=>{const it=universo.filter(p=>p.parado_faixa===f.key);
+    return{...f,valor:it.reduce((s,p)=>s+(p.valor||0),0),qt:it.length};});
   const pf=S.cli.parFaixa||[];
   const par=pf.length?universo.filter(p=>pf.includes(p.parado_faixa)):universo;
   const totItens=par.length, totVal=par.reduce((s,p)=>s+(p.valor||0),0);
   if(!S.sort.parado) S.sort.parado={key:'valor',dir:-1};   // maior valor parado primeiro
   P.forEach(p=>{const cx=p.caixa||1; p._dispCx=cx>1?Math.round((p.qtdisp||0)/cx):null;});
   const cols=[colCod,colProd,colForn,{key:'curva_abc',label:'ABC',badge:true},{key:'dtultsaida',label:'Última venda',fmt:v=>dt(v)},
-    {key:'dias_sem_venda',label:'Dias parado',num:true,fmt:v=>v==null?'nunca':int(v)},
+    // "Dias parado" do item novo mostra a CHEGADA, não "nunca": dizer "nunca" ao lado do card
+    // que acabou de chamá-lo de recém-chegado era a contradição que o diretor leria primeiro.
+    {key:'dias_sem_venda',label:'Dias parado',num:true,html:p=>paradoDiasCel(p)},
+    {key:'dias_sem_entrada',label:'Chegou há',num:true,fmt:v=>v==null?'—':int(v)+'d'},
     {key:'qtdisp',label:'Disp.',num:true,fmt:int},
     {key:'_dispCx',label:'Disp. cx',num:true,fmt:v=>v==null?'—':int(v)},
     {key:'valor',label:'Valor',num:true,fmt:money},
     {key:'status_saida',label:'Saída',badge:true},{key:'parado_faixa',label:'Faixa',badge:true},
     {key:'_plano',label:'Ação',html:p=>planoCell('parado',String(p.codprod),p.codprod,p.descricao,null)}];
+  const nNovos=faixas.find(f=>f.key==='novo')||{qt:0,valor:0};
   const el=$('#v-parado');
   el.innerHTML=head('Estoque parado — o que liquidar','parado')
-    +resumoFaixasBlock('Valor parado por faixa (dias sem venda)'+tipT('Valor de estoque parado em cada faixa de dias sem venda. Clique para filtrar.'),faixas,par,p=>p.valor,pf,'ch-parado')
+    +resumoFaixasBlock('Valor parado por faixa (dias sem venda)'+tipT(`Valor de estoque parado em cada faixa de dias sem venda. Clique para filtrar. "Novos" = itens que NUNCA venderam e entraram há menos de ${int(S.params.novoDias)} dias — antes eles caíam em 121+, porque quem nunca vendeu contava como parado há tempo infinito. A janela é editável em ⚙ Parâmetros.`),faixas,par,p=>p.valor,pf,'ch-parado')
     +`<div class="row" style="gap:14px;margin:6px 0;align-items:flex-end">
         <div class="fb-group"><label>Faixa <small class="muted">(marque várias)</small></label>
           <details class="ms" id="par-faixa"><summary class="fb-control" style="width:auto">${parFaixaLabel(pf)}</summary>
-            <div class="ms-menu">${FX_PARADO.map(f=>`<label><input type="checkbox" value="${f.label}" ${pf.includes(f.label)?'checked':''}>${f.label} dias</label>`).join('')}</div>
+            <div class="ms-menu">${FXP.map(f=>`<label><input type="checkbox" value="${f.key}" ${pf.includes(f.key)?'checked':''}>${f.label}${f.key==='novo'?'':' dias'}</label>`).join('')}</div>
           </details></div>
-        <div class="count-line" style="margin:0"><b>${int(totItens)} itens</b> · ${money(totVal)} parados${pf.length?' na(s) faixa(s) marcada(s)':' (≥15 dias, nunca vendidos incluídos)'}. <b>As faixas somam o total.</b> Clique num card/barra ou marque várias faixas.</div>
+        <div class="count-line" style="margin:0"><b>${int(totItens)} itens</b> · ${money(totVal)} parados${pf.length?' na(s) faixa(s) marcada(s)':' (≥15 dias)'}. <b>As faixas somam o total.</b> Clique num card/barra ou marque várias faixas.${nNovos.qt?` <b>${int(nNovos.qt)} itens</b> (${money(nNovos.valor)}) estão em <b>Novos</b> — chegaram há menos de ${int(S.params.novoDias)} dias e ainda não venderam; <b>não</b> contam como capital parado.`:''}</div>
       </div>`
     +renderTable(par,cols,'parado');
   drawFaixaChart('ch-parado',faixas,f=>parToggle(f.key));
@@ -2072,7 +2104,7 @@ function renderComprasVendas(P){
       const o=g[key]=g[key]||{key,nome,n:0,estoque:0,venda:0,lucro:0,giro:0,rupt:0,parado:0};
       o.n++; o.estoque+=(p.valor||0); o.venda+=(p.venda||0); o.lucro+=(p.lucro||0); o.giro+=(p.giro_mes||0);
       // ruptura = critério oficial (estoque<=0 & giro>0); cobertura baixa é atenção, não ruptura
-      if((p.qtdisp<=0)&&(p.giro_dia>0))o.rupt++; if(p.status_parado)o.parado+=(p.valor||0);});
+      if((p.qtdisp<=0)&&(p.giro_dia>0))o.rupt++; if(ehParado(p))o.parado+=(p.valor||0);});
     const rows0=Object.values(g).map(o=>({...o,margem:o.venda?o.lucro/o.venda*100:null,turn:o.estoque?o.venda/o.estoque:null,pct_rupt:o.n?o.rupt/o.n*100:0}));
     // ⚠️ Curva do UNIVERSO (abcFornecedorMap), NUNCA Pareto sobre esta lista — ela já veio
     // filtrada. Este era o último sobrevivente do bug corrigido em faa95c1 (31/07/2026), que
@@ -2310,10 +2342,11 @@ function resumosHTML(o){
         <div class="grow">
           <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:8px">
             ${kpi(`Cobertura ideal (≥${int(lim)}d)`,iId.pct!=null?pct(iId.pct):'—',int(iId.n)+' SKUs · '+moneyK(iId.valor),corIdeal)}
-            ${kpi(`Em risco (<${int(lim)}d)`,iRis.pct!=null?pct(iRis.pct):'—',int(iRis.n)+' SKUs · '+moneyK(iRis.valor),C.red)}
+            ${kpiGo(`Em risco (<${int(lim)}d)`,iRis.pct!=null?pct(iRis.pct):'—',int(iRis.n)+' SKUs · '+moneyK(iRis.valor),C.red,
+                    'produtos',{cobMax:lim-1},`ver os ${int(iRis.n)} itens com cobertura abaixo de ${int(lim)} dias`)}
             ${kpi('Sem giro',iSem.pct!=null?pct(iSem.pct):'—',int(iSem.n)+' SKUs · '+moneyK(iSem.valor),C.dim)}
           </div>
-          <div class="count-line">% de SKUs <b>que giram</b> por faixa de cobertura (ARREDONDA.CIMA(estoque ÷ giro diário)). Meta: <b>≥${dec(metaPct*100,0)}%</b> com cobertura <b>ideal (≥${int(lim)} dias)</b>. ${alerta?`<b style="color:${C.red}">⚠ Só ${iId.pct!=null?pct(iId.pct):'—'} atingem a cobertura ideal — abaixo da meta.</b>`:`<b style="color:${C.green}">✓ Meta atingida.</b>`} "Sem giro" (${int(iSem.n)} SKUs) fica à parte e não entra no %.</div>
+          <div class="count-line">% de SKUs <b>que giram</b> por faixa de cobertura (ARREDONDA.CIMA(estoque ÷ giro diário)). Meta: <b>≥${dec(metaPct*100,0)}%</b> com cobertura <b>ideal (≥${int(lim)} dias)</b>. ${alerta?`<b style="color:${C.red}">⚠ Só ${iId.pct!=null?pct(iId.pct):'—'} atingem a cobertura ideal — abaixo da meta.</b>`:`<b style="color:${C.green}">✓ Meta atingida.</b>`} "Sem giro" (${int(iSem.n)} SKUs) fica à parte e não entra no %. Clique em <b>Em risco</b> para ver os itens abaixo da cobertura (abre a aba <b>Análise → Produtos</b> já filtrada, com Excel e PDF).</div>
         </div>
       </div></div>`;
   return `<h2 class="section"><span>Painel gerencial — resumos${tipT('Visão executiva do estoque: orçamento de compras, ruptura, validade, cobertura e lucro por comprador.')}</span></h2>
@@ -2364,6 +2397,7 @@ async function renderGerencial(P){
       <div class="count-line" style="margin-top:6px">Lucro (venda líquida − custo) por comprador no período de venda selecionado; respeita os filtros do topo. A rosquinha mostra só participações positivas.</div>
     </div></div>`;
   resumosCharts(o);
+  wireAlerts(el);   // KPI "Em risco" do Estoque ideal → aba Produtos já recortada
   // lucro por comprador — agrega os produtos filtrados
   const by={};
   P.forEach(p=>{ const nome=p.comprador||'Sem comprador'; by[nome]=(by[nome]||0)+(p.lucro||0); });
@@ -3107,7 +3141,11 @@ function render(){
   ({cockpit:renderCockpit,gerencial:renderGerencial,ruptura:renderRuptura,ruptura_comprador:renderRupturaComprador,estoque_zero:renderEstoqueZero,reposicao:renderReposicao,validade:()=>renderValidade(),parado:renderParado,comprasvendas:renderComprasVendas,abcxyz:renderABCXYZ,fornecedores:renderFornecedores,produtos:renderProdutos,qualidade:renderQualidade,ocupacao:renderOcupacao}[S.view]||renderCockpit)(P);
   savePrefs();
 }
-function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast?(Array.isArray(filt.abast)?filt.abast:[filt.abast]):[]; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; S.cli.cobFaixa=filt.cobFaixa?(Array.isArray(filt.cobFaixa)?filt.cobFaixa:[filt.cobFaixa]):[]; S.cli.cobSub=''; if(filt.curva!=null){S.cli.curva=Array.isArray(filt.curva)?filt.curva:[filt.curva];syncCurvaUI();} render(); }
+// ⚠️ Todo filtro que o goView SABE aplicar tem de ser ZERADO aqui quando não vem no `filt` —
+// senão um drill herda o recorte do drill anterior e a tela mente sem avisar. Vale para o
+// `cobMax`: ele é filtro LOCAL da aba Produtos e sobrevive à troca de aba de propósito (como
+// Abast./Margem), mas quem chega por um card novo tem de ver o recorte daquele card, não o velho.
+function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast?(Array.isArray(filt.abast)?filt.abast:[filt.abast]):[]; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; S.cli.cobFaixa=filt.cobFaixa?(Array.isArray(filt.cobFaixa)?filt.cobFaixa:[filt.cobFaixa]):[]; S.cli.cobSub=''; S.cli.cobMax=(filt.cobMax!=null&&!isNaN(+filt.cobMax))?Math.max(0,+filt.cobMax):''; if(filt.curva!=null){S.cli.curva=Array.isArray(filt.curva)?filt.curva:[filt.curva];syncCurvaUI();} render(); }
 
 /* ───────── boot ───────── */
 async function init(){
@@ -3146,6 +3184,7 @@ async function init(){
   $('#p-parado').value=S.params.parado; $('#p-fcmeses').value=S.params.fcmeses;
   $('#p-meta-a').value=S.params.metaA; $('#p-meta-b').value=S.params.metaB; $('#p-meta-c').value=S.params.metaC;
   $('#p-ideal-dias').value=S.params.idealDias; $('#p-ideal-meta').value=S.params.idealMeta;
+  $('#p-novo-dias').value=S.params.novoDias;
   const giroModo=()=>S.params.sazonal?2:(S.params.forecast?1:0);  // 0=media3 1=forecast 2=sazonal
   $('#p-forecast').querySelectorAll('.seg-opt').forEach(o=>o.classList.toggle('on',+o.dataset.v===giroModo()));
   $('#p-forecast').querySelectorAll('.seg-opt').forEach(o=>o.onclick=()=>{const v=+o.dataset.v;S.params.forecast=v>=1?1:0;S.params.sazonal=v===2?1:0;$('#p-forecast').querySelectorAll('.seg-opt').forEach(x=>x.classList.toggle('on',x===o));});
@@ -3185,7 +3224,9 @@ async function init(){
   $('#p-apply').onclick=()=>{S.params={lead:+$('#p-lead').value,seg:+$('#p-seg').value,cob:+$('#p-cob').value,hor:+$('#p-hor').value,parado:+$('#p-parado').value||60,forecast:S.params.forecast?1:0,sazonal:S.params.sazonal?1:0,fcmeses:+$('#p-fcmeses').value||6,arredondacx:S.params.arredondacx?1:0,metaA:_meta('#p-meta-a',2),metaB:_meta('#p-meta-b',5),metaC:_meta('#p-meta-c',10),
     // limiar 0 tornaria TODO item "ideal" → piso de 1 dia aqui (o servidor tem o seu próprio
     // clamp p/ querystring montada na mão, onde 0/lixo cai no default 45). Meta 0 é válida.
-    idealDias:Math.max(1,_meta('#p-ideal-dias',45)),idealMeta:Math.min(100,_meta('#p-ideal-meta',90))};loadData();};
+    idealDias:Math.max(1,_meta('#p-ideal-dias',45)),idealMeta:Math.min(100,_meta('#p-ideal-meta',90)),
+    // piso de 1 dia pelo mesmo motivo do idealDias: 0 esvaziaria o card Novos em silêncio
+    novoDias:Math.max(1,_meta('#p-novo-dias',15))};loadData();};
   document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{S.view=t.dataset.view;S.cli.parado='';S.cli.ruptura='';S.cli.cobFaixa=[];S.cli.cobSub='';render();});
   document.querySelectorAll('.navgroup').forEach(x=>x.onclick=()=>{ const g=x.dataset.group; if(GROUP_OF(S.view)!==g){ S.view=NAV[g][0]; S.cli.parado='';S.cli.ruptura='';S.cli.cobFaixa=[];S.cli.cobSub=''; render(); }});
   $('#overlay').onclick=closeDrawer; $('#modal-bg').onclick=e=>{if(e.target===$('#modal-bg'))closeModal();};

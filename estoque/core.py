@@ -43,6 +43,11 @@ DEFAULTS = {
     # pedido do diretor p/ calibrar na prática antes de fixar o número.
     "ideal_dias":       45,        # cobertura mínima (dias) p/ o SKU contar como "ideal"
     "ideal_meta_pct":   90,        # % dos SKUs que giram que precisa estar na faixa ideal
+    # Janela do "produto novo" no Estoque parado (⚙ Parâmetros → "Produtos novos"). Ver
+    # `parado_faixa_de`: item que nunca vendeu e chegou dentro dela não é dead stock, é
+    # mercadoria que ainda não teve chance. Parâmetro (e não 15 cravado) pelo mesmo motivo do
+    # `ideal_dias`: é calibração de negócio, e o diretor quer olhar o número antes de fixá-lo.
+    "novo_dias":        15,        # dias desde a ENTRADA p/ o item contar como "produto novo"
 }
 _STR_PARAMS = {"giro_base", "base_estoque"}
 
@@ -60,6 +65,10 @@ def merge_params(q):
                 p[k] = float(v) if "." in str(v) else int(v)
             except (TypeError, ValueError):
                 pass
+    # Clamp do que vem do usuário. `novo_dias` = 0 não erraria alto: simplesmente esvaziaria o
+    # card "Novos" e devolveria os itens ao 121+ sem ninguém perceber — o mesmo modo de falha
+    # silenciosa que o `regua_estoque_ideal` já trata para o limiar do Estoque ideal.
+    p["novo_dias"] = max(1, int(_n(p["novo_dias"]) or DEFAULTS["novo_dias"]))
     return p
 
 
@@ -355,13 +364,61 @@ def cobertura_faixa_de(cob_dias):
     return "121+"
 
 
-# faixa de "dias parado" (dias sem venda) p/ o relatório de Estoque Parado — indicador.
-# Partição inteira ≥ início (sem gap/overlap); nunca-vendeu (None) = pior (121+); <15 ou sem
-# estoque = fora do parado (None).
-def parado_faixa_de(dias_sem_venda, qtdisp):
+# Status/faixa de "produto novo": item que NUNCA vendeu e acabou de chegar. Vale nos dois eixos
+# (`parado_faixa`, da aba Estoque parado, e `status_parado`, do Cockpit) — é o mesmo conceito, e
+# duas grafias diferentes era como a Ruptura acabou com três implementações fora de sincronia.
+PARADO_NOVO = "novo"
+
+
+def eh_parado(p):
+    """True quando o item conta como CAPITAL PARADO de verdade.
+
+    FONTE ÚNICA da pergunta "isto está parado?" — a resposta é lida em 4 lugares (KPI de capital
+    parado e alerta do Cockpit, "maiores ofensores", coluna de valor parado da aba Fornecedores).
+    `status_parado` deixou de ser booleano quando ganhou o `novo`: quem testar só a verdade do
+    campo volta a somar produto recém-chegado como dead stock."""
+    st = p.get("status_parado")
+    return bool(st) and st != PARADO_NOVO
+
+
+# faixa de "dias parado" p/ o relatório de Estoque Parado — indicador.
+# Partição inteira ≥ início (sem gap/overlap); <15 dias ou sem estoque = fora do parado (None).
+def parado_faixa_de(dias_sem_venda, qtdisp, dias_sem_entrada=None, novo_dias=15):
+    """⚠️ **Quem nunca vendeu conta os dias a partir da ENTRADA, não do infinito.**
+
+    Até 08/2026 `dias_sem_venda is None` virava 10**9 e caía direto em "121+" — mesmo que a
+    mercadoria tivesse chegado ontem. Reclamação do diretor: "os produtos novos estão caindo
+    como itens parados, sem venda". Medido no BI real: dos 272 itens em 121+, **41 nunca
+    venderam**, e só 23 desses tinham entrada de fato antiga; os outros 18 estavam rotulados
+    "parado 121+ dias" com chegada de 3 a 90 dias — o rótulo era simplesmente falso.
+
+    Agora: nunca vendeu + entrada dentro de `novo_dias` → **`novo`** (10 itens, R$ 10,3k);
+    nunca vendeu + entrada mais velha → a faixa VERDADEIRA da chegada (mais 8 itens saem do
+    121+). Total da aba intacto: 927 itens / R$ 447.784,24 nos dois lados — a invariante
+    "as faixas somam o total" continua valendo.
+
+    ⚠️ **NÃO basta "chegou há menos de 15 dias"** (foi a leitura literal do pedido). Ela pega
+    85 itens, e 75 já venderam antes — é reposição de item normal, não produto novo. Pior: o
+    cód. 57071 (última venda há **1.249 dias**, chegado há 9, R$ 2.607) sairia do 121+ para um
+    card chamado "Produtos novos", escondendo exatamente a compra que precisa aparecer. É por
+    isso que a regra exige NUNCA TER VENDIDO, e não só a entrada recente.
+
+    ⚠️ Sem data de entrada o item continua em "121+" (comportamento de antes). São 0 casos hoje,
+    mas é o lado conservador: na dúvida ele aparece como parado, não some atrás de "novo".
+
+    ⚠️ Isto **afrouxa o 121+ sem ninguém mexer na operação** (R$ 116.744 → R$ 102.680).
+    Comparar antes×depois uma vez, senão parece ganho de gestão.
+    """
     if qtdisp <= 0:
         return None
-    d = dias_sem_venda if dias_sem_venda is not None else 10**9
+    if dias_sem_venda is None:
+        if dias_sem_entrada is None:
+            return "121+"
+        if dias_sem_entrada < novo_dias:
+            return PARADO_NOVO
+        d = dias_sem_entrada
+    else:
+        d = dias_sem_venda
     if d < 15:
         return None
     if d <= 30:
@@ -731,16 +788,25 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         # estoque parado / dead stock — bandas FIXAS por dias sem venda (manual da planilha:
         # ATENCAO 60-90, CRITICO 90-120, MUITO CRITICO 120+). Independe de parâmetro — o campo
         # "parado_atencao" vira só filtro de exibição (mín. dias) na tela/export, não desloca faixa.
+        # ⚠️ Mesma régua do `parado_faixa_de`: quem NUNCA vendeu conta os dias a partir da
+        # ENTRADA. Os dois eixos têm de concordar — a aba Estoque parado lê `parado_faixa` e o
+        # Cockpit lê `status_parado`, e deixar só um corrigido é a armadilha da Ruptura de novo
+        # (a tela dizia 4 e o drill 3 porque duas das três implementações não foram atualizadas).
         sem_giro = giro_dia <= 0 and qtdisp > 0
+        _d_parado = dias_sem_venda
+        if _d_parado is None and dias_sem_entrada is not None:
+            _d_parado = dias_sem_entrada
         if qtdisp <= 0:
             status_parado = None
-        elif dias_sem_venda is None:
+        elif dias_sem_venda is None and dias_sem_entrada is not None and dias_sem_entrada < params["novo_dias"]:
+            status_parado = PARADO_NOVO          # chegou agora e ainda não teve chance de vender
+        elif _d_parado is None:
+            status_parado = "muito_critico"      # nunca vendeu e sem data de entrada → pior caso
+        elif _d_parado >= 120:
             status_parado = "muito_critico"
-        elif dias_sem_venda >= 120:
-            status_parado = "muito_critico"
-        elif dias_sem_venda >= 90:
+        elif _d_parado >= 90:
             status_parado = "critico"
-        elif dias_sem_venda >= 60:
+        elif _d_parado >= 60:
             status_parado = "atencao"
         else:
             status_parado = None
@@ -941,7 +1007,8 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "status_parado": status_parado,
             "status_saida": status_saida,
             "sem_giro": sem_giro,
-            "parado_faixa": parado_faixa_de(dias_sem_venda, qtdisp),
+            "parado_faixa": parado_faixa_de(dias_sem_venda, qtdisp, dias_sem_entrada,
+                                            params["novo_dias"]),
             "curva_abc": None, "curva_giro": None, "abc_xyz": None,
         })
 
@@ -985,7 +1052,7 @@ def cockpit(produtos):
     com_giro = [p for p in produtos if (p["giro_dia"] or 0) > 0]
     sem_giro = [p for p in com_estoque if (p["giro_dia"] or 0) <= 0]
 
-    valor_parado = sum(p["valor"] or 0 for p in produtos if p["status_parado"])
+    valor_parado = sum(p["valor"] or 0 for p in produtos if eh_parado(p))   # `novo` fica fora
     valor_sem_giro = sum(p["valor"] or 0 for p in sem_giro)
 
     faixas = []
@@ -1039,6 +1106,9 @@ def cockpit(produtos):
             "atencao": _cont("status_parado", "atencao"),
             "critico": _cont("status_parado", "critico"),
             "muito_critico": _cont("status_parado", "muito_critico"),
+            # reportado à parte, como o "sem giro": é mercadoria recém-chegada que ainda não
+            # vendeu — não entra no capital parado nem no alerta de 120+ dias
+            "novo": _cont("status_parado", PARADO_NOVO),
             "sem_giro": {"qt": len(sem_giro), "valor": _round(valor_sem_giro)},
         },
         "ruptura": {
@@ -2375,7 +2445,18 @@ def resumo_estoque_ideal(produtos, limiar_dias=45, meta_pct=0.90):
     `ideal_dias` (⚙ Parâmetros) e pode ser calibrado sem mexer na sugestão de compra.
     • Sem giro  = giro ≤ 0 (reportado à parte; NÃO entra no % ideal p/ não distorcer)
     O % ideal é medido só sobre os itens QUE GIRAM (base da 'cobertura mínima'); o gatilho de
-    alerta dispara quando ideal% < `meta_pct` (90%). Cobertura na regra oficial da planilha."""
+    alerta dispara quando ideal% < `meta_pct` (90%). Cobertura na regra oficial da planilha.
+
+    ⚠️ **A cobertura vem do `cobertura_dias` do produto, não de um recálculo.** O card agora é
+    clicável (leva à lista dos itens em risco), então card e lista TÊM de dar o mesmo número —
+    e recalcular aqui não dava. `construir_produtos` calcula `cobertura_dias` com o `qtdisp` e o
+    `giro_dia` CRUS; o dict do produto guarda os dois já ARREDONDADOS, e recalcular a partir
+    deles muda o `ceil`. Medido no BI real com limiar 25: o card dizia **789 SKUs** e a lista
+    (que sempre leu `cobertura_dias`, como o export e a aba Cobertura) tinha **791** —
+    cód. 44398, 104 un ÷ giro 4,3333… = 24d exatos, mas ÷ 4,333 arredondado = 24,0018 → 25d.
+    No limiar 45 os dois coincidiam por sorte, e foi por isso que passou despercebido.
+    O recálculo fica só como fallback, para quem chama a função com produtos sintéticos
+    (os testes montam `{giro_dia, qtdisp, valor}` sem `cobertura_dias`)."""
     risco = ideal = semgiro = 0
     v_risco = v_ideal = v_semgiro = 0.0
     for p in produtos:
@@ -2384,7 +2465,9 @@ def resumo_estoque_ideal(produtos, limiar_dias=45, meta_pct=0.90):
         if giro_dia <= 0:
             semgiro += 1; v_semgiro += valor
             continue
-        cob = cobertura_dias_oficial(p.get("qtdisp") or 0, giro_dia)
+        cob = p.get("cobertura_dias")
+        if cob is None:
+            cob = cobertura_dias_oficial(p.get("qtdisp") or 0, giro_dia)
         if cob < limiar_dias:          # fronteira inclusiva: cobertura == limiar já é ideal
             risco += 1; v_risco += valor
         else:
