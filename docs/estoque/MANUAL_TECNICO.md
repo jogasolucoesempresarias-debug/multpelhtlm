@@ -1,5 +1,8 @@
 # Manual Técnico — Painel de Estoque Multpel
 
+> ⚠️ **DESATUALIZADO — NÃO ALIMENTAR O AGENTE COM ESTE ARQUIVO.**
+> Manual vigente: **`docs/MANUAL_COMPRAS.md`** (v3.0, 28/07/2026). Mantido só como histórico.
+
 Documentação completa da aplicação: arquitetura, fontes de dados, **todos os cálculos**, telas, parâmetros, persistência, limitações e deploy.
 Para o guia rápido do usuário (comprador), ver [MANUAL.md](MANUAL.md).
 

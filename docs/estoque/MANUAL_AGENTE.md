@@ -1,5 +1,11 @@
 # Manual completo — Painel de Estoque Multpel (base de conhecimento do agente)
 
+> ⚠️ **SUBSTITUÍDO — NÃO ALIMENTAR O AGENTE COM ESTE ARQUIVO.**
+> Manual vigente: **`docs/MANUAL_COMPRAS.md`** (v3.0, 28/07/2026). Este texto é de 07/2026 e
+> **não conhece**: tributação de IPI/ST (régua da NF), pré-entrada, ciclo de compras, verbas,
+> lead time por fornecedor, meta de ruptura por curva A/B/C, estoque ideal parametrizável,
+> pedido em caixa, aba Vencidos/Ocupação, nem o login único da fusão. Mantido como histórico.
+
 Documento único e **atualizado** para alimentar o agente de IA de dúvidas. Explica **todas as abas, funções, cálculos e contas** do painel. Cada seção é auto-contida (pensada para busca/RAG). Onde houver fórmula, ela está exatamente como o sistema calcula.
 
 > Substitui, para fins do agente, os antigos `MANUAL.md` e `MANUAL_TECNICO.md` (que estavam defasados: falavam de "Minha Fila", ABC por valor de estoque e toggle Endereçado/Gerencial, que **não existem mais**).

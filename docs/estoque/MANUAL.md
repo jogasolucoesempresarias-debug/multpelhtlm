@@ -1,5 +1,10 @@
 # Manual — Painel de Estoque Multpel
 
+> ⚠️ **DESATUALIZADO — NÃO ALIMENTAR O AGENTE COM ESTE ARQUIVO.**
+> Manual vigente: **`docs/MANUAL_COMPRAS.md`** (v3.0, 28/07/2026). Este descreve o painel
+> pré-fusão (login próprio, sem tributação IPI/ST, sem pré-entrada, sem verbas/lead time/ciclo,
+> sem meta de ruptura por curva). Mantido só como histórico.
+
 Guia rápido de como usar a ferramenta. Pensada para o **comprador**: ver o que comprar, o que vai vencer, o que está parado e como está a margem.
 
 ---
