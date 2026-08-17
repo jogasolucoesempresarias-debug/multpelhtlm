@@ -487,33 +487,61 @@ function filtrosQS(){
   return p.toString();
 }
 
+/* ⚠️ Cada filtro LOCAL pertence a UMA aba, e o `exportQS()` emite só os da aba ABERTA.
+   Sem isto o filtro escolhido numa aba viaja na querystring do export de OUTRA: a tela o ignora
+   (cada render lê só os seus), mas o `_aplicar_filtros_cliente` do servidor aplica tudo que
+   chegar, em qualquer view. Foi assim que a aba Produtos mostrou 50 itens e o PDF/Excel saíram
+   com 18 (diretor, 17/08/2026): o `ez_status` da aba Estoque zerado seguia na URL e recortava o
+   export para só a ruptura sem pedido. Três dos filtros que vazavam (`cob_sub`, `cob_ped`,
+   `par_classe`) chegam a ZERAR o relatório.
+   É o espelho do bug já documentado no README ("filtro de tela tem de viajar no exportQS()") —
+   e o lado PIOR: filtro faltando deixa o export grande demais e óbvio; filtro sobrando o deixa
+   MENOR, e lista curta parece completa (só foi pego porque o diretor conhecia o fornecedor).
+   Filtro local novo entra AQUI — esta é a única fonte de verdade da propriedade. Espalhar
+   `if(S.view===...)` foi o que deixou o `par_faixa` protegido e o `par_classe` ao lado dele não. */
+const FILTROS_DA_ABA={
+  produtos:     ['abast','margem','cob_max','sem_ped'],
+  estoque_zero: ['ez_status'],
+  ruptura:      ['cob_faixa','cob_sub','cob_ped'],   // aba "Cobertura" (view `ruptura`)
+  parado:       ['par_faixa','par_classe'],
+  fornecedores: ['forn_classe'],
+  validade:     ['val_dias','val_faixa'],
+  vencidos:     ['ven_mes','ven_per'],
+  leadtime:     ['lt_min'],
+};
 function exportQS(){
   const p=new URLSearchParams(serverQS()), f=S.cli;
+  // ── GLOBAIS (barra do topo): valem em qualquer aba ──
   if(f.comprador) p.set('comprador_cod',f.comprador);
   if(f.curva && f.curva.length) p.set('curva',f.curva.join(','));
   if(f.xyz && f.xyz.length) p.set('xyz',f.xyz.join(','));
   if(f.fornec) p.set('fornec',f.fornec);
   if(f.depto) p.set('depto',f.depto);
-  // filtros do Explorador de produtos — os 4 têm de viajar, senão o PDF sai com o universo
-  // inteiro enquanto a tela mostra o recorte (era o caso de margem/cobMax/semPed).
-  if(S.view==='produtos'){
-    if(f.abast.length) p.set('abast',f.abast.join(','));
-    if((f.margem||[]).length) p.set('margem',f.margem.join(','));
-    if(f.cobMax!==''&&f.cobMax!=null&&!isNaN(+f.cobMax)) p.set('cob_max',f.cobMax);
-    if(f.semPed) p.set('sem_ped','1');
-  }
-  if(S.view==='vencidos'){ if(S.venMes) p.set('ven_mes',S.venMes); if(S.venPer&&S.venPer!=='tudo') p.set('ven_per',S.venPer); }
-  if(S.view==='leadtime'&&S.ltMin) p.set('lt_min',S.ltMin);
-  if(f.valDias && S.view==='validade') p.set('val_dias',f.valDias);
-  if(S.valFaixa && S.view==='validade'){ p.set('val_faixa_lo',S.valFaixa[0]); p.set('val_faixa_hi',S.valFaixa[1]); }
   if((f.busca||'').trim()) p.set('busca',f.busca.trim());
-  if(f.ezStatus) p.set('ez_status',f.ezStatus);
-  if(f.cobFaixa && f.cobFaixa.length) p.set('cob_faixa',f.cobFaixa.join(','));
-  if(f.parFaixa && f.parFaixa.length && S.view==='parado') p.set('par_faixa',f.parFaixa.join(','));
-  if(f.cobSub) p.set('cob_sub',f.cobSub);
-  if(f.cobPed) p.set('cob_ped',f.cobPed);
-  if(f.parClasse) p.set('par_classe',f.parClasse);
-  if(f.fornClasse) p.set('forn_classe',f.fornClasse);
+  // ── LOCAIS: só os que pertencem à aba aberta ──
+  const meu=k=>(FILTROS_DA_ABA[S.view]||[]).includes(k);
+  if(meu('abast') && f.abast.length) p.set('abast',f.abast.join(','));
+  if(meu('margem') && (f.margem||[]).length) p.set('margem',f.margem.join(','));
+  if(meu('cob_max') && f.cobMax!==''&&f.cobMax!=null&&!isNaN(+f.cobMax)) p.set('cob_max',f.cobMax);
+  if(meu('sem_ped') && f.semPed) p.set('sem_ped','1');
+  if(meu('ez_status') && f.ezStatus) p.set('ez_status',f.ezStatus);
+  if(meu('cob_faixa') && f.cobFaixa && f.cobFaixa.length) p.set('cob_faixa',f.cobFaixa.join(','));
+  if(meu('cob_sub') && f.cobSub) p.set('cob_sub',f.cobSub);
+  if(meu('cob_ped') && f.cobPed) p.set('cob_ped',f.cobPed);
+  if(meu('par_faixa') && f.parFaixa && f.parFaixa.length) p.set('par_faixa',f.parFaixa.join(','));
+  // ⚠️ sai de `f.parado`, NÃO de um `f.parClasse`: o card "Parado 120+ dias" do Cockpit faz
+  // drill com {parado:'muito_critico'} e é ESSE campo que o `filtered()` usa p/ recortar a tela.
+  // O export emitia `f.parClasse`, que nada no app jamais escreveu — então a tela mostrava só o
+  // 120+ e o Excel/PDF saíam com TODOS os parados (o espelho do vazamento, mesma família).
+  // (`S.cli.ruptura` tem a mesma forma — aplicado no `filtered()`, sem parâmetro no servidor —
+  //  mas hoje nenhum drill o aciona; se algum passar a acionar, ele precisa de par no back.)
+  if(meu('par_classe') && f.parado) p.set('par_classe',f.parado);
+  if(meu('forn_classe') && f.fornClasse) p.set('forn_classe',f.fornClasse);
+  if(meu('val_dias') && f.valDias) p.set('val_dias',f.valDias);
+  if(meu('val_faixa') && S.valFaixa){ p.set('val_faixa_lo',S.valFaixa[0]); p.set('val_faixa_hi',S.valFaixa[1]); }
+  if(meu('ven_mes') && S.venMes) p.set('ven_mes',S.venMes);
+  if(meu('ven_per') && S.venPer && S.venPer!=='tudo') p.set('ven_per',S.venPer);
+  if(meu('lt_min') && S.ltMin) p.set('lt_min',S.ltMin);
   return p.toString();
 }
 function exportBtns(view){ const qs=exportQS(); return `<span class="exp"><a class="btn sm" href="/estoque/api/export/${view}.xlsx?${qs}">⬇ Excel</a><a class="btn sm" href="/estoque/api/export/${view}.pdf?${qs}">⬇ PDF</a></span>`; }

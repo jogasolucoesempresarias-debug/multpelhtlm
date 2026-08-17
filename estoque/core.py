@@ -1416,7 +1416,11 @@ def por_comprador(produtos):
         # ruptura = critério OFICIAL (estoque <= 0 E giro > 0); cobertura baixa é atenção, não ruptura
         if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0:
             g["n_ruptura"] += 1
-        if p["status_parado"]:
+        # fonte única `eh_parado` — NÃO testar a verdade do campo: `status_parado` deixou de ser
+        # booleano quando ganhou o `novo`, e o truthy somava mercadoria recém-chegada como dead
+        # stock. Este valor sai no relatório "Compradores" (export e email), então a divergência
+        # ia parar na mão do cliente enquanto o Cockpit dizia outro número.
+        if eh_parado(p):
             g["valor_parado"] += (p["valor"] or 0)
         # fonte única (caixa fechada), nas duas réguas — ver _valor_sugerido_compra
         g["sugestao_valor"] += _valor_sugerido_compra(p)

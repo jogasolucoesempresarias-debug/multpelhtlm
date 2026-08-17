@@ -1188,7 +1188,10 @@ def _resumo_fornecedor(codfornec, itens, forn, extra, lead):
         "lucro": core._round(sum(p.get("lucro") or 0 for p in itens)),
         "n_ruptura": sum(1 for p in itens if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0),
         "sugestao_nf": core._round(_sug),          # a comprar, régua da NF (c/ impostos)
-        "valor_parado": core._round(sum(p.get("valor") or 0 for p in itens if p.get("status_parado"))),
+        # `core.eh_parado`, não a verdade do campo: `novo` é mercadoria recém-chegada, não capital
+        # parado. Sem isto o drawer divergia do export desta MESMA aba (que já usava a régua certa,
+        # ver `_export_data` view="fornecedores") — dois números para o mesmo fornecedor.
+        "valor_parado": core._round(sum(p.get("valor") or 0 for p in itens if core.eh_parado(p))),
         # lead REAL (mediana das entradas >=2d) é o que a aba Lead time mostra; `confiavel`
         # diz se há amostra suficiente — sem isso o drawer exibiria um número frágil como fato
         "lead_real": (lead or {}).get("lead_real"),

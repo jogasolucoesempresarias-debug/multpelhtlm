@@ -168,3 +168,46 @@ def test_default_continua_15():
 def test_clamp_impede_janela_que_esvazia_o_card_em_silencio(valor):
     """`novo_dias=0` não erraria alto: só devolveria os itens ao 121+ sem avisar."""
     assert core.merge_params({"novo_dias": valor})["novo_dias"] >= 1
+
+
+# ───────── 7. TODO consumidor de "capital parado" usa a mesma régua (08/2026) ─────────
+# O `eh_parado` nasceu como fonte única, mas dois chamadores ficaram testando a VERDADE do
+# campo (`if status_parado:`) — e `novo` é truthy. Resultado medido: R$ 15.000 contra R$ 5.000
+# no Cockpit, para os mesmos dois itens. Os dois pontos cegos eram justamente os que o gate
+# original não cobria (ele travava `cockpit` e `eh_parado`, não estes).
+
+def _par_novo_e_velho(hoje):
+    """(novo, velho) — um item que nunca vendeu e chegou anteontem, e um dead stock real."""
+    return _monta(None, "2026-08-12", hoje), _monta(None, "2024-01-01", hoje)
+
+
+def test_por_comprador_nao_soma_o_novo_no_capital_parado():
+    """Sai no relatório "Compradores" (export + email): divergia do Cockpit na mão do cliente."""
+    from datetime import date
+    hoje = date(2026, 8, 14)
+    novo, velho = _par_novo_e_velho(hoje)
+    linha = core.por_comprador([novo, velho])[0]
+    assert linha["valor_parado"] == velho["valor"], "o `novo` entrou no capital parado"
+    assert linha["valor_parado"] == core.cockpit([novo, velho])["valor_parado"], \
+        "por_comprador e cockpit têm de falar o mesmo número"
+
+
+def test_resumo_do_fornecedor_usa_a_mesma_regua_do_export_da_aba():
+    """Drawer 360° do fornecedor × export da MESMA aba Fornecedores: dois números para o mesmo
+    fornecedor era o sintoma. O export sempre usou `eh_parado`; o drawer não."""
+    from datetime import date
+    from estoque import routes
+    hoje = date(2026, 8, 14)
+    novo, velho = _par_novo_e_velho(hoje)
+    itens = [novo, velho]
+    # `_resumo_fornecedor` consulta `_compradores_map()` (Power BI); neutralizado p/ o teste
+    orig = routes._compradores_map
+    routes._compradores_map = lambda: {}
+    try:
+        r = routes._resumo_fornecedor(1, itens, {}, {}, None)
+    finally:
+        routes._compradores_map = orig
+    assert r["valor_parado"] == velho["valor"], "o `novo` entrou no capital parado do drawer"
+    # a régua do export da aba Fornecedores (routes._export_data, view="fornecedores")
+    export = core._round(sum(p.get("valor") or 0 for p in itens if core.eh_parado(p)))
+    assert r["valor_parado"] == export, "drawer e export divergem para o mesmo fornecedor"
