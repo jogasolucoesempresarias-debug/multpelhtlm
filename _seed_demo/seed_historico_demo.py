@@ -3,8 +3,11 @@
 Por que existe: a série real só pode ser fotografada dia a dia (estoque é POSIÇÃO — o saldo de
 ontem é sobrescrito e não existe em lugar nenhum). Numa instância normal isso significa esperar
 semanas. Na DEMO, esperar não faz sentido: ela existe para APRESENTAR a ferramenta, e uma aba
-vazia na reunião de venda é o oposto do objetivo. Além disso a demo tem "hoje" ancorado
-(`ANALYTICS_HOJE`), então o robô de foto nem roda lá — ver `estoque.historico._hoje_ancorado`.
+vazia na reunião de venda é o oposto do objetivo.
+
+⚠️ O "hoje" da demo é o do DADO (`max(dtsaida)`), não o do relógio: o `ANALYTICS_HOJE` vem
+COMENTADO no `docker-compose.demo.yml`, e o fato sintético termina antes da data real. Datar a
+foto no hoje real joga a janela de venda num período vazio e o catálogo inteiro vira curva "C".
 
 O que faz: pega a posição ATUAL do `joga_demo` (a mesma que o painel mostra) e projeta N dias
 para TRÁS, aplicando uma deriva plausível. O resultado é uma série que conta a história que a
@@ -52,10 +55,29 @@ def _trava():
     print(f"[hist-demo] auth DB alvo: {alvo or '(default)'}")
 
 
-def _produtos(app, unidade):
-    """A posição de HOJE da demo, pela mesma porta que o painel usa."""
-    from estoque import routes as R
-    with app.test_request_context(f"/estoque/api/snapshot?unidade={unidade}"):
+def hoje_da_demo():
+    """O "hoje" ANCORADO NO DADO — `max(dtsaida)` do joga_demo (ou `ANALYTICS_HOJE`).
+
+    ⚠️ NÃO usar `date.today()`. O fato sintético da demo termina no último dia com venda, que
+    normalmente é ANTERIOR à data real de hoje (o `ANALYTICS_HOJE` vem comentado no compose).
+    Datando a foto no hoje real, a janela de venda cai num período SEM faturamento — e aí
+    `core._aplicar_curva` carimba o catálogo INTEIRO como curva "C" (é o que ele faz quando o
+    total é zero). Foi exatamente isso: 3.781 produtos, todos C, e o filtro de curva A da aba
+    Evolução voltava vazio na demo (18/08). Mesma âncora que o `provider_sql` usa para todas as
+    janelas relativas do modo BD."""
+    import provider_sql
+    return provider_sql.hoje_analitico()
+
+
+def _produtos(app, unidade, hoje):
+    """A posição da demo na data ÂNCORA, pela mesma porta que o painel usa.
+
+    `hoje` viaja na querystring porque `routes._hoje()` o lê de lá — sem isso o
+    `_build_produtos` calcularia a janela de venda a partir do `date.today()` do servidor."""
+    from estoque import routes as R, historico
+    with app.test_request_context(
+            f"/estoque/api/snapshot?unidade={unidade}"
+            f"&venda_periodo={historico.PERIODO_CURVA}&hoje={hoje.isoformat()}"):
         produtos, _params, _fil = R._build_produtos()
     return produtos
 
@@ -140,7 +162,8 @@ def main():
     if not store.ensure():
         sys.exit("recusado: Postgres indisponível.")
 
-    hoje = date.fromisoformat(os.getenv("ANALYTICS_HOJE") or date.today().isoformat())
+    hoje = hoje_da_demo()
+    print(f"[hist-demo] hoje ancorado no dado: {hoje} (max dtsaida / ANALYTICS_HOJE)")
     conn = store.get_db()
     with conn, conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM estoque_foto_log")
@@ -153,7 +176,7 @@ def main():
     total = 0
     for unidade in R.UNIDADES:
         try:
-            base = _produtos(server.app, unidade)
+            base = _produtos(server.app, unidade, hoje)
         except Exception as e:                                    # noqa: BLE001
             print(f"[hist-demo] {unidade}: sem posição ({e}); pulando.")
             continue

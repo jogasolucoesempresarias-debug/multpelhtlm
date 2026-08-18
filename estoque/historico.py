@@ -27,6 +27,14 @@ from . import core, pbi, store
 # usar um padrão e manter padrão".
 PARAMS_FOTO = {}          # vazio ⇒ core.merge_params devolve DEFAULTS puro
 
+# Janela de venda usada para apurar a CURVA ABC gravada na foto.
+# ⚠️ NÃO pode ser o default ("mes"), que é o ACUMULADO do mês (`hoje.replace(day=1)`): no dia 1º
+# a ABC sairia de um único dia de venda e no dia 30 de trinta. Numa série histórica isso vira
+# dente de serra em toda virada de mês — itens pulando de curva sem nada ter mudado na operação,
+# que é exatamente o "mudança de definição parece resultado" que esta aba existe para evitar.
+# 90 dias é janela MÓVEL: estável, comparável entre dias, e já é opção da barra de filtros.
+PERIODO_CURVA = "90d"
+
 # colunas gravadas por item, na ordem do INSERT
 _COLS = ("data", "unidade", "codprod", "codfornec", "codcomprador", "qtdisp", "custo_unit",
          "valor", "giro_mes", "giro_dia", "cobertura_dias", "dtultsaida", "dtultent",
@@ -156,9 +164,11 @@ def fotografar(app, hoje=None, unidades=None, refazer=False):
     feitas, erros = {}, []
     for uid in alvo:
         try:
-            # `venda_periodo` não entra: as 4 séries (estoque, parado, cobertura, ruptura) não
-            # dependem do faturamento do período. Fica no default e mantém a foto barata.
-            with app.test_request_context(f"/estoque/api/snapshot?unidade={uid}"):
+            # `venda_periodo` entra SÓ por causa da CURVA (ver PERIODO_CURVA). Os outros campos que
+            # variam com o período (venda, lucro, margem) não são gravados, então o efeito é só
+            # tornar a ABC comparável entre dias.
+            with app.test_request_context(
+                    f"/estoque/api/snapshot?unidade={uid}&venda_periodo={PERIODO_CURVA}"):
                 produtos, params, _ = R._build_produtos()
             feitas[uid] = gravar(hoje, uid, produtos, ref.get("end_fmt"), params)
         except Exception as e:                                    # noqa: BLE001

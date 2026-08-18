@@ -447,18 +447,32 @@ async function renderEvolucao(){
     catch(e){ el.innerHTML=`<div class="empty">Falha ao carregar a evolução: ${esc(e.message)}</div>`; return; }
   }
   const J=S.evo, dias=J.dias||[], r=J.resumo||{}, v=r.variacao||{}, dir=r.direcao||{};
+  const fa=J.filtros||{};   // recorte que o SERVIDOR aplicou (não o que a barra mostra)
   const seg=`<div class="row" style="margin:2px 0 12px"><div class="fb-group"><label>Janela</label>
       <div class="seg" id="evo-jan">${Object.keys(EVO_JANELAS).map(k=>
         `<span class="seg-opt ${(S.evoJanela||'90d')===k?'on':''}" data-jan="${k}">${EVO_JAN_LBL[k]}</span>`).join('')}</div></div></div>`;
 
   if(J.indisponivel||!dias.length){
-    /* Estado vazio HONESTO: a série não pode ser gerada para trás (estoque é posição, não
-       evento), então "sem dados" aqui não é falha — é a medição ainda não ter começado. */
-    el.innerHTML=head('Evolução do estoque')+seg+`<div class="empty">
-      ${J.indisponivel?esc(J.indisponivel):'A primeira foto ainda não foi tirada.'}<br>
-      <small class="muted">O histórico começa no dia em que a medição liga: o estoque é um saldo, e o
-      saldo de ontem não fica guardado em lugar nenhum. A foto roda toda manhã, depois que o BI atualiza.</small>
-    </div>`;
+    /* ⚠️ TRÊS vazios diferentes, e confundi-los manda a pessoa caçar o problema errado. Foi o que
+       aconteceu (18/08): a demo TINHA 90 fotos, mas o filtro de curva não casava nada e a tela
+       dizia "a primeira foto ainda não foi tirada" — o diretor e eu fomos os dois atrás do
+       seeder. `J.log` é quem sabe a diferença: ele lista os dias fotografados, sem recorte. */
+    const temFoto=(J.log||[]).length>0, comFiltro=(fa.comprador||fa.fornec||fa.curva||fa.xyz);
+    let titulo, ajuda;
+    if(J.indisponivel){ titulo=esc(J.indisponivel); ajuda='O histórico fica no Postgres do app.'; }
+    else if(!temFoto){
+      titulo='A primeira foto ainda não foi tirada.';
+      ajuda='O histórico começa no dia em que a medição liga: o estoque é um saldo, e o saldo de ontem '
+           +'não fica guardado em lugar nenhum. A foto roda toda manhã, depois que o BI atualiza.';
+    } else {
+      titulo='Nenhum dado para este recorte.';
+      ajuda=`Existem <b>${int((J.log||[]).length)}</b> dias fotografados nesta unidade — o vazio é do filtro, não da medição.`
+        +(fa.curva?' Se a janela de venda usada na foto não teve faturamento, o catálogo inteiro cai em <b>curva C</b>'
+                  +' e A/B ficam sem nada: experimente <b>curva C</b> ou tire o filtro para conferir.':'')
+        +(comFiltro?'':' Verifique também a janela selecionada acima.');
+    }
+    el.innerHTML=head('Evolução do estoque')+seg+`<div class="empty">${titulo}<br>
+      <small class="muted">${ajuda}</small></div>`;
     wireEvo(el); return;
   }
 
@@ -474,7 +488,7 @@ async function renderEvolucao(){
   const u=dias[dias.length-1];
   // Recorte ativo + o que a aba ignora. Sem isto, quem marca "Depto" vê a tela não responder e
   // não descobre por quê — a barra de filtros é global e a aba honra só uma parte dela.
-  const fa=J.filtros||{}, ativos=[];
+  const ativos=[];
   if(fa.comprador) ativos.push('comprador');
   if(fa.fornec) ativos.push('fornecedor '+esc(fa.fornec));
   if(fa.curva) ativos.push('curva <b>'+esc(fa.curva)+'</b>');
@@ -483,7 +497,7 @@ async function renderEvolucao(){
   const linhaFiltro = (ativos.length||fora.length)
     ? `<div class="count-line">${ativos.length?`Recorte: ${ativos.join(' · ')}.`:''}
         ${fora.length?`<span style="color:${C.orange}">Esta aba não usa: <b>${fora.join(', ')}</b> — a série é gravada por item, unidade, comprador, fornecedor, curva e XYZ.</span>`:''}
-        ${fa.curva?`<br><small class="muted">A curva é a do item <b>no dia da foto</b> (Pareto da venda do mês), não a de hoje — por isso o passado não se reclassifica sozinho.</small>`:''}</div>`
+        ${fa.curva?`<br><small class="muted">A curva é a do item <b>no dia da foto</b> (Pareto da venda de 90 dias), não a de hoje — por isso o passado não se reclassifica sozinho.</small>`:''}</div>`
     : '';
   el.innerHTML=head('Evolução do estoque')+seg+aviso+linhaFiltro
     +`<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">

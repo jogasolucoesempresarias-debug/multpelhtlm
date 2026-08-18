@@ -366,12 +366,33 @@ def _trib_entrada_map():
 
 
 def _hoje():
+    """O "hoje" do módulo. Em modo BD ele é ANCORADO NO DADO, não no calendário.
+
+    ⚠️ O Comercial já fazia isso (`provider_sql.hoje_analitico`, ~25 chamadas entre
+    `provider_sql.py` e `server.py`); o Compras ficou de fora e usava `date.today()` puro. O
+    resultado, medido na demo em 18/08/2026: o fato sintético terminava em 24/07 e o relógio dizia
+    18/08, então TODA janela de data do módulo caía 25 dias à frente do dado —
+    venda "mês atual" = R$ 0, meta do orçamento = 0, `dias_sem_venda` inflado em 25 dias (mais
+    itens virando "parado") e, o mais visível, `core._aplicar_curva` carimbando o catálogo INTEIRO
+    como curva C (3.781 produtos, nenhum A ou B) porque o total de venda da janela era zero.
+
+    Só o modo `postgres` muda — o caminho Power BI segue com `date.today()`, que é o correto no
+    cliente real. É a regra do README: caminho novo atrás de `data_source == 'postgres'`, o default
+    sai idêntico.
+
+    (`hoje_analitico` cacheia por processo, igual no Comercial: base que recebe dado novo só vê a
+    âncora nova depois de reiniciar. Aceito — é o comportamento que o Comercial já tem.)"""
     h = request.args.get("hoje")
     if h:
         try:
             return date.fromisoformat(h)
         except ValueError:
             pass
+    if pbi.CONFIG["data_source"] == "postgres":
+        try:
+            return PS.hoje_analitico()
+        except Exception as e:      # banco analítico fora não pode derrubar toda tela
+            print(f"[hoje] âncora analítica indisponível ({e}); caindo no calendário.")
     return date.today()
 
 

@@ -130,8 +130,9 @@ série não amadurece.
   apresentação comercial. Trava igual à do `seed_metas_demo` (`DEMO_SEED=1` + recusa `multpel_db`).
 - **Recorte: comprador · fornecedor · curva · XYZ · unidade** — os quatro primeiros são gravados
   NA FOTO, então o passado não se reclassifica quando um item muda de curva. ⚠️ A curva ABC é o
-  Pareto da venda do PERÍODO e o robô fotografa no período padrão (mês): o que fica gravado é "a
-  curva daquele dia", e a tela declara isso. **Depto e Buscar produto a aba NÃO honra** e avisa
+  Pareto da venda do PERÍODO, e o robô fotografa numa janela MÓVEL de **90 dias**, não no default
+  "mes" (que é o ACUMULADO do mês — no dia 1º a curva sairia de um dia de venda, e a série ganharia
+  dente de serra em toda virada de mês). A tela declara a janela. **Depto e Buscar produto a aba NÃO honra** e avisa
   na tela — filtro que não responde em silêncio é a falha clássica do módulo.
   ⚠️ **Recorte novo tem de entrar na condição do rollup**, senão a aba serve o agregado da
   empresa para quem pediu a curva A — sem erro, só o número errado.

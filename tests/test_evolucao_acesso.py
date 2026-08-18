@@ -104,3 +104,31 @@ def test_a_ruptura_viaja_junto_como_contrapeso():
     from datetime import date
     s = historico.agregar([(date(2026, 8, 14), 0, 0.0, 2.0, 0, None, None)])
     assert s[0]["n_ruptura"] == 1
+
+
+def test_a_tela_separa_sem_foto_de_sem_dado_no_recorte():
+    """18/08: a demo tinha 90 fotos, o filtro de curva não casou nada e a tela disse "a primeira
+    foto ainda não foi tirada". O diretor e eu fomos os dois atrás do seeder — que estava certo.
+
+    Confundir "a medição não começou" com "seu filtro não achou nada" manda a pessoa caçar o
+    problema errado. `J.log` é quem sabe a diferença: ele lista os dias fotografados SEM recorte.
+    Gate de código porque a decisão vive no JS."""
+    from pathlib import Path
+    js = Path("static/estoque/estoque.js").read_text(encoding="utf-8")
+    ini = js.index("async function renderEvolucao(")
+    bloco = js[ini:ini + 4000]
+    assert "const temFoto=(J.log||[]).length>0" in bloco, \
+        "a tela precisa distinguir 'sem foto' de 'sem dado no recorte' pelo log"
+    assert "Nenhum dado para este recorte." in bloco
+    assert "A primeira foto ainda não foi tirada." in bloco
+    assert "curva C" in bloco, \
+        "sem venda na janela, o catálogo inteiro vira C — a tela tem de explicar isso"
+
+
+def test_o_endpoint_devolve_o_log_que_a_tela_usa_para_decidir():
+    """Se o `log` sumir da resposta, a tela volta a dizer 'sem foto' para todo filtro vazio."""
+    from estoque import routes
+    src = routes.api_evolucao.__doc__ or ""
+    import inspect
+    corpo = inspect.getsource(routes.api_evolucao)
+    assert '"log": log' in corpo and "dias_com_foto" in corpo

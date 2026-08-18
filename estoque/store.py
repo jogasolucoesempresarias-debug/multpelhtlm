@@ -154,10 +154,11 @@ CREATE TABLE IF NOT EXISTS estoque_foto_log (
 -- Curva ABC e XYZ do item NO DIA da foto (08/2026, dúvida do diretor: "filtra por curva?").
 -- Gravadas junto porque histórico não se reconstrói: a coluna custa nada hoje e custaria meses
 -- de série depois. Mesma razão pela qual o fornecedor entrou no grão.
--- ⚠️ A curva ABC é o Pareto da venda do PERÍODO, e o robô fotografa com o período PADRÃO (mês).
--- O que fica gravado é "a curva do item naquele dia, apurada no mês corrente" — definição
--- legítima, mas que a tela precisa declarar, senão alguém compara com a curva de 12 meses da
--- aba Produtos e acha que uma das duas está errada.
+-- ⚠️ A curva ABC é o Pareto da venda do PERÍODO. O robô fotografa numa janela MÓVEL de 90 dias
+-- (`historico.PERIODO_CURVA`), NÃO no default "mes" — o default é o acumulado do mês, então no
+-- dia 1º a curva sairia de um dia de venda e no dia 30 de trinta, e a série ganharia um dente de
+-- serra em toda virada de mês. A tela declara a janela: quem comparar com a ABC de 12 meses da
+-- aba Produtos tem de saber que são réguas diferentes, não uma delas errada.
 ALTER TABLE estoque_foto_item ADD COLUMN IF NOT EXISTS curva_abc CHAR(1);
 ALTER TABLE estoque_foto_item ADD COLUMN IF NOT EXISTS xyz CHAR(1);
 CREATE INDEX IF NOT EXISTS ix_estoque_foto_item_curva ON estoque_foto_item (unidade, curva_abc, data);

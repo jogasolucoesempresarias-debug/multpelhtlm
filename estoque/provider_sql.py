@@ -16,10 +16,10 @@ import sys
 from pathlib import Path
 
 try:
-    from provider_sql import analytics_conn, VB, CT, DEV, CDEV
+    from provider_sql import analytics_conn, hoje_analitico, VB, CT, DEV, CDEV
 except ImportError:  # subpacote testado isolado: põe a raiz do app no path
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from provider_sql import analytics_conn, VB, CT, DEV, CDEV
+    from provider_sql import analytics_conn, hoje_analitico, VB, CT, DEV, CDEV
 
 
 def _fil(filiais):
