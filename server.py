@@ -323,8 +323,8 @@ def _guard_estoque():
         return negado
     if not tem_area('compras'):
         if '/api/' in request.path:
-            return jsonify({'ok': False, 'error': 'Sem acesso ao módulo Compras'}), 403
-        return Response('Sem acesso ao módulo Compras', status=403)
+            return jsonify({'ok': False, 'error': 'Sem acesso ao módulo Gestão de Estoque'}), 403
+        return Response('Sem acesso ao módulo Gestão de Estoque', status=403)
 
 
 if 'compras' in MODULOS:
@@ -1335,7 +1335,7 @@ def enviar_relatorios_estoque_email(usuario_id):
 
     # Respeita os dois níveis: o que a empresa contratou e o que a pessoa acessa.
     if 'compras' not in MODULOS:
-        return {'ok': True, 'skipped': 'módulo Compras não contratado nesta instância'}
+        return {'ok': True, 'skipped': 'módulo Gestão de Estoque não contratado nesta instância'}
     if 'compras' not in (user.get('areas') or []):
         return {'ok': True, 'skipped': 'usuário sem acesso à área Compras'}
 
@@ -8880,6 +8880,30 @@ def _disparar_relatorios_agendados():
                 _log_background(f'cron:erro_estoque:user{uid}', erro=str(e)[:500])
 
 
+def _fotografar_estoque():
+    """Foto diária do estoque (aba Evolução) — ver estoque/historico.py.
+
+    Roda de hora em hora pela MANHÃ, não uma vez só: a foto tem de sair depois do refresh do BI
+    do dia, e o horário desse refresh não é garantido. A guarda `pode_fotografar` recusa até o
+    BI ser de hoje, e `ja_fotografado` impede refazer o trabalho nas passagens seguintes — então
+    o custo real é uma checagem barata por hora, e uma foto por dia.
+
+    NÃO depende de CRON_HABILITADO: aquele interruptor existe para não disparar e-mail, e
+    fotografar não manda nada para ninguém. Perder um dia de foto é irrecuperável (estoque é
+    posição, não evento), então ele não pode ficar atrás do interruptor de e-mail."""
+    if 'compras' not in MODULOS:
+        return
+    try:
+        from estoque import historico
+        feitas, erros = historico.fotografar(app)
+        if feitas:
+            print(f"[FOTO] estoque fotografado: {feitas}")
+        for e in erros:
+            print(f"[FOTO] {e}")
+    except Exception as e:
+        print(f"[FOTO] falhou: {e}")
+
+
 def _start_scheduler():
     """Inicia APScheduler in-process. Roda a cada 5min. Idempotente."""
     global _scheduler
@@ -8895,6 +8919,9 @@ def _start_scheduler():
         # NÃO depende de CRON_HABILITADO: aquele interruptor é para não disparar e-mail, e
         # limpeza de banco não manda nada para ninguém.
         _scheduler.add_job(_expurgar_log, 'cron', hour=3, minute=20, id='expurgo_log')
+        # Foto do estoque: 6h-12h, no minuto 40. Janela larga porque o refresh do BI não tem
+        # hora fixa; a 1ª passagem que encontrar o BI do dia grava e as seguintes não fazem nada.
+        _scheduler.add_job(_fotografar_estoque, 'cron', hour='6-12', minute=40, id='foto_estoque')
         _scheduler.start()
         status = 'ATIVO' if CRON_HABILITADO else 'aguardando CRON_HABILITADO=true'
         print(f"[CRON] Scheduler iniciado ({status})")

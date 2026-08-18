@@ -200,7 +200,7 @@
           </label>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:500;">
             <input type="checkbox" id="f_area_compras" style="width:auto;" onchange="atualizarVisibilidadeRoleFields()">
-            Compras
+            Gestão de Estoque
           </label>
         </div>
       </div>
@@ -317,13 +317,13 @@
       <!-- Relatórios de Compras: reusam o horário/frequência do cron acima, então não têm
            agendamento próprio. Só aparece se a pessoa tiver a área Compras. -->
       <div class="ff full" id="ff_relatorios_estoque" style="display:none;">
-        <label>Relatórios de Compras por email
+        <label>Relatórios de Gestão de Estoque por email
           <span style="color:var(--text-dim);font-size:0.72rem;font-weight:400;">— usam o horário e a frequência acima</span>
         </label>
         <div id="rel_estoque_box" style="padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;max-height:190px;overflow-y:auto;">
           <span style="color:var(--text-dim);font-size:0.75rem;">Carregando…</span>
         </div>
-        <span id="rel_estoque_hint" style="color:var(--text-dim);font-size:0.72rem;margin-top:4px;display:block;">Nenhum selecionado — não recebe relatório de Compras</span>
+        <span id="rel_estoque_hint" style="color:var(--text-dim);font-size:0.72rem;margin-top:4px;display:block;">Nenhum selecionado — não recebe relatório de Gestão de Estoque</span>
       </div>
     </div>
     <div class="modal-acoes">
@@ -570,7 +570,7 @@ function renderTabela() {
           <button class="btn" onclick="abrirEdicao(${u.id})">Editar</button>
           <button class="btn btn-success" onclick="enviarRelatorio(${u.id})" title="Enviar relatório de carteira (Comercial) por email agora">📧 Enviar</button>
           ${(u.relatorios_estoque || []).length
-              ? `<button class="btn btn-success" onclick="enviarRelatorioCompras(${u.id})" title="Enviar os relatórios de Compras marcados">📦 Compras</button>`
+              ? `<button class="btn btn-success" onclick="enviarRelatorioCompras(${u.id})" title="Enviar os relatórios de Gestão de Estoque marcados">📦 Estoque</button>`
               : ''}
           ${u.bloqueado
               ? `<button class="btn btn-danger" onclick="desbloquear(${u.id})" title="Conta bloqueada por tentativas de login — liberar agora">🔒 Desbloquear</button>`
@@ -677,7 +677,7 @@ function atualizarHintRelEstoque() {
   const h = document.getElementById('rel_estoque_hint');
   h.textContent = _relEstoqueSel.length
     ? `${_relEstoqueSel.length} relatório(s) — enviados no horário/frequência do cron acima`
-    : 'Nenhum selecionado — não recebe relatório de Compras';
+    : 'Nenhum selecionado — não recebe relatório de Gestão de Estoque';
 }
 
 function nomeComprador(cod) {

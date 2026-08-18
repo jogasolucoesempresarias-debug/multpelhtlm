@@ -18,7 +18,7 @@
 (function () {
   const AREAS = {
     comercial: { rotulo: 'Comercial', href: '/', dica: 'Vendas, carteira e metas' },
-    compras: { rotulo: 'Compras', href: '/estoque/', dica: 'Estoque, reposição e pedidos' },
+    compras: { rotulo: 'Gestão de Estoque', href: '/estoque/', dica: 'Reposição, ruptura, validade e pedidos' },
   };
   const ROTULO_ADMIN = 'Administração';
 

@@ -87,12 +87,59 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
 
 ## 📦 Módulo Compras (features)
 
-Navegação em 2 níveis: **Visão · Comprar · Pedidos · Estoque · Análise** (19 abas). Foco no comprador.
-- **Visão** — Cockpit + Painel gerencial (5 pilares) + Meta de ruptura.
+Navegação em 2 níveis: **Visão · Comprar · Pedidos · Estoque · Análise** (20 abas). Foco no comprador.
+- **Visão** — Cockpit + Painel gerencial (5 pilares) + Meta de ruptura + **Evolução do estoque** (ADM).
 - **Comprar** — Abastecimento (sugestão de compra), Estoque zerado, Plano reposição.
 - **Pedidos** — Orçamento (meta × realizado × pedidos), geração de pedido de compra (PDF + planilha Winthor).
 - **Estoque** — Cobertura, Parado, Validade (FEFO), Vencidos, Ruptura por comprador, Ocupação.
 - **Análise** — Desempenho comercial, Compras × Vendas, Fornecedores, ABC-XYZ, Produtos, Qualidade da base.
+
+**Aba Evolução do estoque — a única série HISTÓRICA do módulo** (08/2026, pedido do diretor:
+"acompanhar de fato se estamos tendo evolução positiva ou não… é gestão comprovada"). Valor de
+estoque, capital parado, cobertura e ruptura ao longo do tempo. **Restrita ao ADM** enquanto a
+série não amadurece.
+- ⚠️ **O histórico NÃO pode ser gerado para trás, e isso não é limitação de esforço.** `PCEST` é
+  **posição**: o `QTESTGER` de ontem foi sobrescrito e não existe no BI nem no Winthor. A aba
+  Vencidos consegue mostrar mês a mês desde sempre porque perda por validade é **evento datado**
+  (fica no livro); saldo é **estado**. Mesmo app, mesma pergunta, respostas opostas — e é essa
+  distinção que decide o que dá para reconstruir. A **cobertura** é a mais irrecuperável: depende
+  de `QTVENDMES1..3`, que são janelas móveis regravadas todo mês.
+- **Guarda-se o INGREDIENTE, não o resultado** (`estoque_foto_item`: qtdisp, custo, giro, datas).
+  Gravar "parado = R$ X" congelaria a série na régua daquele dia, e aí **corrigir uma régua vira
+  degrau no gráfico** — numa aba feita para provar gestão, degrau de definição é lido como
+  resultado de operação. Com o cru, mexer em `novo_dias`/`ideal_dias`/`eh_parado` **recalcula o
+  passado inteiro**. Gate: `tests/test_historico_estoque.py`.
+- **A ruptura é CONTRAPESO, não enfeite.** Estoque caindo, sozinho, pode ser desabastecimento.
+  Por isso `valor_estoque` é a **única métrica sem cor** na tela (`_EVO_DIRECAO`): só parado ↓,
+  ruptura ↑ e % ideal ↑ têm direção inequívoca. Pintar queda de estoque de verde faria a aba um
+  dia comemorar uma ruptura.
+- ⚠️ **Duas convenções de faixa, e as duas espelham a tela de propósito**: as faixas de cobertura
+  seguem o Painel gerencial (`resumo_cobertura`, giro≤0 cai no 121+, então Σ faixas = valor de
+  estoque e o empilhado fecha com o KPI); o trio ideal/risco/sem-giro segue `resumo_estoque_ideal`
+  (sem-giro à parte). Unificar faria a série discordar de uma das telas que ela reproduz.
+- **Robô** (`estoque/historico.py` + job no `server.py`): 6h-12h, minuto 40. Janela larga porque o
+  refresh do BI não tem hora fixa — e a foto **só sai depois do refresh do dia**, senão grava a
+  posição de ontem com a data de hoje. `ja_fotografado` impede refazer nas passagens seguintes;
+  upsert porque o Swarm pode ter réplica. **Fora do `CRON_HABILITADO`**: aquele interruptor é para
+  não mandar e-mail, e perder um dia de foto é irrecuperável.
+- **Grão `data × unidade × produto`** (~6k linhas/dia, ~265 MB/ano na base real da Multpel: 4.519
+  produtos de revenda, 286 fornecedores). `unidade` inclui "todas" e se sobrepõe às demais de
+  propósito — faixa de cobertura não é decomponível por filial (o giro soma junto com o saldo).
+- **Demo**: o robô não roda lá (`ANALYTICS_HOJE` fixo ⇒ a base não envelhece). O histórico vem do
+  `_seed_demo/seed_historico_demo.py` (90 dias, SEED 42), senão a aba abriria vazia na
+  apresentação comercial. Trava igual à do `seed_metas_demo` (`DEMO_SEED=1` + recusa `multpel_db`).
+- **Recorte: comprador · fornecedor · curva · XYZ · unidade** — os quatro primeiros são gravados
+  NA FOTO, então o passado não se reclassifica quando um item muda de curva. ⚠️ A curva ABC é o
+  Pareto da venda do PERÍODO e o robô fotografa no período padrão (mês): o que fica gravado é "a
+  curva daquele dia", e a tela declara isso. **Depto e Buscar produto a aba NÃO honra** e avisa
+  na tela — filtro que não responde em silêncio é a falha clássica do módulo.
+  ⚠️ **Recorte novo tem de entrar na condição do rollup**, senão a aba serve o agregado da
+  empresa para quem pediu a curva A — sem erro, só o número errado.
+  Gate: `test_qualquer_recorte_desvia_do_rollup`.
+- **"Itens em ruptura" é CONTAGEM de SKUs** (disponível ≤ 0 e giro > 0), não o catálogo: o KPI
+  mostra `309 de 2.877`. Medido na base real: curva A 17/366 (4,6%) × curva C 268/2.061 (13%).
+- 🚧 **Ainda não tem export** (CSV/XLSX/PDF) nem entra no catálogo de e-mail — enquanto for
+  ADM-only isso não faz falta, mas é o que falta para ela virar aba normal.
 
 **Aba Fornecedores — ciclo de compras + lucro com verba** (07/2026). Quatro colunas novas:
 `Compras` (quantas vezes compramos no período), `Ciclo 12m` (de quanto em quanto tempo),
@@ -550,7 +597,7 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 │   ├── core.py queries.py pbi.py store.py   # regra/DAX/PBI/Postgres (quase intactos)
 │   ├── relatorios.py               #   🆕 catálogo único dos relatórios (Admin + email)
 │   ├── emails.py                   #   🆕 gera anexos PDF+XLSX p/ o email de Compras
-│   └── index.html                  #   SPA do Compras (19 abas)
+│   └── index.html                  #   SPA do Compras (20 abas)
 ├── portal.html                     # 🆕 tela de escolha de área (+ Administração como faixa)
 ├── index/carteira/vendedores/…html # Páginas do Comercial
 ├── admin.html                      # CRUD + acesso por área + comprador + relatórios de Compras

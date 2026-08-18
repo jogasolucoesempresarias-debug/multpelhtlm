@@ -52,7 +52,8 @@ const S = {
   params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1,metaA:2,metaB:5,metaC:10,idealDias:45,idealMeta:90,novoDias:15},
   charts:{}, sort:{}, valFaixa:null,
   orcArrastar:false,   // Orçamento: descontar o estouro do mês anterior da meta (opt-in)
-  vencidos:null, vencidosQS:'', venMes:null, venPer:'2026',   // aba Vencidos: cache por QS, mês selecionado, período (2026|12m|tudo)
+  vencidos:null, vencidosQS:'', venMes:null, venPer:'2026',
+  evo:null, evoQS:'', evoJanela:'90d', admin:false,   // aba Evolucao: cache por QS, janela, e se a aba pode aparecer   // aba Vencidos: cache por QS, mês selecionado, período (2026|12m|tudo)
   // Lead time / Verbas: cache com CHAVE do comprador — as duas agregam no servidor e o recorte
   // por comprador é feito lá (mediana e totais não se recalculam a partir das linhas visíveis).
   leadtime:null, leadtimeKey:null, ltMin:5, ltOpen:new Set(), ltDet:{},
@@ -89,7 +90,7 @@ const sugCxN = p => { if(!(p.sugestao_cx>0)) return '—';
 const embCell = p => { const e=esc(p.embalagem_caixa||''); const cx=p.caixa||1;
   return cx>1 ? `${e||'cx'} <small class="muted">· ${int(cx)} un/cx</small>` : `<span class="muted">${e||'avulso'} · 1 un</span>`; };
 // navegação em 2 níveis: grupo → telas
-const NAV={visao:['cockpit','gerencial','meta_ruptura'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento'],estoque:['ruptura','parado','validade','vencidos','ruptura_comprador','ocupacao'],analise:['desempenho','comprasvendas','fornecedores','leadtime','verbas','abcxyz','produtos','qualidade']};
+const NAV={visao:['cockpit','gerencial','meta_ruptura','evolucao'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento'],estoque:['ruptura','parado','validade','vencidos','ruptura_comprador','ocupacao'],analise:['desempenho','comprasvendas','fornecedores','leadtime','verbas','abcxyz','produtos','qualidade']};
 // aba 'logistica' oculta a pedido do diretor (não usa p/ análise) — reversível: re-adicionar em pedidos
 const GROUP_OF=v=>Object.keys(NAV).find(g=>NAV[g].includes(v))||'visao';
 // filtro Curva (global, topo) = MULTI-seleção (ex.: ver ruptura de B+C juntas)
@@ -386,6 +387,155 @@ async function loadData(){
   }catch(e){ toast('Falha ao carregar: '+e.message,true); console.error(e); }
   $('#loader').style.display='none'; $('#content').style.display='block';
   render();
+}
+
+/* ───────── Evolução do estoque (foto diária) ─────────
+   ⚠️ Base PRÓPRIA: lê de `estoque_foto_item` (histórico), não do snapshot de hoje. Por isso não
+   passa por `filtered()` — o recorte de comprador/fornecedor vai ao SERVIDOR, que refaz a série
+   a partir do dado cru. Restrita ao ADM enquanto a série não amadurece (o gate de verdade é o
+   /api/evolucao; aqui a aba só fica escondida do menu).
+   O valor de estoque NÃO é colorido de propósito: cair pode ser boa gestão OU desabastecimento —
+   quem dá o sinal é a ruptura ao lado. Só parado/ruptura/%ideal têm direção inequívoca. */
+const EVO_JANELAS={'30d':30,'90d':90,'12m':365,'tudo':null};
+const EVO_JAN_LBL={'30d':'30 dias','90d':'90 dias','12m':'12 meses','tudo':'Tudo'};
+const EVO_FX=[['0-30',C.red],['31-60',C.green],['61-90',C.yellow],['91-120',C.orange],['121+',C.purple]];
+const dLbl=iso=>{const p=String(iso||'').split('-');return p.length===3?p[2]+'/'+p[1]:String(iso||'');};
+
+function evoQS(){
+  const p=new URLSearchParams(serverQS());
+  const n=EVO_JANELAS[S.evoJanela||'90d'];
+  if(n){ const d=new Date(); d.setDate(d.getDate()-n); p.set('ini',d.toISOString().slice(0,10)); }
+  if(S.cli.comprador) p.set('comprador_cod',S.cli.comprador);
+  if(S.cli.fornec) p.set('fornec',S.cli.fornec);
+  // Curva/XYZ saem da FOTO do dia (gravadas no item), não do cadastro de hoje. A barra permite
+  // multi-seleção; aqui vale UMA — com duas o recorte deixaria de ter leitura ("A+B ao longo do
+  // tempo" não é uma pergunta que alguém faça), e a tela declara qual está valendo.
+  if((S.cli.curva||[]).length===1) p.set('curva',S.cli.curva[0]);
+  if((S.cli.xyz||[]).length===1) p.set('xyz',S.cli.xyz[0]);
+  return p.toString();
+}
+
+/* Filtros do topo que esta aba NÃO honra — a barra fica visível em todas as abas, e filtro que
+   não responde em silêncio é a falha clássica do módulo. Mesma política da Meta de ruptura, que
+   declara não responder a nenhum. Aqui: Depto e Buscar produto não estão na foto (o grão é o
+   item, mas o depto não foi gravado); curva/XYZ só valem com UMA opção marcada. */
+function evoIgnorados(){
+  const f=S.cli, fora=[];
+  if(f.depto) fora.push('Depto');
+  if((f.busca||'').trim()) fora.push('Buscar produto');
+  if((f.curva||[]).length>1) fora.push('Curva (só 1 por vez)');
+  if((f.xyz||[]).length>1) fora.push('XYZ (só 1 por vez)');
+  return fora;
+}
+
+/* delta com cor SÓ quando a direção é inequívoca — o servidor diz qual é em `resumo.direcao`.
+   Pintar o estoque de verde ao cair faria a aba, um dia, comemorar uma ruptura. */
+function evoDelta(v,dir,fmt){
+  if(!v) return '<span class="muted">—</span>';
+  const d=v.delta, pct=v.delta_pct;
+  const bom = dir==='menor_melhor' ? d<0 : (dir==='maior_melhor' ? d>0 : null);
+  const cor = bom===null ? 'var(--muted)' : (bom?C.green:C.red);
+  const sinal = d>0?'+':'';
+  return `<span style="color:${cor}">${sinal}${fmt(d)}${pct!=null?` (${sinal}${dec(pct,1)}%)`:''}</span>`;
+}
+
+async function renderEvolucao(){
+  const el=$('#v-evolucao'), qs=evoQS();
+  if(!S.evo || S.evoQS!==qs){
+    el.innerHTML=`<div class="loader"><div class="spinner"></div>Carregando evolução…</div>`;
+    try{ S.evo=await getJSON('/estoque/api/evolucao?'+qs); S.evoQS=qs; }
+    catch(e){ el.innerHTML=`<div class="empty">Falha ao carregar a evolução: ${esc(e.message)}</div>`; return; }
+  }
+  const J=S.evo, dias=J.dias||[], r=J.resumo||{}, v=r.variacao||{}, dir=r.direcao||{};
+  const seg=`<div class="row" style="margin:2px 0 12px"><div class="fb-group"><label>Janela</label>
+      <div class="seg" id="evo-jan">${Object.keys(EVO_JANELAS).map(k=>
+        `<span class="seg-opt ${(S.evoJanela||'90d')===k?'on':''}" data-jan="${k}">${EVO_JAN_LBL[k]}</span>`).join('')}</div></div></div>`;
+
+  if(J.indisponivel||!dias.length){
+    /* Estado vazio HONESTO: a série não pode ser gerada para trás (estoque é posição, não
+       evento), então "sem dados" aqui não é falha — é a medição ainda não ter começado. */
+    el.innerHTML=head('Evolução do estoque')+seg+`<div class="empty">
+      ${J.indisponivel?esc(J.indisponivel):'A primeira foto ainda não foi tirada.'}<br>
+      <small class="muted">O histórico começa no dia em que a medição liga: o estoque é um saldo, e o
+      saldo de ontem não fica guardado em lugar nenhum. A foto roda toda manhã, depois que o BI atualiza.</small>
+    </div>`;
+    wireEvo(el); return;
+  }
+
+  const mat=r.maturidade, faltam=r.faltam_para_util||0;
+  const aviso = mat==='enchendo'
+    ? `<div class="count-line" style="color:${C.orange}">📷 <b>${int(r.fotos)}</b> ${r.fotos===1?'foto tirada':'fotos tiradas'} ·
+        a tendência fica legível a partir de <b>4 semanas</b> (faltam ${int(faltam)} dias).
+        O que está no gráfico já é medição real — só é cedo para ler tendência.</div>`
+    : (mat==='util'
+      ? `<div class="count-line">Série com <b>${int(r.fotos)}</b> fotos — já dá para ler direção. Tendência firme a partir de 90 dias.</div>`
+      : `<div class="count-line">Série com <b>${int(r.fotos)}</b> fotos (${dLbl(r.de)} a ${dLbl(r.ate)}).</div>`);
+
+  const u=dias[dias.length-1];
+  // Recorte ativo + o que a aba ignora. Sem isto, quem marca "Depto" vê a tela não responder e
+  // não descobre por quê — a barra de filtros é global e a aba honra só uma parte dela.
+  const fa=J.filtros||{}, ativos=[];
+  if(fa.comprador) ativos.push('comprador');
+  if(fa.fornec) ativos.push('fornecedor '+esc(fa.fornec));
+  if(fa.curva) ativos.push('curva <b>'+esc(fa.curva)+'</b>');
+  if(fa.xyz) ativos.push('XYZ <b>'+esc(fa.xyz)+'</b>');
+  const fora=evoIgnorados();
+  const linhaFiltro = (ativos.length||fora.length)
+    ? `<div class="count-line">${ativos.length?`Recorte: ${ativos.join(' · ')}.`:''}
+        ${fora.length?`<span style="color:${C.orange}">Esta aba não usa: <b>${fora.join(', ')}</b> — a série é gravada por item, unidade, comprador, fornecedor, curva e XYZ.</span>`:''}
+        ${fa.curva?`<br><small class="muted">A curva é a do item <b>no dia da foto</b> (Pareto da venda do mês), não a de hoje — por isso o passado não se reclassifica sozinho.</small>`:''}</div>`
+    : '';
+  el.innerHTML=head('Evolução do estoque')+seg+aviso+linhaFiltro
+    +`<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
+        ${kpi('Valor em estoque',money(u.valor_estoque),evoDelta(v.valor_estoque,dir.valor_estoque,moneyK)+' na janela',C.accent)}
+        ${kpi('Capital parado',money(u.valor_parado),evoDelta(v.valor_parado,dir.valor_parado,moneyK)+' na janela',C.purple)}
+        ${kpi('Itens em ruptura',`${int(u.n_ruptura)} <small class="muted">de ${int(u.n_skus)}</small>`,evoDelta(v.n_ruptura,dir.n_ruptura,int)+' na janela',C.red)}
+        ${kpi('Cobertura ideal',u.pct_ideal!=null?dec(u.pct_ideal*100,1)+'%':'—',evoDelta(v.pct_ideal,dir.pct_ideal,x=>dec(x*100,1)+' p.p.')+' na janela',C.green)}
+      </div>
+      <div class="panel"><h3><span>Estoque × capital parado${tipT('Barras = valor total em estoque. Linha = quanto dele está parado. As duas juntas contam a história: estoque caindo COM o parado caindo mais rápido é gestão.')}</span></h3>
+        <div class="chart-box" style="height:230px"><canvas id="ch-evo-valor"></canvas></div></div>
+      <div class="panel"><h3><span>Composição da cobertura${tipT('Para onde o capital está migrando. Faixa boa (31-60) crescendo e o 121+ encolhendo é a prova visual da gestão.')}</span></h3>
+        <div class="chart-box" style="height:230px"><canvas id="ch-evo-cob"></canvas></div></div>
+      <div class="panel"><h3><span>Itens em ruptura${tipT('O CONTRAPESO: estoque caindo só é boa notícia se a ruptura não subir junto. Sem esta linha, um desabastecimento pareceria eficiência.')}</span></h3>
+        <div class="chart-box sm" style="height:150px"><canvas id="ch-evo-rup"></canvas></div></div>
+      <div class="panel" id="evo-tbl"></div>`;
+
+  const lbls=dias.map(d=>dLbl(d.data));
+  // ⚠️ EIXO PRÓPRIO para o parado. No mesmo eixo do estoque ele fica esmagado no rodapé
+  // (R$ 6,0 mi contra R$ 437 mil) e a queda de -14,4% — que é A notícia da aba — some da tela.
+  // Os dois eixos começam em ZERO: truncar a base exageraria a variação, que é o vício clássico
+  // deste gráfico. Achado olhando o render, não o código.
+  chart('ch-evo-valor',{data:{labels:lbls,datasets:[
+      {type:'bar',label:'Estoque',data:dias.map(d=>d.valor_estoque),backgroundColor:C.accent+'55',borderColor:C.accent,borderWidth:1,yAxisID:'y'},
+      {type:'line',label:'Parado (eixo à direita)',data:dias.map(d=>d.valor_parado),borderColor:C.purple,backgroundColor:'transparent',tension:.25,pointRadius:0,borderWidth:2,yAxisID:'y2'}]},
+    options:{maintainAspectRatio:false,scales:{
+      x:{ticks:{maxTicksLimit:15,autoSkip:true}},
+      y:{beginAtZero:true,ticks:{callback:x=>moneyK(x)}},
+      y2:{position:'right',beginAtZero:true,grid:{drawOnChartArea:false},ticks:{callback:x=>moneyK(x)}}}}});
+  chart('ch-evo-cob',{type:'line',data:{labels:lbls,datasets:EVO_FX.map(f=>({
+      label:f[0],data:dias.map(d=>(d.faixas||{})[f[0]]||0),borderColor:f[1],backgroundColor:f[1]+'55',
+      fill:true,tension:.25,pointRadius:0,borderWidth:1}))},
+    options:{maintainAspectRatio:false,scales:{x:{ticks:{maxTicksLimit:15,autoSkip:true}},
+      y:{stacked:true,beginAtZero:true,ticks:{callback:x=>moneyK(x)}}}}});
+  chart('ch-evo-rup',{type:'line',data:{labels:lbls,datasets:[{label:'Em ruptura',
+      data:dias.map(d=>d.n_ruptura),borderColor:C.red,backgroundColor:C.red+'22',
+      fill:true,tension:.25,pointRadius:0,borderWidth:2}]},
+    options:{maintainAspectRatio:false,plugins:{legend:{display:false}},
+      scales:{x:{ticks:{maxTicksLimit:15,autoSkip:true}},y:{beginAtZero:true}}}});
+
+  const cols=[{k:'data',label:'Data',fmt:dLbl},{k:'valor_estoque',label:'Estoque R$',num:1,fmt:money},
+    {k:'valor_parado',label:'Parado R$',num:1,fmt:money},{k:'pct_parado',label:'% parado',num:1,fmt:x=>x==null?'—':dec(x,1)+'%'},
+    {k:'n_ruptura',label:'Ruptura',num:1,fmt:int},{k:'pct_ideal',label:'% ideal',num:1,fmt:x=>x==null?'—':dec(x*100,1)+'%'},
+    {k:'n_skus',label:'SKUs',num:1,fmt:int}];
+  const ord=[...dias].reverse();   // mais recente primeiro: é a linha que o diretor olha
+  $('#evo-tbl').innerHTML=`<h3><span>Foto dia a dia</span> <small class="muted">· ${int(dias.length)} ${dias.length===1?'dia medido':'dias medidos'}</small></h3>
+    <div class="tbl-wrap"><table><thead><tr>${cols.map(c=>`<th class="${c.num?'num':''}">${c.label}</th>`).join('')}</tr></thead>
+    <tbody>${ord.map(d=>`<tr>${cols.map(c=>`<td class="${c.num?'num':''}">${c.fmt?c.fmt(d[c.k]):d[c.k]}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+  wireEvo(el);
+}
+
+function wireEvo(el){
+  el.querySelectorAll('#evo-jan .seg-opt').forEach(o=>o.onclick=()=>{ S.evoJanela=o.dataset.jan; S.evo=null; render(); });
 }
 
 /* ───────── filtros client-side ───────── */
@@ -3157,6 +3307,7 @@ function render(){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   $('#v-'+S.view).classList.add('active');
   applyNav();
+  if(S.view==='evolucao'){ renderEvolucao(); savePrefs(); return; }   // base propria (foto diaria), nao usa filtered()
   if(S.view==='orcamento'){ renderOrcamento(); savePrefs(); return; }
   if(S.view==='logistica'){ renderLogistica(); savePrefs(); return; }
   if(S.view==='plano'){ renderPlano(); savePrefs(); return; }
@@ -3186,6 +3337,16 @@ async function init(){
   if(pr.orcArrastar) S.orcArrastar=true;       // arraste do estouro do mês anterior (opt-in)
   applyNav();   // organiza os tabs já na 1ª pintura (antes do fetch) — evita o flash de todos os tabs
   document.body.classList.add('booted');   // revela os tabs (CSS esconde até aqui)
+  // A aba Evolução nasce ADM-only (a série ainda está enchendo). Revelar aqui é COSMÉTICO —
+  // quem barra de verdade é o /api/evolucao no servidor. Falha de rede não pode derrubar o
+  // painel inteiro por causa de uma aba, então o catch só deixa a aba escondida.
+  try{
+    const me=await getJSON('/api/me');
+    S.admin = (me && me.role==='admin');
+    if(S.admin){ const t=document.querySelector('.tab[data-view="evolucao"]'); if(t) t.hidden=false; }
+    else if(S.view==='evolucao') S.view='cockpit';   // pref salva de quem perdeu o acesso
+    applyNav();
+  }catch(e){ /* sem /api/me a aba fica escondida — degradação silenciosa e segura */ }
   try{
     const f=await getJSON('/estoque/api/filtros');
     S.filiaisAll=f.filiais; S.nomesFilial=f.nomes_filial||{};

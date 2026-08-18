@@ -21,6 +21,7 @@ from . import pbi
 from . import queries as Q
 from . import core
 from . import store
+from . import historico
 from . import provider_sql as PS   # modo DATA_SOURCE=postgres (lê do joga_demo)
 
 bp = Blueprint("estoque", __name__, url_prefix="/estoque")
@@ -1036,6 +1037,77 @@ def api_leadtime_pedidos():
     det = core.leadtime_detalhe(raw["cab"], raw["entradas"], cod,
                                 _cadastro_fornecedores(), _compradores_map(), hoje=_hoje())
     return jsonify({"ok": True, **det})
+
+
+@bp.route("/api/evolucao")
+def api_evolucao():
+    """Serie historica do estoque — a aba Evolucao (ver `estoque/historico.py`).
+
+    ⚠️ **Restrita ao ADM por enquanto** (decisao 08/2026): a aba nasce sem historico nenhum e so
+    fica util depois de ~4 semanas de foto. Deixa-la visivel para o comprador antes disso seria
+    entregar tela vazia como se fosse produto. O gate e no SERVIDOR, nao so no menu — esconder
+    aba no JS nao e controle de acesso.
+
+    Tudo e DERIVADO da foto crua a cada chamada: os ⚙ Parametros viajam na querystring e
+    reescrevem a serie inteira (e o que a decisao de guardar ingrediente comprou). O resumo traz
+    a VARIACAO na janela, nao so o nivel — "caiu R$ 380 mil desde o inicio" e a pergunta que a
+    aba responde; "ha R$ 4,3 mi em estoque" o Cockpit ja respondia."""
+    if (session.get("role") or "") != "admin":
+        return jsonify({"ok": False, "error": "Aba restrita ao administrador"}), 403
+    if not store.ensure():
+        return jsonify({"ok": True, "dias": [], "log": [], "resumo": {},
+                        "indisponivel": "Postgres indisponivel"})
+    unidade = _unidade()
+    ini = core._parse_dt(request.args.get("ini"))
+    fim = core._parse_dt(request.args.get("fim"))
+    comprador = request.args.get("comprador_cod") or None
+    fornec = request.args.get("fornec") or None
+    # curva/XYZ vêm da FOTO daquele dia, não do cadastro de hoje — é o que permite ver a ruptura
+    # da curva A ao longo do tempo sem reclassificar o passado com a régua de agora.
+    # Multi-seleção não entra: a barra manda "A,B" e aqui só uma vale; o front recorta 1 por vez.
+    curva = (request.args.get("curva") or "").strip().upper()[:1] or None
+    xyz = (request.args.get("xyz") or "").strip().upper()[:1] or None
+    dias = historico.serie(unidade, ini, fim, comprador, fornec, request.args.to_dict(),
+                           curva=curva, xyz=xyz)
+    log = historico.dias_com_foto(unidade, ini, fim)
+    return jsonify({"ok": True, "unidade": unidade, "dias": dias, "log": log,
+                    "filtros": {"comprador": comprador, "fornec": fornec,
+                                "curva": curva, "xyz": xyz},
+                    "resumo": _resumo_evolucao(dias, log)})
+
+
+# Metricas com direcao INEQUIVOCA — so elas ganham cor na tela. O valor de estoque fica de fora
+# de proposito: estoque caindo pode ser boa gestao OU desabastecimento, e pintar de verde faria
+# a aba um dia comemorar uma ruptura. E a ruptura estavel ao lado da queda que prova gestao.
+_EVO_DIRECAO = {"valor_parado": "menor_melhor", "n_ruptura": "menor_melhor",
+                "pct_ideal": "maior_melhor", "valor_estoque": None}
+
+
+def _resumo_evolucao(dias, log):
+    """Primeiro x ultimo ponto da janela + o estado de maturidade da serie.
+
+    `fotos`/`maturidade` alimentam o aviso honesto da tela enquanto o historico nao enche: a aba
+    mostra a foto de hoje e diz quantas faltam, em vez de um "sem dados" que faria o diretor
+    achar que a ferramenta nao esta trabalhando."""
+    if not dias:
+        return {"fotos": len(log), "maturidade": "vazia", "direcao": _EVO_DIRECAO}
+    a, b = dias[0], dias[-1]
+    var = {}
+    for k in _EVO_DIRECAO:
+        ini_v, fim_v = a.get(k), b.get(k)
+        if ini_v is None or fim_v is None:
+            var[k] = None
+            continue
+        var[k] = {"ini": ini_v, "fim": fim_v, "delta": core._round(fim_v - ini_v, 4),
+                  "delta_pct": core._round((fim_v - ini_v) / ini_v * 100, 1) if ini_v else None}
+    n = len(dias)
+    return {
+        "de": a["data"], "ate": b["data"], "fotos": n,
+        # 4 semanas e o minimo para a linha dizer algo; 90 dias e onde ela vira tendencia
+        "maturidade": "tendencia" if n >= 90 else ("util" if n >= 28 else "enchendo"),
+        "faltam_para_util": max(0, 28 - n),
+        "variacao": var, "direcao": _EVO_DIRECAO,
+    }
 
 
 @bp.route("/api/validade")

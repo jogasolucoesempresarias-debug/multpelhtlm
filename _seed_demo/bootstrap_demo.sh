@@ -41,13 +41,17 @@ if [ "${JA:-0}" -gt 1000 ]; then
     exit 0
 fi
 
-echo "[bootstrap] 1/6 schema (joga_demo)..."   && python -X utf8 _seed_demo/setup_db.py
-echo "[bootstrap] 2/6 dimensoes..."            && python -X utf8 _seed_demo/gerar.py
-echo "[bootstrap] 3/6 fato de vendas (~1,17M)..." && python -X utf8 _seed_demo/gerar_fato.py
-echo "[bootstrap] 4/6 estoque..."              && python -X utf8 _seed_demo/gerar_estoque.py
-echo "[bootstrap] 5/6 auth/config (init_db)..." && python -X utf8 init_db.py
-echo "[bootstrap] 6/6 metas + admin..."
+echo "[bootstrap] 1/7 schema (joga_demo)..."   && python -X utf8 _seed_demo/setup_db.py
+echo "[bootstrap] 2/7 dimensoes..."            && python -X utf8 _seed_demo/gerar.py
+echo "[bootstrap] 3/7 fato de vendas (~1,17M)..." && python -X utf8 _seed_demo/gerar_fato.py
+echo "[bootstrap] 4/7 estoque..."              && python -X utf8 _seed_demo/gerar_estoque.py
+echo "[bootstrap] 5/7 auth/config (init_db)..." && python -X utf8 init_db.py
+echo "[bootstrap] 6/7 metas + admin..."
 DEMO_SEED=1 python -X utf8 _seed_demo/seed_metas_demo.py
+# Historico do estoque (aba Evolucao). A demo tem "hoje" ancorado, entao o robo de foto
+# nao roda la — sem este seed a aba abriria VAZIA na apresentacao comercial.
+echo "[bootstrap] 7/7 historico de estoque (aba Evolucao)..."
+DEMO_SEED=1 python -X utf8 _seed_demo/seed_historico_demo.py --dias 90 || echo "[bootstrap] historico falhou — a aba Evolucao abre vazia, o resto da demo segue."
 python -X utf8 - <<'PY'
 import os, json, psycopg2
 c = psycopg2.connect(host=os.getenv("DB_HOST"), port=os.getenv("DB_PORT", "5432"),

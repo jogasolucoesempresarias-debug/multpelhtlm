@@ -94,6 +94,79 @@ ALTER TABLE estoque_pedidos ADD COLUMN IF NOT EXISTS valor_nf NUMERIC;
 -- essa diferença e faria pedido antigo imprimir "sem IPI".
 ALTER TABLE estoque_pedido_itens ADD COLUMN IF NOT EXISTS perc_ipi NUMERIC;
 ALTER TABLE estoque_pedido_itens ADD COLUMN IF NOT EXISTS perc_st NUMERIC;
+-- ───────────────────────── foto diária do estoque (aba Evolução) ─────────────────────────
+-- ⚠️ Guarda os INGREDIENTES CRUS, não os números prontos. O PCEST é POSIÇÃO: o saldo de ontem
+-- é sobrescrito e não existe em lugar nenhum (é por isso que o histórico não pode ser gerado
+-- para trás — diferente da perda por validade, que é EVENTO datado e por isso a aba Vencidos
+-- consegue mostrar mês a mês desde sempre).
+--
+-- Gravar o resultado calculado congelaria a série na régua do dia. Com o cru, toda régua é
+-- recalculável para trás: corrigir o `eh_parado`, mexer no `novo_dias` ou no `ideal_dias` NÃO
+-- cria degrau no gráfico. Isso importa porque a aba existe para PROVAR gestão — e num gráfico
+-- assim, mudança de definição parece resultado.
+--
+-- Grão: data × unidade × produto. Medido na base real da Multpel (08/2026): 4.519 produtos de
+-- revenda, ~6.081 linhas de posição por dia somando as unidades ⇒ ~2,2M linhas/ano (~265 MB).
+-- `unidade` inclui "todas", que se sobrepõe às demais de propósito: faixa de cobertura NÃO é
+-- decomponível por filial (o giro soma junto com o saldo), então cada unidade precisa da sua
+-- própria foto para bater exatamente com o que a tela mostrou.
+CREATE TABLE IF NOT EXISTS estoque_foto_item (
+    data           DATE    NOT NULL,
+    unidade        TEXT    NOT NULL,
+    codprod        INTEGER NOT NULL,
+    -- gravados no dia (e não derivados do cadastro na hora da leitura): remanejar um comprador
+    -- amanhã não pode reescrever o passado dele
+    codfornec      INTEGER,
+    codcomprador   INTEGER,
+    qtdisp         NUMERIC,
+    custo_unit     NUMERIC,
+    valor          NUMERIC,   -- max(0,qtdisp)×custo, igual ao que a tela soma
+    giro_mes       NUMERIC,
+    giro_dia       NUMERIC,
+    cobertura_dias INTEGER,
+    dtultsaida     DATE,      -- com dtultent, é o que permite recalcular "parado" depois
+    dtultent       DATE,
+    qtd_ja_pedida  NUMERIC,
+    qt_transicao   NUMERIC,
+    PRIMARY KEY (data, unidade, codprod)
+);
+-- a tela lê por período; o índice cobre o filtro que ela sempre aplica
+CREATE INDEX IF NOT EXISTS ix_estoque_foto_item_data ON estoque_foto_item (data, unidade);
+CREATE INDEX IF NOT EXISTS ix_estoque_foto_item_forn ON estoque_foto_item (unidade, codfornec, data);
+-- Diário de bordo da fotografia. Existe para a tela distinguir "dia sem movimento" de "dia em
+-- que o robô não rodou": sem isto o gráfico ligaria os pontos por cima do buraco e inventaria
+-- uma linha reta onde não houve medição. Guarda também o refresh do BI que originou a foto.
+CREATE TABLE IF NOT EXISTS estoque_foto_log (
+    data        DATE NOT NULL,
+    unidade     TEXT NOT NULL,
+    n_itens     INTEGER,
+    bi_refresh  TEXT,
+    params      JSONB,
+    criado_em   TIMESTAMP DEFAULT now(),
+    PRIMARY KEY (data, unidade)
+);
+-- Rollup diário: o resultado de `historico.agregar` para os parâmetros PADRÃO, gravado junto da
+-- foto. NÃO é uma segunda regra — é cache da MESMA função Python, e pode ser reconstruído a
+-- qualquer momento (`historico.rebuild_rollup`). Existe por medição: agregar a foto crua custava
+-- 3,5s para 45 dias (129 mil linhas) e ~28s projetados para 12 meses, piorando todo dia.
+-- Leitura sem filtro e com régua padrão usa isto; filtro por comprador/fornecedor ou parâmetro
+-- customizado cai no cru, que é onde a recomputação do passado continua acontecendo.
+-- Curva ABC e XYZ do item NO DIA da foto (08/2026, dúvida do diretor: "filtra por curva?").
+-- Gravadas junto porque histórico não se reconstrói: a coluna custa nada hoje e custaria meses
+-- de série depois. Mesma razão pela qual o fornecedor entrou no grão.
+-- ⚠️ A curva ABC é o Pareto da venda do PERÍODO, e o robô fotografa com o período PADRÃO (mês).
+-- O que fica gravado é "a curva do item naquele dia, apurada no mês corrente" — definição
+-- legítima, mas que a tela precisa declarar, senão alguém compara com a curva de 12 meses da
+-- aba Produtos e acha que uma das duas está errada.
+ALTER TABLE estoque_foto_item ADD COLUMN IF NOT EXISTS curva_abc CHAR(1);
+ALTER TABLE estoque_foto_item ADD COLUMN IF NOT EXISTS xyz CHAR(1);
+CREATE INDEX IF NOT EXISTS ix_estoque_foto_item_curva ON estoque_foto_item (unidade, curva_abc, data);
+CREATE TABLE IF NOT EXISTS estoque_foto_dia (
+    data     DATE NOT NULL,
+    unidade  TEXT NOT NULL,
+    payload  JSONB NOT NULL,
+    PRIMARY KEY (data, unidade)
+);
 """
 
 _disponivel = None  # cache do teste de conexão (True/False)
