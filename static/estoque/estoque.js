@@ -2671,6 +2671,21 @@ async function modalPedidoItens(numped){
     $('#pi-body').querySelectorAll('tr[data-cod]').forEach(tr=>tr.onclick=()=>{ closeModal(); openProduto(tr.dataset.cod); });
   }catch(e){ $('#pi-body').innerHTML=`<div class="empty">Erro ao carregar itens: ${e.message}</div>`; }
 }
+/* Preço pesquisado no MOMENTO DA DECISÃO — é o que transforma digitar em campo numa alavanca
+   em vez de tarefa: o comprador entra na negociação com evidência ao lado do custo.
+   ⚠️ Entra como LINHA sob o nome do produto, nunca como 9ª coluna: a tabela é `table-layout:
+   fixed` e o diretor já reportou DUAS vezes coluna cortada (test_modal_pedido_layout). */
+let PESQ_ULT = {};
+async function carregarPesquisas(){
+  try{ const j=await getJSON('/estoque/api/pesquisa-preco?ultimas=1'); PESQ_ULT=j.ultimas||{}; }
+  catch(e){ PESQ_ULT={}; }   // acessório: falhar aqui não pode impedir gerar pedido
+}
+function pesqLinha(cod){
+  const m=PESQ_ULT[cod]; if(!m) return '';
+  const un=m.unidade==='cx'?'/cx':'/un';
+  return `<br><small class="muted">pesquisado ${money(m.preco)}${un} · ${dt(m.data_pesquisa)}${m.origem?' · '+esc(m.origem):''}</small>`;
+}
+
 function modalPedido(opts){
   opts=opts||{};
   let itens=[], fornIni='';
@@ -2758,7 +2773,7 @@ function modalPedido(opts){
         // Caixa vem ANTES da unidade de propósito (pedido do diretor 07/2026): é nela que o
         // comprador raciocina e é ela que o fornecedor fatura. A unidade continua visível e
         // editável porque é ela que vai no payload/PDF/planilha — ver o handler de [data-cxi].
-        itens.map((x,i)=>`<tr><td class="num">${x.codprod}</td><td><span class="prod">${esc(x.descricao||'')}</span></td>
+        itens.map((x,i)=>`<tr><td class="num">${x.codprod}</td><td><span class="prod">${esc(x.descricao||'')}</span>${pesqLinha(x.codprod)}</td>
           <td class="num">${x.qtunitcx>1
             ?`<input type="number" data-cxi="${i}" value="${Math.ceil((+x.qtd||0)/x.qtunitcx)}" min="0" step="1" style="width:66px;text-align:right" title="${int(x.qtunitcx)} un por caixa"> <span class="muted">cx</span>`
             :'<span class="muted" title="item sem fator de caixa cadastrado — digite em unidades">—</span>'}</td>
@@ -2802,6 +2817,8 @@ function modalPedido(opts){
     $('#pd-itens').querySelectorAll('[data-ri]').forEach(b=>b.onclick=()=>{ itens.splice(+b.dataset.ri,1); draw(); });
   }
   draw();
+  // busca as pesquisas DEPOIS da 1ª pintura e repinta: o modal não pode esperar rede para abrir
+  carregarPesquisas().then(()=>{ if($('#pd-itens')) draw(); });
   $('#pd-additem').onclick=()=>{
     const raw=($('#pd-prodadd').value||'').trim(); const cod=parseInt(raw,10);
     const p=(S.produtosAll||[]).find(x=>x.codprod===cod)||(S.produtosAll||[]).find(x=>(x.descricao||'').toLowerCase()===raw.toLowerCase());
@@ -2852,6 +2869,28 @@ function modalPlano(it){
 const MES_ABREV=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
 const mesLbl12=am=>{const s=String(am);return MES_ABREV[+s.slice(4)-1]+'/'+s.slice(2,4);};
 const _temSerie=a=>Array.isArray(a)&&a.some(v=>(v||0)>0);
+/* Pesquisa de preço no 360°: UMA linha, dentro de "Venda no período" — sem seção própria.
+   O drawer já tem 7 blocos (KPIs, venda, situação, abastecimento, plano, plano no tempo, lotes);
+   uma seção nova com histórico deixaria a ficha apertada, e a pergunta que o comprador faz aqui
+   é uma só: "quanto acharam por aí, e quando?". O histórico completo fica na tela de campo.
+   Sem medição não renderiza nada — linha vazia em drawer é ruído. */
+function pesquisaDrawer(p, pesquisas){
+  const m=(pesquisas||[])[0];
+  if(!m) return '';
+  const un=m.unidade==='cx'?'/cx':'/un';
+  // ⚠️ o gap só aparece quando as duas pontas estão na MESMA régua (un + mercadoria). Preço por
+  // caixa ou com imposto não se compara direto com o CUSTOFIN — nesses casos mostra só o preço.
+  const comparavel = m.unidade==='un' && !m.com_imposto && (p.custo_unit||0)>0;
+  const d = comparavel ? (m.preco - p.custo_unit)/p.custo_unit*100 : null;
+  // ⚠️ Cor pela perspectiva do NOSSO preço (diretor, 19/08): nosso mais CARO = vermelho.
+  // `d` é (pesquisado − nosso)/nosso: d<0 = acharam mais barato = o nosso está caro = VERMELHO.
+  const gap = d==null ? '' :
+    ` <small style="color:${d<0?C.red:C.green}">${d<0?'':'+'}${dec(d,0)}% vs custo</small>`;
+  const det=[dt(m.data_pesquisa), m.origem].filter(Boolean).join(' · ');
+  return `<div class="lote-row"><span>Pesquisa de preço<br><small class="muted">${esc(det)}</small></span>
+    <span class="lr-r">${money(m.preco)}<small class="muted">${un}</small>${gap}</span></div>`;
+}
+
 function planoDrawer(plano,p){
   const prox=(plano&&!plano.sem_giro&&(plano.liberacoes||[])[0])||null;
   const resumo=prox
@@ -3017,6 +3056,7 @@ async function openProduto(cod){
       <div class="lote-row"><span>Qtd vendida</span><span>${int(p.qtd_vendida)}<br><small class="muted">líquida de devolução</small></span></div>
       ${p.preco_medio!=null?`<div class="lote-row"><span>Preço médio<br><small class="muted">no período</small></span><span class="lr-r">${money(p.preco_medio)}/un${p.caixa>1?`<br><small class="muted">${money(p.preco_medio*p.caixa)}/cx</small>`:''}</span></div>`:''}
       ${topVendedoresRow(j.top_vendedores)}
+      ${pesquisaDrawer(p, j.pesquisas)}
       <div class="d-sec">Situação</div>
       <div class="lote-row"><span>Abastecimento</span><span>${badge(p.status_abast)}</span></div>
       <div class="lote-row"><span>Ruptura</span><span>${p.status_ruptura?badge('0-15',p.status_ruptura+'d'):'—'}</span></div>

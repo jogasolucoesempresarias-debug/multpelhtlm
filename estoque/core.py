@@ -2561,6 +2561,54 @@ def qualidade_cadastro(prod_map, emb_map=None, forn_map=None, comp_map=None, com
             "produtos": linhas}
 
 
+# ───────────────────────── pesquisa de preço (comparação) ─────────────────────────
+def normaliza_pesquisa(preco, unidade="un", com_imposto=False, qtunitcx=None,
+                       perc_ipi=0.0, perc_st=0.0):
+    """Traz o preço digitado em campo para a MESMA régua do `custo_unit`: R$ por UNIDADE, em
+    MERCADORIA (sem imposto). Função pura — é aqui que moram as duas armadilhas do módulo.
+
+    ⚠️ **Unidade.** Quem pesquisa lê a etiqueta da caixa. Comparar "R$ 45 a caixa" com um custo
+    unitário erra pelo fator inteiro — é a mesma família do pedido que saía ~50x errado por
+    converter quantidade sem converter preço (ver `item_master`).
+
+    ⚠️ **Imposto.** `CUSTOFIN` é MERCADORIA; preço de gôndola tem tributo dentro. É a "duas
+    réguas" (mercadoria × NF) que já mordeu no Orçamento.
+
+    ⚠️ **Sem fator de caixa não se chuta.** Preço em `cx` sem `qtunitcx` > 1 devolve
+    `comparavel=False` e valor None — a tela mostra "—". Mesma política do `medidas_confiaveis`:
+    número errado que parece plausível é pior que célula vazia.
+
+    Retorna {preco_un, comparavel, motivo}.
+    """
+    p = _n(preco)
+    if p <= 0:
+        return {"preco_un": None, "comparavel": False, "motivo": "preco_invalido"}
+    if str(unidade or "un").lower() == "cx":
+        f = _n(qtunitcx)
+        if f <= 1:
+            return {"preco_un": None, "comparavel": False, "motivo": "sem_fator_caixa"}
+        p = p / f
+    if com_imposto:
+        # o digitado é NF; volta para mercadoria dividindo pelos mesmos % que a sugestão soma
+        div = 1 + (_n(perc_ipi) + _n(perc_st)) / 100.0
+        if div <= 0:
+            return {"preco_un": None, "comparavel": False, "motivo": "imposto_invalido"}
+        p = p / div
+    return {"preco_un": _round(p, 4), "comparavel": True, "motivo": None}
+
+
+def gap_pesquisa(preco_un, custo_unit):
+    """Diferença entre o preço pesquisado e o NOSSO custo, na régua já normalizada.
+
+    Positivo = pesquisamos MAIS CARO que o nosso custo (o fornecedor atual está melhor).
+    Negativo = achamos mais barato — é a linha que vira argumento de negociação.
+    `None` quando falta um dos lados: não se inventa comparação."""
+    a, b = _n(preco_un), _n(custo_unit)
+    if a <= 0 or b <= 0:
+        return {"delta": None, "delta_pct": None}
+    return {"delta": _round(a - b, 4), "delta_pct": _round((a - b) / b * 100, 1)}
+
+
 def casa_busca(cad, busca):
     """Mesma regra de busca da tela e do export: `codprod` OU `descricao`, case-insensitive.
     Regra única de propósito — três implementações do mesmo filtro é como as telas divergem."""

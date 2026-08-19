@@ -168,6 +168,37 @@ CREATE TABLE IF NOT EXISTS estoque_foto_dia (
     payload  JSONB NOT NULL,
     PRIMARY KEY (data, unidade)
 );
+-- ───────────────────── pesquisa de preço (captura em campo) ─────────────────────
+-- Pedido do diretor 08/2026: preencher o preço pesquisado direto no item, durante a visita.
+-- É a 1ª vez que a ferramenta vira FONTE de um dado que o Winthor não tem.
+--
+-- ⚠️ SEM chave única de propósito: duas cotações do mesmo item no mesmo dia, de origens
+-- diferentes, são dois FATOS. Isto é histórico, não estado — o `plano_upsert` usa UPSERT porque
+-- lá o grão é o item; aqui o grão é a medição.
+--
+-- As três colunas que decidem se o dado presta (e que não se recalculam depois):
+--   `unidade`     — o preço visto é da UNIDADE ou da EMBALAGEM. O módulo já teve pedido saindo
+--                   ~50x errado por converter quantidade sem converter preço (core.item_master).
+--   `com_imposto` — `CUSTOFIN` é MERCADORIA. Preço de gôndola tem tributo dentro. Comparar os
+--                   dois direto não significa nada (é a "duas réguas" do Orçamento de novo).
+--   `qtunitcx`    — o fator NO DIA da pesquisa. O cadastro muda; o passado não pode se
+--                   reinterpretar (mesma razão do `codcomprador` na foto de estoque).
+CREATE TABLE IF NOT EXISTS estoque_pesquisa_preco (
+    id            SERIAL PRIMARY KEY,
+    data_pesquisa DATE    NOT NULL,
+    codprod       INTEGER NOT NULL,
+    tipo          TEXT    NOT NULL DEFAULT 'fornecedor',   -- fornecedor | concorrente
+    origem        TEXT,                                     -- nome do fornecedor ou da loja
+    preco         NUMERIC NOT NULL,
+    unidade       TEXT    NOT NULL DEFAULT 'un',            -- un | cx
+    com_imposto   BOOLEAN NOT NULL DEFAULT false,
+    qtunitcx      NUMERIC,
+    obs           TEXT,
+    usuario_id    INTEGER,
+    criado_em     TIMESTAMP DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_pesq_preco_prod
+    ON estoque_pesquisa_preco (codprod, data_pesquisa DESC);
 """
 
 _disponivel = None  # cache do teste de conexão (True/False)
@@ -206,7 +237,7 @@ def _iso_dates(row):
     jsonify do Flask emite o objeto date como RFC 1123 ('Tue, 21 Jul 2026 00:00:00 GMT') e o
     dt() do front (que espera ISO) mostra a string crua com horário/GMT."""
     if row:
-        for k in ("data_pedido", "dt_vencimento"):
+        for k in ("data_pedido", "dt_vencimento", "data_pesquisa", "criado_em"):
             v = row.get(k)
             if hasattr(v, "isoformat"):
                 row[k] = v.isoformat()
@@ -395,3 +426,83 @@ def plano_delete(chave):
     with conn, conn.cursor() as cur:
         cur.execute("DELETE FROM estoque_planos_acao WHERE chave=%s", (chave,))
     conn.close()
+
+
+# ───────────────────────── pesquisa de preço ─────────────────────────
+def pesquisa_add(d):
+    """Grava uma medição de preço. Retorna o id.
+
+    Sem UPSERT: cada linha é um fato datado (ver DDL). Regravar por cima apagaria a cotação
+    anterior do mesmo item, que é justamente o histórico que dá valor ao dado."""
+    conn = get_db()
+    with conn, conn.cursor() as cur:
+        cur.execute("""INSERT INTO estoque_pesquisa_preco
+            (data_pesquisa, codprod, tipo, origem, preco, unidade, com_imposto, qtunitcx, obs, usuario_id)
+            VALUES (%(data_pesquisa)s,%(codprod)s,%(tipo)s,%(origem)s,%(preco)s,%(unidade)s,
+                    %(com_imposto)s,%(qtunitcx)s,%(obs)s,%(usuario_id)s)
+            RETURNING id""", {
+                "data_pesquisa": d.get("data_pesquisa") or datetime.now().date(),
+                "codprod": int(d["codprod"]),
+                "tipo": (d.get("tipo") or "fornecedor"),
+                "origem": (d.get("origem") or None),
+                "preco": d["preco"],
+                "unidade": (d.get("unidade") or "un"),
+                "com_imposto": bool(d.get("com_imposto")),
+                "qtunitcx": d.get("qtunitcx"),
+                "obs": (d.get("obs") or None),
+                "usuario_id": d.get("usuario_id"),
+            })
+        return cur.fetchone()[0]
+
+
+def pesquisa_ultima(codprods=None):
+    """{codprod: última medição} — DISTINCT ON pega a mais recente por produto.
+
+    `codprods=None` traz tudo (usado pelo modal de pedido, que já tem a lista em mãos e
+    filtra no cliente). Lista vazia devolve {} sem ir ao banco."""
+    if codprods is not None and not codprods:
+        return {}
+    sql = """SELECT DISTINCT ON (codprod) * FROM estoque_pesquisa_preco
+             {onde} ORDER BY codprod, data_pesquisa DESC, id DESC"""
+    onde, args = "", ()
+    if codprods is not None:
+        onde, args = "WHERE codprod = ANY(%s)", ([int(c) for c in codprods],)
+    conn = get_db()
+    with conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(sql.format(onde=onde), args)
+        out = {r["codprod"]: _iso_dates(dict(r)) for r in cur.fetchall()}
+    conn.close()
+    return out
+
+
+def pesquisa_do_produto(codprod, limite=20):
+    """Histórico de medições de UM produto, mais recente primeiro (drawer 360°)."""
+    conn = get_db()
+    with conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""SELECT * FROM estoque_pesquisa_preco WHERE codprod=%s
+                       ORDER BY data_pesquisa DESC, id DESC LIMIT %s""", (int(codprod), int(limite)))
+        out = [_iso_dates(dict(r)) for r in cur.fetchall()]
+    conn.close()
+    return out
+
+
+def pesquisa_lista(dias=90, limite=1000):
+    """Medições recentes com o NOME de quem preencheu (join em multpel_users).
+
+    ⚠️ `usuario_id` sozinho é número na tela — inútil. O join é LEFT: medição de usuário já
+    removido continua aparecendo (o fato aconteceu), só sem nome.
+    O recorte por FORNECEDOR fica no routes: fornecedor não está nesta tabela, vem do cadastro
+    do produto — e duplicá-lo aqui seria o mesmo erro do `codcomprador` que a foto de estoque
+    grava para não reinterpretar o passado."""
+    conn = get_db()
+    with conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+            SELECT p.*, u.nome AS usuario
+              FROM estoque_pesquisa_preco p
+              LEFT JOIN multpel_users u ON u.id = p.usuario_id
+             WHERE p.data_pesquisa >= (CURRENT_DATE - %s::int)
+             ORDER BY p.data_pesquisa DESC, p.id DESC
+             LIMIT %s""", (int(dias), int(limite)))
+        out = [_iso_dates(dict(r)) for r in cur.fetchall()]
+    conn.close()
+    return out

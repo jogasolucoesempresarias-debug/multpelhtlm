@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pesquisa de preço · JOGA</title>
+<!--
+  Tela de CAMPO. Autocontida de propósito — CSS e JS inline, zero dependência externa:
+
+  1. o app não tem cache-busting em lugar nenhum (`?v=` : zero ocorrências no repo), então
+     arquivo externo aqui significaria usuário preso numa versão velha sem saber;
+  2. loja tem sinal ruim, e um <link> que não carrega deixa a tela quebrada justamente onde
+     ela precisa funcionar;
+  3. garante que esta página NUNCA carregue as 3.4 mil linhas do estoque.js.
+
+  NÃO é uma aba: não entra no menu do painel (decisão 08/2026 — o módulo já tem 21).
+  A guarda de acesso (login + área `compras`) vem do before_request do blueprint.
+-->
+<style>
+  :root{
+    --bg:#0b1220; --surface:#131c2e; --surface2:#1b2740; --line:#243450;
+    --text:#e6edf7; --muted:#8ea3c0; --accent:#38bdf8; --green:#34d399;
+    --red:#f87171; --amber:#fbbf24;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    padding:0 0 env(safe-area-inset-bottom);
+    -webkit-text-size-adjust:100%;
+  }
+  header{
+    position:sticky; top:0; z-index:5; background:var(--surface);
+    border-bottom:1px solid var(--line); padding:12px 14px;
+    display:flex; align-items:center; gap:10px;
+  }
+  header h1{font-size:1rem; margin:0; font-weight:600}
+  header .volta{margin-left:auto; color:var(--muted); text-decoration:none; font-size:.85rem}
+  main{padding:14px; max-width:640px; margin:0 auto}
+  label{display:block; font-size:.78rem; color:var(--muted); margin:14px 0 5px; letter-spacing:.02em}
+  /* 44px é o mínimo confortável para o polegar — a tela é usada em pé, com uma mão */
+  input,select,button{
+    font:inherit; width:100%; min-height:46px; padding:10px 12px; border-radius:10px;
+    border:1px solid var(--line); background:var(--surface2); color:var(--text);
+  }
+  input:focus,select:focus{outline:2px solid var(--accent); outline-offset:1px}
+  button{background:var(--accent); color:#062033; border:0; font-weight:600; cursor:pointer}
+  button:disabled{opacity:.45}
+  button.ghost{background:var(--surface2); color:var(--text); border:1px solid var(--line); font-weight:500}
+  .row{display:flex; gap:10px}
+  .row>*{flex:1}
+  .card{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:12px; margin-top:12px}
+  .hit{padding:11px 12px; border-bottom:1px solid var(--line); cursor:pointer}
+  .hit:last-child{border-bottom:0}
+  .hit b{display:block; font-size:.92rem; font-weight:600}
+  .hit small{color:var(--muted); font-size:.76rem}
+  .muted{color:var(--muted)}
+  .aviso{font-size:.8rem; color:var(--muted); margin-top:6px}
+  .fila{background:#3a2a10; border-color:#6b4d16; color:var(--amber)}
+  .ok{color:var(--green)} .erro{color:var(--red)}
+  .seg{display:flex; gap:0; border:1px solid var(--line); border-radius:10px; overflow:hidden}
+  .seg button{border-radius:0; background:var(--surface2); color:var(--muted); font-weight:500}
+  .seg button.on{background:var(--accent); color:#062033; font-weight:600}
+  .salvo{font-size:.83rem; padding:8px 0; border-bottom:1px solid var(--line); display:flex; gap:8px}
+  .salvo span:last-child{margin-left:auto; white-space:nowrap}
+  /* telas maiores: a tela é de campo, mas ninguém precisa de linha de 1400px */
+  .btn-exp{flex:1; display:block; text-align:center; text-decoration:none; padding:12px;
+    border-radius:10px; background:var(--surface2); border:1px solid var(--line);
+    color:var(--text); font-size:.88rem; font-weight:600}
+  .med{border-bottom:1px solid var(--line); padding:9px 0; font-size:.84rem}
+  .med:last-child{border-bottom:0}
+  .med b{display:block; font-weight:600}
+  .med .l{display:flex; gap:8px; margin-top:2px}
+  .med .l span:last-child{margin-left:auto; white-space:nowrap}
+  /* consulta é leitura: no desktop a coluna estreita atrapalha */
+  @media (min-width:700px){ main{padding:22px} body.consulta main{max-width:1100px} }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pesquisa de preço</h1>
+  <button type="button" id="btn-consulta" style="width:auto;min-height:36px;padding:6px 12px;font-size:.82rem">Pesquisas</button>
+  <a class="volta" href="/estoque/">← painel</a>
+</header>
+
+<main>
+  <div id="fila-aviso" class="card fila" hidden></div>
+
+  <label for="qf">Fornecedor da visita <span class="muted">(opcional)</span></label>
+  <input id="qf" type="search" inputmode="search" autocomplete="off" placeholder="nome ou código do fornecedor">
+  <div id="fhits" class="card" hidden></div>
+  <div id="forn-sel" class="card" hidden>
+    <b id="forn-nome"></b>
+    <div class="aviso" id="forn-sub"></div>
+    <button class="ghost" type="button" id="forn-limpar" style="margin-top:10px">Trocar fornecedor</button>
+  </div>
+
+  <label for="q">Buscar produto (código ou descrição)</label>
+  <input id="q" type="search" inputmode="search" autocomplete="off" placeholder="ex.: 41364 ou bandeja">
+  <div id="hits" class="card" hidden></div>
+
+  <div id="form" hidden>
+    <div class="card">
+      <b id="p-desc"></b>
+      <small class="muted" id="p-sub"></small>
+    </div>
+
+    <label>Preço visto</label>
+    <div class="row">
+      <!-- ⚠️ type="text", NÃO number: em pt-BR a pessoa digita "12,50" e o input numérico
+           DESCARTA a vírgula em silêncio — o campo fica vazio e ela não entende por quê.
+           `inputmode="decimal"` já abre o teclado numérico; a vírgula vira ponto no salvar. -->
+      <input id="preco" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00">
+      <div class="seg" id="un">
+        <button type="button" data-un="un" class="on">Unidade</button>
+        <button type="button" data-un="cx">Caixa</button>
+      </div>
+    </div>
+    <div class="aviso" id="un-aviso"></div>
+
+    <div class="row">
+      <div>
+        <label>Origem do preço</label>
+        <select id="tipo">
+          <option value="fornecedor">Fornecedor (cotação)</option>
+          <option value="concorrente">Concorrente (gôndola)</option>
+        </select>
+      </div>
+      <div>
+        <label>Tem imposto?</label>
+        <select id="imposto">
+          <option value="0">Não (mercadoria)</option>
+          <option value="1">Sim (preço cheio)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- O diretor pediu explicitamente: "qual loja ou atacado foi pesquisado". O rótulo antigo
+         ("Quem / onde") deixava ambíguo e vinha vazio, e sem o lugar a medição perde metade do
+         valor — preço sem origem não se confere nem se volta a negociar. -->
+    <label for="origem">Onde foi pesquisado <span class="muted">(loja, atacado ou fornecedor)</span></label>
+    <input id="origem" placeholder="ex.: Atacadão Vitória, Makro, ou o representante">
+
+    <label for="obs">Observação (opcional)</label>
+    <input id="obs" placeholder="ex.: leva 10 caixas">
+
+    <div class="row" style="margin-top:16px">
+      <button class="ghost" type="button" id="cancelar">Cancelar</button>
+      <button type="button" id="salvar">Salvar</button>
+    </div>
+    <div class="aviso" id="msg"></div>
+  </div>
+
+  <!-- Consulta: mesma tela, outro modo. Ver o que já foi levantado (e por quem) e tirar o
+       documento é o que faltava para a pesquisa não virar dado morto — mas não precisa de aba:
+       o comprador já está aqui, e é daqui que ele sai para negociar. -->
+  <div id="consulta" hidden>
+    <div class="row" style="margin-top:12px">
+      <select id="c-dias">
+        <option value="30">Últimos 30 dias</option>
+        <option value="90" selected>Últimos 90 dias</option>
+        <option value="3650">Tudo</option>
+      </select>
+      <button class="ghost" type="button" id="c-fechar">Voltar</button>
+    </div>
+    <div class="aviso" id="c-escopo"></div>
+    <div class="row" style="margin-top:10px">
+      <a class="btn-exp" id="exp-xlsx" href="#">⬇ Excel</a>
+      <a class="btn-exp" id="exp-pdf" href="#">⬇ PDF</a>
+    </div>
+    <div class="card" id="c-lista"></div>
+  </div>
+
+  <div class="card" id="lista-card" hidden>
+    <b style="font-size:.85rem">Salvos nesta visita</b>
+    <div id="lista"></div>
+  </div>
+</main>
+
+<script>
+/* ── Fila offline ──────────────────────────────────────────────────────────────────────
+   O motivo de existir: loja tem sinal ruim. Alguém digitar 40 itens e perder tudo mata a
+   adoção na primeira visita — e aí não há segunda. Tudo o que é salvo entra na fila, e a
+   fila só some do localStorage depois que o servidor confirma. */
+const FILA = 'joga_pesq_fila';
+const lerFila = () => { try { return JSON.parse(localStorage.getItem(FILA)) || []; } catch (e) { return []; } };
+const gravarFila = f => { try { localStorage.setItem(FILA, JSON.stringify(f)); } catch (e) {} };
+const $ = s => document.querySelector(s);
+
+let sel = null, unidade = 'un', forn = null;
+const salvos = [];
+
+function pintarFila() {
+  const n = lerFila().length, el = $('#fila-aviso');
+  el.hidden = !n;
+  if (n) el.textContent = `${n} ${n === 1 ? 'registro aguardando' : 'registros aguardando'} conexão — não feche a página.`;
+}
+
+async function sincronizar() {
+  const fila = lerFila();
+  if (!fila.length || !navigator.onLine) return;
+  const resta = [];
+  for (const item of fila) {
+    try {
+      const r = await fetch('/estoque/api/pesquisa-preco', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin', body: JSON.stringify(item)
+      });
+      const j = await r.json().catch(() => ({}));
+      // 4xx é dado inválido: reenviar para sempre não conserta, e a fila nunca esvaziaria.
+      // Só erro de REDE ou 5xx volta para a fila.
+      if (!r.ok && r.status >= 500) resta.push(item);
+      else if (!r.ok) console.warn('recusado pelo servidor:', j.error);
+    } catch (e) { resta.push(item); }
+  }
+  gravarFila(resta);
+  pintarFila();
+}
+
+/* ── Roteiro por fornecedor ────────────────────────────────────────────────────────────
+   Pedido do diretor 08/2026: "filtrar por fornecedor, aí traz os itens daquele fornecedor".
+   É o que torna a visita produtiva — sem isso a pessoa caça item por item na loja, e acima de
+   ~20 itens ninguém aguenta. Escolhido o fornecedor, a lista JÁ aparece (sem digitar nada) e o
+   campo de busca passa a recortar dentro dela. */
+function urlBusca(q){
+  const p = new URLSearchParams();
+  if (q) p.set('q', q);
+  if (forn) p.set('fornec', forn.codfornec);
+  return '/estoque/api/busca?' + p.toString();
+}
+
+async function listarDoFornecedor(){
+  $('#hits').innerHTML = '<div class="hit muted">Carregando itens…</div>';
+  $('#hits').hidden = false;
+  try{
+    const r = await fetch(urlBusca(''), { credentials:'same-origin' });
+    const j = await r.json();
+    pintarHits(j.produtos||[], j.truncado);
+  }catch(e){ $('#hits').innerHTML='<div class="hit erro">Sem conexão para carregar a lista.</div>'; }
+}
+
+function pintarHits(hits, truncado){
+  $('#hits').innerHTML = hits.length
+    ? hits.map(p => `<div class="hit" data-cod="${p.codprod}" data-cx="${p.qtunitcx||''}">
+         <b>${p.descricao || ('PRODUTO ' + p.codprod)}</b>
+         <small>${p.codprod}${p.qtunitcx>1 ? ' · caixa com '+p.qtunitcx : ' · sem fator de caixa'}</small></div>`).join('')
+      + (truncado ? '<div class="hit muted">Lista cortada — refine pela busca.</div>' : '')
+    : '<div class="hit muted">Nada encontrado.</div>';
+  $('#hits').hidden = false;
+}
+
+let tf = null;
+$('#qf').addEventListener('input', e => {
+  clearTimeout(tf);
+  const q = e.target.value.trim();
+  if (q.length < 2) { $('#fhits').hidden = true; return; }
+  tf = setTimeout(async () => {
+    try{
+      const r = await fetch('/estoque/api/busca?tipo=fornec&q=' + encodeURIComponent(q), { credentials:'same-origin' });
+      const j = await r.json();
+      const fs = j.fornecedores || [];
+      $('#fhits').innerHTML = fs.length
+        ? fs.map(f => `<div class="hit" data-fc="${f.codfornec}"><b>${f.fornecedor}</b><small>${f.codfornec}</small></div>`).join('')
+        : '<div class="hit muted">Nenhum fornecedor.</div>';
+      $('#fhits').hidden = false;
+    }catch(e){ $('#fhits').innerHTML='<div class="hit erro">Sem conexão.</div>'; $('#fhits').hidden=false; }
+  }, 300);
+});
+
+$('#fhits').addEventListener('click', e => {
+  const h = e.target.closest('.hit[data-fc]'); if(!h) return;
+  forn = { codfornec:+h.dataset.fc, nome:h.querySelector('b').textContent };
+  $('#forn-nome').textContent = forn.nome;
+  $('#forn-sub').textContent = 'A busca abaixo recorta só os itens deste fornecedor.';
+  $('#fhits').hidden = true; $('#qf').value = ''; $('#qf').parentElement && ($('#qf').hidden = true);
+  document.querySelector('label[for=qf]').hidden = true;
+  $('#forn-sel').hidden = false;
+  listarDoFornecedor();
+});
+
+$('#forn-limpar').onclick = () => {
+  forn = null; $('#forn-sel').hidden = true; $('#qf').hidden = false;
+  document.querySelector('label[for=qf]').hidden = false;
+  $('#hits').hidden = true; $('#q').value = ''; $('#qf').focus();
+};
+
+/* ── Busca ── */
+let t = null;
+$('#q').addEventListener('input', e => {
+  clearTimeout(t);
+  const q = e.target.value.trim();
+  if (q.length < 2) { if (forn) { listarDoFornecedor(); } else { $('#hits').hidden = true; } return; }
+  t = setTimeout(async () => {
+    try {
+      const r = await fetch(urlBusca(q), { credentials: 'same-origin' });
+      const j = await r.json();
+      pintarHits(j.produtos || [], j.truncado);
+    } catch (e) { $('#hits').innerHTML = '<div class="hit erro">Sem conexão para buscar.</div>'; $('#hits').hidden = false; }
+  }, 300);
+});
+
+$('#hits').addEventListener('click', e => {
+  const h = e.target.closest('.hit[data-cod]');
+  if (!h) return;
+  sel = { codprod: +h.dataset.cod, descricao: h.querySelector('b').textContent, qtunitcx: +h.dataset.cx || null };
+  $('#p-desc').textContent = sel.descricao;
+  $('#p-sub').textContent = sel.codprod + (sel.qtunitcx > 1 ? ` · caixa com ${sel.qtunitcx}` : ' · sem fator de caixa');
+  $('#hits').hidden = true; $('#form').hidden = false; $('#msg').textContent = '';
+  $('#preco').value = ''; $('#preco').focus();
+  avisoUnidade();
+});
+
+/* ⚠️ Sem fator de caixa não dá para converter caixa→unidade. A tela avisa ANTES de a pessoa
+   digitar, em vez de aceitar e o servidor devolver um preço incomparável depois. */
+function avisoUnidade() {
+  const semFator = !(sel && sel.qtunitcx > 1);
+  $('#un-aviso').textContent = (unidade === 'cx' && semFator)
+    ? 'Este item não tem fator de caixa no cadastro — o preço por caixa não poderá ser comparado com o nosso custo.'
+    : (unidade === 'cx' ? `Será dividido por ${sel.qtunitcx} para comparar com o custo unitário.` : '');
+  $('#un-aviso').className = 'aviso' + ((unidade === 'cx' && semFator) ? ' erro' : '');
+}
+
+document.querySelectorAll('#un button').forEach(b => b.onclick = () => {
+  unidade = b.dataset.un;
+  document.querySelectorAll('#un button').forEach(x => x.classList.toggle('on', x === b));
+  avisoUnidade();
+});
+
+$('#cancelar').onclick = () => { $('#form').hidden = true; sel = null; $('#q').value = ''; $('#q').focus(); };
+
+$('#salvar').onclick = async () => {
+  const preco = parseFloat(String($('#preco').value).replace(',', '.'));
+  if (!sel || !(preco > 0)) { $('#msg').textContent = 'Informe um preço maior que zero.'; $('#msg').className = 'aviso erro'; return; }
+  const item = {
+    codprod: sel.codprod, preco, unidade,
+    qtunitcx: sel.qtunitcx || null,
+    tipo: $('#tipo').value,
+    com_imposto: $('#imposto').value === '1',
+    origem: $('#origem').value.trim() || null,
+    obs: $('#obs').value.trim() || null,
+    data_pesquisa: new Date().toISOString().slice(0, 10)
+  };
+  // entra na fila ANTES de tentar a rede: se o navegador morrer no meio, o dado sobrevive
+  gravarFila([...lerFila(), item]); pintarFila();
+  salvos.unshift({ ...item, descricao: sel.descricao });
+  $('#lista-card').hidden = false;
+  $('#lista').innerHTML = salvos.map(s => `<div class="salvo"><span>${s.codprod} · ${s.descricao}</span>
+      <span>R$ ${s.preco.toFixed(2)}/${s.unidade}</span></div>`).join('');
+  $('#msg').textContent = 'Salvo.'; $('#msg').className = 'aviso ok';
+  $('#form').hidden = true; sel = null; $('#q').value = ''; $('#q').focus();
+  sincronizar();
+};
+
+/* ── Consulta ───────────────────────────────────────────────────────────────────────── */
+function expQS(){
+  const p=new URLSearchParams({dias:$('#c-dias').value});
+  if(forn) p.set('fornec', forn.codfornec);
+  return p.toString();
+}
+async function carregarConsulta(){
+  const qs=expQS();
+  $('#exp-xlsx').href='/estoque/api/export/pesquisa.xlsx?'+qs;
+  $('#exp-pdf').href='/estoque/api/export/pesquisa.pdf?'+qs;
+  $('#c-escopo').textContent = forn ? `Somente ${forn.nome}.` : 'Todos os fornecedores.';
+  $('#c-lista').innerHTML='<div class="med muted">Carregando…</div>';
+  try{
+    const r=await fetch('/estoque/api/pesquisa-preco?lista=1&'+qs,{credentials:'same-origin'});
+    const ms=(await r.json()).medicoes||[];
+    $('#c-lista').innerHTML = ms.length ? ms.map(m=>{
+      // ⚠️ diferença só quando comparável (un + mercadoria) — senão a coluna mente
+      /* ⚠️ Cor pela perspectiva do NOSSO preço (decisão do diretor 19/08): nosso mais CARO =
+         vermelho, nosso mais BARATO = verde. `delta` é (pesquisado − nosso), então pesquisado
+         mais barato (delta<0) significa que o NOSSO está caro → VERMELHO. É o inverso da
+         leitura de "oportunidade", e a dele é a certa para quem compra: vermelho é "pago mal". */
+      const d=m.comparavel&&m.delta_pct!=null
+        ? ` <span style="color:${m.delta_pct<0?'var(--red)':'var(--green)'}">${m.delta_pct<0?'':'+'}${Math.round(m.delta_pct)}%</span>` : '';
+      const cu=m.custo_unit?` · nosso R$ ${(+m.custo_unit).toFixed(2)}`:'';
+      const local=m.origem?`<b style="color:var(--accent);font-weight:600">${m.origem}</b>`:'<span class="muted">local não informado</span>';
+      return `<div class="med"><b>${m.descricao}</b>
+        <div class="l"><span class="muted">${m.codprod}${m.fornecedor?' · '+m.fornecedor:''}</span>
+          <span>R$ ${(+m.preco).toFixed(2)}/${m.unidade}${d}</span></div>
+        <div class="l"><span>📍 ${local}</span><span class="muted">${m.data_pesquisa}${m.usuario?' · '+m.usuario:''}${cu}</span></div></div>`;
+    }).join('') : '<div class="med muted">Nenhuma pesquisa no período.</div>';
+  }catch(e){ $('#c-lista').innerHTML='<div class="med erro">Sem conexão para consultar.</div>'; }
+}
+$('#btn-consulta').onclick=()=>{
+  document.body.classList.add('consulta');
+  ['#form','#hits','#fhits','#lista-card'].forEach(x=>$(x).hidden=true);
+  $('#consulta').hidden=false; carregarConsulta();
+};
+$('#c-fechar').onclick=()=>{ document.body.classList.remove('consulta'); $('#consulta').hidden=true; };
+$('#c-dias').onchange=carregarConsulta;
+
+window.addEventListener('online', sincronizar);
+pintarFila(); sincronizar();
+</script>
+</body>
+</html>

@@ -1060,6 +1060,155 @@ def api_leadtime_pedidos():
     return jsonify({"ok": True, **det})
 
 
+# ───────────────────────── pesquisa de preço (captura em campo) ─────────────────────────
+@bp.route("/pesquisa")
+def pagina_pesquisa():
+    """Tela de campo da pesquisa de preço — página PRÓPRIA, fora do SPA.
+
+    ⚠️ Não é aba e não entra no menu (decisão 08/2026): o módulo já tem 21 abas, e este é outro
+    CONTEXTO — pessoa em pé, uma mão, sinal ruim, um item por vez. As telas do painel pressupõem
+    o oposto (sentado, tela larga, tabela de 20 colunas sobre o snapshot inteiro).
+
+    A guarda de acesso vem do `before_request` do blueprint (login + área `compras`), então esta
+    função não leva decorador nenhum."""
+    return send_from_directory(_PKG_DIR, "pesquisa.html")
+
+
+@bp.route("/api/busca")
+def api_busca():
+    """Busca LEVE de produto por código ou descrição — para a tela de campo.
+
+    ⚠️ Existe porque não havia nada assim: a única rota por produto era
+    `/api/produto/<cod>`, que exige código exato e ainda roda `_build_produtos()` (snapshot
+    inteiro). No SPA a busca é client-side sobre `S.produtosAll`, que o celular não pode carregar.
+
+    Usa só o cadastro (cache 24h) — nenhuma consulta ao BI."""
+    q = (request.args.get("q") or "").strip()
+    fornec = request.args.get("fornec")
+
+    # `?tipo=fornec` — busca o FORNECEDOR, para o comprador montar o roteiro da visita
+    # (pedido do diretor 08/2026: "filtrar por fornecedor, aí traz os itens daquele fornecedor").
+    if request.args.get("tipo") == "fornec":
+        if len(q) < 2:
+            return jsonify({"ok": True, "fornecedores": []})
+        ql = q.lower()
+        fs = [{"codfornec": cf, "fornecedor": (f.get("FORNECEDOR") or "").strip()}
+              for cf, f in _cadastro_fornecedores().items()
+              if ql in str(cf) or ql in (f.get("FORNECEDOR") or "").lower()]
+        fs.sort(key=lambda x: x["fornecedor"])
+        return jsonify({"ok": True, "fornecedores": fs[:20]})
+
+    # sem fornecedor escolhido, exige termo: varrer o cadastro inteiro por nada é caro e inútil
+    if not fornec and len(q) < 2:
+        return jsonify({"ok": True, "produtos": []})
+    prod, emb = _cadastro_produtos(), _embalagem_map()
+    fcod = int(core._n(fornec)) if fornec else None
+    out = []
+    for cod, cad in prod.items():
+        if fcod and int(core._n(cad.get("CODFORNEC"))) != fcod:
+            continue
+        if q and not core.casa_busca({**cad, "CODPROD": cod}, q):
+            continue
+        qe = core._n((emb.get(cod) or {}).get("qtunit"))
+        out.append({"codprod": cod,
+                    "descricao": (cad.get("DESCRICAO") or "").strip(),
+                    "embalagem": cad.get("EMBALAGEM"),
+                    "qtunitcx": qe if qe > 1 else core._n(cad.get("QTUNITCX")) or None})
+        # busca livre corta em 30 (tela de polegar); ROTEIRO de fornecedor vai até 200 — a lista
+        # dele É o trabalho da visita, e cortar em 30 deixaria o comprador sem saber o que falta
+        if len(out) >= (200 if fcod else 30):
+            break
+    out.sort(key=lambda x: ((x["descricao"] or "").upper(), x["codprod"]))
+    lim = 200 if fcod else 30
+    return jsonify({"ok": True, "produtos": out, "truncado": len(out) >= lim})
+
+
+@bp.route("/api/pesquisa-preco", methods=["GET", "POST"])
+def api_pesquisa_preco():
+    """GET: histórico de um produto. POST: grava uma medição.
+
+    A validação recusa preço <= 0 e produto fora do cadastro — dado de campo entra torto com
+    facilidade, e uma linha inválida contamina a comparação sem avisar."""
+    if not store.ensure():
+        return jsonify({"ok": False, "error": "Postgres indisponível"}), 503
+    if request.method == "GET":
+        # `?ultimas=1` devolve a última medição de CADA produto — é o que o modal de pedido
+        # precisa (ele já tem a lista de itens em mãos e recorta no cliente). A tabela cresce
+        # por visita, não por catálogo, então não vale paginar ainda.
+        # `?lista=1` — a consulta da tela de campo: o que já foi pesquisado, com autor.
+        # Recorte de fornecedor aqui (e não no store): fornecedor vem do CADASTRO do produto.
+        if request.args.get("lista"):
+            dias = int(core._n(request.args.get("dias")) or 90)
+            linhas = _pesquisa_enriquecida(store.pesquisa_lista(dias=dias),
+                                           request.args.get("fornec"))
+            return jsonify({"ok": True, "medicoes": linhas})
+        if request.args.get("ultimas"):
+            return jsonify({"ok": True, "ultimas": store.pesquisa_ultima()})
+        cod = request.args.get("codprod")
+        if not cod:
+            return jsonify({"ok": False, "error": "codprod obrigatório"}), 400
+        return jsonify({"ok": True, "medicoes": store.pesquisa_do_produto(int(core._n(cod)))})
+
+    d = request.get_json() or {}
+    cod = int(core._n(d.get("codprod")))
+    preco = core._n(d.get("preco"))
+    if not cod:
+        return jsonify({"ok": False, "error": "codprod obrigatório"}), 400
+    if preco <= 0:
+        return jsonify({"ok": False, "error": "preço tem de ser maior que zero"}), 400
+    cad = _cadastro_produtos().get(cod)
+    if cad is None:
+        return jsonify({"ok": False, "error": f"produto {cod} não está no cadastro de revenda"}), 400
+    if (d.get("unidade") or "un") not in ("un", "cx"):
+        return jsonify({"ok": False, "error": "unidade tem de ser 'un' ou 'cx'"}), 400
+    # o fator viaja GRAVADO: o cadastro muda e o passado não pode se reinterpretar
+    qe = core._n((_embalagem_map().get(cod) or {}).get("qtunit"))
+    d["qtunitcx"] = d.get("qtunitcx") or (qe if qe > 1 else core._n(cad.get("QTUNITCX")) or None)
+    d["codprod"] = cod
+    d["usuario_id"] = session.get("user_id") or session.get("uid")
+    return jsonify({"ok": True, "id": store.pesquisa_add(d)})
+
+
+def _pesquisa_enriquecida(medicoes, fornec=None):
+    """Medições + produto, fornecedor e a comparação com o NOSSO custo.
+
+    Fonte ÚNICA da tela de consulta E dos exports — duplicar a montagem era garantir que um dia
+    o Excel diria um número e a tela outro (o app já tem cicatriz dessa família na aba
+    Fornecedores).
+
+    O gap só sai quando as duas pontas estão na MESMA régua (unidade + mercadoria): preço por
+    caixa ou com imposto vira `comparavel=False` e a coluna sai vazia, nunca um número torto.
+    """
+    prod, forn = _cadastro_produtos(), _cadastro_fornecedores()
+    # ⚠️ O custo vem do SNAPSHOT (PCEST.custofin), NÃO do cadastro — o PCPRODUT não tem custo.
+    # Ler do cadastro devolvia 0 em tudo, e o documento que vai ao fornecedor sairia dizendo que
+    # pagamos zero. Achado conferindo o export contra a lista.
+    try:
+        custo_map = {int(core._n(r["CODPROD"])): core._n(r.get("custofin"))
+                     for r in _snapshot_rows(_filiais_estoque())}
+    except Exception as e:                                    # noqa: BLE001
+        print(f"[pesquisa] custo indisponível ({e}).")
+        custo_map = {}
+    fcod = int(core._n(fornec)) if fornec else None
+    out = []
+    for m in medicoes:
+        cad = prod.get(m["codprod"]) or {}
+        cf = int(core._n(cad.get("CODFORNEC"))) or None
+        if fcod and cf != fcod:
+            continue
+        n = core.normaliza_pesquisa(m["preco"], m.get("unidade"), m.get("com_imposto"),
+                                    m.get("qtunitcx"))
+        custo = custo_map.get(m["codprod"]) or None
+        g = core.gap_pesquisa(n["preco_un"], custo) if n["comparavel"] else {"delta": None, "delta_pct": None}
+        out.append({**m,
+                    "descricao": (cad.get("DESCRICAO") or f"PRODUTO {m['codprod']}").strip(),
+                    "codfornec": cf, "fornecedor": (forn.get(cf) or {}).get("FORNECEDOR"),
+                    "custo_unit": core._round(custo, 4) if custo else None,
+                    "preco_un": n["preco_un"], "comparavel": n["comparavel"],
+                    "delta": g["delta"], "delta_pct": g["delta_pct"]})
+    return out
+
+
 @bp.route("/api/evolucao")
 def api_evolucao():
     """Serie historica do estoque — a aba Evolucao (ver `estoque/historico.py`).
@@ -1528,7 +1677,14 @@ def api_produto(codprod):
         p["serie_mensal_clientes"] = [int(core._n(cli.get(am))) for am in meses] if cli else None
     top_vend = _top_vendedores_produto(codprod, request.args.get("venda_periodo", "mes"),
                                        _filiais_venda(), _hoje()) if p else []
-    return jsonify({"ok": bool(p), "produto": p, "lotes": lotes, "enderecos": enderecos,
+    # histórico de pesquisa de preço do item (drawer). Degrada p/ [] — Postgres fora não pode
+    # derrubar o 360° inteiro por causa de um bloco acessório.
+    try:
+        _pesq = store.pesquisa_do_produto(codprod) if store.ensure() else []
+    except Exception as e:                                    # noqa: BLE001
+        print(f"[pesquisa] histórico indisponível ({e}).")
+        _pesq = []
+    return jsonify({"ok": bool(p), "produto": p, "pesquisas": _pesq, "lotes": lotes, "enderecos": enderecos,
                     "top_vendedores": top_vend})
 
 
@@ -2051,6 +2207,16 @@ def _export_data(view):
             linhas = [l for l in linhas if cat in l.get("categorias", [])]
         cols = ["codprod", "descricao", "fornecedor", "comprador", "un_por_cx",
                 "peso_un_kg", "volume_un_m3", "caixa_kg", "caixa_m3", "problemas"]
+    elif view == "pesquisa":
+        # Documento que VAI PARA O FORNECEDOR: leva o nosso preço atual junto do pesquisado,
+        # por decisão do diretor (19/08) — "pro fornecedor, poderia mandar nosso preço atual e o
+        # preço pesquisado". É tática de negociação ("pago X, cubra"), não descuido: ele foi
+        # avisado de que expõe o nosso custo e decidiu assim.
+        dias = int(core._n(request.args.get("dias")) or 90)
+        linhas = _pesquisa_enriquecida(store.pesquisa_lista(dias=dias) if store.ensure() else [],
+                                       request.args.get("fornec"))
+        cols = ["data_pesquisa", "codprod", "descricao", "fornecedor", "preco", "unidade",
+                "preco_un", "custo_unit", "delta", "delta_pct", "origem", "usuario", "obs"]
     elif view == "qualidade":
         # produtos com cadastro/saldo inconsistente. cat opcional filtra 1 categoria.
         produtos = _aplicar_filtros_cliente(_build_produtos()[0])
@@ -2338,7 +2504,13 @@ _PDF_COLS = {
                  ("punit", "P.unit.", "money"), ("total", "Total", "money"),
                  ("comprador", "Comprador", "text", 18), ("qtdisp", "Em estoque", "int")],
 }
-_PDF_TITULO = {"produtos": "Produtos", "comprasvendas": "Compras × Vendas", "reposicao": "Reposição",
+_PDF_COLS["pesquisa"] = [
+    ("data_pesquisa", "Data", "text"), ("codprod", "Cód", "text"),
+    ("descricao", "Produto", "text", 38), ("preco", "Pesquisado", "money"),
+    ("unidade", "Un", "text"), ("custo_unit", "Nosso preço", "money"),
+    ("delta_pct", "Dif.", "dec"), ("origem", "Onde pesquisou", "text", 18),
+    ("usuario", "Quem pesquisou", "text", 16)]
+_PDF_TITULO = {"pesquisa": "Pesquisa de preço", "produtos": "Produtos", "comprasvendas": "Compras × Vendas", "reposicao": "Reposição",
                "parado": "Estoque parado", "ruptura": "Cobertura de estoque", "validade": "Validade / FEFO",
                "fornecedores": "Fornecedores", "compradores": "Compradores", "estoque_zero": "Estoque zerado",
                "ruptura_comprador": "Ruptura por comprador", "desempenho": "Desempenho comercial",
