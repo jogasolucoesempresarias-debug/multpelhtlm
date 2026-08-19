@@ -2930,6 +2930,14 @@ def validade_fefo(lotes, produtos_idx, params, hoje=None):
             "fornecedor": p.get("fornecedor"),
             "comprador": p.get("comprador"),
             "curva_abc": p.get("curva_abc"),
+            # XYZ do PRODUTO na linha do lote (pedido do diretor 19/08). Não é enfeite: a aba
+            # projeta `saldo_proj`/`valor_risco` com o giro MÉDIO, e num item Z (demanda errática)
+            # essa média é justamente o número menos confiável. A coluna é o qualificador da
+            # própria estimativa que a tela já mostra — item X com 30 dias é administrável, item
+            # Z com os mesmos 30 dias não se projeta.
+            # Vem vazio para produto sem média de 3 meses (sem CV) — a tela mostra "—", igual ao
+            # ABC, que já se comporta assim para lote fora do snapshot da unidade.
+            "xyz": p.get("xyz"),
             "numlote": numlote,
             "n_lotes": a["n_lotes"],
             "dtval": dtval.isoformat(),

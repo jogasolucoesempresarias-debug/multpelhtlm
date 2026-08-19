@@ -1178,6 +1178,10 @@ function renderValidade(){
   const L=lotesFiltrados();
   const cols=[colCod,{key:'descricao',label:'Produto',fmt:v=>`<span class="prod" title="${esc(v)}">${esc(v)}</span>`},
     {key:'curva_abc',label:'ABC',badge:true},
+    // XYZ ao lado do ABC (diretor, 19/08): a aba projeta saldo/risco com o giro MEDIO, e
+    // num item Z (demanda erratica) essa media e justamente o numero menos confiavel — a
+    // coluna qualifica a propria estimativa que a tela mostra. Vazio vira '—' (sem CV de 3m).
+    {key:'xyz',label:'XYZ',badge:true},
     {key:'numlote',label:'Lote'},{key:'dtval',label:'Validade',fmt:dt},{key:'dias_para_vencer',label:'Dias',num:true},
     {key:'qt',label:'Qtd',num:true,fmt:int},{key:'saldo_proj',label:'Saldo proj.',num:true,fmt:int},
     {key:'valor_risco',label:'Valor risco',num:true,fmt:money},{key:'classificacao',label:'Classe',badge:true},

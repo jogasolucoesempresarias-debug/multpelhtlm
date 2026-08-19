@@ -2055,7 +2055,7 @@ def _export_data(view):
                 linhas = [l for l in linhas if lo_i <= l["dias_para_vencer"] <= hi_i]
             except ValueError:
                 pass
-        cols = ["codprod", "descricao", "curva_abc", "comprador", "fornecedor", "numlote", "dtval",
+        cols = ["codprod", "descricao", "curva_abc", "xyz", "comprador", "fornecedor", "numlote", "dtval",
                 "dias_para_vencer", "qt", "saldo_proj", "valor_risco", "classificacao", "risco"]
     elif view == "fornecedores":
         produtos, params, _fil = _build_produtos()
@@ -2461,7 +2461,7 @@ _PDF_COLS = {
     "estoque_zero": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 40), ("fornecedor", "Fornecedor", "text", 26),
                      ("qtdisp", "Estoque", "int"), ("dias_sem_venda", "Dias s/ venda", "int"), ("qtd_ja_pedida", "Já ped.", "int"),
                      ("giro_mes", "Giro/mês", "int"), ("sugestao_cx", "Sug.(cx)", "int"), ("status_exec", "Status", "text")],
-    "validade": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 34), ("comprador", "Comprador", "text", 18),
+    "validade": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 34), ("curva_abc", "ABC", "text"), ("xyz", "XYZ", "text"), ("comprador", "Comprador", "text", 18),
                  ("fornecedor", "Fornecedor", "text", 22),
                  ("dtval", "Validade", "date"), ("dias_para_vencer", "Dias", "int"), ("qt", "Qtd", "int"),
                  ("valor_risco", "Valor risco", "money"), ("classificacao", "Classe", "text")],
