@@ -203,3 +203,19 @@ def test_o_local_da_pesquisa_e_pedido_e_exibido():
     assert "local não informado" in PAG, "quando vazio, a lista tem de dizer que falta"
     src = Path("estoque/routes.py").read_text(encoding="utf-8")
     assert '("origem", "Onde pesquisou"' in src, "a coluna do PDF/Excel também"
+
+
+def test_o_painel_tem_porta_para_a_tela_de_campo():
+    """Sem link, só se chega à pesquisa digitando a URL — e aí ninguém usa.
+
+    ⚠️ Fica na TOPBAR, não entre as abas: entre as abas ela viraria a 22ª, que é exatamente o
+    que a decisão de não-criar-aba evitou. É outra superfície, não outra visão."""
+    html = Path("estoque/index.html").read_text(encoding="utf-8")
+    assert 'href="/estoque/pesquisa"' in html, "o painel precisa linkar a tela de campo"
+    linha = next(l for l in html.splitlines() if 'href="/estoque/pesquisa"' in l)
+    assert 'class="tab"' not in linha, "não pode ser uma aba"
+    # na barra de FILTROS, junto de ⚙ Parâmetros / ✕ Limpar (que também não são filtros).
+    # Na topbar apertava: marca e seletor de área quebravam em duas linhas a 1600px.
+    ini = html.index('<div class="filterbar">')
+    assert html.index('href="/estoque/pesquisa"') > ini, "tem de estar na barra de filtros"
+    assert 'id="btn-limpar"' in html[:html.index('href="/estoque/pesquisa"')], "depois de ✕ Limpar"
