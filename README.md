@@ -87,7 +87,8 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
 
 ## 📦 Módulo Compras (features)
 
-Navegação em 2 níveis: **Visão · Comprar · Pedidos · Estoque · Análise** (20 abas). Foco no comprador.
+Navegação em 2 níveis: **Visão · Comprar · Pedidos · Estoque · Análise** (22 abas) + a tela de
+CAMPO da pesquisa de preço, que fica **fora** do painel (`/estoque/pesquisa`). Foco no comprador.
 - **Visão** — Cockpit + Painel gerencial (5 pilares) + Meta de ruptura + **Evolução do estoque** (ADM).
 - **Comprar** — Abastecimento (sugestão de compra), Estoque zerado, Plano reposição.
 - **Pedidos** — Orçamento (meta × realizado × pedidos), geração de pedido de compra (PDF + planilha Winthor).
@@ -139,6 +140,28 @@ série não amadurece.
   Gate: `test_qualquer_recorte_desvia_do_rollup`.
 - **"Itens em ruptura" é CONTAGEM de SKUs** (disponível ≤ 0 e giro > 0), não o catálogo: o KPI
   mostra `309 de 2.877`. Medido na base real: curva A 17/366 (4,6%) × curva C 268/2.061 (13%).
+- **Ruptura por CURVA + %** (08/2026, pedido do diretor). É a **ruptura REAL** — item zerado com
+  giro, tenha ou não pedido em aberto ("esquece a ruptura da meta; o objetivo é medir a evolução
+  da real, o que tem ou não tem de fato no estoque"). ⚠️ Portanto **não é o número do placar da
+  Meta de ruptura**, que só conta o que está sem providência e é sempre menor — a tela declara
+  isso, senão alguém lê 11% aqui contra a meta de 2% de lá. Sai em **%** porque a curva C tem ~6x
+  mais SKUs que a A e a contagem crua a mostraria sempre no topo. Deu para atender **sem perder
+  história** porque a `curva_abc` já era gravada por item desde o 1º dia. Item sem curva → **C**,
+  como no placar. Gates: `test_ruptura_por_curva_sai_na_foto_do_dia` e
+  `test_a_ordem_do_select_casa_com_o_agregar` (a foto viaja como tupla POSICIONAL do SQL até o
+  `agregar`: coluna nova num lado só desloca todos os campos seguintes, sem erro).
+- 🩹 **1ª foto em produção: os gráficos saíam EM BRANCO** (19/08, "PQ ficou em branco?"). Não
+  faltava dado — o Chart.js pinta **segmentos entre pontos**, e com `pointRadius:0` uma série de
+  um dia não tem o que desenhar. O eixo já vinha escalado no valor certo (R$ 7.000k), que é a
+  prova de que o dado chegou; a barra do 1º gráfico aparecia porque barra se desenha **por**
+  ponto, o que fez parecer que só a cobertura falhara. Junto, os 4 KPIs diziam "R$ 0,00 (0%) na
+  janela" — com uma foto o delta é zero por construção, e "0%" afirma uma medição que não foi
+  feita (hoje sai `—`). O sintoma só existe no **primeiro dia de cada instância nova**, por isso
+  virou gate: `tests/test_evolucao_acesso.py`.
+- **O rollup se auto-invalida** (`_rollup_atual`): payload gravado por uma versão anterior do
+  `agregar` é recusado e a leitura cai no cru. Antes, métrica nova exigia lembrar do
+  `rebuild_rollup` no deploy — e esquecer **não dava erro**, servia o agregado velho em silêncio.
+  O rebuild continua valendo, mas agora por **performance**, não por correção.
 - 🚧 **Ainda não tem export** (CSV/XLSX/PDF) nem entra no catálogo de e-mail — enquanto for
   ADM-only isso não faz falta, mas é o que falta para ela virar aba normal.
 
@@ -564,8 +587,12 @@ ANALYTICS_DB_NAME=joga_demo   # banco analítico (ANALYTICS_DB_* faz fallback pr
 > demo **não envelhece** sem regenerar. O default powerbi usa `TODAY()` normal.
 
 **Gates:** `tests/test_provider_*.py` (Dashboard, Comercial, Metas, Mix, Radar, Estoque, RBAC) +
-`test_medida_compat.py`. Baseline **498 passam / 5 falham** (3 de fixture de data + 2 do
-`test_provider_estoque` que dependem de um `joga_demo` local com venda no mês corrente).
+`test_medida_compat.py`. Baseline **659 passam / 3 falham** (as 3 são fixture de data do
+Comercial: radar/mix/cohort).
+⚠️ Até 19/08/2026 o baseline dizia "5 falham", contando 2 do `test_provider_estoque` como
+*"dependem de um `joga_demo` local com venda no mês corrente"*. **Nunca foi ambiente:** elas
+falhavam porque o módulo perguntava pelo mês do CALENDÁRIO a um banco cujo dado terminava antes.
+Ancorado o `_hoje()` no dado, passaram — ver a armadilha nº 17.
 
 ---
 
@@ -598,7 +625,8 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 │   ├── core.py queries.py pbi.py store.py   # regra/DAX/PBI/Postgres (quase intactos)
 │   ├── relatorios.py               #   🆕 catálogo único dos relatórios (Admin + email)
 │   ├── emails.py                   #   🆕 gera anexos PDF+XLSX p/ o email de Compras
-│   └── index.html                  #   SPA do Compras (20 abas)
+│   ├── pesquisa.html               #   🆕 tela de CAMPO (mobile, autocontida) — NÃO é aba
+│   └── index.html                  #   SPA do módulo (22 abas)
 ├── portal.html                     # 🆕 tela de escolha de área (+ Administração como faixa)
 ├── index/carteira/vendedores/…html # Páginas do Comercial
 ├── admin.html                      # CRUD + acesso por área + comprador + relatórios de Compras
@@ -620,7 +648,7 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 ├── estoque/provider_sql.py         # 🆕 modo postgres do Compras
 ├── docker-compose.demo.yml         # 🆕 stack da instância DEMO (Portainer)
 ├── _seed_demo/                     # 🆕 base sintética reprodutível (joga_demo) + bootstrap + seeder
-└── tests/                          # pytest (498 passam; 5 falham por ambiente/fixture — não é regressão)
+└── tests/                          # pytest (659 passam; 3 falham por fixture de data — não é regressão)
 ```
 
 ---
@@ -632,7 +660,7 @@ cp .env.example .env        # preencher (ver variáveis abaixo)
 docker compose -f docker-compose.dev.yml up -d redis
 python -X utf8 init_db.py   # cria/migra schema + admin default (ADMIN_EMAIL / ADMIN_SENHA)
 python -X utf8 server.py    # http://localhost:5000
-pytest -q                   # 498 passam, 5 falham (fixture de data + joga_demo local — não é regressão)
+pytest -q                   # 659 passam, 3 falham (fixture de data do Comercial — não é regressão)
 ```
 
 Variáveis novas da fusão no `.env` (além das do Power BI/DB/Redis/Resend):
@@ -780,8 +808,8 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 5. **Checagem de API usa `'/api/' in path`, não `startswith`** — por causa de `/estoque/api/...`.
 6. **Não editar `MultpelEstoque/`** (repo congelado) nem publicar em `:latest` sem intenção.
 7. **3 testes falham por fixture de data** (radar/mix/cohort) — pré-existentes, **não** são regressão.
-   O baseline é **498 passam / 5 falham** (+2 do `test_provider_estoque`, que precisam de um
-   `joga_demo` local com venda no mês corrente — falham no HEAD limpo também).
+   O baseline é **659 passam / 3 falham**. As 2 do `test_provider_estoque` que constavam aqui
+   como dependência de ambiente eram, na verdade, o bug de ancoragem de data (armadilha nº 17).
 8. **Verificação visual de tema não confia em captura** das telas de dados (Power BI muda o conteúdo
    entre capturas) — comparar cor computada (`getComputedStyle`), não pixels.
 9. **Base nova ganha `areas=["comercial"]` por default** — libere `compras` no Admin (ou via UPDATE),

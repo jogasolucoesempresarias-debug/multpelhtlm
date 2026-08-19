@@ -2562,21 +2562,28 @@ def qualidade_cadastro(prod_map, emb_map=None, forn_map=None, comp_map=None, com
 
 
 # ───────────────────────── pesquisa de preço (comparação) ─────────────────────────
-def normaliza_pesquisa(preco, unidade="un", com_imposto=False, qtunitcx=None,
-                       perc_ipi=0.0, perc_st=0.0):
-    """Traz o preço digitado em campo para a MESMA régua do `custo_unit`: R$ por UNIDADE, em
-    MERCADORIA (sem imposto). Função pura — é aqui que moram as duas armadilhas do módulo.
+def normaliza_pesquisa(preco, unidade="un", qtunitcx=None):
+    """Traz o preço visto na gôndola para a MESMA régua do nosso preço de venda: R$ por UNIDADE.
 
-    ⚠️ **Unidade.** Quem pesquisa lê a etiqueta da caixa. Comparar "R$ 45 a caixa" com um custo
-    unitário erra pelo fator inteiro — é a mesma família do pedido que saía ~50x errado por
+    **A pergunta que a pesquisa responde** (diretor, 08/2026): o comprador vai a atacados
+    CONCORRENTES ver por quanto ELES vendem o mesmo item, para saber se o NOSSO preço de venda
+    está abaixo, igual ou acima do mercado. Isso é trabalho de compra porque a margem se calcula
+    sobre o custo: se o custo entra alto, o preço de venda sai fora da praça.
+
+    ⚠️ **Unidade é régua.** Quem pesquisa lê a etiqueta da CAIXA e o nosso preço é por unidade —
+    comparar direto erra pelo fator inteiro. Mesma família do pedido que saía ~50x errado por
     converter quantidade sem converter preço (ver `item_master`).
-
-    ⚠️ **Imposto.** `CUSTOFIN` é MERCADORIA; preço de gôndola tem tributo dentro. É a "duas
-    réguas" (mercadoria × NF) que já mordeu no Orçamento.
 
     ⚠️ **Sem fator de caixa não se chuta.** Preço em `cx` sem `qtunitcx` > 1 devolve
     `comparavel=False` e valor None — a tela mostra "—". Mesma política do `medidas_confiaveis`:
     número errado que parece plausível é pior que célula vazia.
+
+    ⚠️ **NÃO desconte imposto aqui.** Até 08/2026 esta função convertia o preço para MERCADORIA,
+    porque a comparação era contra o `CUSTOFIN`. A premissa estava errada: os dois lados são
+    preço de VENDA — a gôndola do concorrente e o nosso realizado — e ambos são cheios ("o nosso
+    preço de venda é com imposto", diretor). Reintroduzir o desconto faria a tela dizer que
+    estamos baratos justamente onde estamos caros. A coluna `com_imposto` segue gravada na
+    medição (histórico não se regenera), mas não entra mais na conta.
 
     Retorna {preco_un, comparavel, motivo}.
     """
@@ -2588,22 +2595,21 @@ def normaliza_pesquisa(preco, unidade="un", com_imposto=False, qtunitcx=None,
         if f <= 1:
             return {"preco_un": None, "comparavel": False, "motivo": "sem_fator_caixa"}
         p = p / f
-    if com_imposto:
-        # o digitado é NF; volta para mercadoria dividindo pelos mesmos % que a sugestão soma
-        div = 1 + (_n(perc_ipi) + _n(perc_st)) / 100.0
-        if div <= 0:
-            return {"preco_un": None, "comparavel": False, "motivo": "imposto_invalido"}
-        p = p / div
     return {"preco_un": _round(p, 4), "comparavel": True, "motivo": None}
 
 
-def gap_pesquisa(preco_un, custo_unit):
-    """Diferença entre o preço pesquisado e o NOSSO custo, na régua já normalizada.
+def gap_pesquisa(preco_un, nosso_preco):
+    """Diferença entre o preço do CONCORRENTE e o NOSSO preço de venda, na régua já normalizada.
 
-    Positivo = pesquisamos MAIS CARO que o nosso custo (o fornecedor atual está melhor).
-    Negativo = achamos mais barato — é a linha que vira argumento de negociação.
-    `None` quando falta um dos lados: não se inventa comparação."""
-    a, b = _n(preco_un), _n(custo_unit)
+    Positivo = o concorrente vende mais caro → o nosso preço está abaixo do mercado.
+    Negativo = o concorrente vende mais barato → o NOSSO está caro, e é a linha que pede ação.
+    `None` quando falta um dos lados: não se inventa comparação.
+
+    ⚠️ A COR segue o sinal pela perspectiva de quem compra (decisão do diretor): negativo =
+    VERMELHO. A convenção NÃO mudou quando a referência passou de custo para preço de venda,
+    porque o sinal continua significando "o nosso está caro" — e essa continuidade é fácil de
+    quebrar sem perceber ao mexer aqui (a 1ª versão saiu invertida)."""
+    a, b = _n(preco_un), _n(nosso_preco)
     if a <= 0 or b <= 0:
         return {"delta": None, "delta_pct": None}
     return {"delta": _round(a - b, 4), "delta_pct": _round((a - b) / b * 100, 1)}

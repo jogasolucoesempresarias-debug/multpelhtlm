@@ -23,9 +23,12 @@ from estoque import core, historico
 D1, D2 = date(2026, 8, 14), date(2026, 8, 15)
 
 
-def _linha(dia, qtdisp, valor, giro_dia, cob, dtsaida=None, dtent=None):
-    """Uma linha CRUA da foto, na ordem que o SELECT do `serie()` devolve."""
-    return (dia, qtdisp, valor, giro_dia, cob, dtsaida, dtent)
+def _linha(dia, qtdisp, valor, giro_dia, cob, dtsaida=None, dtent=None, curva="C"):
+    """Uma linha CRUA da foto, na ORDEM POSICIONAL que o SELECT do `serie()` devolve.
+
+    ⚠️ Aridade é contrato: `_SQL_CRU`, este helper e o desempacotamento do `agregar` andam
+    juntos. Ver `test_a_ordem_do_select_casa_com_o_agregar`."""
+    return (dia, qtdisp, valor, giro_dia, cob, dtsaida, dtent, curva)
 
 
 # ───────────────── 1. as 4 séries saem do cru ─────────────────
@@ -198,3 +201,24 @@ def test_qualquer_recorte_desvia_do_rollup(monkeypatch):
             f"{list(recorte)[0]} não pode ser servido pelo rollup da empresa"
     # ⚙ Parâmetro fora do padrão também recalcula (é o "reescrever o passado")
     assert historico.serie("atacado", params={"novo_dias": 30}) == ["CRU"]
+
+
+def test_rollup_de_versao_antiga_nao_e_servido(monkeypatch):
+    """⚠️ O rollup é cache da MESMA função `agregar`. Quando ela ganha uma métrica (a ruptura por
+    curva, 08/2026), os payloads já gravados não a têm — e servi-los faria a aba mostrar "—"
+    numa coluna que o cru sabe calcular, sem erro nenhum.
+
+    Antes isso dependia de alguém lembrar de rodar o `rebuild_rollup` no deploy. Agora o payload
+    velho é detectado e a leitura cai no cru sozinha; o rebuild virou questão de performance.
+    """
+    velho = {"data": "2026-08-19", "valor_estoque": 1.0, "valor_parado": 0.0,
+             "n_ruptura": 0, "pct_ideal": 1.0, "faixas": {}}          # sem pct_ruptura/curva
+    assert historico._rollup_atual(velho) is False
+    assert historico._rollup_atual({**velho, "pct_ruptura": 0.0, "ruptura_curva": {}}) is True
+    assert historico._rollup_atual(None) is False
+
+    monkeypatch.setattr(historico, "_serie_rollup", lambda *a, **k: None)
+    monkeypatch.setattr(historico, "_linhas_cruas", lambda *a, **k: [])
+    monkeypatch.setattr(historico, "agregar", lambda linhas, params=None: ["CRU"])
+    assert historico.serie("atacado") == ["CRU"], \
+        "rollup recusado tem de cair no cru, não devolver vazio"

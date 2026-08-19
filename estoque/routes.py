@@ -1170,25 +1170,33 @@ def api_pesquisa_preco():
 
 
 def _pesquisa_enriquecida(medicoes, fornec=None):
-    """Medições + produto, fornecedor e a comparação com o NOSSO custo.
+    """Medições + produto, fornecedor e a comparação com o NOSSO PREÇO DE VENDA.
 
-    Fonte ÚNICA da tela de consulta E dos exports — duplicar a montagem era garantir que um dia
-    o Excel diria um número e a tela outro (o app já tem cicatriz dessa família na aba
-    Fornecedores).
+    Fonte ÚNICA da tela de campo, do drawer 360° e dos exports — três montagens do mesmo número
+    é como as telas divergem (o app já tem cicatriz dessa família na aba Fornecedores).
 
-    O gap só sai quando as duas pontas estão na MESMA régua (unidade + mercadoria): preço por
-    caixa ou com imposto vira `comparavel=False` e a coluna sai vazia, nunca um número torto.
+    ⚠️ **A referência é o preço de VENDA, não o custo.** O pedido foi lido errado até 08/2026:
+    o comprador vai a atacados CONCORRENTES ver por quanto ELES vendem ("pesquisar o preço que
+    eles estão vendendo o mesmo produto que nós vendemos", diretor), para saber se o nosso preço
+    está dentro da praça. Comparando com o `CUSTOFIN` a tela errava duas vezes: como o custo é
+    sempre menor que o preço de venda, o gap saía enviesado para o VERDE — dizia "estamos bem"
+    mesmo quando vendíamos acima do mercado — e o documento que vai ao fornecedor levava o nosso
+    custo de aquisição, a única coisa que não se manda a fornecedor.
+
+    ⚠️ **NÃO use o `preco_venda` do produto.** Em `core.construir_produtos` esse campo cai em
+    `custofin` quando o item não vendeu em 3 meses (a venda perdida precisa do fallback). Aqui
+    ele devolveria o CUSTO rotulado como "nosso preço de venda" — o vazamento de volta, agora
+    com etiqueta errada. Sem preço realizado, a coluna sai VAZIA.
     """
     prod, forn = _cadastro_produtos(), _cadastro_fornecedores()
-    # ⚠️ O custo vem do SNAPSHOT (PCEST.custofin), NÃO do cadastro — o PCPRODUT não tem custo.
-    # Ler do cadastro devolvia 0 em tudo, e o documento que vai ao fornecedor sairia dizendo que
-    # pagamos zero. Achado conferindo o export contra a lista.
+    # Preço de venda = realizado médio dos ÚLTIMOS 3 MESES: o `PCPRODUT[PVENDA]` está vazio nesta
+    # base, e o diretor aprovou a régua ("pode pegar a média de preço dos últimos 3 meses").
+    # Cache de 6h do `_preco_venda_map` — esta tela não custa consulta nova ao BI.
     try:
-        custo_map = {int(core._n(r["CODPROD"])): core._n(r.get("custofin"))
-                     for r in _snapshot_rows(_filiais_estoque())}
+        pv_map = _preco_venda_map(_filiais_venda())
     except Exception as e:                                    # noqa: BLE001
-        print(f"[pesquisa] custo indisponível ({e}).")
-        custo_map = {}
+        print(f"[pesquisa] preço de venda indisponível ({e}).")
+        pv_map = {}
     fcod = int(core._n(fornec)) if fornec else None
     out = []
     for m in medicoes:
@@ -1196,14 +1204,13 @@ def _pesquisa_enriquecida(medicoes, fornec=None):
         cf = int(core._n(cad.get("CODFORNEC"))) or None
         if fcod and cf != fcod:
             continue
-        n = core.normaliza_pesquisa(m["preco"], m.get("unidade"), m.get("com_imposto"),
-                                    m.get("qtunitcx"))
-        custo = custo_map.get(m["codprod"]) or None
-        g = core.gap_pesquisa(n["preco_un"], custo) if n["comparavel"] else {"delta": None, "delta_pct": None}
+        n = core.normaliza_pesquisa(m["preco"], m.get("unidade"), m.get("qtunitcx"))
+        nosso = core._n(pv_map.get(m["codprod"])) or None
+        g = core.gap_pesquisa(n["preco_un"], nosso) if n["comparavel"] else {"delta": None, "delta_pct": None}
         out.append({**m,
                     "descricao": (cad.get("DESCRICAO") or f"PRODUTO {m['codprod']}").strip(),
                     "codfornec": cf, "fornecedor": (forn.get(cf) or {}).get("FORNECEDOR"),
-                    "custo_unit": core._round(custo, 4) if custo else None,
+                    "preco_venda_unit": core._round(nosso, 4) if nosso else None,
                     "preco_un": n["preco_un"], "comparavel": n["comparavel"],
                     "delta": g["delta"], "delta_pct": g["delta_pct"]})
     return out
@@ -1250,6 +1257,7 @@ def api_evolucao():
 # de proposito: estoque caindo pode ser boa gestao OU desabastecimento, e pintar de verde faria
 # a aba um dia comemorar uma ruptura. E a ruptura estavel ao lado da queda que prova gestao.
 _EVO_DIRECAO = {"valor_parado": "menor_melhor", "n_ruptura": "menor_melhor",
+                "pct_ruptura": "menor_melhor",
                 "pct_ideal": "maior_melhor", "valor_estoque": None}
 
 
@@ -1262,10 +1270,16 @@ def _resumo_evolucao(dias, log):
     if not dias:
         return {"fotos": len(log), "maturidade": "vazia", "direcao": _EVO_DIRECAO}
     a, b = dias[0], dias[-1]
+    # ⚠️ Com UMA foto, `a` e `b` sao o MESMO ponto e todo delta sai zero — a tela dizia
+    # "R$ 0,00 (0%) na janela" nos quatro KPIs no dia da 1a foto em producao. Isso se le como
+    # "nao mudou nada", quando o certo e "ainda nao da para comparar": afirma uma medicao que
+    # nao foi feita. `None` cai no `—` que o front ja sabe renderizar (`evoDelta`), na mesma
+    # politica do resto da aba (o aviso de maturidade ja dizia que faltavam 27 dias).
+    um_ponto = len(dias) == 1
     var = {}
     for k in _EVO_DIRECAO:
         ini_v, fim_v = a.get(k), b.get(k)
-        if ini_v is None or fim_v is None:
+        if um_ponto or ini_v is None or fim_v is None:
             var[k] = None
             continue
         var[k] = {"ini": ini_v, "fim": fim_v, "delta": core._round(fim_v - ini_v, 4),
@@ -1679,8 +1693,11 @@ def api_produto(codprod):
                                        _filiais_venda(), _hoje()) if p else []
     # histórico de pesquisa de preço do item (drawer). Degrada p/ [] — Postgres fora não pode
     # derrubar o 360° inteiro por causa de um bloco acessório.
+    # ⚠️ Enriquecido AQUI, pela mesma função da tela de campo e dos exports. Antes vinha cru e o
+    # JS refazia o gap sozinho — duas implementações do mesmo número, que já tinham divergido
+    # (o servidor comparava preço com imposto contra mercadoria e o drawer não comparava).
     try:
-        _pesq = store.pesquisa_do_produto(codprod) if store.ensure() else []
+        _pesq = _pesquisa_enriquecida(store.pesquisa_do_produto(codprod)) if store.ensure() else []
     except Exception as e:                                    # noqa: BLE001
         print(f"[pesquisa] histórico indisponível ({e}).")
         _pesq = []
@@ -2208,15 +2225,16 @@ def _export_data(view):
         cols = ["codprod", "descricao", "fornecedor", "comprador", "un_por_cx",
                 "peso_un_kg", "volume_un_m3", "caixa_kg", "caixa_m3", "problemas"]
     elif view == "pesquisa":
-        # Documento que VAI PARA O FORNECEDOR: leva o nosso preço atual junto do pesquisado,
-        # por decisão do diretor (19/08) — "pro fornecedor, poderia mandar nosso preço atual e o
-        # preço pesquisado". É tática de negociação ("pago X, cubra"), não descuido: ele foi
-        # avisado de que expõe o nosso custo e decidiu assim.
+        # Documento que VAI PARA O FORNECEDOR: leva o NOSSO PREÇO DE VENDA junto do pesquisado
+        # ("pro fornecedor, poderia mandar nosso preço atual e o preço pesquisado", diretor).
+        # ⚠️ Até 08/2026 a coluna era o `custo_unit` (CUSTOFIN) — mandava o nosso custo de
+        # aquisição para quem negocia conosco. Preço de venda é público (está na gôndola e na
+        # tabela); custo de compra é a única coisa que não se manda a fornecedor.
         dias = int(core._n(request.args.get("dias")) or 90)
         linhas = _pesquisa_enriquecida(store.pesquisa_lista(dias=dias) if store.ensure() else [],
                                        request.args.get("fornec"))
         cols = ["data_pesquisa", "codprod", "descricao", "fornecedor", "preco", "unidade",
-                "preco_un", "custo_unit", "delta", "delta_pct", "origem", "usuario", "obs"]
+                "preco_un", "preco_venda_unit", "delta", "delta_pct", "origem", "usuario", "obs"]
     elif view == "qualidade":
         # produtos com cadastro/saldo inconsistente. cat opcional filtra 1 categoria.
         produtos = _aplicar_filtros_cliente(_build_produtos()[0])
@@ -2507,7 +2525,7 @@ _PDF_COLS = {
 _PDF_COLS["pesquisa"] = [
     ("data_pesquisa", "Data", "text"), ("codprod", "Cód", "text"),
     ("descricao", "Produto", "text", 38), ("preco", "Pesquisado", "money"),
-    ("unidade", "Un", "text"), ("custo_unit", "Nosso preço", "money"),
+    ("unidade", "Un", "text"), ("preco_venda_unit", "Nosso preço", "money"),
     ("delta_pct", "Dif.", "dec"), ("origem", "Onde pesquisou", "text", 18),
     ("usuario", "Quem pesquisou", "text", 16)]
 _PDF_TITULO = {"pesquisa": "Pesquisa de preço", "produtos": "Produtos", "comprasvendas": "Compras × Vendas", "reposicao": "Reposição",

@@ -1,8 +1,14 @@
-# Manual do Módulo COMPRAS (Estoque) — JOGA Analytics
+# Manual do Módulo GESTÃO DE ESTOQUE — JOGA Analytics
 
-**Versão 3.1 · Atualizado em 14/08/2026 · Base de conhecimento do agente de IA de dúvidas.**
+**Versão 4.0 · Atualizado em 19/08/2026 · Base de conhecimento do agente de IA de dúvidas.**
 
-> **Escopo:** este manual cobre o **módulo Compras** — as **21 abas**, todos os cálculos, o
+> ⚠️ **O módulo mudou de nome em 19/08/2026: "Compras" → "Gestão de Estoque".** Mudou só o
+> RÓTULO. A chave interna continua `compras` — está na env `MODULOS`, na coluna
+> `multpel_users.areas` (por pessoa, já gravada em produção) e na URL `/estoque`. Se alguém
+> perguntar "onde fica o módulo Compras", é este. Gate: `tests/test_nome_gestao_estoque.py`.
+>
+> **Escopo:** este manual cobre o módulo — as **22 abas**, a tela de campo da pesquisa de
+> preço, todos os cálculos, o
 > pedido de compra, a tributação, os relatórios e as armadilhas de dados. O **módulo Comercial**
 > (dashboard, carteira RFM, vendedores, metas, cobertura de carteira) tem manual próprio:
 > **`docs/MANUAL_COMERCIAL.md`**.
@@ -486,13 +492,13 @@ dinheiro).
 
 ---
 
-## 7. Navegação — 5 grupos, 21 abas
+## 7. Navegação — 5 grupos, 22 abas (+ 1 tela de campo fora do painel)
 
 **Visão · Comprar · Pedidos · Estoque · Análise**
 
 | Grupo | Abas |
 |---|---|
-| **Visão** | Cockpit · Painel gerencial · Meta de ruptura |
+| **Visão** | Cockpit · Painel gerencial · Meta de ruptura · **Evolução do estoque** *(só ADM)* |
 | **Comprar** | Abastecimento · Estoque zerado · Plano reposição |
 | **Pedidos** | Orçamento *(+ Logística, oculta)* |
 | **Estoque** | Cobertura · Parado · Validade · Vencidos · Ruptura · Ocupação |
@@ -529,7 +535,51 @@ Placar da meta por comprador, **uma meta por curva** (§5.19).
 - **Escopo fixo:** unidade atual, curva apurada sobre 90 dias, **sem responder aos filtros do
   topo**. Para investigar item a item, use **Estoque → Ruptura**.
 
-### 7.4 Abastecimento (Comprar) — "o que comprar, por fornecedor"
+### 7.4 Evolução do estoque (Visão) — **restrita ao ADM**
+
+A **única série histórica** do módulo: valor de estoque, capital parado, cobertura e ruptura ao
+longo do tempo. Pedido do diretor (08/2026): *"acompanhar de fato se estamos tendo evolução
+positiva ou não… é gestão comprovada"*.
+
+⚠️ **O histórico NÃO pode ser gerado para trás, e isso não é falta de esforço.** O `PCEST` é
+**posição**: o `QTESTGER` de ontem foi sobrescrito e não existe no BI nem no Winthor. A aba
+Vencidos mostra mês a mês desde sempre porque perda por validade é **evento datado**; saldo é
+**estado**. A cobertura é a mais irrecuperável — depende de `QTVENDMES1..3`, janelas móveis
+regravadas todo mês.
+
+**Como nasce:** um robô fotografa o estoque todo dia (6h-12h, e só **depois do refresh do BI do
+dia** — antes disso gravaria a posição de ontem com a data de hoje). A primeira leitura útil sai
+em ~4 semanas; tendência firme em ~90 dias. Enquanto enche, a tela mostra o contador de fotos e
+explica — não diz "sem dados".
+
+- **KPIs:** Valor em estoque · Capital parado · Itens em ruptura · Cobertura ideal, cada um com a
+  **variação na janela** (é a pergunta da aba; o nível o Cockpit já respondia).
+- **Gráficos:** barras de estoque com o parado em linha (eixo próprio à direita, senão a linha
+  fica esmagada) · composição da cobertura empilhada · itens em ruptura.
+- **Tabela:** a foto dia a dia, mais recente primeiro.
+- **Recorte:** unidade · comprador · fornecedor · curva · XYZ. **Depto e Buscar produto a aba NÃO
+  honra**, e avisa na tela.
+
+⚠️ **Guarda-se o INGREDIENTE, não o resultado.** A foto grava `qtdisp`, custo, giro, datas, curva
+e XYZ por item — não "parado = R$ X". Gravar o número pronto congelaria a série na régua daquele
+dia, e aí **corrigir uma régua viraria degrau no gráfico**. Numa aba feita para provar gestão,
+degrau de definição é lido como resultado de operação. Com o cru, mexer em `novo_dias`,
+`ideal_dias` ou no `eh_parado` recalcula o passado inteiro.
+
+⚠️ **A ruptura é CONTRAPESO, não enfeite.** Estoque caindo, sozinho, pode ser desabastecimento.
+Por isso o **valor de estoque é a única métrica sem cor** — só parado ↓, ruptura ↑ e % ideal ↑
+têm direção inequívoca. Pintar queda de estoque de verde faria a aba um dia comemorar uma ruptura.
+
+- ⚠️ **Duas convenções de faixa, ambas espelhando a tela:** as faixas de cobertura seguem o Painel
+  gerencial (giro ≤ 0 cai no 121+, então Σ faixas = valor de estoque); o trio ideal/risco/sem-giro
+  segue o Estoque ideal (sem-giro à parte).
+- ⚠️ **A curva gravada usa janela MÓVEL de 90 dias**, não o "mês atual". O default é o acumulado
+  do mês: no dia 1º a ABC sairia de UM dia de venda — dente de serra em toda virada de mês.
+- **Na demo** o robô não roda (o "hoje" é ancorado no dado); o histórico vem de um seeder de 90
+  dias, senão a aba abriria vazia na apresentação comercial.
+- 🚧 **Ainda não tem export.** Enquanto for ADM-only não faz falta.
+
+### 7.5 Abastecimento (Comprar) — "o que comprar, por fornecedor"
 A tela principal de compra: itens com sugestão > 0, **agrupados por fornecedor**.
 - **Cabeçalho de cada fornecedor:** nº de itens · **m³** · **kg** · **valor total (régua da NF)** ·
   botão **"Gerar pedido"** (abre o construtor já preenchido).
@@ -539,20 +589,20 @@ A tela principal de compra: itens com sugestão > 0, **agrupados por fornecedor*
 - Itens com alíquota estimada saem marcados com **`≈`**, e o rodapé informa quanto do valor está
   apoiado em estimativa.
 
-### 7.5 Estoque zerado (Comprar)
+### 7.6 Estoque zerado (Comprar)
 Todos os produtos com estoque gerencial ≤ 0 (inclusive negativos).
 - **KPIs:** Zerados/negativos · Com giro (ruptura real) · Já com pedido · **Venda perdida** ·
   **Custo de reposição** (régua da NF).
 - **Colunas:** Cód · Produto · Fornecedor · ABC · Comprador · Estoque · **Dias s/ venda** ·
   Já ped. · Giro/mês · Sugerido (cx) · Status. Filtro por status.
 
-### 7.6 Plano reposição / DRP (Comprar)
+### 7.7 Plano reposição / DRP (Comprar)
 Grade **semanal** de um produto: projeta o saldo semana a semana (12 semanas), gera **pedidos
 planejados** quando cruza o estoque de segurança, e calcula **quando o pedido precisa sair**
 (= data de recebimento − lead time). Como o BI não tem dados de trânsito, o reabastecimento é
 **planejado**, não rastreado.
 
-### 7.7 Orçamento (Pedidos)
+### 7.8 Orçamento (Pedidos)
 Meta de compras do mês × realizado (§5.17).
 - **KPIs:** Meta do mês · Comprado (Winthor) · Saldo · % Consumido, com barra de progresso.
 - **Alertas:** entregas atrasadas · chegam em ≤7 dias · transferências entre filiais excluídas.
@@ -568,7 +618,7 @@ Meta de compras do mês × realizado (§5.17).
 > diretor. Calculava, dos pedidos em aberto, a cubagem (Σ qtd × volume unitário) e a ocupação
 > (cubagem ÷ 60 m³/veículo), marcando baixa ocupação como candidato a consolidar carga.
 
-### 7.8 Cobertura (Estoque)
+### 7.9 Cobertura (Estoque)
 Distribuição do capital por faixa de cobertura (métrica oficial, §5.3).
 - **Cards por faixa** (0-30 … 121+) com valor de estoque + gráfico + visão "por comprador".
 - **Filtro de faixa multi-seleção.** No **121+** há sub-filtro **"sem giro × excesso real"** —
@@ -576,7 +626,7 @@ Distribuição do capital por faixa de cobertura (métrica oficial, §5.3).
 - **Colunas:** Cód · Produto · Fornecedor · ABC · Comprador · Disp. · Disp. cx · Valor estoque ·
   Cob. · Já ped. · Giro/mês · Giro cx · Sugerido · Faixa.
 
-### 7.9 Parado (Estoque) — "o que liquidar"
+### 7.10 Parado (Estoque) — "o que liquidar"
 Itens com estoque e **≥15 dias** parados. **Reconciliado com a Cobertura:** as faixas
 **somam o total**.
 - **Cards por faixa** (**Novos** · 15-30 … 121+) + gráfico + "por comprador".
@@ -591,7 +641,7 @@ Itens com estoque e **≥15 dias** parados. **Reconciliado com a Cobertura:** as
   Em item novo, "Dias parado" mostra **"chegou há Xd"** em vez de "nunca" — dizer "nunca" ao lado
   de um card que acabou de chamá-lo de recém-chegado era contradição na mesma linha.
 
-### 7.10 Validade / FEFO (Estoque)
+### 7.11 Validade / FEFO (Estoque)
 Controle de vencimento **por lote**, sobre o estoque **endereçado** (`PCESTENDERECO`, RUA ≠ 99),
 com horizonte configurável.
 ```
@@ -599,12 +649,21 @@ saldo projetado = quantidade do lote − (giro diário × dias até vencer)
 valor em risco  = max(0, saldo projetado) × custo
 ```
 - **Cards por faixa** (0-15, 16-30, 31-60, 61-90, 90+) + gráfico + "vencimento por comprador".
-- **Colunas:** Cód · Produto · ABC · Lote · Validade · Dias · Qtd · Saldo proj. · Valor risco ·
-  Classe · Ação. **Classes:** crítico (≤7d) · atenção (≤15d) · planejar.
+- **Colunas:** Cód · Produto · ABC · **XYZ** · Lote · Validade · Dias · Qtd · Saldo proj. ·
+  Valor risco · Classe · Ação. **Classes:** crítico (≤7d) · atenção (≤15d) · planejar.
+- ⚠️ **A coluna XYZ (19/08/2026) é o qualificador da própria estimativa desta tela.** O
+  `saldo proj.` e o `valor risco` saem do giro MÉDIO; num item **Z** (demanda errática) essa
+  média é justamente o número menos confiável. Item **X** com 30 dias de validade é
+  administrável; item **Z** com os mesmos 30 dias não se projeta.
+  *Medido na base real (578 lotes, horizonte 600d):* os **Z são 13% dos lotes e 27% do valor em
+  risco** — mais de um quarto do risco está onde a previsão vale menos. A leitura da aba deixa
+  de ser só "ordenar por dias a vencer" e passa a ser "olhar primeiro os Z de validade curta".
+  O XYZ é do PRODUTO e a linha é do LOTE: vem vazio (`—`) para item sem série de 3 meses ou fora
+  do snapshot da unidade — 3% dos lotes. Gate: `tests/test_validade_xyz.py`.
 - O **nome do produto vem do próprio lote**, então item zerado no gerencial (que só tem lote)
   aparece com o nome certo, não "PRODUTO {código}".
 
-### 7.11 Vencidos (Estoque) — perda REALIZADA
+### 7.12 Vencidos (Estoque) — perda REALIZADA
 Contraponto da Validade: lá é risco futuro, **aqui é perda que já aconteceu** (conta **200042**
 do Winthor), mês a mês.
 - **Colunas:** Vezes (reincidência ao longo de todo o histórico) · Qt perdida · **Já perdido** ·
@@ -613,7 +672,7 @@ do Winthor), mês a mês.
 - ⚠️ **Join por `NUMTRANSVENDA`, NUNCA por `NUMNOTA`.** O `NUMNOTA` repete ao longo dos anos e
   infla o resultado **~3,5×** — e o `SELECT DISTINCT` **não** corrige.
 
-### 7.12 Ruptura por comprador (Estoque)
+### 7.13 Ruptura por comprador (Estoque)
 Ruptura agregada em **duas tabelas**: **por comprador** e **por curva ABC**.
 - **KPIs:** Itens em ruptura (+ sem pedido) · Venda perdida · Sugestão de compra · Compradores.
 - **Colunas:** Produtos · Em ruptura · **% Rupt.** · **Dias rupt. méd** (média de dias sem venda
@@ -625,13 +684,13 @@ Ruptura agregada em **duas tabelas**: **por comprador** e **por curva ABC**.
 - **Clicar numa curva (A/B/C)** abre os itens daquela curva — mostra quanto da ruptura está em
   cada curva de venda (A = os campeões).
 
-### 7.13 Ocupação (Estoque)
+### 7.14 Ocupação (Estoque)
 Ocupação das posições do depósito segundo o WMS (bate com a consulta **1772** do Winthor).
 - **Colunas:** Posições (slots com estoque) · **% ocup.** · m³ endereçado · Qtd (sistema) ·
   Situação (com estoque / vazia reservada). Tipos: AP = Picking, AE = Pulmão.
 - Suporta **conferência por rua** e listagem de **vagas vazias**.
 
-### 7.14 Desempenho comercial (Análise)
+### 7.15 Desempenho comercial (Análise)
 Ranking dos **compradores** pelo resultado comercial dos produtos que eles compram.
 ```
 Venda líquida = venda bruta − devoluções
@@ -643,14 +702,14 @@ Margem        = lucro ÷ venda líquida
   **AA Lucro**.
 - Status de lucro: negativo · alta (≥30% do lucro) · boa (≥8%) · baixa.
 
-### 7.15 Compras × Vendas (Análise)
+### 7.16 Compras × Vendas (Análise)
 Cruzamento **estoque (compras) × venda × lucro × margem**, em 3 visões: **por comprador · por
 fornecedor · por produto**.
 - **Venda/Estoque** = quantas vezes o capital girou no período.
 - Por fornecedor: Itens · Estoque · Venda · Lucro · Margem · Venda/Estoque · Ruptura · % Rupt. ·
   Parado + **ABC do fornecedor** (e o filtro Curva age por ele).
 
-### 7.16 Fornecedores (Análise)
+### 7.17 Fornecedores (Análise)
 Compara **quanto o fornecedor vende × quanto pesa em estoque**, e agora também o **ciclo de
 compras e a rentabilidade com verba**.
 ```
@@ -674,14 +733,14 @@ Fórmulas em §5.20 (compras/ciclo), §5.21 (crescimento) e §5.22 (verba/lucro)
 - A aba é calculada **duas vezes** — no front (para os filtros responderem sem round-trip) e no
   back (para o export). Coluna nova precisa entrar nos dois, senão o Excel/PDF diverge da tela.
 
-### 7.17 Lead time (Análise)
+### 7.18 Lead time (Análise)
 Quanto cada fornecedor demora entre o pedido ser emitido e a NF entrar no estoque (12 meses).
 - **Colunas:** Fornecedor · Comprador · Pedidos · **% na hora** · **Lead todos** · **Lead real** ·
   **Prazo manual** · **Δ** · Situação (cadastro OK / inflado / otimista / sem lead confiável).
 - **Drill de auditoria:** clicar no fornecedor abre os pedidos que formaram o número.
 - Fórmulas e o porquê da média × mediana em §5.23.
 
-### 7.18 Verbas (Análise)
+### 7.19 Verbas (Análise)
 Verbas/bonificações negociadas com fornecedores (**rotina 1801** do Winthor).
 - **Contas mapeadas:** 250009 Rebaixa de custo · 250008 Conta corrente · 200013 Premiações e
   campanhas · 200042 Perda validade.
@@ -697,7 +756,7 @@ Verbas/bonificações negociadas com fornecedores (**rotina 1801** do Winthor).
 - **O tripé:** compra × lead × verba — quanto compro, quanto demora, quanto devolve.
 - Conferida contra o relatório **1826** (BOMBRIL centavo a centavo no recorte 2024+).
 
-### 7.19 ABC-XYZ (Análise)
+### 7.20 ABC-XYZ (Análise)
 Matriz **curva de vendas (ABC) × variabilidade da demanda (XYZ)** — 9 células com nº de itens e
 venda do período. Estratégias: **AX** = campeão previsível (controle rígido, estoque enxuto) ·
 **AZ** = alto valor e imprevisível (foco do comprador) · **CZ** = candidato a descontinuar.
@@ -705,7 +764,7 @@ Clique numa célula lista os produtos.
 ⚠️ As opções do filtro XYZ precisam de `value` explícito (`X`/`Y`/`Z`) — sem isso o filtro casa
 nada e devolve **zero produtos em silêncio**.
 
-### 7.20 Produtos (Análise) — o explorador
+### 7.21 Produtos (Análise) — o explorador
 Tabela completa de todos os produtos: Cód · Produto · Fornecedor · ABC · XYZ · Disp. · Disp. cx ·
 **Avaria** · Giro/mês · Giro cx · Cob. · Dias s/V · Venda · Lucro · Margem · Estoque · Abast.
 - **Colunas Cód + Produto congeladas** ao rolar lateralmente.
@@ -714,11 +773,99 @@ Tabela completa de todos os produtos: Cód · Produto · Fornecedor · ABC · XY
 - É o **destino do drill** do card "Em risco" do Painel gerencial (§5.18): ele chega com
   `Cobertura ≤ limiar−1` já preenchido, e o Excel/PDF saem com o mesmo recorte.
 
-### 7.21 Qualidade da base (Análise)
+### 7.22 Qualidade da base (Análise)
 Lista itens com problema de cadastro para o TI/diretor corrigir: sem custo · sem fornecedor ·
 sem comprador · sem giro com estoque · estoque negativo.
 
 ---
+
+### 7.23 Pesquisa de preço — **tela de CAMPO, fora do painel**
+
+Pedido do diretor (19/08/2026): *"podemos ir para as visitas de pesquisas e ir preenchendo o
+preço concorrente direto nos itens"*. É a **primeira feature em que a ferramenta vira FONTE** de
+um dado que o Winthor não tem — todo o resto do módulo é leitura derivada do ERP.
+
+**O que ela mede:** o comprador vai a **atacados CONCORRENTES** ver por quanto **eles vendem** o
+mesmo item, e compara com o **NOSSO preço de venda** — *"para saber se o meu preço de venda está
+dentro da prática usada no mercado em geral ou não; meu preço está abaixo, igual ou acima"*. É
+trabalho de compra porque a margem se calcula sobre o custo: custo alto entra, preço de venda sai
+fora da praça.
+
+⚠️ **A 1ª versão comparava com o nosso CUSTO (`CUSTOFIN`) — o pedido foi lido errado**, e o
+estrago era duplo e silencioso: (1) como o custo é sempre MENOR que o preço de venda, o gap saía
+enviesado para o **verde** — a tela dizia "estamos bem" mesmo quando vendíamos acima do mercado,
+o que **inverte a conclusão** na direção que não gera ação; (2) o Excel/PDF que vai ao
+**fornecedor** levava o nosso custo de aquisição na coluna "Nosso preço". Corrigido em 08/2026.
+O sintoma que denunciou: o diretor perguntou *"eu marco qual?"* no seletor de imposto — quando o
+usuário-alvo não consegue responder ao próprio formulário, o campo está modelando outra coisa.
+
+⚠️ **NÃO é uma aba, de propósito.** A captura acontece em outro contexto — pessoa em pé, uma mão,
+sinal ruim — e toda tela do painel pressupõe o oposto (sentada, tabela de 20 colunas sobre o
+snapshot inteiro). É uma página própria em **`/estoque/pesquisa`**, que não entra no menu. Chega-se
+por ela pelo botão **🔎 Pesquisa de preço** na barra de filtros do painel.
+
+**Quem usa:** time de compras (reusa a área `compras`; sem ela, 403).
+
+#### Capturar
+Fornecedor da visita *(opcional)* → busca de produto → preço → un/cx → **onde foi pesquisado** →
+salvar. Os seletores de *"origem do preço"* (fornecedor/concorrente) e *"tem imposto?"* saíram:
+a aba é só pesquisa de concorrente (*"sobre fornecedor, não vamos usar ele"*) e o preço é sempre
+o **cheio** de gôndola, comparado com o nosso preço de venda, que também é cheio. As colunas
+seguem gravadas no banco — histórico não se regenera —, o que saiu foi a **pergunta**.
+
+- **Roteiro por fornecedor:** escolhido o fornecedor, a lista dele aparece **sem digitar nada** —
+  é ela que é o trabalho da visita. Vai até 200 itens (a busca livre corta em 30) e sai ordenada
+  por **nome**, porque na prateleira se procura pelo nome. A busca passa a recortar dentro dela.
+- **Fila offline:** o registro entra no `localStorage` **antes** de tentar a rede e sincroniza
+  sozinho quando a conexão volta. Sem isso, 40 itens digitados numa loja sem sinal viram nada — e
+  não há segunda visita. Erro 4xx (dado inválido) não volta para a fila, senão ela nunca esvazia.
+- ⚠️ **Busca precisa de rede.** A fila protege a queda de sinal **depois** de escolher o item, não
+  a visita inteira offline. Busca offline exigiria cachear o catálogo no celular — outra feature.
+
+#### Consultar e enviar
+Botão **Pesquisas** no cabeçalho da mesma tela: lista do que foi levantado, **com quem
+preencheu**, filtro de período, recorte pelo fornecedor selecionado, e **Excel + PDF**.
+
+⚠️ **O documento leva o NOSSO PREÇO DE VENDA junto do pesquisado** — decisão explícita do
+diretor (*"pro fornecedor, poderia mandar nosso preço atual e o preço pesquisado"*). Preço de
+venda é público: está na gôndola e na tabela. Até 08/2026 a coluna era o **custo de aquisição**,
+que é a única coisa que não se manda a quem negocia conosco.
+
+#### Onde o preço reaparece
+- **360° do produto:** uma linha dentro de "Venda no período", com a diferença vs o nosso custo.
+- **Modal de gerar pedido:** uma linha sob o nome do item — é o **momento da decisão**, o que
+  transforma digitar em campo numa alavanca em vez de tarefa.
+
+#### As armadilhas que decidem se o dado presta
+1. **Unidade.** Quem pesquisa lê a etiqueta da CAIXA e o nosso preço é por unidade. A linha
+   guarda `un`/`cx` e o servidor divide pelo fator. **Sem fator de caixa não se chuta:** devolve
+   incomparável e a tela mostra `—`. É a mesma família do pedido que saía ~50× errado por
+   converter quantidade sem preço.
+2. **Imposto: NÃO se desconta.** Os dois lados são preço de venda cheio (*"o nosso preço de venda
+   é com imposto"*). A conversão para mercadoria existia por causa do `CUSTOFIN` e morreu com
+   ele — reintroduzi-la faria a tela dizer que estamos baratos justamente onde estamos caros.
+3. **Data e lugar.** Preço sem data apodrece em silêncio; preço sem origem não se confere nem se
+   volta a negociar. Quando o lugar falta, a lista escreve **"local não informado"**.
+4. ⚠️ **Não usar o `preco_venda` do produto.** Em `core.construir_produtos` esse campo cai em
+   `custofin` quando o item não vendeu em 3 meses (a venda perdida precisa do fallback). Aqui
+   devolveria o **custo rotulado como preço de venda** — o vazamento de volta, com etiqueta
+   errada. Sem preço realizado, a coluna sai **vazia**.
+
+**Nosso preço = realizado médio dos últimos 3 meses** (`_preco_venda_map`, cache 6h). O preço de
+tabela do BI (`PCPRODUT[PVENDA]`) está vazio nesta base; a régua foi aprovada pelo diretor
+(*"pode pegar a média de preço dos últimos 3 meses"*).
+
+⚠️ **A COR é pela perspectiva de quem compra** (decisão do diretor): concorrente mais **barato**
+= o nosso preço está acima do mercado = **vermelho**. É o inverso da leitura de "oportunidade" —
+para quem compra, vermelho significa *"estou fora da praça, aja"*. A convenção **não mudou**
+quando a referência passou de custo para preço de venda, porque o sinal significa a mesma coisa.
+
+**Fonte única:** `_pesquisa_enriquecida` monta a comparação para a tela de campo, o **drawer
+360°** e os **exports**. O drawer recalculava o gap por conta própria no JS e as duas versões já
+tinham divergido — hoje ele só renderiza o que o servidor mandou.
+
+Gates: `tests/test_pesquisa_preco.py` (normalização) e `tests/test_pesquisa_acesso.py`
+(acesso, forma da tela, fila offline, cor, local).
 
 ## 8. Componentes: drawers e modais
 
@@ -950,9 +1097,28 @@ padrão do servidor, o painel pode significar coisas diferentes para cada pessoa
 13. **Ao conferir com relatório do ERP, igualar a filial** (§3).
 14. **Coluna nova na aba Fornecedores precisa entrar no front E no back** — senão o export diverge
     da tela (§7.16).
+15. **O módulo ancora o "hoje" NO DADO em modo BD** (`_hoje()` → `provider_sql.hoje_analitico`).
+    O Comercial sempre fez; o Compras usava `date.today()` puro. Na demo, com o fato terminando
+    em 24/07 e o relógio em 18/08, TODA janela caía 25 dias à frente: venda "mês atual" = R$ 0,
+    meta do orçamento = 0, `dias_sem_venda` +25, e o catálogo INTEIRO virando curva **C** (é o
+    que `_aplicar_curva` faz quando o total da janela é zero). Só o modo `postgres` muda — o
+    caminho Power BI segue no calendário. Gate: `tests/test_hoje_ancorado.py`.
+16. **Evolução do estoque: guarda-se o INGREDIENTE, não o resultado** — senão a série congela na
+    régua do dia e corrigir um critério vira degrau no gráfico (§7.4).
+17. **Pesquisa de preço compara com o nosso PREÇO DE VENDA, nunca com o custo** — e sem fator de
+    caixa não se chuta comparação (§7.23). A régua de custo enviesava o gap para o verde e ainda
+    mandava o nosso custo de aquisição ao fornecedor.
+18. **Pesquisa de preço: a cor é pela perspectiva de quem compra** — concorrente mais barato =
+    vermelho. O inverso é a leitura intuitiva e está errado para quem compra (§7.23).
+19. **XYZ na Validade não é enfeite:** qualifica a confiabilidade do `saldo proj.`/`valor risco`
+    que a própria tela calcula com o giro médio (§7.11).
+20. **`input[type=number]` DESCARTA a vírgula** do teclado pt-BR. Em campo, a pessoa digita
+    "12,50" e o campo fica vazio. Use `type=text` + `inputmode=decimal` (§7.23).
+21. **`CUSTOFIN` vive no SNAPSHOT (PCEST), não no cadastro de produto.** Lê-lo do `PCPRODUT`
+    devolve 0 em tudo — e o documento que vai ao fornecedor sairia dizendo que pagamos R$ 0,00.
 
 ---
 
-*Fim do manual de Compras. Dúvidas comerciais (carteira, vendedores, metas, cobertura de
+*Fim do manual de Gestão de Estoque. Dúvidas comerciais (carteira, vendedores, metas, cobertura de
 carteira): `docs/MANUAL_COMERCIAL.md`. Quando o comportamento divergir deste texto, o código
 manda.*

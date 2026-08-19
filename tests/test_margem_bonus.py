@@ -52,12 +52,21 @@ def _rotas():
             ('PCPEDI[CODUSUR]', mix_usur)]
 
 
+def _get_metas(client, url):
+    """GET + checagem explícita do envelope. Sem isto, um 401/500 vira `KeyError: 'total'` e o
+    teste não diz o que aconteceu — foi exatamente o que atrasou o diagnóstico uma vez."""
+    r = client.get(url)
+    corpo = r.get_json()
+    assert r.status_code == 200, f"HTTP {r.status_code} em {url}: {corpo}"
+    assert corpo and corpo.get('ok'), f"payload sem ok=True em {url}: {corpo}"
+    return corpo
+
+
 def test_margem_total_e_supervisor_usam_realizado_bruto(client, usuario_admin,
                                                         mock_dax_capture, clean_redis):
     mock_dax_capture.set_routes(_rotas())
     login_as(client, usuario_admin['email'], usuario_admin['senha'])
-    d = client.get(f'/api/metas?{_AM}').get_json()
-    assert d['ok']
+    d = _get_metas(client, f'/api/metas?{_AM}')
 
     esperado = LUCRO / BRUTO            # 19,85% — coluna (%) MARGEM do BI
     inflado = LUCRO / SEM_BONUS         # 22,90% — o bug: 3 p.p. a mais
@@ -70,7 +79,7 @@ def test_margem_total_e_supervisor_usam_realizado_bruto(client, usuario_admin,
 def test_margem_vendedor_usa_realizado_bruto(client, usuario_admin, mock_dax_capture, clean_redis):
     mock_dax_capture.set_routes(_rotas())
     login_as(client, usuario_admin['email'], usuario_admin['senha'])
-    d = client.get(f'/api/metas/vendedores?{_AM}&codsupervisor=4').get_json()
+    d = _get_metas(client, f'/api/metas/vendedores?{_AM}&codsupervisor=4')
     v = next(x for x in d['vendedores'] if x['codusur'] == 750)
 
     esperado = V_LUCRO / V_BRUTO        # 21,22% — o que o BI mostra na linha do ANTONIO
@@ -87,5 +96,5 @@ def test_margem_ignora_venda_sb_mesmo_quando_o_bonus_e_enorme(client, usuario_ad
                                  '[proj]': 2500.0, '[cli]': 10, '[mix]': 20}])
     mock_dax_capture.set_routes(list(rotas.items()))
     login_as(client, usuario_admin['email'], usuario_admin['senha'])
-    d = client.get(f'/api/metas?{_AM}').get_json()
+    d = _get_metas(client, f'/api/metas?{_AM}')
     assert d['total']['margem'] == pytest.approx(0.20)   # 200/1000, não 200/500

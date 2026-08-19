@@ -399,6 +399,7 @@ async function loadData(){
 const EVO_JANELAS={'30d':30,'90d':90,'12m':365,'tudo':null};
 const EVO_JAN_LBL={'30d':'30 dias','90d':'90 dias','12m':'12 meses','tudo':'Tudo'};
 const EVO_FX=[['0-30',C.red],['31-60',C.green],['61-90',C.yellow],['91-120',C.orange],['121+',C.purple]];
+const EVO_CV=[['A',C.red],['B',C.orange],['C',C.accent]];   // ruptura por curva: A é a que dói
 const dLbl=iso=>{const p=String(iso||'').split('-');return p.length===3?p[2]+'/'+p[1]:String(iso||'');};
 
 function evoQS(){
@@ -503,7 +504,7 @@ async function renderEvolucao(){
     +`<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
         ${kpi('Valor em estoque',money(u.valor_estoque),evoDelta(v.valor_estoque,dir.valor_estoque,moneyK)+' na janela',C.accent)}
         ${kpi('Capital parado',money(u.valor_parado),evoDelta(v.valor_parado,dir.valor_parado,moneyK)+' na janela',C.purple)}
-        ${kpi('Itens em ruptura',`${int(u.n_ruptura)} <small class="muted">de ${int(u.n_skus)}</small>`,evoDelta(v.n_ruptura,dir.n_ruptura,int)+' na janela',C.red)}
+        ${kpi('Itens em ruptura',`${int(u.n_ruptura)} <small class="muted">de ${int(u.n_skus)} · ${u.pct_ruptura!=null?dec(u.pct_ruptura,1)+'%':'—'}</small>`,evoDelta(v.pct_ruptura,dir.pct_ruptura,x=>dec(x,1)+' p.p.')+' na janela',C.red)}
         ${kpi('Cobertura ideal',u.pct_ideal!=null?dec(u.pct_ideal*100,1)+'%':'—',evoDelta(v.pct_ideal,dir.pct_ideal,x=>dec(x*100,1)+' p.p.')+' na janela',C.green)}
       </div>
       <div class="panel"><h3><span>Estoque × capital parado${tipT('Barras = valor total em estoque. Linha = quanto dele está parado. As duas juntas contam a história: estoque caindo COM o parado caindo mais rápido é gestão.')}</span></h3>
@@ -512,39 +513,67 @@ async function renderEvolucao(){
         <div class="chart-box" style="height:230px"><canvas id="ch-evo-cob"></canvas></div></div>
       <div class="panel"><h3><span>Itens em ruptura${tipT('O CONTRAPESO: estoque caindo só é boa notícia se a ruptura não subir junto. Sem esta linha, um desabastecimento pareceria eficiência.')}</span></h3>
         <div class="chart-box sm" style="height:150px"><canvas id="ch-evo-rup"></canvas></div></div>
+      <div class="panel"><h3><span>Ruptura por curva (%)${tipT('% de itens zerados com giro sobre o TOTAL de itens da curva, na foto do dia. Em % porque a curva C tem muito mais itens que a A — na contagem crua ela pareceria sempre a pior.')}</span></h3>
+        <div class="chart-box" style="height:200px"><canvas id="ch-evo-rupcv"></canvas></div>
+        <div class="count-line"><b>Ruptura real</b>: todo item zerado com giro, tenha ou não pedido em aberto —
+          é "o que tem ou não tem de fato no estoque". <b>Não é a régua da aba Meta de ruptura</b>,
+          que conta só os itens sem providência e por isso mostra um número menor.</div></div>
       <div class="panel" id="evo-tbl"></div>`;
 
   const lbls=dias.map(d=>dLbl(d.data));
+  /* ⚠️ UM ponto só NÃO desenha linha. O Chart.js pinta SEGMENTOS entre pontos: com `pointRadius:0`
+     uma série de um dia fica invisível — painel em branco com o eixo já escalado no valor certo.
+     Foi o que o diretor viu no dia da 1ª foto em produção ("PQ ficou em branco?"): o dado estava
+     lá (eixo até R$ 7.000k, ruptura até 300), faltava o traço. A barra do gráfico de estoque
+     aparecia porque barra se desenha POR ponto — o que fez parecer que só a cobertura falhara.
+     Com 2+ fotos volta a zero: marcador em série longa vira ruído. */
+  const _pr = dias.length===1 ? 4 : 0;
   // ⚠️ EIXO PRÓPRIO para o parado. No mesmo eixo do estoque ele fica esmagado no rodapé
   // (R$ 6,0 mi contra R$ 437 mil) e a queda de -14,4% — que é A notícia da aba — some da tela.
   // Os dois eixos começam em ZERO: truncar a base exageraria a variação, que é o vício clássico
   // deste gráfico. Achado olhando o render, não o código.
   chart('ch-evo-valor',{data:{labels:lbls,datasets:[
       {type:'bar',label:'Estoque',data:dias.map(d=>d.valor_estoque),backgroundColor:C.accent+'55',borderColor:C.accent,borderWidth:1,yAxisID:'y'},
-      {type:'line',label:'Parado (eixo à direita)',data:dias.map(d=>d.valor_parado),borderColor:C.purple,backgroundColor:'transparent',tension:.25,pointRadius:0,borderWidth:2,yAxisID:'y2'}]},
+      {type:'line',label:'Parado (eixo à direita)',data:dias.map(d=>d.valor_parado),borderColor:C.purple,backgroundColor:'transparent',tension:.25,pointRadius:_pr,borderWidth:2,yAxisID:'y2'}]},
     options:{maintainAspectRatio:false,scales:{
       x:{ticks:{maxTicksLimit:15,autoSkip:true}},
       y:{beginAtZero:true,ticks:{callback:x=>moneyK(x)}},
       y2:{position:'right',beginAtZero:true,grid:{drawOnChartArea:false},ticks:{callback:x=>moneyK(x)}}}}});
   chart('ch-evo-cob',{type:'line',data:{labels:lbls,datasets:EVO_FX.map(f=>({
       label:f[0],data:dias.map(d=>(d.faixas||{})[f[0]]||0),borderColor:f[1],backgroundColor:f[1]+'55',
-      fill:true,tension:.25,pointRadius:0,borderWidth:1}))},
+      fill:true,tension:.25,pointRadius:_pr,borderWidth:1}))},
     options:{maintainAspectRatio:false,scales:{x:{ticks:{maxTicksLimit:15,autoSkip:true}},
       y:{stacked:true,beginAtZero:true,ticks:{callback:x=>moneyK(x)}}}}});
+  /* ⚠️ Em %, não em contagem: a curva C tem ~6x mais SKUs que a A, então a contagem crua
+     mostraria a C sempre no topo e a leitura "qual curva está pior" ficaria impossível. O
+     absoluto de cada curva viaja no tooltip, que é onde ele responde "quantos itens são". */
+  chart('ch-evo-rupcv',{type:'line',data:{labels:lbls,datasets:EVO_CV.map(c=>({
+      label:'Curva '+c[0],data:dias.map(d=>((d.ruptura_curva||{})[c[0]]||{}).pct),
+      borderColor:c[1],backgroundColor:'transparent',tension:.25,pointRadius:_pr,borderWidth:2,spanGaps:true}))},
+    options:{maintainAspectRatio:false,scales:{x:{ticks:{maxTicksLimit:15,autoSkip:true}},
+      y:{beginAtZero:true,ticks:{callback:x=>dec(x,1)+'%'}}},
+      plugins:{tooltip:{callbacks:{label:it=>{
+        const r=((dias[it.dataIndex]||{}).ruptura_curva||{})[EVO_CV[it.datasetIndex][0]]||{};
+        return `${it.dataset.label}: ${dec(r.pct,1)}% (${int(r.n)} de ${int(r.skus)})`;}}}}}});
   chart('ch-evo-rup',{type:'line',data:{labels:lbls,datasets:[{label:'Em ruptura',
       data:dias.map(d=>d.n_ruptura),borderColor:C.red,backgroundColor:C.red+'22',
-      fill:true,tension:.25,pointRadius:0,borderWidth:2}]},
+      fill:true,tension:.25,pointRadius:_pr,borderWidth:2}]},
     options:{maintainAspectRatio:false,plugins:{legend:{display:false}},
       scales:{x:{ticks:{maxTicksLimit:15,autoSkip:true}},y:{beginAtZero:true}}}});
 
   const cols=[{k:'data',label:'Data',fmt:dLbl},{k:'valor_estoque',label:'Estoque R$',num:1,fmt:money},
     {k:'valor_parado',label:'Parado R$',num:1,fmt:money},{k:'pct_parado',label:'% parado',num:1,fmt:x=>x==null?'—':dec(x,1)+'%'},
-    {k:'n_ruptura',label:'Ruptura',num:1,fmt:int},{k:'pct_ideal',label:'% ideal',num:1,fmt:x=>x==null?'—':dec(x*100,1)+'%'},
+    {k:'n_ruptura',label:'Ruptura',num:1,fmt:int},
+    {k:'pct_ruptura',label:'% ruptura',num:1,fmt:x=>x==null?'—':dec(x,1)+'%'},
+    ...EVO_CV.map(c=>({k:'cv'+c[0],label:'Rup. '+c[0],num:1,
+      fmt:(_v,d)=>{const r=(d.ruptura_curva||{})[c[0]]||{};
+        return r.pct==null?'—':`${dec(r.pct,1)}% <small class="muted">(${int(r.n)})</small>`;}})),
+    {k:'pct_ideal',label:'% ideal',num:1,fmt:x=>x==null?'—':dec(x*100,1)+'%'},
     {k:'n_skus',label:'SKUs',num:1,fmt:int}];
   const ord=[...dias].reverse();   // mais recente primeiro: é a linha que o diretor olha
   $('#evo-tbl').innerHTML=`<h3><span>Foto dia a dia</span> <small class="muted">· ${int(dias.length)} ${dias.length===1?'dia medido':'dias medidos'}</small></h3>
     <div class="tbl-wrap"><table><thead><tr>${cols.map(c=>`<th class="${c.num?'num':''}">${c.label}</th>`).join('')}</tr></thead>
-    <tbody>${ord.map(d=>`<tr>${cols.map(c=>`<td class="${c.num?'num':''}">${c.fmt?c.fmt(d[c.k]):d[c.k]}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+    <tbody>${ord.map(d=>`<tr>${cols.map(c=>`<td class="${c.num?'num':''}">${c.fmt?c.fmt(d[c.k],d):d[c.k]}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
   wireEvo(el);
 }
 
@@ -2882,14 +2911,16 @@ function pesquisaDrawer(p, pesquisas){
   const m=(pesquisas||[])[0];
   if(!m) return '';
   const un=m.unidade==='cx'?'/cx':'/un';
-  // ⚠️ o gap só aparece quando as duas pontas estão na MESMA régua (un + mercadoria). Preço por
-  // caixa ou com imposto não se compara direto com o CUSTOFIN — nesses casos mostra só o preço.
-  const comparavel = m.unidade==='un' && !m.com_imposto && (p.custo_unit||0)>0;
-  const d = comparavel ? (m.preco - p.custo_unit)/p.custo_unit*100 : null;
-  // ⚠️ Cor pela perspectiva do NOSSO preço (diretor, 19/08): nosso mais CARO = vermelho.
-  // `d` é (pesquisado − nosso)/nosso: d<0 = acharam mais barato = o nosso está caro = VERMELHO.
+  /* ⚠️ O gap vem PRONTO do servidor (`_pesquisa_enriquecida`) — a mesma montagem da tela de campo
+     e dos exports. Antes era recalculado aqui, e as duas versões já discordavam: o servidor
+     comparava preço com imposto contra mercadoria e esta linha simplesmente não comparava.
+     Referência = NOSSO PREÇO DE VENDA (média realizada de 3 meses), NÃO o custo: a pesquisa é
+     na gôndola do concorrente, e o que se quer saber é se o nosso preço está dentro da praça. */
+  const d = m.comparavel ? m.delta_pct : null;
+  // ⚠️ Cor pela perspectiva de quem compra (diretor, 19/08): concorrente mais barato (d<0) =
+  // o NOSSO preço está acima do mercado = VERMELHO. É o inverso da leitura de "oportunidade".
   const gap = d==null ? '' :
-    ` <small style="color:${d<0?C.red:C.green}">${d<0?'':'+'}${dec(d,0)}% vs custo</small>`;
+    ` <small style="color:${d<0?C.red:C.green}">${d<0?'':'+'}${dec(d,0)}% vs nosso preço</small>`;
   const det=[dt(m.data_pesquisa), m.origem].filter(Boolean).join(' · ');
   return `<div class="lote-row"><span>Pesquisa de preço<br><small class="muted">${esc(det)}</small></span>
     <span class="lr-r">${money(m.preco)}<small class="muted">${un}</small>${gap}</span></div>`;

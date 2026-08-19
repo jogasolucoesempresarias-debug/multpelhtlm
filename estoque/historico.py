@@ -113,7 +113,8 @@ def gravar(dia, unidade, produtos, bi_refresh=None, params=None):
     # rollup nasce junto da foto: nunca pode existir dia fotografado sem agregado pronto
     gravar_rollup(dia, unidade, [
         (dia, core._n(p.get("qtdisp")), core._n(p.get("valor")), core._n(p.get("giro_dia")),
-         p.get("cobertura_dias"), _parse(p.get("dtultsaida")), _parse(p.get("dtultent")))
+         p.get("cobertura_dias"), _parse(p.get("dtultsaida")), _parse(p.get("dtultent")),
+         p.get("curva_abc"))
         for p in produtos])
     return len(linhas)
 
@@ -197,8 +198,11 @@ def dias_com_foto(unidade, ini=None, fim=None):
 # todos jogaria o cache fora em 100% dos acessos.
 _PARAMS_DA_SERIE = ("novo_dias", "ideal_dias")
 
+# ⚠️ A ordem deste SELECT É a assinatura posicional que o `agregar` desempacota. Coluna nova
+# tem de entrar nos DOIS lugares (e no builder do `gravar_rollup`), senão o valor entra no campo
+# errado sem erro nenhum. Gate: `test_a_ordem_do_select_casa_com_o_agregar`.
 _SQL_CRU = """
-    SELECT data, qtdisp, valor, giro_dia, cobertura_dias, dtultsaida, dtultent
+    SELECT data, qtdisp, valor, giro_dia, cobertura_dias, dtultsaida, dtultent, curva_abc
       FROM estoque_foto_item
      WHERE unidade=%s
        AND (%s::date IS NULL OR data>=%s) AND (%s::date IS NULL OR data<=%s)
@@ -230,9 +234,25 @@ def _regua_padrao(params):
     return all(p[k] == core.DEFAULTS[k] for k in _PARAMS_DA_SERIE)
 
 
+# Chaves que o `agregar` de HOJE produz. Rollup gravado por uma versão anterior não as tem, e
+# servi-lo faria a aba mostrar "—" numa métrica que o cru sabe calcular.
+_ROLLUP_CHAVES = ("valor_estoque", "valor_parado", "n_ruptura", "pct_ideal", "faixas",
+                  "pct_ruptura", "ruptura_curva")
+
+
+def _rollup_atual(payload):
+    """O payload foi gravado pela versão CORRENTE do `agregar`?
+
+    ⚠️ Sem isto, toda métrica nova exigia lembrar de rodar o `rebuild_rollup` no deploy — e
+    esquecer não dava erro: a aba servia o agregado velho, sem a coluna nova, em silêncio. O
+    rollup é cache da mesma função; cache de uma versão anterior é cache que mente."""
+    return isinstance(payload, dict) and all(k in payload for k in _ROLLUP_CHAVES)
+
+
 def _serie_rollup(unidade, ini, fim):
-    """Lê o rollup pronto. Devolve None se QUALQUER dia da janela ainda não foi rolado — aí a
-    leitura cai no cru, que é sempre correto. Cache que mente é pior que cache que falta."""
+    """Lê o rollup pronto. Devolve None se QUALQUER dia da janela ainda não foi rolado **ou foi
+    rolado por uma versão anterior do `agregar`** — aí a leitura cai no cru, que é sempre
+    correto. Cache que mente é pior que cache que falta."""
     conn = store.get_db()
     try:
         with conn, conn.cursor() as cur:
@@ -245,7 +265,7 @@ def _serie_rollup(unidade, ini, fim):
             rows = cur.fetchall()
     finally:
         conn.close()
-    if not rows or any(pl is None for _d, pl in rows):
+    if not rows or any(not _rollup_atual(pl) for _d, pl in rows):
         return None
     return [pl for _d, pl in rows]
 
@@ -292,8 +312,13 @@ def gravar_rollup(dia, unidade, linhas_cruas):
 
 
 def rebuild_rollup(unidade=None):
-    """Reconstrói o rollup a partir da foto crua. **Rodar depois de mudar uma régua** — é o que
-    impede o cache de virar a "definição congelada" que a foto crua existe para evitar."""
+    """Reconstrói o rollup a partir da foto crua.
+
+    Depois de mudar uma régua ou acrescentar uma métrica, a CORREÇÃO já se resolve sozinha (o
+    `_rollup_atual` derruba o payload velho e a leitura cai no cru). O que este rebuild devolve
+    é a PERFORMANCE: sem ele toda leitura recalcula a janela inteira, que era 3,5s para 45 dias.
+    Rodar no deploy continua sendo o certo — só deixou de ser o que separa número certo de
+    número errado."""
     conn = store.get_db()
     try:
         with conn, conn.cursor() as cur:
@@ -308,6 +333,17 @@ def rebuild_rollup(unidade=None):
     return len(chaves)
 
 
+CURVAS = ("A", "B", "C")
+
+
+def curva_de(c):
+    """Curva do item NA FOTO, normalizada. **Item sem curva entra na C** — mesma leitura do
+    placar da Meta de ruptura ("a cauda longa; item sem curva entra aqui"). Divergir disso faria
+    duas telas do mesmo módulo somarem universos diferentes."""
+    c = (str(c or "").strip().upper() or "C")[:1]
+    return c if c in CURVAS else "C"
+
+
 def agregar(linhas, params=None):
     """As 4 séries por dia a partir das linhas CRUS da foto — função PURA, sem I/O.
 
@@ -315,22 +351,39 @@ def agregar(linhas, params=None):
     em vez de resultado. Todo o "recalcular o passado" mora aqui — troque `params` e o gráfico
     inteiro se redesenha sem uma linha do banco mudar.
 
-    `linhas`: (data, qtdisp, valor, giro_dia, cobertura_dias, dtultsaida, dtultent).
+    **Ruptura por curva** (08/2026, pedido do diretor: "trazer a ruptura por curva ABC na foto
+    do dia, e incluir o % de ruptura além da quantidade de itens").
+
+    ⚠️ É a ruptura REAL — item zerado com giro, tenha ou não pedido em aberto. Decisão dele:
+    "pode usar a ruptura real, esquece a ruptura da meta; o objetivo é medir a evolução da real,
+    o que tem ou não tem de fato no estoque". Portanto **este número NÃO é o do placar da Meta
+    de ruptura**, que conta só o que está sem providência (`core._sem_providencia`) e é sempre
+    menor. As duas réguas convivem de propósito e a tela declara qual está mostrando — ler 11%
+    daqui contra a meta de 2% de lá seria concluir catástrofe onde não há.
+
+    O denominador é o TOTAL de SKUs da curva na foto, que é o mesmo do KPI ("314 de 2.878").
+
+    `linhas`: (data, qtdisp, valor, giro_dia, cobertura_dias, dtultsaida, dtultent, curva_abc).
     """
     p = core.merge_params(params or {})
     limiar, _meta = core.regua_estoque_ideal(p)
     novo_dias = int(p["novo_dias"])
     por_dia = {}
-    for dia, qtdisp, valor, giro_dia, cob, dtsaida, dtent in linhas:
+    for dia, qtdisp, valor, giro_dia, cob, dtsaida, dtent, curva in linhas:
         d = por_dia.setdefault(dia, {"data": dia.isoformat(), "n_skus": 0, "valor_estoque": 0.0,
                                      "valor_parado": 0.0, "n_ruptura": 0,
                                      "faixas": {n: 0.0 for n, _ in core._FAIXAS_COB_LIM},
-                                     "ideal_n": 0, "risco_n": 0, "semgiro_n": 0})
+                                     "ideal_n": 0, "risco_n": 0, "semgiro_n": 0,
+                                     "_rup_cv": {c: 0 for c in CURVAS},
+                                     "_skus_cv": {c: 0 for c in CURVAS}})
         qtdisp = core._n(qtdisp); valor = core._n(valor); giro_dia = core._n(giro_dia)
+        cv = curva_de(curva)
         d["n_skus"] += 1
+        d["_skus_cv"][cv] += 1
         d["valor_estoque"] += valor
         if qtdisp <= 0 and giro_dia > 0:
             d["n_ruptura"] += 1
+            d["_rup_cv"][cv] += 1
         # "parado" reconstruído pela MESMA régua do app (core), a partir das datas gravadas
         dsv = (dia - dtsaida).days if dtsaida else None
         dse = (dia - dtent).days if dtent else None
@@ -359,6 +412,16 @@ def agregar(linhas, params=None):
         d["faixas"] = {k: core._round(v) for k, v in d["faixas"].items()}
         com_giro = d["ideal_n"] + d["risco_n"]
         d["pct_ideal"] = core._round(d["ideal_n"] / com_giro, 4) if com_giro else None
+        # % de ruptura sobre o TOTAL de SKUs — a mesma conta que o KPI já exibia como "314 de
+        # 2.878". Por curva, é ela que torna A e C comparáveis: a C tem ~6x mais itens, então a
+        # contagem crua sempre a faria parecer a pior.
+        d["pct_ruptura"] = (core._round(d["n_ruptura"] / d["n_skus"] * 100, 1)
+                            if d["n_skus"] else None)
+        rup_cv, skus_cv = d.pop("_rup_cv"), d.pop("_skus_cv")
+        d["ruptura_curva"] = {c: {"n": rup_cv[c], "skus": skus_cv[c],
+                                  "pct": (core._round(rup_cv[c] / skus_cv[c] * 100, 1)
+                                          if skus_cv[c] else None)}
+                              for c in CURVAS}
         d["pct_parado"] = (core._round(d["valor_parado"] / d["valor_estoque"] * 100, 1)
                            if d["valor_estoque"] else None)
         saida.append(d)

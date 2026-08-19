@@ -119,23 +119,13 @@
     </div>
     <div class="aviso" id="un-aviso"></div>
 
-    <div class="row">
-      <div>
-        <label>Origem do preço</label>
-        <select id="tipo">
-          <option value="fornecedor">Fornecedor (cotação)</option>
-          <option value="concorrente">Concorrente (gôndola)</option>
-        </select>
-      </div>
-      <div>
-        <label>Tem imposto?</label>
-        <select id="imposto">
-          <option value="0">Não (mercadoria)</option>
-          <option value="1">Sim (preço cheio)</option>
-        </select>
-      </div>
-    </div>
-
+    <!-- ⚠️ Nem "origem do preço" nem "tem imposto?" são perguntas aqui, e as duas já foram feitas
+         e respondidas: a aba é só pesquisa de CONCORRENTE ("sobre fornecedor, não vamos usar
+         ele") e o preço é sempre o CHEIO de gôndola, comparado com o nosso preço de venda, que
+         também é cheio. O diretor chegou a perguntar "eu marco qual?" no seletor de imposto —
+         quando o usuário-alvo não consegue responder ao próprio formulário, o campo está
+         modelando outra coisa. As colunas seguem gravadas no banco (histórico não se regenera);
+         o que saiu foi a pergunta. -->
     <!-- O diretor pediu explicitamente: "qual loja ou atacado foi pesquisado". O rótulo antigo
          ("Quem / onde") deixava ambíguo e vinha vazio, e sem o lugar a medição perde metade do
          valor — preço sem origem não se confere nem se volta a negociar. -->
@@ -316,8 +306,8 @@ $('#hits').addEventListener('click', e => {
 function avisoUnidade() {
   const semFator = !(sel && sel.qtunitcx > 1);
   $('#un-aviso').textContent = (unidade === 'cx' && semFator)
-    ? 'Este item não tem fator de caixa no cadastro — o preço por caixa não poderá ser comparado com o nosso custo.'
-    : (unidade === 'cx' ? `Será dividido por ${sel.qtunitcx} para comparar com o custo unitário.` : '');
+    ? 'Este item não tem fator de caixa no cadastro — o preço por caixa não poderá ser comparado com o nosso preço.'
+    : (unidade === 'cx' ? `Será dividido por ${sel.qtunitcx} para comparar com o nosso preço unitário.` : '');
   $('#un-aviso').className = 'aviso' + ((unidade === 'cx' && semFator) ? ' erro' : '');
 }
 
@@ -335,8 +325,6 @@ $('#salvar').onclick = async () => {
   const item = {
     codprod: sel.codprod, preco, unidade,
     qtunitcx: sel.qtunitcx || null,
-    tipo: $('#tipo').value,
-    com_imposto: $('#imposto').value === '1',
     origem: $('#origem').value.trim() || null,
     obs: $('#obs').value.trim() || null,
     data_pesquisa: new Date().toISOString().slice(0, 10)
@@ -375,7 +363,9 @@ async function carregarConsulta(){
          leitura de "oportunidade", e a dele é a certa para quem compra: vermelho é "pago mal". */
       const d=m.comparavel&&m.delta_pct!=null
         ? ` <span style="color:${m.delta_pct<0?'var(--red)':'var(--green)'}">${m.delta_pct<0?'':'+'}${Math.round(m.delta_pct)}%</span>` : '';
-      const cu=m.custo_unit?` · nosso R$ ${(+m.custo_unit).toFixed(2)}`:'';
+      // "nosso" = preço de VENDA (média realizada 3m). Vazio quando o item não vendeu em 3
+      // meses: melhor coluna vazia do que cair no custo, que era o bug desta tela.
+      const cu=m.preco_venda_unit?` · nosso R$ ${(+m.preco_venda_unit).toFixed(2)}`:'';
       const local=m.origem?`<b style="color:var(--accent);font-weight:600">${m.origem}</b>`:'<span class="muted">local não informado</span>';
       return `<div class="med"><b>${m.descricao}</b>
         <div class="l"><span class="muted">${m.codprod}${m.fornecedor?' · '+m.fornecedor:''}</span>

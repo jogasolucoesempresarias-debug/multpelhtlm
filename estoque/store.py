@@ -179,8 +179,11 @@ CREATE TABLE IF NOT EXISTS estoque_foto_dia (
 -- As três colunas que decidem se o dado presta (e que não se recalculam depois):
 --   `unidade`     — o preço visto é da UNIDADE ou da EMBALAGEM. O módulo já teve pedido saindo
 --                   ~50x errado por converter quantidade sem converter preço (core.item_master).
---   `com_imposto` — `CUSTOFIN` é MERCADORIA. Preço de gôndola tem tributo dentro. Comparar os
---                   dois direto não significa nada (é a "duas réguas" do Orçamento de novo).
+--   `com_imposto` — nasceu para reconciliar mercadoria x NF quando a comparação era contra o
+--                   `CUSTOFIN`. A premissa era errada: a referência é o nosso PREÇO DE VENDA e
+--                   os dois lados são cheios, então a coluna deixou de entrar na conta em
+--                   08/2026 (ver `core.normaliza_pesquisa`). Segue gravada — histórico não se
+--                   regenera, e as linhas antigas precisam dizer sob que régua entraram.
 --   `qtunitcx`    — o fator NO DIA da pesquisa. O cadastro muda; o passado não pode se
 --                   reinterpretar (mesma razão do `codcomprador` na foto de estoque).
 CREATE TABLE IF NOT EXISTS estoque_pesquisa_preco (
@@ -443,7 +446,9 @@ def pesquisa_add(d):
             RETURNING id""", {
                 "data_pesquisa": d.get("data_pesquisa") or datetime.now().date(),
                 "codprod": int(d["codprod"]),
-                "tipo": (d.get("tipo") or "fornecedor"),
+                # a tela de campo não pergunta mais (é sempre concorrente); o default cobre
+                # tanto ela quanto qualquer item que ainda esteja na fila offline do navegador
+                "tipo": (d.get("tipo") or "concorrente"),
                 "origem": (d.get("origem") or None),
                 "preco": d["preco"],
                 "unidade": (d.get("unidade") or "un"),
