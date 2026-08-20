@@ -712,7 +712,7 @@ ANALYTICS_DB_NAME=joga_demo   # banco analítico (ANALYTICS_DB_* faz fallback pr
 > demo **não envelhece** sem regenerar. O default powerbi usa `TODAY()` normal.
 
 **Gates:** `tests/test_provider_*.py` (Dashboard, Comercial, Metas, Mix, Radar, Estoque, RBAC) +
-`test_medida_compat.py`. Baseline **701 passam / 3 falham** (as 3 são fixture de data do
+`test_medida_compat.py`. Baseline **690 passam / 3 falham** (as 3 são fixture de data do
 Comercial: radar/mix/cohort).
 ⚠️ Até 19/08/2026 o baseline dizia "5 falham", contando 2 do `test_provider_estoque` como
 *"dependem de um `joga_demo` local com venda no mês corrente"*. **Nunca foi ambiente:** elas
@@ -773,7 +773,7 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 ├── estoque/provider_sql.py         # 🆕 modo postgres do Compras
 ├── docker-compose.demo.yml         # 🆕 stack da instância DEMO (Portainer)
 ├── _seed_demo/                     # 🆕 base sintética reprodutível (joga_demo) + bootstrap + seeder
-└── tests/                          # pytest (701 passam; 3 falham por fixture de data — não é regressão)
+└── tests/                          # pytest (690 passam; 3 falham por fixture de data — não é regressão)
 ```
 
 ---
@@ -785,7 +785,7 @@ cp .env.example .env        # preencher (ver variáveis abaixo)
 docker compose -f docker-compose.dev.yml up -d redis
 python -X utf8 init_db.py   # cria/migra schema + admin default (ADMIN_EMAIL / ADMIN_SENHA)
 python -X utf8 server.py    # http://localhost:5000
-pytest -q                   # 701 passam, 3 falham (fixture de data do Comercial — não é regressão)
+pytest -q                   # 690 passam, 3 falham (fixture de data do Comercial — não é regressão)
 ```
 
 Variáveis novas da fusão no `.env` (além das do Power BI/DB/Redis/Resend):
@@ -815,6 +815,9 @@ docker service update \
   --with-registry-auth --force painel-teste_painel-app
 
 # 2) migration — OBRIGATÓRIA (o login quebra sem as colunas novas, ex.: tema)
+#    ⚠️ E tabela NOVA falha CALADA: sem ela a foto do estoque sai, mas o estado do dia
+#    (ocupação/qualidade/validade/pedidos/avaria) não grava — cada métrica tem seu próprio
+#    try e só aparece como uma linha "(estado/<chave>)" no log. Um dia perdido não volta.
 docker exec $(docker ps -q -f name=painel-teste_painel-app) python -X utf8 init_db.py
 
 # 3) conferir
@@ -933,7 +936,7 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 5. **Checagem de API usa `'/api/' in path`, não `startswith`** — por causa de `/estoque/api/...`.
 6. **Não editar `MultpelEstoque/`** (repo congelado) nem publicar em `:latest` sem intenção.
 7. **3 testes falham por fixture de data** (radar/mix/cohort) — pré-existentes, **não** são regressão.
-   O baseline é **701 passam / 3 falham**. As 2 do `test_provider_estoque` que constavam aqui
+   O baseline é **690 passam / 3 falham**. As 2 do `test_provider_estoque` que constavam aqui
    como dependência de ambiente eram, na verdade, o bug de ancoragem de data (armadilha nº 17).
 8. **Verificação visual de tema não confia em captura** das telas de dados (Power BI muda o conteúdo
    entre capturas) — comparar cor computada (`getComputedStyle`), não pixels.
@@ -959,6 +962,40 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
     as MESMAS chaves que o `core.py` lê (as que o `clean_rows` encurta: `PCEST[QTBLOQUEADA]→qtbloq`,
     `QTVENDMES1→giro_m1`). Chave errada → `core` lê `None` e a tela **zera em silêncio**.
 
+### Cuidados da foto diária (aba Evolução)
+17. **Em modo BD o "hoje" é ANCORADO NO DADO**, não no calendário (`_hoje()`). O Compras usava
+    `date.today()` puro e, na demo de 18/08/2026, o fato terminava em 24/07 enquanto o relógio dizia
+    18/08: TODA janela caía 25 dias à frente — venda do mês = R$ 0, meta do orçamento = 0,
+    `dias_sem_venda` inflado (mais itens virando "parado") e o catálogo INTEIRO carimbado como curva
+    C, porque a venda da janela era zero. Parecia ambiente; era o código perguntando pelo mês errado.
+18. **Só se fotografa ESTADO, nunca EVENTO.** Estado é posição sobrescrita (saldo, ocupação do WMS,
+    cadastro, pedido em aberto): some para sempre e só existe se alguém guardar. Evento é fato datado
+    (baixa por validade, lançamento, venda, verba): fica no livro e se recalcula a qualquer momento.
+    O par **validade × vencido** é o exemplo inteiro — mesma pergunta, respostas opostas. Fotografar
+    evento cria uma 2ª cópia do que a contabilidade já tem, e no dia em que divergirem a errada é a
+    nossa. Métrica de estado nova entra em **`historico._ESTADO_DO_DIA`** e mais nada (a tabela é
+    `payload JSONB` com merge no upsert — sem migration).
+19. **`estoque_foto_dia` é CACHE; `estoque_foto_estado` é dado PRIMÁRIO.** As duas têm a mesma forma
+    e ficam lado a lado, e é justamente por isso que confundir é fácil. A primeira é rollup de
+    `agregar` e o `rebuild_rollup` a joga fora de rotina; a segunda guarda o que não se refaz (a
+    ocupação de ontem não existe no Winthor). Gravar estado no rollup faria um rebuild comum
+    **apagar histórico irrecuperável, sem erro nenhum**.
+20. **A foto viaja como TUPLA POSICIONAL** do `_SQL_CRU` até o `agregar`. Coluna nova entra em **três**
+    lugares — o SELECT, o desempacotamento do `agregar` e o builder do `gravar_rollup` — senão todos
+    os campos seguintes deslocam (valor vira giro) sem levantar erro. E suba o **`_ROLLUP_VERSAO`**:
+    a checagem por chaves pega métrica NOVA, mas **não vê métrica que muda de significado**.
+    Gate: `test_a_ordem_do_select_casa_com_o_agregar`.
+21. **Percentual: copie a chave, não refaça a conta.** A foto guarda o `pct_ocupado` verbatim do
+    `ocupacao_resumo` porque recalcular `ocupadas/posicoes*100` dava **84,0%** onde a aba Ocupação
+    mostra **84,1%** (fração arredondada a 4 casas + `Intl` half-expand × `toFixed`). Mesmo dado,
+    duas telas do mesmo painel discordando — é o defeito do card "Em risco" (789 SKUs no card × 791
+    na lista) repetido. Regra: se o número já existe calculado em algum lugar, leia de lá.
+22. **A foto sai 18h-22h porque o BI atualiza 7x/dia** (06:26 · 08:28 · 10:24 · 12:25 · 14:24 ·
+    16:23 · **17:44** BRT). De manhã ela pegava o refresh das 06:26 — a posição ANTES de qualquer
+    movimento, ou seja, o fechamento de ontem com a data de hoje. **Não devolva para a manhã** sem
+    remedir o refresh history. A janela de 5 passagens não é redundância inútil: perder um dia é
+    irrecuperável, e um deploy no minuto exato custaria a foto.
+
 ---
 
 ## 📜 Histórico
@@ -978,6 +1015,15 @@ espelhando o DAX (Comercial + Compras + drills + exports), reconstrução das me
 (`medidas_dax.py`), rede de segurança contra vazamento, base sintética `joga_demo` + stack DEMO
 auto-contida. Zero regressão na Multpel **provada centavo-a-centavo** no BI real (antes×depois idêntico);
 2 sweeps HTTP (100% dos endpoints branchados); baseline 293 testes.
+
+**Foto diária virou medição de verdade** (08/2026, `4a5e09e` + `841e8e9`): o horário saiu de 6h-12h
+para **18h-22h** (o BI atualiza 7x/dia e a última é 17:44 — de manhã a foto gravava o fechamento de
+ontem com a data de hoje); nasceu a watchlist **"Em desaceleração"** como alternativa a derrubar o
+piso do capital parado de 60 para 20 dias (a faixa 20-59 é 100% curva C); e a foto passou a guardar
+**estado do dia** — ocupação do WMS, qualidade de cadastro, risco de vencimento, pedidos em aberto
+e avaria — em `estoque_foto_estado`, separada do rollup de propósito. `n_rup_sem_prov` e a coluna
+"Vencido R$" entraram **com histórico** (a primeira porque os ingredientes já estavam gravados; a
+segunda porque vem do livro, não da foto). `_ROLLUP_VERSAO` → 4.
 
 ---
 
