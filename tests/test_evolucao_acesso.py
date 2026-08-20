@@ -102,7 +102,7 @@ def test_a_ruptura_viaja_junto_como_contrapeso():
     "desabasteci" — e foi a melhoria proposta em cima do pedido original."""
     from estoque import historico
     from datetime import date
-    s = historico.agregar([(date(2026, 8, 14), 0, 0.0, 2.0, 0, None, None, "A")])
+    s = historico.agregar([(date(2026, 8, 14), 0, 0.0, 2.0, 0, None, None, "A", 0, 0)])
     assert s[0]["n_ruptura"] == 1
 
 
@@ -147,8 +147,11 @@ def test_um_ponto_so_ainda_desenha_o_grafico():
     # o próprio comentário que explica o bug, e o gate reprovaria o conserto
     assert "pointRadius:0," not in bloco, \
         "pointRadius fixo em 0 volta a apagar o gráfico do primeiro dia"
-    assert bloco.count("pointRadius:_pr") == 4, \
-        "TODO dataset de linha/área precisa do marcador: parado, cobertura, ruptura e ruptura/curva"
+    assert bloco.count("pointRadius:_pr") == 6, \
+        ("TODO dataset de linha/área precisa do marcador: parado, EM DESACELERAÇÃO, OCUPAÇÃO, "
+         "cobertura, ruptura e ruptura/curva. Subiu para 6 em 08/2026 (watchlist + ocupação do WMS): "
+         "série nova que esquecesse o `_pr` sairia invisível no 1º dia de cada instância, "
+         "que é exatamente o bug que este gate existe para impedir.")
 
 
 def test_com_uma_foto_a_variacao_nao_finge_medicao():
@@ -165,15 +168,15 @@ def test_com_uma_foto_a_variacao_nao_finge_medicao():
     from estoque.routes import _EVO_DIRECAO, _resumo_evolucao
 
     d1, d2 = date(2026, 8, 19), date(2026, 8, 20)
-    um = historico.agregar([(d1, 10, 1000.0, 1.0, 10, None, None, "A")])
+    um = historico.agregar([(d1, 10, 1000.0, 1.0, 10, None, None, "A", 0, 0)])
     r = _resumo_evolucao(um, [{"data": "2026-08-19", "n_itens": 1}])
     assert r["fotos"] == 1 and r["maturidade"] == "enchendo"
     for k in _EVO_DIRECAO:
         assert r["variacao"][k] is None, f"{k}: com uma foto não há variação a declarar"
 
     # ⚠️ e o caminho normal continua medindo — o conserto não pode calar a série de verdade
-    dois = historico.agregar([(d1, 10, 1000.0, 1.0, 10, None, None, "A"),
-                              (d2, 8, 800.0, 1.0, 8, None, None, "A")])
+    dois = historico.agregar([(d1, 10, 1000.0, 1.0, 10, None, None, "A", 0, 0),
+                              (d2, 8, 800.0, 1.0, 8, None, None, "A", 0, 0)])
     r2 = _resumo_evolucao(dois, [])
     assert r2["variacao"]["valor_estoque"]["delta"] == -200.0
 
@@ -201,12 +204,12 @@ def test_ruptura_por_curva_sai_na_foto_do_dia():
 
     d = date(2026, 8, 19)
     s = historico.agregar([
-        (d, 0, 0.0, 2.0, 0, None, None, "A"),      # A em ruptura
-        (d, 10, 100.0, 1.0, 10, None, None, "A"),  # A ok
-        (d, 0, 0.0, 1.0, 0, None, None, "C"),      # C em ruptura
-        (d, 5, 50.0, 1.0, 5, None, None, "C"),
-        (d, 5, 50.0, 1.0, 5, None, None, "C"),
-        (d, 5, 50.0, 1.0, 5, None, None, "C"),
+        (d, 0, 0.0, 2.0, 0, None, None, "A", 0, 0),      # A em ruptura
+        (d, 10, 100.0, 1.0, 10, None, None, "A", 0, 0),  # A ok
+        (d, 0, 0.0, 1.0, 0, None, None, "C", 0, 0),      # C em ruptura
+        (d, 5, 50.0, 1.0, 5, None, None, "C", 0, 0),
+        (d, 5, 50.0, 1.0, 5, None, None, "C", 0, 0),
+        (d, 5, 50.0, 1.0, 5, None, None, "C", 0, 0),
     ])[0]
     assert s["n_ruptura"] == 2 and s["n_skus"] == 6
     assert s["pct_ruptura"] == 33.3
@@ -226,9 +229,9 @@ def test_o_percentual_por_curva_e_o_que_torna_A_e_C_comparaveis():
     from estoque import historico
 
     d = date(2026, 8, 19)
-    linhas = [(d, 0, 0.0, 1.0, 0, None, None, "A")]                       # 1 de 1 = 100%
-    linhas += [(d, 0, 0.0, 1.0, 0, None, None, "C") for _ in range(2)]    # 2 de 10 = 20%
-    linhas += [(d, 9, 9.0, 1.0, 9, None, None, "C") for _ in range(8)]
+    linhas = [(d, 0, 0.0, 1.0, 0, None, None, "A", 0, 0)]                       # 1 de 1 = 100%
+    linhas += [(d, 0, 0.0, 1.0, 0, None, None, "C", 0, 0) for _ in range(2)]    # 2 de 10 = 20%
+    linhas += [(d, 9, 9.0, 1.0, 9, None, None, "C", 0, 0) for _ in range(8)]
     rc = historico.agregar(linhas)[0]["ruptura_curva"]
     assert rc["C"]["n"] > rc["A"]["n"], "em contagem a C parece pior"
     assert rc["A"]["pct"] > rc["C"]["pct"], "em % a A aparece como a que dói — e é a leitura certa"
@@ -282,4 +285,7 @@ def test_a_ordem_do_select_casa_com_o_agregar():
     nomes = [x.strip() for x in linha.split("for", 1)[1].split(" in ")[0].split(",")]
     assert len(colunas) == len(nomes), \
         f"SELECT tem {len(colunas)} colunas e o agregar desempacota {len(nomes)}"
-    assert colunas[-1] == "curva_abc" and nomes[-1] == "curva"
+    # ⚠️ A ÚLTIMA coluna muda quando o SELECT cresce — e é justamente aí que o desalinhamento
+    # se esconde. Em 08/2026 entraram `qtd_ja_pedida`/`qt_transicao` (régua da Meta de ruptura).
+    assert colunas[-1] == "qt_transicao" and nomes[-1] == "transito"
+    assert "curva_abc" in colunas and "curva" in nomes

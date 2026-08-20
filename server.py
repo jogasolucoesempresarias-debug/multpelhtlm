@@ -8883,8 +8883,8 @@ def _disparar_relatorios_agendados():
 def _fotografar_estoque():
     """Foto diária do estoque (aba Evolução) — ver estoque/historico.py.
 
-    Roda de hora em hora pela MANHÃ, não uma vez só: a foto tem de sair depois do refresh do BI
-    do dia, e o horário desse refresh não é garantido. A guarda `pode_fotografar` recusa até o
+    Roda de hora em hora à NOITE (18h-22h), não uma vez só: a foto tem de sair depois do
+    ÚLTIMO refresh do BI do dia (~17:44), e um restart no horário exato não pode custar o dia. A guarda `pode_fotografar` recusa até o
     BI ser de hoje, e `ja_fotografado` impede refazer o trabalho nas passagens seguintes — então
     o custo real é uma checagem barata por hora, e uma foto por dia.
 
@@ -8919,9 +8919,21 @@ def _start_scheduler():
         # NÃO depende de CRON_HABILITADO: aquele interruptor é para não disparar e-mail, e
         # limpeza de banco não manda nada para ninguém.
         _scheduler.add_job(_expurgar_log, 'cron', hour=3, minute=20, id='expurgo_log')
-        # Foto do estoque: 6h-12h, no minuto 40. Janela larga porque o refresh do BI não tem
-        # hora fixa; a 1ª passagem que encontrar o BI do dia grava e as seguintes não fazem nada.
-        _scheduler.add_job(_fotografar_estoque, 'cron', hour='6-12', minute=40, id='foto_estoque')
+        # Foto do estoque: 18h-22h, no minuto 40 (era 6h-12h até 08/2026).
+        #
+        # ⚠️ A mudança veio de MEDIÇÃO, não de preferência: o dataset Estoque atualiza **7x por
+        # dia** (06:26 · 08:28 · 10:24 · 12:25 · 14:24 · 16:23 · **17:44**, BRT, apurado no
+        # refresh history da API). Fotografando 6h-12h, a 1ª passagem pegava o refresh das 06:26
+        # — que é a posição ANTES de qualquer movimento do dia, ou seja, o fechamento de ontem
+        # carimbado com a data de hoje. Às 18h40 a foto sai depois do ÚLTIMO refresh do dia e
+        # passa a valer o fechamento REAL do dia.
+        #
+        # ⚠️ Continua sendo JANELA (5 passagens), não disparo único: perder um dia de foto é
+        # irrecuperável (estoque é posição, não evento), então um deploy ou restart exatamente
+        # às 18h40 não pode custar o dia. `ja_fotografado` faz as passagens seguintes não
+        # refazerem nada, e o teto é 22h para a foto nunca cruzar a meia-noite e gravar a
+        # posição de um dia na data do outro.
+        _scheduler.add_job(_fotografar_estoque, 'cron', hour='18-22', minute=40, id='foto_estoque')
         _scheduler.start()
         status = 'ATIVO' if CRON_HABILITADO else 'aguardando CRON_HABILITADO=true'
         print(f"[CRON] Scheduler iniciado ({status})")

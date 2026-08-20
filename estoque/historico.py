@@ -114,7 +114,7 @@ def gravar(dia, unidade, produtos, bi_refresh=None, params=None):
     gravar_rollup(dia, unidade, [
         (dia, core._n(p.get("qtdisp")), core._n(p.get("valor")), core._n(p.get("giro_dia")),
          p.get("cobertura_dias"), _parse(p.get("dtultsaida")), _parse(p.get("dtultent")),
-         p.get("curva_abc"))
+         p.get("curva_abc"), core._n(p.get("qtd_ja_pedida")), core._n(p.get("qt_transicao")))
         for p in produtos])
     return len(linhas)
 
@@ -174,7 +174,185 @@ def fotografar(app, hoje=None, unidades=None, refazer=False):
             feitas[uid] = gravar(hoje, uid, produtos, ref.get("end_fmt"), params)
         except Exception as e:                                    # noqa: BLE001
             erros.append(f"{uid}: {e}")
+            continue
+        # ── estado do dia que não sai do grão do item (ocupação do WMS) ──
+        # ⚠️ DEPOIS do `gravar` e num try PRÓPRIO: a ocupação vem de outra fonte (PCENDERECO, o
+        # WMS) e uma falha dela não pode custar a foto do estoque, que é o dado principal. Sem
+        # esta separação, o depósito com WMS fora do ar derrubaria a série inteira do dia.
+        # ⚠️ Cada métrica num try PRÓPRIO e gravada sozinha (o UPSERT faz merge de chave). Uma
+        # fonte fora do ar — WMS, cadastro, pedidos — não pode custar as outras nem a foto do
+        # estoque, que é o dado principal. Degradar é perder UMA métrica de UM dia; um try único
+        # perderia o dia inteiro de estado.
+        for chave, fn in _ESTADO_DO_DIA.items():
+            try:
+                gravar_estado(hoje, uid, {chave: fn(app, uid)})
+            except Exception as e:                                # noqa: BLE001
+                erros.append(f"{uid} (estado/{chave}): {e}")
     return feitas, erros
+
+
+def _ocupacao_do_dia(app, uid):
+    """Só os ESCALARES da ocupação — não a lista de ruas nem as vagas vazias.
+
+    ⚠️ O pedido do diretor foi explícito ("só o percentual de ocupação"), e guardar o resto seria
+    caro sem responder mais: rua e vaga vazia são um retrato de ENDEREÇO, e o que a série precisa
+    é "o depósito está enchendo?". `pct` é derivado e vai gravado junto de propósito — ele é o
+    número que a tela mostra, e ter o par (ocupadas, posições) ao lado permite refazer a conta se
+    a régua do denominador mudar um dia."""
+    from . import routes as R
+    with app.test_request_context(f"/estoque/api/ocupacao?unidade={uid}"):
+        filiais = R._filiais_estoque()
+        if R._pg():
+            oc = core.ocupacao_resumo(R.PS.ocupacao_kpis(filiais), R.PS.ocupacao_por_rua(filiais),
+                                      R.PS.ocupacao_por_tipo(filiais))
+        else:
+            oc = core.ocupacao_resumo(pbi.run_dax(R.Q.q_ocupacao_kpis(filiais)),
+                                      pbi.run_dax(R.Q.q_ocupacao_por_rua(filiais)),
+                                      pbi.run_dax(R.Q.q_ocupacao_por_tipo(filiais)))
+    pos, occ = int(oc.get("posicoes") or 0), int(oc.get("ocupadas") or 0)
+    return {"posicoes": pos, "ocupadas": occ, "livres": int(oc.get("livres") or 0),
+            "bloqueados": int(oc.get("bloqueados") or 0),
+            "com_estoque": int(oc.get("com_estoque") or 0),
+            # ⚠️ **`pct_ocupado` VERBATIM do `ocupacao_resumo`** — a MESMA chave que a aba Ocupação
+            # lê, e não uma reconta. É FRAÇÃO (0-1) arredondada a 4 casas, e a tela a renderiza com
+            # o helper `pct()` (Intl, arredondamento half-expand).
+            #
+            # Recalcular aqui como `occ/pos*100` arredondado a 1 casa parecia inofensivo e **dava
+            # outro número**: 4.446/5.290 = 0,8404536… → a aba mostra **84,1%** (0,8405 pelo Intl) e a
+            # reconta dava **84,0%**. Mesmo dia, mesmo dado, duas telas discordando em 0,1 p.p. —
+            # exatamente o defeito do card "Em risco" (789 SKUs no card × 791 na lista), que nasceu
+            # de refazer a conta a partir de valores já arredondados.
+            #
+            # O par (ocupadas, posicoes) segue gravado ao lado para auditoria e para permitir
+            # refazer a conta se a régua do denominador mudar um dia.
+            "pct_ocupado": oc.get("pct_ocupado"),
+            # picking x pulmão: encher o pulmão é normal, encher o picking trava a separação
+            "tipos": {t.get("tipo"): {"posicoes": t.get("posicoes"), "ocupadas": t.get("ocupadas")}
+                      for t in (oc.get("tipos") or []) if t.get("tipo")}}
+
+
+def _qualidade_do_dia(app, uid):
+    """Cadastros quebrados na BASE INTEIRA (não no snapshot) — o mesmo universo da aba Qualidade.
+
+    ⚠️ **Estado puro, e o exemplo mais claro do critério.** Quando o TI corrige um cadastro, o
+    valor anterior é SOBRESCRITO: não existe forma de saber quantos estavam errados em julho.
+    É a métrica que transforma "mandei a lista pro TI" em "caiu de 72 para 40" — e ela só existe
+    se alguém fotografar. Custo: zero query nova (cadastro e embalagem já estão em cache)."""
+    from . import routes as R
+    with app.test_request_context(f"/estoque/api/qualidade-cadastro?unidade={uid}"):
+        res = core.qualidade_cadastro(R._cadastro_produtos(), R._embalagem_map(),
+                                      R._cadastro_fornecedores(), R._compradores_map())
+    r = res.get("resumo") or {}
+    return {"total": r.get("total"), "base": r.get("base"),
+            # `contagem` é {categoria: n} — viaja inteira para uma categoria nova aparecer
+            # sozinha no histórico, sem precisar mexer aqui de novo
+            "contagem": r.get("contagem") or {}}
+
+
+def _validade_do_dia(app, uid):
+    """Valor em RISCO de vencer, por faixa — a foto do FEFO.
+
+    ⚠️ Risco é ESTADO, perda é EVENTO: a aba Vencidos mostra mês a mês desde sempre porque baixa
+    por validade fica no livro (PCLANC), mas quanto estava a vencer em 30 dias numa data passada
+    não existe em lugar nenhum — a quantidade de cada lote é sobrescrita. É o par que melhor
+    ilustra por que umas métricas se fotografam e outras não."""
+    from . import routes as R
+    from datetime import timedelta
+    with app.test_request_context(f"/estoque/api/resumos?unidade={uid}"):
+        hoje = R._hoje()
+        filiais = R._filiais_estoque()
+        _jan = (hoje, hoje + timedelta(days=3650))
+        lotes = (R.PS.validade(*_jan, filiais) if R._pg()
+                 else pbi.run_dax(R.Q.q_validade(*_jan, filiais)))
+        produtos, _params, _ = R._build_produtos()
+        idx = {p["codprod"]: p for p in produtos}
+        res = core.resumo_validade(lotes, idx, hoje=hoje)
+    tot = res.get("total") or {}
+    return {"itens": tot.get("itens"), "valor": tot.get("valor"),
+            "faixas": {f.get("faixa"): {"itens": f.get("itens"), "valor": f.get("valor")}
+                       for f in (res.get("faixas") or []) if f.get("faixa")}}
+
+
+def _pedidos_do_dia(app, uid):
+    """Posição dos pedidos EM ABERTO: valor, atrasados, chegando em 7 dias.
+
+    ⚠️ `PCITEM[QTENTREGUE]` é campo CUMULATIVO corrente — o Winthor o atualiza a cada recebimento
+    e não guarda o histórico. Não há como saber o que estava em aberto em 15/08. Fotografado, isto
+    vira performance de fornecedor MEDIDA ao longo do tempo, em vez de impressão."""
+    from . import routes as R
+    with app.test_request_context(f"/estoque/api/orcamento?unidade={uid}"):
+        hoje = R._hoje()
+        filiais = R._filiais_estoque()
+        cab = R._pedidos_data(filiais, hoje)["cab"]
+        venda_comp = R._venda_comprador_30d(filiais, R._filiais_venda(), hoje)
+        orc = core.orcamento_winthor(cab, venda_comp, R._compradores_map(),
+                                     R._cadastro_fornecedores(), R._mes_atual(), "TODOS",
+                                     pct=0.65, hoje=hoje, meta_override=None,
+                                     cnpj_empresa=R.MULTPEL_EMPRESA["cnpj"])
+    r = orc.get("resumo") or {}
+    return {"n_abertos": r.get("n_abertos"), "n_atrasados": r.get("n_atrasados"),
+            "n_chega7": r.get("n_chega7"), "valor_aberto": r.get("valor_aberto"),
+            # o orçamento do mês vai junto: a meta é 65% da venda de 30d MEDIDA NAQUELE DIA, e
+            # reconstruí-la depois com a venda de hoje produziria uma meta que nunca existiu
+            "meta": r.get("meta"), "comprado": r.get("comprado"), "saldo": r.get("saldo")}
+
+
+def _avaria_do_dia(app, uid):
+    """Mercadoria BLOQUEADA que não é pré-entrada — avaria de verdade, em quantidade e R$.
+
+    ⚠️ A foto do item guarda o `qtdisp` JÁ LÍQUIDO de avaria, e o `qtbloq` não está entre as
+    colunas — então "a avaria está crescendo?" hoje não tem resposta. Aqui ela vira escalar sem
+    tocar no grão do item (que é ~6k linhas/dia e custaria coluna nova no SELECT posicional).
+
+    A separação avaria × pré-entrada é a mesma heurística do `core.qt_em_transicao`, com o cap
+    por `QTULTENT`: 200 un bloqueadas com entrada de 12 = 12 chegando, 188 avaria."""
+    from . import routes as R
+    with app.test_request_context(
+            f"/estoque/api/snapshot?unidade={uid}&venda_periodo={PERIODO_CURVA}"):
+        produtos, _params, _ = R._build_produtos()
+    n = qt = valor = 0.0
+    for p in produtos:
+        bloq = core._n(p.get("qtbloq"))
+        transito = core._n(p.get("qt_transicao"))
+        av = max(0.0, bloq - transito)
+        if av > 0:
+            n += 1
+            qt += av
+            valor += av * core._n(p.get("custo_unit"))
+    return {"n_itens": int(n), "qt": core._round(qt, 2), "valor": core._round(valor)}
+
+
+# Registro das métricas de ESTADO do dia. ⚠️ Métrica nova entra AQUI e mais nada: a tabela é
+# `payload JSONB` com merge no upsert, então não há migration, e o passado simplesmente não tem
+# a chave — que é a verdade (ninguém mediu antes).
+#
+# ⚠️ O critério para entrar: **estado sobrescrito, não evento datado**. Lead time, verbas,
+# vencidos, compras×vendas e desempenho comercial NÃO entram — todos derivam de fatos com data,
+# que o livro já guarda e o app recalcula a qualquer momento. Fotografá-los só duplicaria o dado
+# com risco de divergir da fonte.
+_ESTADO_DO_DIA = {
+    "ocupacao":  _ocupacao_do_dia,
+    "qualidade": _qualidade_do_dia,
+    "validade":  _validade_do_dia,
+    "pedidos":   _pedidos_do_dia,
+    "avaria":    _avaria_do_dia,
+}
+
+def gravar_estado(dia, unidade, payload):
+    """UPSERT do estado do dia. MERGE por chave (`payload || novo`), não substituição: métrica de
+    estado nova entra sem apagar as que já foram medidas naquele dia."""
+    if not store.ensure():
+        return
+    conn = store.get_db()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("""INSERT INTO estoque_foto_estado (data, unidade, payload)
+                           VALUES (%s,%s,%s::jsonb)
+                           ON CONFLICT (data, unidade) DO UPDATE
+                              SET payload = estoque_foto_estado.payload || EXCLUDED.payload""",
+                        (dia, unidade, _json(payload)))
+    finally:
+        conn.close()
 
 
 # ───────────────────────── leitura (alimenta a aba) ─────────────────────────
@@ -196,13 +374,17 @@ def dias_com_foto(unidade, ini=None, fim=None):
 # Únicos parâmetros que mudam o resultado de `agregar`. A querystring da tela carrega dezenas
 # (lead time, forecast, cortes ABC…) que não tocam nenhuma das 4 séries — exigir igualdade de
 # todos jogaria o cache fora em 100% dos acessos.
-_PARAMS_DA_SERIE = ("novo_dias", "ideal_dias")
+_PARAMS_DA_SERIE = ("novo_dias", "ideal_dias",
+                    # a watchlist Em desaceleração é recalculada por estes 4 — fora daqui,
+                    # mexer nos campos de ⚙ Parâmetros serviria a série cacheada de antes
+                    "desacel_de", "desacel_ate", "desacel_cob", "desacel_valor_min")
 
 # ⚠️ A ordem deste SELECT É a assinatura posicional que o `agregar` desempacota. Coluna nova
 # tem de entrar nos DOIS lugares (e no builder do `gravar_rollup`), senão o valor entra no campo
 # errado sem erro nenhum. Gate: `test_a_ordem_do_select_casa_com_o_agregar`.
 _SQL_CRU = """
-    SELECT data, qtdisp, valor, giro_dia, cobertura_dias, dtultsaida, dtultent, curva_abc
+    SELECT data, qtdisp, valor, giro_dia, cobertura_dias, dtultsaida, dtultent, curva_abc,
+           qtd_ja_pedida, qt_transicao
       FROM estoque_foto_item
      WHERE unidade=%s
        AND (%s::date IS NULL OR data>=%s) AND (%s::date IS NULL OR data<=%s)
@@ -237,16 +419,33 @@ def _regua_padrao(params):
 # Chaves que o `agregar` de HOJE produz. Rollup gravado por uma versão anterior não as tem, e
 # servi-lo faria a aba mostrar "—" numa métrica que o cru sabe calcular.
 _ROLLUP_CHAVES = ("valor_estoque", "valor_parado", "n_ruptura", "pct_ideal", "faixas",
-                  "pct_ruptura", "ruptura_curva")
+                  "pct_ruptura", "ruptura_curva", "valor_desacel", "n_desacel",
+                  "n_rup_sem_prov")
+
+# ⚠️ VERSÃO DA SEMÂNTICA. A checagem por chaves só pega métrica NOVA; ela não vê quando uma
+# métrica existente muda de significado — e foi exatamente o que aconteceu ao alinhar o
+# `valor_parado` com a régua do Cockpit (60+ dias no lugar de 15+): mesmas chaves, número
+# diferente. Sem este selo, os rollups já gravados seguiriam servindo o valor antigo em silêncio,
+# que é o pior modo de falha possível numa aba feita para provar gestão.
+# **Suba este número sempre que mudar o resultado do `agregar`.**
+#   2 → 08/2026: capital parado passou a usar `core.status_parado_de` (piso 60 dias).
+#   3 → 08/2026: entrou a watchlist "Em desaceleração" (`valor_desacel`/`n_desacel`). Aqui as
+#       chaves são NOVAS, então a checagem por chaves já pegaria; o selo sobe assim mesmo porque
+#       depender de qual dos dois mecanismos salvou é como o parado passou despercebido.
+#   4 → 08/2026: `n_rup_sem_prov` (régua da Meta de ruptura) + o SELECT do cru ganhou
+#       `qtd_ja_pedida`/`qt_transicao`. Rollup gravado antes não tem a chave.
+_ROLLUP_VERSAO = 4
 
 
 def _rollup_atual(payload):
     """O payload foi gravado pela versão CORRENTE do `agregar`?
 
-    ⚠️ Sem isto, toda métrica nova exigia lembrar de rodar o `rebuild_rollup` no deploy — e
-    esquecer não dava erro: a aba servia o agregado velho, sem a coluna nova, em silêncio. O
-    rollup é cache da mesma função; cache de uma versão anterior é cache que mente."""
-    return isinstance(payload, dict) and all(k in payload for k in _ROLLUP_CHAVES)
+    ⚠️ Sem isto, toda mudança no agregado exigia lembrar de rodar o `rebuild_rollup` no deploy —
+    e esquecer não dava erro: a aba servia o agregado velho em silêncio. O rollup é cache da
+    mesma função; cache de uma versão anterior é cache que mente."""
+    return (isinstance(payload, dict)
+            and payload.get("_v") == _ROLLUP_VERSAO
+            and all(k in payload for k in _ROLLUP_CHAVES))
 
 
 def _serie_rollup(unidade, ini, fim):
@@ -288,18 +487,75 @@ def serie(unidade, ini=None, fim=None, comprador=None, fornecedor=None, params=N
     Contrapeso: `n_ruptura` viaja junto com o valor de estoque de propósito. Estoque caindo,
     sozinho, não é boa notícia — pode ser desabastecimento.
     """
-    if not any((comprador, fornecedor, curva, xyz)) and _regua_padrao(params):
+    sem_recorte = not any((comprador, fornecedor, curva, xyz))
+    if sem_recorte and _regua_padrao(params):
         pronto = _serie_rollup(unidade, ini, fim)
         if pronto is not None:
-            return pronto
-    return agregar(_linhas_cruas(unidade, ini, fim, comprador, fornecedor,
+            return _com_estado(pronto, unidade, ini, fim, sem_recorte)
+    dias = agregar(_linhas_cruas(unidade, ini, fim, comprador, fornecedor,
                                  curva=curva, xyz=xyz), params)
+    return _com_estado(dias, unidade, ini, fim, sem_recorte)
+
+
+def _com_estado(dias, unidade, ini, fim, sem_recorte):
+    """Costura o estado do dia (ocupação do WMS) nas séries, num lugar SÓ.
+
+    ⚠️ Merge feito aqui e não dentro do `agregar` porque o `agregar` é PURO (recebe linhas, não
+    toca banco) — e é essa pureza que permite recalcular o passado com parâmetro novo. Fazê-lo
+    ler outra tabela transformaria a função em I/O e mataria os testes de recálculo.
+
+    ⚠️ **Com recorte ativo a ocupação NÃO viaja.** Ela é do DEPÓSITO (grão = posição do WMS) e
+    não se decompõe por comprador, fornecedor, curva ou XYZ. Servi-la ao lado de um gráfico
+    filtrado pela curva A mostraria o número da empresa inteira como se respondesse ao filtro —
+    a falha clássica do módulo (foi assim que a tabela de Verbas ficou ao lado do gráfico da
+    empresa toda). Ausente, o front mostra "—" e diz por quê."""
+    if not dias or not sem_recorte:
+        return dias
+    est = _estado_por_dia(unidade, ini, fim)
+    for d in dias:
+        do_dia = est.get(d["data"]) or {}
+        # ⚠️ Merge por CHAVE, sem lista fixa: métrica de estado nova aparece na série sozinha,
+        # sem passar por aqui. `setdefault` para nunca sobrescrever uma chave que o `agregar`
+        # calculou — o estado ACRESCENTA à série, nunca disputa com ela.
+        for chave, val in do_dia.items():
+            if chave != "ocupacao":
+                d.setdefault(chave, val)
+        oc = do_dia.get("ocupacao")
+        if oc:
+            # FRAÇÃO (0-1), igual à aba Ocupação. O front usa o mesmo helper `pct()` das duas
+            # telas — é o que garante que elas não divirjam na 1ª casa decimal.
+            d["ocupacao_pct"] = oc.get("pct_ocupado")
+            d["ocupacao"] = oc
+    return dias
+
+
+def _estado_por_dia(unidade, ini=None, fim=None):
+    """{data_iso: payload} da `estoque_foto_estado`. Degrada para {} — a ocupação é um
+    acréscimo à aba, e uma falha na leitura dela não pode derrubar a série do estoque."""
+    if not store.ensure():
+        return {}
+    try:
+        conn = store.get_db()
+        try:
+            with conn, conn.cursor() as cur:
+                cur.execute("""SELECT data, payload FROM estoque_foto_estado
+                               WHERE unidade=%s AND (%s::date IS NULL OR data>=%s)
+                                 AND (%s::date IS NULL OR data<=%s)""",
+                            (unidade, ini, ini, fim, fim))
+                return {d.isoformat(): (pl or {}) for d, pl in cur.fetchall()}
+        finally:
+            conn.close()
+    except Exception as e:                                        # noqa: BLE001
+        print(f"[historico] estado do dia indisponivel ({e}).")
+        return {}
 
 
 def gravar_rollup(dia, unidade, linhas_cruas):
     """Grava o agregado do dia na régua PADRÃO. Chamado pelo `gravar` — o rollup nasce junto
     da foto para nunca existir dia com foto e sem agregado."""
     agg = agregar(linhas_cruas)
+    if agg:
+        agg[0]["_v"] = _ROLLUP_VERSAO
     conn = store.get_db()
     try:
         with conn, conn.cursor() as cur:
@@ -363,15 +619,18 @@ def agregar(linhas, params=None):
 
     O denominador é o TOTAL de SKUs da curva na foto, que é o mesmo do KPI ("314 de 2.878").
 
-    `linhas`: (data, qtdisp, valor, giro_dia, cobertura_dias, dtultsaida, dtultent, curva_abc).
+    `linhas`: (data, qtdisp, valor, giro_dia, cobertura_dias, dtultsaida, dtultent, curva_abc,
+    qtd_ja_pedida, qt_transicao).
     """
     p = core.merge_params(params or {})
     limiar, _meta = core.regua_estoque_ideal(p)
     novo_dias = int(p["novo_dias"])
     por_dia = {}
-    for dia, qtdisp, valor, giro_dia, cob, dtsaida, dtent, curva in linhas:
+    for dia, qtdisp, valor, giro_dia, cob, dtsaida, dtent, curva, ja_ped, transito in linhas:
         d = por_dia.setdefault(dia, {"data": dia.isoformat(), "n_skus": 0, "valor_estoque": 0.0,
                                      "valor_parado": 0.0, "n_ruptura": 0,
+                                     "valor_desacel": 0.0, "n_desacel": 0,
+                                     "n_rup_sem_prov": 0,
                                      "faixas": {n: 0.0 for n, _ in core._FAIXAS_COB_LIM},
                                      "ideal_n": 0, "risco_n": 0, "semgiro_n": 0,
                                      "_rup_cv": {c: 0 for c in CURVAS},
@@ -384,12 +643,47 @@ def agregar(linhas, params=None):
         if qtdisp <= 0 and giro_dia > 0:
             d["n_ruptura"] += 1
             d["_rup_cv"][cv] += 1
-        # "parado" reconstruído pela MESMA régua do app (core), a partir das datas gravadas
+            # ⚠️ A régua da META de ruptura, que é OUTRA: conta só o item **sem providência** —
+            # nem pedido em aberto nem mercadoria em pré-entrada. Sempre MENOR que a ruptura real
+            # (`n_ruptura`), e as duas convivem de propósito: a real mede "o que falta de fato",
+            # esta mede "o que ninguém providenciou". Ler uma pela outra é concluir catástrofe
+            # onde não há — a tela declara qual está mostrando.
+            #
+            # Saiu **de graça e com histórico retroativo**: `qtd_ja_pedida` e `qt_transicao` já
+            # eram gravadas no grão do item desde o 1º dia, só não eram lidas. Espelha
+            # `core._sem_providencia`.
+            if core._n(ja_ped) <= 0 and core._n(transito) <= 0:
+                d["n_rup_sem_prov"] += 1
+        # "parado" reconstruído pela MESMA régua do Cockpit, a partir das datas gravadas.
+        # ⚠️ Mudou em 08/2026: usava `parado_faixa_de`, cujo piso é 15 dias — a série dizia
+        # R$ 433.647 onde o Cockpit dizia R$ 181.182, no mesmo dia e na mesma base. Não eram
+        # conceitos diferentes: somando as faixas de 61 dias para cima a régua antiga dava
+        # R$ 181.155, ou seja, a mesma conta com piso diferente. Item sem venda há 20 dias é
+        # ROTAÇÃO num distribuidor, não dead stock — a faixa 15-30 sozinha eram R$ 151.699, e
+        # chamá-la de capital parado fazia o KPI gritar lobo.
+        # A aba Estoque parado continua em 15+ de propósito: lá o papel é mostrar o gradiente.
+        # Trocar aqui não perde história — a foto guarda o INGREDIENTE, então o passado inteiro
+        # se recalcula (é a decisão de gravar o cru pagando pela segunda vez).
         dsv = (dia - dtsaida).days if dtsaida else None
         dse = (dia - dtent).days if dtent else None
-        faixa = core.parado_faixa_de(dsv, qtdisp, dse, novo_dias)
-        if faixa and faixa != core.PARADO_NOVO:      # `novo` não é capital parado (core.eh_parado)
+        # ⚠️ `cobd` é calculado AQUI (antes do parado/desaceleração) e reusado nas faixas mais
+        # abaixo: a watchlist precisa da MESMA cobertura que a tela usa. Recalcular a partir dos
+        # valores já arredondados do dict daria um `ceil` diferente — é o defeito que o card
+        # "Em risco" do Painel gerencial teve (789 SKUs no card × 791 na lista).
+        cobd = int(cob) if cob is not None else core.cobertura_dias_oficial(qtdisp, giro_dia)
+        st_par = core.status_parado_de(dsv, qtdisp, dse, novo_dias)
+        if core.eh_parado({"status_parado": st_par}):
             d["valor_parado"] += valor
+        # Watchlist "Em desaceleração" — o aviso ANTES do dead stock, pela MESMA função da tela.
+        # ⚠️ Ela nasce com todo o histórico que a foto já tem (a régua sai de `dias sem venda` +
+        # `cobertura_dias` + `valor`, os três gravados desde o 1º dia): é o segundo pagamento da
+        # decisão de guardar o INGREDIENTE. Se a foto guardasse "parado = R$ X", esta métrica só
+        # poderia começar hoje — e uma série que começa do zero não responde "está melhorando?".
+        elif core.em_desaceleracao({"status_parado": st_par, "dias_sem_venda": dsv,
+                                    "qtdisp": qtdisp, "cobertura_dias": cobd,
+                                    "valor": valor}, p):
+            d["valor_desacel"] += valor
+            d["n_desacel"] += 1
         # ⚠️ DUAS convenções, e as duas espelham a tela de propósito:
         # · as FAIXAS seguem o Painel gerencial (`core.resumo_cobertura`), onde giro<=0 vira
         #   cobertura 9999 e cai no 121+. Assim Σ faixas == valor de estoque, que é o que o
@@ -397,7 +691,6 @@ def agregar(linhas, params=None):
         # · o trio ideal/risco/sem-giro segue o `core.resumo_estoque_ideal`, que reporta o
         #   sem-giro À PARTE para não distorcer o %.
         # Unificar as duas faria a série discordar de uma das telas que ela promete reproduzir.
-        cobd = int(cob) if cob is not None else core.cobertura_dias_oficial(qtdisp, giro_dia)
         d["faixas"][core.cobertura_faixa_de(cobd)] += valor
         if giro_dia <= 0:
             d["semgiro_n"] += 1
@@ -409,6 +702,7 @@ def agregar(linhas, params=None):
     for d in sorted(por_dia.values(), key=lambda x: x["data"]):
         d["valor_estoque"] = core._round(d["valor_estoque"])
         d["valor_parado"] = core._round(d["valor_parado"])
+        d["valor_desacel"] = core._round(d["valor_desacel"])
         d["faixas"] = {k: core._round(v) for k, v in d["faixas"].items()}
         com_giro = d["ideal_n"] + d["risco_n"]
         d["pct_ideal"] = core._round(d["ideal_n"] / com_giro, 4) if com_giro else None

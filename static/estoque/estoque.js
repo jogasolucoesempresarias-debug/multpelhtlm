@@ -47,9 +47,9 @@ const S = {
   filiaisAll:[], filiaisSel:new Set(), base:'gerencial', vperiodo:'mes', cvDim:'comprador', abcLens:'venda',
   unidade:'atacado', unidadeNome:'Atacado', nomesFilial:{},
   compradorNome:'',
-  cli:{comprador:'',curva:[],xyz:[],fornec:'',depto:'',busca:'',abast:[],margem:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[]},
+  cli:{comprador:'',curva:[],xyz:[],fornec:'',depto:'',busca:'',abast:[],margem:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[],desacel:false},
   // idealDias/idealMeta = régua do "Estoque ideal" do Painel gerencial (só mede; a compra usa `cob`)
-  params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1,metaA:2,metaB:5,metaC:10,idealDias:45,idealMeta:90,novoDias:15},
+  params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1,metaA:2,metaB:5,metaC:10,idealDias:45,idealMeta:90,novoDias:15,desacelDe:20,desacelAte:60,desacelCob:90,desacelValor:200},
   charts:{}, sort:{}, valFaixa:null,
   orcArrastar:false,   // Orçamento: descontar o estouro do mês anterior da meta (opt-in)
   vencidos:null, vencidosQS:'', venMes:null, venPer:'2026',
@@ -366,6 +366,11 @@ function serverQS(){
   // janela do "produto novo" (aba Estoque parado) — o `parado_faixa` sai do BACKEND, então
   // sem isto na querystring o card Novos ficaria preso em 15d por mais que o campo mudasse.
   p.set('novo_dias', S.params.novoDias);
+  // watchlist Em desaceleração: o card sai do BACK (`cockpit`) e o filtro do export é
+  // refeito lá com `merge_params` — sem estes 4 na querystring, mexer em ⚙ Parâmetros
+  // moveria a tela e NÃO moveria o Excel, que é a divergência clássica do módulo.
+  p.set('desacel_de', S.params.desacelDe); p.set('desacel_ate', S.params.desacelAte);
+  p.set('desacel_cob', S.params.desacelCob); p.set('desacel_valor_min', S.params.desacelValor);
   return p.toString();
 }
 
@@ -495,22 +500,36 @@ async function renderEvolucao(){
   if(fa.curva) ativos.push('curva <b>'+esc(fa.curva)+'</b>');
   if(fa.xyz) ativos.push('XYZ <b>'+esc(fa.xyz)+'</b>');
   const fora=evoIgnorados();
+  // a ocupação é do DEPÓSITO (grão = posição do WMS) e não se decompõe por comprador,
+  // fornecedor, curva ou XYZ — com recorte ativo o servidor não a manda, e o KPI diz por quê
+  const temRecorte=!!(fa.comprador||fa.fornec||fa.curva||fa.xyz);
   const linhaFiltro = (ativos.length||fora.length)
     ? `<div class="count-line">${ativos.length?`Recorte: ${ativos.join(' · ')}.`:''}
         ${fora.length?`<span style="color:${C.orange}">Esta aba não usa: <b>${fora.join(', ')}</b> — a série é gravada por item, unidade, comprador, fornecedor, curva e XYZ.</span>`:''}
         ${fa.curva?`<br><small class="muted">A curva é a do item <b>no dia da foto</b> (Pareto da venda de 90 dias), não a de hoje — por isso o passado não se reclassifica sozinho.</small>`:''}</div>`
     : '';
   el.innerHTML=head('Evolução do estoque')+seg+aviso+linhaFiltro
-    +`<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
+    +`<div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
         ${kpi('Valor em estoque',money(u.valor_estoque),evoDelta(v.valor_estoque,dir.valor_estoque,moneyK)+' na janela',C.accent)}
         ${kpi('Capital parado',money(u.valor_parado),evoDelta(v.valor_parado,dir.valor_parado,moneyK)+' na janela',C.purple)}
         ${kpi('Itens em ruptura',`${int(u.n_ruptura)} <small class="muted">de ${int(u.n_skus)} · ${u.pct_ruptura!=null?dec(u.pct_ruptura,1)+'%':'—'}</small>`,evoDelta(v.pct_ruptura,dir.pct_ruptura,x=>dec(x,1)+' p.p.')+' na janela',C.red)}
         ${kpi('Cobertura ideal',u.pct_ideal!=null?dec(u.pct_ideal*100,1)+'%':'—',evoDelta(v.pct_ideal,dir.pct_ideal,x=>dec(x*100,1)+' p.p.')+' na janela',C.green)}
+        ${kpi('Em desaceleração',money(u.valor_desacel),evoDelta(v.valor_desacel,dir.valor_desacel,moneyK)+' na janela',C.accent2)}
+        ${/* ⚠️ `pct()` — o MESMO helper da aba Ocupação, sobre a MESMA fração. Formatar com
+              `dec(x,1)` aqui daria 84,0% onde a outra aba mostra 84,1% (Intl arredonda
+              half-expand, toFixed não), e duas telas discordando na 1ª decimal é o bastante
+              para o painel perder a confiança de quem confere. */''}
+        ${kpi('Ocupação do depósito',u.ocupacao_pct!=null?pct(u.ocupacao_pct):'—',
+              u.ocupacao_pct!=null
+                ? (int((u.ocupacao||{}).ocupadas)+' de '+int((u.ocupacao||{}).posicoes)+' posições · '+evoDelta(v.ocupacao_pct,dir.ocupacao_pct,x=>dec(x*100,1)+' p.p.')+' na janela')
+                : (temRecorte ? 'não se aplica ao recorte' : 'ainda não fotografada'),C.yellow)}
       </div>
-      <div class="panel"><h3><span>Estoque × capital parado${tipT('Barras = valor total em estoque. Linha = quanto dele está parado. As duas juntas contam a história: estoque caindo COM o parado caindo mais rápido é gestão.')}</span></h3>
+      <div class="panel"><h3><span>Estoque × capital parado${tipT('Barras = valor total em estoque. Linha cheia = quanto dele já é capital parado (60+ dias sem venda). Linha tracejada = o que está em desaceleração — o aviso ANTES do parado, e por onde ele se alimenta. As três juntas contam a história: estoque caindo COM o parado caindo mais rápido é gestão; desaceleração subindo enquanto o parado ainda cai é o parado do mês que vem.')}</span></h3>
         <div class="chart-box" style="height:230px"><canvas id="ch-evo-valor"></canvas></div></div>
       <div class="panel"><h3><span>Composição da cobertura${tipT('Para onde o capital está migrando. Faixa boa (31-60) crescendo e o 121+ encolhendo é a prova visual da gestão.')}</span></h3>
         <div class="chart-box" style="height:230px"><canvas id="ch-evo-cob"></canvas></div></div>
+      ${dias.some(d=>d.ocupacao_pct!=null)?`<div class="panel"><h3><span>Ocupação do depósito (%)${tipT('Percentual de posições ocupadas no WMS (PCENDERECO), na foto do dia. Sem cor de propósito: subir pode ser depósito enchendo ou giro entrando — quem dá o sentido é a linha ao lado do valor de estoque e da ruptura. Picking e pulmão viajam no tooltip: encher o pulmão é normal, encher o picking trava a separação.')}</span></h3>
+        <div class="chart-box sm" style="height:150px"><canvas id="ch-evo-ocup"></canvas></div></div>`:''}
       <div class="panel"><h3><span>Itens em ruptura${tipT('O CONTRAPESO: estoque caindo só é boa notícia se a ruptura não subir junto. Sem esta linha, um desabastecimento pareceria eficiência.')}</span></h3>
         <div class="chart-box sm" style="height:150px"><canvas id="ch-evo-rup"></canvas></div></div>
       <div class="panel"><h3><span>Ruptura por curva (%)${tipT('% de itens zerados com giro sobre o TOTAL de itens da curva, na foto do dia. Em % porque a curva C tem muito mais itens que a A — na contagem crua ela pareceria sempre a pior.')}</span></h3>
@@ -534,11 +553,30 @@ async function renderEvolucao(){
   // deste gráfico. Achado olhando o render, não o código.
   chart('ch-evo-valor',{data:{labels:lbls,datasets:[
       {type:'bar',label:'Estoque',data:dias.map(d=>d.valor_estoque),backgroundColor:C.accent+'55',borderColor:C.accent,borderWidth:1,yAxisID:'y'},
-      {type:'line',label:'Parado (eixo à direita)',data:dias.map(d=>d.valor_parado),borderColor:C.purple,backgroundColor:'transparent',tension:.25,pointRadius:_pr,borderWidth:2,yAxisID:'y2'}]},
+      {type:'line',label:'Parado (eixo à direita)',data:dias.map(d=>d.valor_parado),borderColor:C.purple,backgroundColor:'transparent',tension:.25,pointRadius:_pr,borderWidth:2,yAxisID:'y2'},
+      /* ⚠️ MESMO eixo do parado (y2), de propósito: as duas são o funil do dead stock e têm
+         ordem de grandeza parecida (R$ 128k × R$ 179k). Num eixo próprio, a desaceleração
+         pareceria maior que o parado — e a leitura da aba é justamente qual dos dois está
+         alimentando o outro. Tracejada porque ela é AVISO, não o problema consumado. */
+      {type:'line',label:'Em desaceleração (eixo à direita)',data:dias.map(d=>d.valor_desacel),borderColor:C.accent2,backgroundColor:'transparent',borderDash:[5,4],tension:.25,pointRadius:_pr,borderWidth:2,yAxisID:'y2'}]},
     options:{maintainAspectRatio:false,scales:{
       x:{ticks:{maxTicksLimit:15,autoSkip:true}},
       y:{beginAtZero:true,ticks:{callback:x=>moneyK(x)}},
       y2:{position:'right',beginAtZero:true,grid:{drawOnChartArea:false},ticks:{callback:x=>moneyK(x)}}}}});
+  if(dias.some(d=>d.ocupacao_pct!=null))
+    chart('ch-evo-ocup',{type:'line',data:{labels:lbls,datasets:[{label:'% ocupação',
+        data:dias.map(d=>d.ocupacao_pct!=null?d.ocupacao_pct*100:null),borderColor:C.yellow,backgroundColor:C.yellow+'33',
+        fill:true,tension:.25,pointRadius:_pr,borderWidth:2}]},
+      options:{maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{
+        label:c=>pct((dias[c.dataIndex]||{}).ocupacao_pct),
+        afterLabel:c=>{const o=(dias[c.dataIndex]||{}).ocupacao||{};const t=o.tipos||{};
+          return [`${int(o.ocupadas)} de ${int(o.posicoes)} posições`,
+                  ...Object.keys(t).map(k=>`${k}: ${int(t[k].ocupadas)}/${int(t[k].posicoes)}`)];}}}},
+        /* eixo NÃO começa em zero: a ocupação de um depósito vive numa faixa estreita (ex. 70-80%)
+           e forçar o zero achataria a linha até ela não dizer nada. É o oposto do gráfico de valor,
+           onde truncar a base exageraria a variação — aqui o exagero é o que revela o movimento. */
+        scales:{x:{ticks:{maxTicksLimit:15,autoSkip:true}},
+                y:{beginAtZero:false,ticks:{callback:x=>dec(x,0)+'%'}}}}});
   chart('ch-evo-cob',{type:'line',data:{labels:lbls,datasets:EVO_FX.map(f=>({
       label:f[0],data:dias.map(d=>(d.faixas||{})[f[0]]||0),borderColor:f[1],backgroundColor:f[1]+'55',
       fill:true,tension:.25,pointRadius:_pr,borderWidth:1}))},
@@ -569,9 +607,30 @@ async function renderEvolucao(){
       fmt:(_v,d)=>{const r=(d.ruptura_curva||{})[c[0]]||{};
         return r.pct==null?'—':`${dec(r.pct,1)}% <small class="muted">(${int(r.n)})</small>`;}})),
     {k:'pct_ideal',label:'% ideal',num:1,fmt:x=>x==null?'—':dec(x*100,1)+'%'},
-    {k:'n_skus',label:'SKUs',num:1,fmt:int}];
+    {k:'n_skus',label:'SKUs',num:1,fmt:int},
+    /* ⚠️ Daqui pra baixo é TUDO que a foto passa a guardar, mesmo sem gráfico ainda. A tabela é
+       de propósito o inventário do que existe: decidir depois se vira gráfico é barato, decidir
+       depois se vira DADO não é — estado não se reconstrói, e a métrica só passa a existir do
+       dia em que alguém a fotografou. Célula vazia aqui = não medido naquele dia, não zero. */
+    {k:'n_rup_sem_prov',label:'Rup. s/ prov.',num:1,fmt:(x,d)=>x==null?'—':
+      `${int(x)} <small class="muted">(${d.n_ruptura?dec(x/d.n_ruptura*100,0):0}%)</small>`},
+    {k:'valor_desacel',label:'Desacel. R$',num:1,fmt:(x,d)=>x==null?'—':
+      `${money(x)} <small class="muted">(${int(d.n_desacel||0)})</small>`},
+    {k:'ocupacao_pct',label:'Ocupação',num:1,fmt:(x,d)=>x==null?'—':
+      `${pct(x)} <small class="muted">(${int((d.ocupacao||{}).ocupadas)}/${int((d.ocupacao||{}).posicoes)})</small>`},
+    {k:'_venc',label:'A vencer R$',num:1,fmt:(_v,d)=>{const t=d.validade;return !t?'—':
+      `${money(t.valor)} <small class="muted">(${int(t.itens)})</small>`;}},
+    {k:'_aberto',label:'Pedidos abertos',num:1,fmt:(_v,d)=>{const t=d.pedidos;return !t?'—':
+      `${money(t.valor_aberto)} <small class="muted">(${int(t.n_abertos)}${t.n_atrasados?` · ${int(t.n_atrasados)} atras.`:''})</small>`;}},
+    {k:'_avaria',label:'Avaria R$',num:1,fmt:(_v,d)=>{const t=d.avaria;return !t?'—':
+      `${money(t.valor)} <small class="muted">(${int(t.n_itens)})</small>`;}},
+    {k:'_qual',label:'Cadastro c/ erro',num:1,fmt:(_v,d)=>{const t=d.qualidade;return !t?'—':
+      `${int(t.total)} <small class="muted">de ${int(t.base)}</small>`;}}];
   const ord=[...dias].reverse();   // mais recente primeiro: é a linha que o diretor olha
   $('#evo-tbl').innerHTML=`<h3><span>Foto dia a dia</span> <small class="muted">· ${int(dias.length)} ${dias.length===1?'dia medido':'dias medidos'}</small></h3>
+    <div class="count-line">Tudo que a foto guarda por dia. As colunas sem gráfico estão aqui porque
+      <b>estado não se reconstrói</b>: guardar hoje é barato, medir o passado depois é impossível.
+      Coluna vazia = <b>não medida naquele dia</b>, não zero.</div>
     <div class="tbl-wrap"><table><thead><tr>${cols.map(c=>`<th class="${c.num?'num':''}">${c.label}</th>`).join('')}</tr></thead>
     <tbody>${ord.map(d=>`<tr>${cols.map(c=>`<td class="${c.num?'num':''}">${c.fmt?c.fmt(d[c.k],d):d[c.k]}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
   wireEvo(el);
@@ -591,6 +650,7 @@ function filtered(skipCurva){
     if(f.fornec && String(p.codfornec)!==f.fornec) return false;
     if(f.depto && String(p.codepto)!==f.depto) return false;
     if(f.parado && p.status_parado!==f.parado) return false;
+    if(f.desacel && !emDesaceleracao(p)) return false;
     if(f.ruptura && !p.status_ruptura) return false;
     if(b && !(String(p.codprod).includes(b)||(p.descricao||'').toLowerCase().includes(b))) return false;
     return true;
@@ -613,6 +673,7 @@ function agg(P){
   const comGiro=P.filter(p=>(p.giro_dia||0)>0);
   const semGiro=P.filter(p=>(p.giro_dia||0)<=0&&(p.qtdisp||0)>0);
   const parados=P.filter(ehParado);   // `novo` NÃO é capital parado (espelha core.eh_parado)
+  const desacel=P.filter(emDesaceleracao);   // disjunto de `parados` por construção
   const repor=P.filter(p=>(p.sugestao_compra||0)>0&&(p.giro_dia||0)>0&&!p.compra_suspensa);
   const rupt=P.filter(p=>p.status_ruptura);
   const zerados=P.filter(p=>p.estoque_zero&&(p.giro_dia||0)>0);   // ruptura real (estoque ≤ 0 e giro > 0)
@@ -625,6 +686,7 @@ function agg(P){
   return {valor_total,venda_total,lucro_total,margem_total: venda_total?lucro_total/venda_total*100:null,
     n:P.length,com_estoque:P.filter(p=>(p.qtdisp||0)>0).length,com_giro:comGiro.length,sem_giro:semGiro.length,
     valor_parado:sum(parados,p=>p.valor),valor_sem_giro:sum(semGiro,p=>p.valor),faixas,abc,matriz,
+    desacel:{qt:desacel.length,valor:sum(desacel,p=>p.valor)},
     parado:{atencao:cnt('status_parado','atencao'),critico:cnt('status_parado','critico'),muito_critico:cnt('status_parado','muito_critico')},
     ruptura:{total:rupt.length,valor:sum(rupt,p=>p.valor),f0_15:rupt.filter(p=>p.status_ruptura==='0-15').length,
       zerados:zerados.length,valor_zerados:sum(zerados,p=>p.valor)},
@@ -693,7 +755,7 @@ function filtrosQS(){
    Filtro local novo entra AQUI — esta é a única fonte de verdade da propriedade. Espalhar
    `if(S.view===...)` foi o que deixou o `par_faixa` protegido e o `par_classe` ao lado dele não. */
 const FILTROS_DA_ABA={
-  produtos:     ['abast','margem','cob_max','sem_ped'],
+  produtos:     ['abast','margem','cob_max','sem_ped','desacel'],
   estoque_zero: ['ez_status'],
   ruptura:      ['cob_faixa','cob_sub','cob_ped'],   // aba "Cobertura" (view `ruptura`)
   parado:       ['par_faixa','par_classe'],
@@ -717,6 +779,7 @@ function exportQS(){
   if(meu('margem') && (f.margem||[]).length) p.set('margem',f.margem.join(','));
   if(meu('cob_max') && f.cobMax!==''&&f.cobMax!=null&&!isNaN(+f.cobMax)) p.set('cob_max',f.cobMax);
   if(meu('sem_ped') && f.semPed) p.set('sem_ped','1');
+  if(meu('desacel') && f.desacel) p.set('desacel','1');   // filtro COMPOSTO: o back o refaz com os mesmos params
   if(meu('ez_status') && f.ezStatus) p.set('ez_status',f.ezStatus);
   if(meu('cob_faixa') && f.cobFaixa && f.cobFaixa.length) p.set('cob_faixa',f.cobFaixa.join(','));
   if(meu('cob_sub') && f.cobSub) p.set('cob_sub',f.cobSub);
@@ -778,13 +841,14 @@ function renderCockpit(P){
      ${kpi('A comprar',int(k.repor.n),'sug. '+moneyK(k.repor.valor),C.orange)}
      ${kpi('Capital parado',moneyK(k.valor_parado),dec(k.valor_total?k.valor_parado/k.valor_total*100:0,1)+'% do estoque',C.purple)}
    </div>
-   <h2 class="section"><span>Alertas de ação${tipT('Ações prioritárias do dia — rupturas, cobertura crítica, compras a fazer, vencimentos e estoque parado. Clique num card para ir direto à aba.')}</span></h2>
+   <h2 class="section"><span>Alertas de ação${tipT('Ações prioritárias do dia — rupturas, cobertura crítica, compras a fazer, vencimentos, estoque parado e itens em desaceleração. Clique num card para ir direto à aba.')}</span></h2>
    <div class="alerts">
      ${alertCard(k.ruptura.zerados,'Em ruptura (estoque ≤ 0)',k.ruptura.valor_zerados,C.red,'estoque_zero',{})}
      ${alertCard(k.ruptura.f0_15,'Cobertura crítica (≤15d)',k.ruptura.valor,C.orange,'ruptura',{cobFaixa:'0-30'})}
      ${alertCard(k.repor.n,'Comprar (cobertura baixa)',k.repor.valor,C.orange,'reposicao',{})}
      ${alertCard(v.critico||0,'Vencimento ≤7 dias',v.valor_risco_critico!=null?v.valor_risco_critico:v.valor_risco,C.yellow,'validade',{})}
      ${alertCard(k.parado.muito_critico.qt,'Parado 120+ dias',k.parado.muito_critico.valor,C.purple,'parado',{parado:'muito_critico'})}
+     ${alertCard(k.desacel.qt,`Em desaceleração (${int(S.params.desacelDe)}-${int(S.params.desacelAte)-1}d)`,k.desacel.valor,C.accent2,'produtos',{desacel:1})}
    </div>
    <div class="row">
      <div class="panel grow"><h3><span>Curva ABC (${S.abcLens==='estoque'?'estoque':'vendas'})${tipT('Classificação de Pareto por venda (ou por valor de estoque): A ≈ 80% do total, B ≈ 15%, C o restante. Alterne a base no botão.')}</span> <span class="seg" style="display:inline-flex;vertical-align:middle;margin-left:8px"><span class="seg-opt ${S.abcLens!=='estoque'?'on':''}" data-abclens="venda">Vendas</span><span class="seg-opt ${S.abcLens==='estoque'?'on':''}" data-abclens="estoque">Estoque</span></span></h3>
@@ -810,6 +874,11 @@ function renderCockpit(P){
    <div class="row">
      <div class="panel grow"><h3><span>Maiores ofensores — capital parado${tipT('Os produtos com mais dinheiro parado (estoque sem giro ou sem venda recente).')}</span></h3><div id="cp-parado"></div></div>
      <div class="panel grow"><h3><span>Maiores ofensores — risco de vencimento${tipT('Os produtos com maior valor em risco de perder a validade no horizonte configurado.')}</span></h3><div id="cp-venc"></div></div>
+   </div>
+   <div class="row">
+     <div class="panel grow"><h3><span>Em desaceleração — pegar antes de virar parado${tipT('Itens que pararam de vender na janela configurada E têm estoque acima da cobertura definida. NÃO entram no capital parado: são o aviso ANTES dele. Medido nesta base, a janela é praticamente toda curva C — item de ciclo longo. Clique para abrir a lista completa.')}</span></h3>
+       <div class="count-line" style="margin:0 0 8px">Parou de vender há ${int(S.params.desacelDe)}-${int(S.params.desacelAte)-1} dias · cobertura acima de ${int(S.params.desacelCob)}d · valor ≥ ${money(S.params.desacelValor)} <span class="muted">(⚙ Parâmetros)</span></div>
+       <div id="cp-desacel"></div></div>
    </div>`;
   chart('ch-abc',{type:'bar',data:{labels:['A','B','C'],datasets:[{data:['A','B','C'].map(c=>S.abcLens==='estoque'?k.abc[c].valor:k.abc[c].venda),backgroundColor:[C.green,C.accent,C.dim],borderRadius:6}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)+' · '+k.abc[['A','B','C'][c.dataIndex]].qt+' itens'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
   // rosca de participação dos itens por curva (quantidade) — cores fixas A/B/C (verde/azul/cinza), borda = surface p/ respiro
@@ -819,6 +888,8 @@ function renderCockpit(P){
   const topPar=P.filter(ehParado).sort((a,b)=>b.valor-a.valor).slice(0,6);   // `novo` fora
   const topVen=_LF.slice().sort((a,b)=>b.valor_risco-a.valor_risco).slice(0,6);
   $('#cp-parado').innerHTML=topPar.map(p=>`<div class="lote-row" data-cod="${p.codprod}" style="cursor:pointer"><span class="prod">${esc(p.descricao)}</span><span class="lr-r">${money(p.valor)}<br><small class="muted">${p.dias_sem_venda==null?'sem saída':p.dias_sem_venda+'d s/ venda'}</small></span></div>`).join('')||'<div class="empty">Nada parado 🎉</div>';
+  const topDes=P.filter(emDesaceleracao).sort((a,b)=>b.valor-a.valor).slice(0,8);
+  $('#cp-desacel').innerHTML=topDes.map(p=>`<div class="lote-row" data-cod="${p.codprod}" style="cursor:pointer"><span class="prod">${esc(p.descricao)} <small class="muted">#${esc(p.codprod)}</small></span><span class="lr-r">${money(p.valor)}<br><small class="muted">${int(p.dias_sem_venda)}d s/ venda · cob ${int(p.cobertura_dias)}d</small></span></div>`).join('')||'<div class="empty">Nada desacelerando 🎉</div>';
   $('#cp-venc').innerHTML=topVen.map(l=>`<div class="lote-row" data-cod="${l.codprod}" style="cursor:pointer"><span class="prod">${esc(l.descricao)}</span><span class="lr-r">${money(l.valor_risco)}<br><small class="muted">vence ${l.dias_para_vencer}d</small></span></div>`).join('')||'<div class="empty">Sem risco no horizonte 🎉</div>';
   el.querySelectorAll('.lote-row[data-cod]').forEach(r=>r.onclick=()=>openProduto(r.dataset.cod));
   wireAlerts(el);
@@ -1518,6 +1589,18 @@ const fxParado=()=>[
   {key:'121+',label:'121+',color:C.purple}];
 // `novo` NÃO é capital parado (espelha `core.eh_parado` — mexeu num, mexa no outro)
 const ehParado=p=>!!p.status_parado&&p.status_parado!=='novo';
+// Espelha `core.em_desaceleracao`. ⚠️ O `ehParado` na 1a linha e o que garante que a watchlist e
+// o capital parado NUNCA se sobreponham, aconteca o que acontecer com os parametros — mesma
+// guarda do back. Se um dia divergirem, a tela soma dois cards que se tocam e passa do estoque.
+function emDesaceleracao(p){
+  if(ehParado(p)) return false;
+  const de=+S.params.desacelDe, ate=+S.params.desacelAte, cob=+S.params.desacelCob, vmin=+S.params.desacelValor;
+  const d=p.dias_sem_venda;
+  if(d==null||!(d>=de&&d<ate)) return false;
+  if((p.qtdisp||0)<=0) return false;
+  if(p.cobertura_dias==null||p.cobertura_dias<=cob) return false;
+  return (p.valor||0)>=vmin;
+}
 // "dias parado" da COLUNA: quem nunca vendeu conta da chegada, igual ao backend. Sem isto a
 // linha do produto novo dizia "nunca" ao lado de um card que acabou de chamá-lo de recém-chegado.
 function paradoDiasCel(p){
@@ -3413,7 +3496,7 @@ function render(){
 // senão um drill herda o recorte do drill anterior e a tela mente sem avisar. Vale para o
 // `cobMax`: ele é filtro LOCAL da aba Produtos e sobrevive à troca de aba de propósito (como
 // Abast./Margem), mas quem chega por um card novo tem de ver o recorte daquele card, não o velho.
-function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast?(Array.isArray(filt.abast)?filt.abast:[filt.abast]):[]; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; S.cli.cobFaixa=filt.cobFaixa?(Array.isArray(filt.cobFaixa)?filt.cobFaixa:[filt.cobFaixa]):[]; S.cli.cobSub=''; S.cli.cobMax=(filt.cobMax!=null&&!isNaN(+filt.cobMax))?Math.max(0,+filt.cobMax):''; if(filt.curva!=null){S.cli.curva=Array.isArray(filt.curva)?filt.curva:[filt.curva];syncCurvaUI();} render(); }
+function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast?(Array.isArray(filt.abast)?filt.abast:[filt.abast]):[]; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; S.cli.cobFaixa=filt.cobFaixa?(Array.isArray(filt.cobFaixa)?filt.cobFaixa:[filt.cobFaixa]):[]; S.cli.cobSub=''; S.cli.cobMax=(filt.cobMax!=null&&!isNaN(+filt.cobMax))?Math.max(0,+filt.cobMax):''; S.cli.desacel=!!filt.desacel;/* zera quando ausente: sem isto o drill seguinte herda a watchlist */ if(filt.curva!=null){S.cli.curva=Array.isArray(filt.curva)?filt.curva:[filt.curva];syncCurvaUI();} render(); }
 
 /* ───────── boot ───────── */
 async function init(){
@@ -3463,6 +3546,8 @@ async function init(){
   $('#p-meta-a').value=S.params.metaA; $('#p-meta-b').value=S.params.metaB; $('#p-meta-c').value=S.params.metaC;
   $('#p-ideal-dias').value=S.params.idealDias; $('#p-ideal-meta').value=S.params.idealMeta;
   $('#p-novo-dias').value=S.params.novoDias;
+  $('#p-desacel-de').value=S.params.desacelDe; $('#p-desacel-ate').value=S.params.desacelAte;
+  $('#p-desacel-cob').value=S.params.desacelCob; $('#p-desacel-valor').value=S.params.desacelValor;
   const giroModo=()=>S.params.sazonal?2:(S.params.forecast?1:0);  // 0=media3 1=forecast 2=sazonal
   $('#p-forecast').querySelectorAll('.seg-opt').forEach(o=>o.classList.toggle('on',+o.dataset.v===giroModo()));
   $('#p-forecast').querySelectorAll('.seg-opt').forEach(o=>o.onclick=()=>{const v=+o.dataset.v;S.params.forecast=v>=1?1:0;S.params.sazonal=v===2?1:0;$('#p-forecast').querySelectorAll('.seg-opt').forEach(x=>x.classList.toggle('on',x===o));});
@@ -3504,7 +3589,14 @@ async function init(){
     // clamp p/ querystring montada na mão, onde 0/lixo cai no default 45). Meta 0 é válida.
     idealDias:Math.max(1,_meta('#p-ideal-dias',45)),idealMeta:Math.min(100,_meta('#p-ideal-meta',90)),
     // piso de 1 dia pelo mesmo motivo do idealDias: 0 esvaziaria o card Novos em silêncio
-    novoDias:Math.max(1,_meta('#p-novo-dias',15))};loadData();};
+    novoDias:Math.max(1,_meta('#p-novo-dias',15)),
+    // Watchlist Em desaceleração. Os clamps espelham `core.merge_params`: janela invertida,
+    // cobertura ou valor negativos NÃO erram alto — só esvaziam o card, e card vazio se lê
+    // como "não há problema", nunca como "o parâmetro está quebrado".
+    desacelDe:Math.max(1,_meta('#p-desacel-de',20)),
+    desacelAte:Math.max(Math.max(1,_meta('#p-desacel-de',20))+1,_meta('#p-desacel-ate',60)),
+    desacelCob:Math.max(0,_meta('#p-desacel-cob',90)),
+    desacelValor:Math.max(0,_meta('#p-desacel-valor',200))};loadData();};
   document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{S.view=t.dataset.view;S.cli.parado='';S.cli.ruptura='';S.cli.cobFaixa=[];S.cli.cobSub='';render();});
   document.querySelectorAll('.navgroup').forEach(x=>x.onclick=()=>{ const g=x.dataset.group; if(GROUP_OF(S.view)!==g){ S.view=NAV[g][0]; S.cli.parado='';S.cli.ruptura='';S.cli.cobFaixa=[];S.cli.cobSub=''; render(); }});
   $('#overlay').onclick=closeDrawer; $('#modal-bg').onclick=e=>{if(e.target===$('#modal-bg'))closeModal();};

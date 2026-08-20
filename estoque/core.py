@@ -48,6 +48,26 @@ DEFAULTS = {
     # mercadoria que ainda não teve chance. Parâmetro (e não 15 cravado) pelo mesmo motivo do
     # `ideal_dias`: é calibração de negócio, e o diretor quer olhar o número antes de fixá-lo.
     "novo_dias":        15,        # dias desde a ENTRADA p/ o item contar como "produto novo"
+    # ── Watchlist "Em desaceleração" (08/2026, pedido do diretor) ──────────────────────────────
+    # ⚠️ Isto NÃO é capital parado e NÃO pode virar capital parado. Nasceu de um pedido para
+    # DERRUBAR o piso do parado de 60 para 20 dias; medido no BI, a faixa 20-59 é **100% curva C**
+    # (o item de curva A que está há mais tempo sem vender está há 14 dias, o de B há 16) e 392 dos
+    # 413 itens TÊM giro — eles vendem, só não venderam nas últimas semanas. Baixar o piso dobrava
+    # o KPI de capital parado (R$ 179k → R$ 366k) com rotação normal de curva C. A saída acordada
+    # foi uma lista à parte: quem está desacelerando aparece cedo sem contaminar o placar.
+    "desacel_de":        20,       # dias sem venda: início da janela de desaceleração
+    "desacel_ate":       60,       # fim (exclusivo) — daqui pra frente já é capital parado
+    # ⚠️ 90 é PISO, não preferência. A cobertura MEDIANA de um item de curva C que está vendendo
+    # normal é de **84 dias** nesta base (p25 40 · p75 195 · p90 463): ter 3 meses de estoque é o
+    # comportamento normal do item C. Em 90 o filtro ainda separa (deixa passar 61% da janela);
+    # em 45 ele deixaria passar 82% e viraria enfeite. Descer daqui exige refazer a medição.
+    "desacel_cob":       90,       # cobertura (dias) acima da qual o item entra na watchlist
+    # Piso de valor: 41% da lista custava menos de R$ 200 por item e somava 6,8% do dinheiro.
+    # Sem ele a lista tem 249 linhas; com ele tem 147 e ainda carrega 93,2% do valor.
+    # ⚠️ É PISO DE VALOR, de propósito, e não um "top 50": lista de tamanho fixo NUNCA melhora —
+    # mostraria 50 itens hoje e 50 depois do problema resolvido pela metade. Numa métrica que a
+    # Evolução usa para provar gestão, número constante por construção é pior que não ter métrica.
+    "desacel_valor_min": 200,      # R$ mínimos de estoque parado no item p/ entrar na lista
 }
 _STR_PARAMS = {"giro_base", "base_estoque"}
 
@@ -69,6 +89,13 @@ def merge_params(q):
     # card "Novos" e devolveria os itens ao 121+ sem ninguém perceber — o mesmo modo de falha
     # silenciosa que o `regua_estoque_ideal` já trata para o limiar do Estoque ideal.
     p["novo_dias"] = max(1, int(_n(p["novo_dias"]) or DEFAULTS["novo_dias"]))
+    # Clamps da watchlist, pelo mesmo motivo do `novo_dias`: nenhum deles erraria ALTO. Cobertura
+    # ou valor negativos, ou uma janela invertida (`de` >= `ate`), esvaziariam o card em silêncio —
+    # e card vazio é lido como "não tem problema nenhum", não como "o parâmetro está quebrado".
+    p["desacel_de"] = max(1, int(_n(p["desacel_de"]) or DEFAULTS["desacel_de"]))
+    p["desacel_ate"] = max(p["desacel_de"] + 1, int(_n(p["desacel_ate"]) or DEFAULTS["desacel_ate"]))
+    p["desacel_cob"] = max(0, int(_n(p["desacel_cob"])))
+    p["desacel_valor_min"] = max(0.0, _n(p["desacel_valor_min"]))
     return p
 
 
@@ -370,6 +397,36 @@ def cobertura_faixa_de(cob_dias):
 PARADO_NOVO = "novo"
 
 
+# Bandas FIXAS de dead stock (manual da planilha): ATENCAO 60-90, CRITICO 90-120, M.CRITICO 120+.
+# ⚠️ Extraído do `construir_produtos` em 08/2026 para virar FONTE ÚNICA. Antes esta regra existia
+# aqui (Cockpit, via `status_parado`) e o `parado_faixa_de` implementava a MESMA ideia com piso 15
+# (aba Estoque parado e série da Evolução). Medido no BI real no mesmo dia: R$ 181.181,76 contra
+# R$ 433.647,22 — e, somando só as faixas de 61 dias para cima, R$ 181.154,97. Os R$ 26,79 de
+# resto eram o item com exatamente 60 dias (uma banda começa em 60, a outra em 61). Ou seja: as
+# duas nunca foram conceitos diferentes, eram a mesma conta concordando por sorte.
+def status_parado_de(dias_sem_venda, qtdisp, dias_sem_entrada=None, novo_dias=15):
+    """Status de dead stock do item — `None` quando não é capital parado.
+
+    ⚠️ Quem NUNCA vendeu conta os dias a partir da ENTRADA (mesma régua do `parado_faixa_de`);
+    quem chegou dentro de `novo_dias` é `novo` e fica fora do capital parado."""
+    d = dias_sem_venda
+    if d is None and dias_sem_entrada is not None:
+        d = dias_sem_entrada
+    if (qtdisp or 0) <= 0:
+        return None
+    if dias_sem_venda is None and dias_sem_entrada is not None and dias_sem_entrada < novo_dias:
+        return PARADO_NOVO           # chegou agora e ainda não teve chance de vender
+    if d is None:
+        return "muito_critico"       # nunca vendeu e sem data de entrada → pior caso
+    if d >= 120:
+        return "muito_critico"
+    if d >= 90:
+        return "critico"
+    if d >= 60:
+        return "atencao"
+    return None
+
+
 def eh_parado(p):
     """True quando o item conta como CAPITAL PARADO de verdade.
 
@@ -379,6 +436,54 @@ def eh_parado(p):
     campo volta a somar produto recém-chegado como dead stock."""
     st = p.get("status_parado")
     return bool(st) and st != PARADO_NOVO
+
+
+def em_desaceleracao(p, params=None):
+    """True quando o item entra na watchlist **Em desaceleração** — o aviso ANTES do dead stock.
+
+    FONTE ÚNICA da pergunta "isto está desacelerando?" (espelhada em `emDesaceleracao` no JS).
+
+    Três condições, e cada uma existe por um motivo medido no BI real:
+    1. **parou de vender há [`desacel_de`, `desacel_ate`) dias** — o sinal;
+    2. **cobertura > `desacel_cob`** — sem isto a lista vira "todo item de curva C do mês". Os 72
+       itens da janela com cobertura ≤ 45d somavam R$ 9.773: item C com pouco estoque que não
+       vendeu esse mês não é problema, é o ciclo dele;
+    3. **valor ≥ `desacel_valor_min`** — corta a poeira (41% das linhas, 6,8% do dinheiro).
+
+    ⚠️ **NUNCA pode intersectar o capital parado.** O `eh_parado` na primeira linha é o que garante
+    isso *independentemente dos parâmetros*: se alguém subir `desacel_ate` acima do piso do parado
+    (60), o item não é contado duas vezes — ele já é dead stock e sai daqui. Sem essa guarda, o
+    "Capital parado + Em desaceleração" que a tela mostra lado a lado poderia somar mais que o
+    estoque, que é o modo de falha clássico de duas medidas com universos que se tocam.
+
+    ⚠️ **Item com giro 0 e venda recente ENTRA** de propósito. `_giro_mensal` arredonda para
+    inteiro, então quem vendeu 1 unidade em 3 meses tem giro 0 e cobertura 9999 — e um item que
+    vendeu há 30 dias e cuja média trimestral zerou é exatamente o que a aba quer pegar cedo.
+    São 14 itens hoje. Eles também aparecem no "sem giro" do Cockpit; essa sobreposição é entre
+    duas LENTES e é aceita — a que não pode existir é com o capital parado, tratada acima."""
+    if eh_parado(p):
+        return False
+    pr = params or DEFAULTS
+    d = p.get("dias_sem_venda")
+    if d is None or not (pr["desacel_de"] <= d < pr["desacel_ate"]):
+        return False
+    if (p.get("qtdisp") or 0) <= 0:
+        return False
+    cob = p.get("cobertura_dias")
+    if cob is None or cob <= pr["desacel_cob"]:
+        return False
+    return (p.get("valor") or 0) >= pr["desacel_valor_min"]
+
+
+def resumo_desaceleracao(produtos, params=None):
+    """{qt, valor, itens} da watchlist — `itens` já ordenados por valor (maior ofensor primeiro).
+
+    A ordenação vive AQUI e não na tela porque o export lê deste mesmo lugar: a lista que o
+    comprador vê no Cockpit tem de ser a mesma que sai no Excel, na mesma ordem."""
+    itens = sorted((p for p in produtos if em_desaceleracao(p, params)),
+                   key=lambda x: -(x.get("valor") or 0))
+    return {"qt": len(itens), "valor": _round(sum(p.get("valor") or 0 for p in itens)),
+            "itens": itens}
 
 
 # faixa de "dias parado" p/ o relatório de Estoque Parado — indicador.
@@ -793,23 +898,8 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         # Cockpit lê `status_parado`, e deixar só um corrigido é a armadilha da Ruptura de novo
         # (a tela dizia 4 e o drill 3 porque duas das três implementações não foram atualizadas).
         sem_giro = giro_dia <= 0 and qtdisp > 0
-        _d_parado = dias_sem_venda
-        if _d_parado is None and dias_sem_entrada is not None:
-            _d_parado = dias_sem_entrada
-        if qtdisp <= 0:
-            status_parado = None
-        elif dias_sem_venda is None and dias_sem_entrada is not None and dias_sem_entrada < params["novo_dias"]:
-            status_parado = PARADO_NOVO          # chegou agora e ainda não teve chance de vender
-        elif _d_parado is None:
-            status_parado = "muito_critico"      # nunca vendeu e sem data de entrada → pior caso
-        elif _d_parado >= 120:
-            status_parado = "muito_critico"
-        elif _d_parado >= 90:
-            status_parado = "critico"
-        elif _d_parado >= 60:
-            status_parado = "atencao"
-        else:
-            status_parado = None
+        status_parado = status_parado_de(dias_sem_venda, qtdisp, dias_sem_entrada,
+                                         int(params["novo_dias"]))
 
         if dt_saida is None:
             status_saida = "sem_saida"
@@ -1044,7 +1134,10 @@ FAIXAS_COB = [
 ]
 
 
-def cockpit(produtos):
+def cockpit(produtos, params=None):
+    """⚠️ `params` é OPCIONAL e cai nos DEFAULTS: só a watchlist "Em desaceleração" o usa, e
+    deixá-lo obrigatório quebraria os chamadores existentes (e todo fixture de teste) por uma
+    métrica nova. Quem quiser a watchlist calibrada tem de passá-lo (o `/api/snapshot` passa)."""
     valor_total = sum(p["valor"] or 0 for p in produtos)
     venda_total = sum(p["venda"] or 0 for p in produtos)
     lucro_total = sum(p["lucro"] or 0 for p in produtos)
@@ -1053,6 +1146,7 @@ def cockpit(produtos):
     sem_giro = [p for p in com_estoque if (p["giro_dia"] or 0) <= 0]
 
     valor_parado = sum(p["valor"] or 0 for p in produtos if eh_parado(p))   # `novo` fica fora
+    desacel = resumo_desaceleracao(produtos, params)   # disjunto do parado por construção
     valor_sem_giro = sum(p["valor"] or 0 for p in sem_giro)
 
     faixas = []
@@ -1099,6 +1193,11 @@ def cockpit(produtos):
         "valor_parado": _round(valor_parado),
         "pct_capital_parado": _round(valor_parado / valor_total * 100, 1) if valor_total else 0,
         "valor_sem_giro": _round(valor_sem_giro),
+        # watchlist "Em desaceleração" — o aviso ANTECIPADO, reportado à PARTE do capital parado
+        # (os dois conjuntos são disjuntos; ver `em_desaceleracao`). Sem `itens` aqui: o payload
+        # do /api/snapshot já é o mais pesado do módulo e a tela remonta a lista do `produtos`
+        # que ela própria recebeu — mandar os itens de novo seria duplicá-los na rede.
+        "desaceleracao": {"qt": desacel["qt"], "valor": desacel["valor"]},
         "faixas_cobertura": faixas,
         "abc": abc,
         "matriz_abc_xyz": matriz,

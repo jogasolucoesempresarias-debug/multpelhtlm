@@ -922,7 +922,10 @@ def api_snapshot():
         "params": params,
         "n": len(produtos),
         "produtos": produtos,
-        "cockpit": core.cockpit(produtos),
+        # ⚠️ `params` viaja porque a watchlist "Em desaceleração" é parametrizável (janela,
+        # cobertura e piso de valor). Sem ele o card sairia sempre nos defaults e os campos de
+        # ⚙ Parâmetros não moveriam nada — a mesma falha silenciosa do `novo_dias`.
+        "cockpit": core.cockpit(produtos, params),
         "fornecedores": core.fornecedores(produtos, params),
         "compradores": core.por_comprador(produtos),
     })
@@ -1258,6 +1261,18 @@ def api_evolucao():
 # a aba um dia comemorar uma ruptura. E a ruptura estavel ao lado da queda que prova gestao.
 _EVO_DIRECAO = {"valor_parado": "menor_melhor", "n_ruptura": "menor_melhor",
                 "pct_ruptura": "menor_melhor",
+                # A watchlist cai quando o comprador age (vendeu, devolveu, parou de repor) — e,
+                # ao contrario do valor de estoque, ela nao tem leitura ruim quando cai: nenhum
+                # item sai daqui por desabastecimento, porque entrar exige cobertura ALTA.
+                # ⚠️ E aqui que o piso de VALOR (em vez de um "top 50") se paga: lista de tamanho
+                # fixo daria uma serie constante, que nao pode melhorar nem piorar.
+                "valor_desacel": "menor_melhor",
+                # ⚠️ Ocupação SEM cor, mesma regra do valor de estoque: subir pode ser depósito
+                # enchendo (ruim, acaba o espaço) ou giro entrando (bom), e cair pode ser
+                # organização (bom) ou desabastecimento (ruim). Pintar de verde ou vermelho seria
+                # afirmar uma direção que o número sozinho não tem — quem dá o sentido é ela ao
+                # lado do valor de estoque e da ruptura, que é o motivo de estarem na mesma aba.
+                "ocupacao_pct": None,
                 "pct_ideal": "maior_melhor", "valor_estoque": None}
 
 
@@ -1988,6 +2003,13 @@ def _aplicar_filtros_cliente(produtos, skip=()):
             pass
     if g("sem_ped") in ("1", "true", "sim"):
         out = [p for p in out if (p.get("qtd_ja_pedida") or 0) <= 0]
+    # watchlist "Em desaceleração" (drill do card do Cockpit). Filtro COMPOSTO — janela sem venda
+    # + cobertura + piso de valor — e é por isso que ele é um parâmetro próprio em vez de uma
+    # combinação de `cob_max`/`par_faixa`: nenhum filtro existente expressa "cobertura MÍNIMA", e
+    # montá-lo com as peças de hoje daria tela e export divergindo na primeira mudança de régua.
+    if g("desacel") in ("1", "true", "sim"):
+        _pr = core.merge_params(a.to_dict())
+        out = [p for p in out if core.em_desaceleracao(p, _pr)]
     bs = g("busca")
     if bs:
         bs = bs.lower()

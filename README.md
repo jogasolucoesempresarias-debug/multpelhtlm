@@ -118,9 +118,9 @@ série não amadurece.
   seguem o Painel gerencial (`resumo_cobertura`, giro≤0 cai no 121+, então Σ faixas = valor de
   estoque e o empilhado fecha com o KPI); o trio ideal/risco/sem-giro segue `resumo_estoque_ideal`
   (sem-giro à parte). Unificar faria a série discordar de uma das telas que ela reproduz.
-- **Robô** (`estoque/historico.py` + job no `server.py`): 6h-12h, minuto 40. Janela larga porque o
-  refresh do BI não tem hora fixa — e a foto **só sai depois do refresh do dia**, senão grava a
-  posição de ontem com a data de hoje. `ja_fotografado` impede refazer nas passagens seguintes;
+- **Robô** (`estoque/historico.py` + job no `server.py`): **18h-22h**, minuto 40 (ver acima). Janela de 5 passagens
+  para um restart no horário exato não custar o dia — e a foto **só sai depois do refresh do dia**,
+  senão grava a posição de ontem com a data de hoje. `ja_fotografado` impede refazer nas passagens seguintes;
   upsert porque o Swarm pode ter réplica. **Fora do `CRON_HABILITADO`**: aquele interruptor é para
   não mandar e-mail, e perder um dia de foto é irrecuperável.
 - **Grão `data × unidade × produto`** (~6k linhas/dia, ~265 MB/ano na base real da Multpel: 4.519
@@ -158,9 +158,24 @@ série não amadurece.
   janela" — com uma foto o delta é zero por construção, e "0%" afirma uma medição que não foi
   feita (hoje sai `—`). O sintoma só existe no **primeiro dia de cada instância nova**, por isso
   virou gate: `tests/test_evolucao_acesso.py`.
+- 🩹 **Capital parado: a série passou a usar a régua do Cockpit (60+ dias)** — antes usava a do
+  `parado_faixa_de` (piso **15**), e no BI real, no mesmo dia e na mesma base, a série dizia
+  **R$ 433.647** onde o Cockpit dizia **R$ 181.182**, as duas com o rótulo "Capital parado".
+  **Não eram conceitos diferentes:** somando só as faixas de 61 dias para cima, a régua antiga
+  dava R$ 181.155 — os R$ 26,79 de resto eram o item com exatamente 60 dias (uma banda começa em
+  60, a outra em 61). Era a mesma conta concordando por sorte. Item sem vender há 20 dias é
+  **rotação** num distribuidor, não dead stock: a faixa 15-30 sozinha eram R$ 151.699, e
+  chamá-la de capital parado fazia o KPI gritar lobo. Fonte única: **`core.status_parado_de`**,
+  chamada pelo `construir_produtos` e pelo `agregar`. A **aba Estoque parado segue em 15+** de
+  propósito — lá o papel é mostrar o gradiente. ⚠️ Muda o número **sem ninguém mexer na
+  operação** (a série inteira cai ~50%, sem degrau, porque a foto guarda o ingrediente):
+  comparar antes×depois uma vez. Gate: `test_a_serie_da_evolucao_usa_a_MESMA_regua_do_cockpit`.
 - **O rollup se auto-invalida** (`_rollup_atual`): payload gravado por uma versão anterior do
   `agregar` é recusado e a leitura cai no cru. Antes, métrica nova exigia lembrar do
   `rebuild_rollup` no deploy — e esquecer **não dava erro**, servia o agregado velho em silêncio.
+  ⚠️ A checagem por CHAVES só pega métrica nova; **não vê métrica que muda de significado** — foi
+  o caso do parado acima (mesmas chaves, número diferente). Por isso o payload leva um selo
+  **`_v` (`_ROLLUP_VERSAO`)**: suba o número sempre que mudar o resultado do `agregar`.
   O rebuild continua valendo, mas agora por **performance**, não por correção.
 - 🚧 **Ainda não tem export** (CSV/XLSX/PDF) nem entra no catálogo de e-mail — enquanto for
   ADM-only isso não faz falta, mas é o que falta para ela virar aba normal.
@@ -319,6 +334,101 @@ mesmo tendo chegado ontem.
   rótulo carrega a janela em dias; a coluna "Dias parado" mostra **"chegou há Xd"** em vez de
   "nunca" nesses itens, e ganhou a coluna ordenável **"Chegou há"**.
   Gate: `tests/test_parado_novos.py` (18 testes, incluindo a partição das faixas).
+
+**Horário da foto: 18h-22h, minuto 40** (era 6h-12h até 08/2026). A mudança veio de **medição**,
+não de preferência: o dataset Estoque atualiza **7x por dia** — 06:26 · 08:28 · 10:24 · 12:25 ·
+14:24 · 16:23 · **17:44** (BRT, apurado no *refresh history* da API). Fotografando de manhã, a 1ª
+passagem pegava o refresh das **06:26**, que é a posição **antes de qualquer movimento do dia** —
+ou seja, o fechamento de ontem carimbado com a data de hoje. Às 18h40 a foto sai depois do
+**último** refresh e passa a valer o fechamento **real** do dia.
+- ⚠️ **Continua sendo JANELA (5 passagens), não disparo único.** Perder um dia é irrecuperável, então
+  um deploy às 18h40 não pode custar a foto. Teto em 22h para nunca cruzar a meia-noite e gravar a
+  posição de um dia na data do outro.
+- ⚠️ **Muda o significado da série uma vez**: cada ponto passa de "início do dia" para "fim do dia",
+  um deslocamento de ~1 dia de movimento. Feito em 20/08/2026, com **2 fotos** no banco — foi o
+  momento mais barato possível para fazer isso, e depois de 90 dias de série teria custado um degrau.
+
+**Ocupação do depósito na série** (08/2026, pedido do diretor: *"será que dá para colocar o gráfico
+de ocupação ali também? Só o percentual de ocupação"*). KPI + gráfico próprio na Evolução.
+- **Tabela nova `estoque_foto_estado`** (`data × unidade → payload JSONB`). ⚠️ **NÃO foi para a
+  `estoque_foto_dia`**, que tem exatamente a mesma forma e está ao lado: aquela é o **rollup**, isto
+  é, *cache* de `historico.agregar`, descartável e reconstruível por `rebuild_rollup`. A ocupação é
+  dado **primário e irrecuperável** — a posição do WMS de ontem não existe em lugar nenhum do
+  Winthor. Misturar as duas faria um `rebuild_rollup` de rotina **apagar histórico que não se
+  refaz**, sem erro nenhum.
+- **`payload` é JSONB e não colunas** de propósito: a lista de métricas de estado vai crescer, e com
+  colunas cada uma seria uma migration. O UPSERT faz **merge** (`payload || EXCLUDED.payload`), então
+  métrica nova não apaga as que já foram medidas naquele dia.
+- **Só os escalares** (`posicoes`/`ocupadas`/`livres`/`bloqueados`/`pct` + picking×pulmão). Rua e
+  vaga vazia são retrato de **endereço**; a série responde "o depósito está enchendo?".
+- ⚠️ **Try próprio, depois do `gravar`**: a ocupação vem de outra fonte (PCENDERECO). WMS fora do ar
+  não pode custar a foto do estoque, que é o dado principal.
+- ⚠️ **Com recorte ativo ela NÃO viaja** (`historico._com_estado`). O grão é **posição do WMS**, que
+  não se decompõe por comprador, fornecedor, curva ou XYZ — servir o número do depósito inteiro ao
+  lado de um gráfico filtrado pela curva A é a falha clássica do módulo. O KPI mostra `—` e diz por quê.
+- ⚠️ **Sem cor** (`_EVO_DIRECAO["ocupacao_pct"] = None`), mesma regra do valor de estoque: subir pode
+  ser depósito enchendo (ruim) ou giro entrando (bom). Quem dá o sentido é a linha ao lado do valor
+  e da ruptura. E o **eixo não começa em zero** — ocupação vive numa faixa estreita (hoje 84,0%) e
+  forçar o zero achataria a linha; é o oposto do gráfico de valor, onde truncar exageraria.
+- **Medido hoje:** Atacado **84,0%** (4.446 de 5.290 posições). ⚠️ As unidades `am`/`ac`/`jid` não
+  têm endereçamento no WMS (0 posições) e saem com `—` — degradação correta, não defeito.
+- **O merge vive em `serie()`, não em `agregar()`**: o `agregar` é PURO (recebe linhas, não toca
+  banco), e é essa pureza que permite recalcular o passado. Fazê-lo ler outra tabela mataria isso.
+
+**Watchlist "Em desaceleração" — o aviso ANTES do capital parado** (08/2026). Card no Cockpit
+(drill para Análise → Produtos), painel dos maiores ofensores, e métrica na série da Evolução.
+Nasceu de um pedido para **derrubar o piso do capital parado de 60 para 20 dias** — e a medição
+é que mostrou por que isso seria caro:
+
+| | SKUs | valor | % do estoque |
+|---|---:|---:|---:|
+| capital parado hoje (60+ dias) | 420 | R$ 179.395 | 2,9% |
+| se o piso caísse para 20 dias | 833 | R$ 365.920 | 6,0% |
+
+- ⚠️ **A faixa 20-59 dias é 100% curva C.** Não é aproximação: o item de **curva A** que está há
+  mais tempo sem vender está há **14 dias**, e o de **curva B**, há **16** — nenhum dos dois
+  alcança 20. E **392 dos 413** itens da faixa **têm giro**: eles vendem, só não venderam nas
+  últimas semanas. Baixar o piso **dobraria o KPI** com rotação normal de curva C, num placar cuja
+  função é apontar dead stock. Item que não vende há 3 semanas num distribuidor é o ciclo dele.
+- **A saída foi uma lista à parte, não uma régua nova.** Três condições
+  (`core.em_desaceleracao`): parou de vender há **20-59 dias** · cobertura **> 90 dias** ·
+  valor **≥ R$ 200**. Hoje: **146 SKUs / R$ 128.368**, também 100% curva C.
+- ⚠️ **É DISJUNTA do capital parado por construção**, não por coincidência de parâmetro: a 1ª
+  linha de `em_desaceleracao` é `if eh_parado(p): return False`. Sem ela, subir `desacel_ate`
+  acima de 60 faria os dois cards contarem o mesmo item, e "parado + desacelerando" poderia
+  passar do valor de estoque. Gate: `test_disjuncao_resiste_a_parametro_que_invade_a_faixa_do_parado`.
+- ⚠️ **90 dias de cobertura é PISO, não preferência.** A cobertura **mediana** de um item de curva
+  C **que está vendendo normal** é de **84 dias** nesta base (p25 40 · p75 195 · p90 463) — ter 3
+  meses de estoque é o comportamento normal do item C. Em 90 o filtro ainda separa (deixa passar
+  61% da janela); em 45 deixaria passar 82% e a condição viraria enfeite. **Descer daqui exige
+  refazer a medição**, não é ajuste de gosto. O corte foi negociado de 120 → 90 com o diretor: a
+  diferença são 27 SKUs e R$ 11.119 (+9% do valor), e "3 meses" é regra que a pessoa lembra.
+- ⚠️ **O piso de R$ 200 é PISO DE VALOR, e não um "top 50"** — a alternativa que estava na mesa.
+  Lista de tamanho fixo **nunca melhora**: mostraria 50 itens hoje e 50 depois do problema
+  resolvido pela metade. Como a métrica entra na Evolução, que existe para provar gestão, número
+  constante por construção é pior que não ter métrica. O piso corta 41% das linhas levando só
+  6,8% do dinheiro. Gate: `test_a_lista_ENCOLHE_quando_o_problema_diminui`.
+- **Na Evolução ela nasce com o histórico inteiro**, não com um ponto: a régua sai de `dias sem
+  venda` + `cobertura_dias` + `valor`, os três já gravados na foto desde o 1º dia. É o segundo
+  pagamento da decisão de guardar o **ingrediente** em vez do resultado. No gráfico ela é a linha
+  **tracejada no mesmo eixo do parado** (grandezas parecidas: R$ 128k × R$ 179k) — eixo próprio a
+  faria parecer maior que o parado, e a leitura da aba é qual dos dois alimenta o outro.
+  `_ROLLUP_VERSAO` subiu para **3**.
+- ⚠️ **Item com giro 0 e venda recente ENTRA** de propósito: `_giro_mensal` arredonda para inteiro,
+  então quem vendeu 1 unidade em 3 meses tem giro 0 e cobertura 9999. Item que vendeu há 30 dias e
+  cuja média trimestral zerou é exatamente o alvo. São 14 itens; eles também aparecem no "sem giro"
+  do Cockpit, e essa sobreposição entre LENTES é aceita — a proibida é com o capital parado.
+- **4 parâmetros** em ⚙ Parâmetros (`desacel_de`/`_ate`/`_cob`/`_valor_min`), com clamp em
+  `merge_params` — nenhum valor de entrada erra alto, todos apenas esvaziariam o card, e card
+  vazio se lê como "não há problema". Eles viajam no `serverQS()` **e** no `exportQS()`: o card sai
+  do backend e o filtro do export é refeito lá com os mesmos params, senão mexer no painel moveria
+  a tela e não moveria o Excel.
+- 🩹 **De quebra, o campo que provavelmente originou o pedido:** ⚙ Parâmetros tinha
+  **"Parado: dias parados (≥)" = 60**, que parece o botão da régua mas é só **filtro de listagem**
+  da aba Estoque parado (`core.py`, "não desloca faixa"). Quem o mudasse para 20 não veria nada
+  acontecer. Relabelado para **"Parado: mín. dias p/ listar"** com o escopo no `title`.
+- Gate: `tests/test_desaceleracao.py` (25 testes). ⚠️ O 1º deles trava que **o capital parado não
+  se mexe** — se ele cair, a decisão inteira foi revertida sem querer.
 
 **Meta de ruptura — uma meta por curva** (07/2026). Era A (2%) × B+C (5%); virou **A / B / C**
 (2% / 5% / 10%), editáveis em ⚙ Parâmetros. ⚠️ Separar **afrouxa o placar sem ninguém mexer na
@@ -587,7 +697,7 @@ ANALYTICS_DB_NAME=joga_demo   # banco analítico (ANALYTICS_DB_* faz fallback pr
 > demo **não envelhece** sem regenerar. O default powerbi usa `TODAY()` normal.
 
 **Gates:** `tests/test_provider_*.py` (Dashboard, Comercial, Metas, Mix, Radar, Estoque, RBAC) +
-`test_medida_compat.py`. Baseline **659 passam / 3 falham** (as 3 são fixture de data do
+`test_medida_compat.py`. Baseline **701 passam / 3 falham** (as 3 são fixture de data do
 Comercial: radar/mix/cohort).
 ⚠️ Até 19/08/2026 o baseline dizia "5 falham", contando 2 do `test_provider_estoque` como
 *"dependem de um `joga_demo` local com venda no mês corrente"*. **Nunca foi ambiente:** elas
@@ -648,7 +758,7 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 ├── estoque/provider_sql.py         # 🆕 modo postgres do Compras
 ├── docker-compose.demo.yml         # 🆕 stack da instância DEMO (Portainer)
 ├── _seed_demo/                     # 🆕 base sintética reprodutível (joga_demo) + bootstrap + seeder
-└── tests/                          # pytest (659 passam; 3 falham por fixture de data — não é regressão)
+└── tests/                          # pytest (701 passam; 3 falham por fixture de data — não é regressão)
 ```
 
 ---
@@ -660,7 +770,7 @@ cp .env.example .env        # preencher (ver variáveis abaixo)
 docker compose -f docker-compose.dev.yml up -d redis
 python -X utf8 init_db.py   # cria/migra schema + admin default (ADMIN_EMAIL / ADMIN_SENHA)
 python -X utf8 server.py    # http://localhost:5000
-pytest -q                   # 659 passam, 3 falham (fixture de data do Comercial — não é regressão)
+pytest -q                   # 701 passam, 3 falham (fixture de data do Comercial — não é regressão)
 ```
 
 Variáveis novas da fusão no `.env` (além das do Power BI/DB/Redis/Resend):
@@ -808,7 +918,7 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 5. **Checagem de API usa `'/api/' in path`, não `startswith`** — por causa de `/estoque/api/...`.
 6. **Não editar `MultpelEstoque/`** (repo congelado) nem publicar em `:latest` sem intenção.
 7. **3 testes falham por fixture de data** (radar/mix/cohort) — pré-existentes, **não** são regressão.
-   O baseline é **659 passam / 3 falham**. As 2 do `test_provider_estoque` que constavam aqui
+   O baseline é **701 passam / 3 falham**. As 2 do `test_provider_estoque` que constavam aqui
    como dependência de ambiente eram, na verdade, o bug de ancoragem de data (armadilha nº 17).
 8. **Verificação visual de tema não confia em captura** das telas de dados (Power BI muda o conteúdo
    entre capturas) — comparar cor computada (`getComputedStyle`), não pixels.

@@ -23,12 +23,16 @@ from estoque import core, historico
 D1, D2 = date(2026, 8, 14), date(2026, 8, 15)
 
 
-def _linha(dia, qtdisp, valor, giro_dia, cob, dtsaida=None, dtent=None, curva="C"):
+def _linha(dia, qtdisp, valor, giro_dia, cob, dtsaida=None, dtent=None, curva="C",
+           ja_ped=0, transito=0):
     """Uma linha CRUA da foto, na ORDEM POSICIONAL que o SELECT do `serie()` devolve.
 
     ⚠️ Aridade é contrato: `_SQL_CRU`, este helper e o desempacotamento do `agregar` andam
-    juntos. Ver `test_a_ordem_do_select_casa_com_o_agregar`."""
-    return (dia, qtdisp, valor, giro_dia, cob, dtsaida, dtent, curva)
+    juntos. Ver `test_a_ordem_do_select_casa_com_o_agregar`.
+
+    `ja_ped`/`transito` entraram em 08/2026 com o `n_rup_sem_prov` (a régua da Meta de ruptura).
+    Default 0 = "sem providência", que é o caso que a maioria dos testes quer."""
+    return (dia, qtdisp, valor, giro_dia, cob, dtsaida, dtent, curva, ja_ped, transito)
 
 
 # ───────────────── 1. as 4 séries saem do cru ─────────────────
@@ -84,13 +88,18 @@ def test_sem_giro_fica_fora_do_percentual_ideal():
 def test_mudar_a_regua_do_produto_novo_reescreve_o_passado():
     """A prova de que guardar o cru valeu: MESMAS linhas, `novo_dias` diferente, capital parado
     diferente — sem tocar no banco. Se a foto guardasse o total já somado, este número estaria
-    congelado e a correção da régua viraria um degrau no gráfico."""
-    # item que NUNCA vendeu e entrou há 20 dias
-    linhas = [_linha(D1, 10, 1000.0, 0.0, 9999, dtsaida=None, dtent=date(2026, 7, 25))]
+    congelado e a correção da régua viraria um degrau no gráfico.
+
+    ⚠️ A fixture usava entrada de 20 dias, que servia quando o piso do parado na série era 15.
+    Em 08/2026 a série passou a usar a régua do Cockpit (**60+ dias**), e 20 dias deixou de ser
+    dead stock em qualquer janela — o teste passaria a comparar dois zeros. Agora a entrada é de
+    70 dias, que ATRAVESSA o piso novo: dead stock com `novo_dias=15`, ainda "novo" com 90."""
+    # item que NUNCA vendeu e entrou há 70 dias (D1 = 14/08/2026)
+    linhas = [_linha(D1, 10, 1000.0, 0.0, 9999, dtsaida=None, dtent=date(2026, 6, 5))]
     with_15 = historico.agregar(linhas, {"novo_dias": 15})
-    with_30 = historico.agregar(linhas, {"novo_dias": 30})
-    assert with_15[0]["valor_parado"] == 1000.0, "com janela de 15d ele é dead stock"
-    assert with_30[0]["valor_parado"] == 0.0, "com janela de 30d ele ainda é 'novo'"
+    with_90 = historico.agregar(linhas, {"novo_dias": 90})
+    assert with_15[0]["valor_parado"] == 1000.0, "com janela de 15d ele é dead stock (70 > 60)"
+    assert with_90[0]["valor_parado"] == 0.0, "com janela de 90d ele ainda é 'novo'"
 
 
 def test_mudar_o_limiar_do_estoque_ideal_reescreve_o_passado():
@@ -191,16 +200,18 @@ def test_qualquer_recorte_desvia_do_rollup(monkeypatch):
     """⚠️ O rollup é o agregado da EMPRESA na régua padrão. Se um filtro novo não entrar na
     condição, a aba serve o total da empresa para quem pediu a curva A — sem erro, só o número
     errado. Este teste é o que impede o próximo filtro de esquecer disso."""
-    monkeypatch.setattr(historico, "_serie_rollup", lambda *a, **k: ["ROLLUP"])
+    # ⚠️ Sentinelas são DICTS com "data", não strings: o `serie()` costura o estado do dia
+    # (ocupação do WMS) na saída antes de devolver, e um item sem "data" não é um dia.
+    monkeypatch.setattr(historico, "_serie_rollup", lambda *a, **k: [{"data": "2026-08-19", "via": "ROLLUP"}])
     monkeypatch.setattr(historico, "_linhas_cruas", lambda *a, **k: [])
-    monkeypatch.setattr(historico, "agregar", lambda linhas, params=None: ["CRU"])
+    monkeypatch.setattr(historico, "agregar", lambda linhas, params=None: [{"data": "2026-08-19", "via": "CRU"}])
 
-    assert historico.serie("atacado") == ["ROLLUP"], "sem recorte, o caminho rápido tem de valer"
+    assert historico.serie("atacado")[0]["via"] == "ROLLUP", "sem recorte, o caminho rápido tem de valer"
     for recorte in ({"curva": "A"}, {"xyz": "X"}, {"comprador": "3"}, {"fornecedor": "9"}):
-        assert historico.serie("atacado", **recorte) == ["CRU"], \
+        assert historico.serie("atacado", **recorte)[0]["via"] == "CRU", \
             f"{list(recorte)[0]} não pode ser servido pelo rollup da empresa"
     # ⚙ Parâmetro fora do padrão também recalcula (é o "reescrever o passado")
-    assert historico.serie("atacado", params={"novo_dias": 30}) == ["CRU"]
+    assert historico.serie("atacado", params={"novo_dias": 30})[0]["via"] == "CRU"
 
 
 def test_rollup_de_versao_antiga_nao_e_servido(monkeypatch):
@@ -213,12 +224,22 @@ def test_rollup_de_versao_antiga_nao_e_servido(monkeypatch):
     """
     velho = {"data": "2026-08-19", "valor_estoque": 1.0, "valor_parado": 0.0,
              "n_ruptura": 0, "pct_ideal": 1.0, "faixas": {}}          # sem pct_ruptura/curva
-    assert historico._rollup_atual(velho) is False
-    assert historico._rollup_atual({**velho, "pct_ruptura": 0.0, "ruptura_curva": {}}) is True
+    # ⚠️ "completo" = o que o `agregar` de HOJE produz. Métrica nova entra aqui junto com
+    # a entrada no `_ROLLUP_CHAVES`: foi assim que a watchlist "Em desaceleração" (08/2026)
+    # fez este teste falhar — o gate funcionando, não uma regressão.
+    completo = {**velho, "pct_ruptura": 0.0, "ruptura_curva": {},
+                "valor_desacel": 0.0, "n_desacel": 0, "n_rup_sem_prov": 0}
+    assert historico._rollup_atual(velho) is False, "faltando métrica nova"
     assert historico._rollup_atual(None) is False
+    # ⚠️ CHAVES COMPLETAS NÃO BASTAM. Ao alinhar o capital parado com a régua do Cockpit (60+
+    # dias no lugar de 15+), as chaves ficaram idênticas e só o NÚMERO mudou — sem o selo de
+    # versão os rollups já gravados serviriam o valor antigo em silêncio, numa aba feita para
+    # provar gestão. Este é o caso que a checagem por chaves não pegava.
+    assert historico._rollup_atual(completo) is False, "mesmas chaves, semântica antiga"
+    assert historico._rollup_atual({**completo, "_v": historico._ROLLUP_VERSAO}) is True
 
     monkeypatch.setattr(historico, "_serie_rollup", lambda *a, **k: None)
     monkeypatch.setattr(historico, "_linhas_cruas", lambda *a, **k: [])
-    monkeypatch.setattr(historico, "agregar", lambda linhas, params=None: ["CRU"])
-    assert historico.serie("atacado") == ["CRU"], \
+    monkeypatch.setattr(historico, "agregar", lambda linhas, params=None: [{"data": "2026-08-19", "via": "CRU"}])
+    assert historico.serie("atacado")[0]["via"] == "CRU", \
         "rollup recusado tem de cair no cru, não devolver vazio"

@@ -168,6 +168,27 @@ CREATE TABLE IF NOT EXISTS estoque_foto_dia (
     payload  JSONB NOT NULL,
     PRIMARY KEY (data, unidade)
 );
+-- ───────────────── estado do dia que NÃO sai do grão do item ─────────────────
+-- Métricas escalares por dia×unidade que não são decomponíveis por produto: ocupação do WMS
+-- (grão = POSIÇÃO), qualidade de cadastro (grão = base inteira), posição de pedidos em aberto.
+--
+-- ⚠️ **Por que não no `estoque_foto_dia`**, que é a tabela ao lado e tem exatamente esta forma:
+-- aquela é o ROLLUP, ou seja, CACHE de `historico.agregar` — ela pode ser jogada fora e
+-- reconstruída do cru a qualquer momento (`rebuild_rollup`), e o `_rollup_atual` a descarta
+-- sozinho quando a versão muda. Isto aqui é dado PRIMÁRIO e IRRECUPERÁVEL: a ocupação de ontem
+-- não existe em lugar nenhum do Winthor. Misturar os dois faria um `rebuild_rollup` de rotina
+-- APAGAR histórico que não se refaz — e sem erro nenhum, que é o pior modo de falha desta aba.
+--
+-- ⚠️ `payload` é JSONB de propósito, e não colunas: a lista de métricas de estado vai crescer
+-- (qualidade de cadastro, avaria, pedidos em aberto já estão mapeados). Com colunas, cada
+-- métrica nova seria uma migration; com payload, é só passar a gravar a chave — e o passado
+-- simplesmente não a tem, que é a verdade (ninguém mediu antes).
+CREATE TABLE IF NOT EXISTS estoque_foto_estado (
+    data     DATE NOT NULL,
+    unidade  TEXT NOT NULL,
+    payload  JSONB NOT NULL,
+    PRIMARY KEY (data, unidade)
+);
 -- ───────────────────── pesquisa de preço (captura em campo) ─────────────────────
 -- Pedido do diretor 08/2026: preencher o preço pesquisado direto no item, durante a visita.
 -- É a 1ª vez que a ferramenta vira FONTE de um dado que o Winthor não tem.
