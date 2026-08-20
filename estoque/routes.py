@@ -1250,10 +1250,63 @@ def api_evolucao():
     dias = historico.serie(unidade, ini, fim, comprador, fornec, request.args.to_dict(),
                            curva=curva, xyz=xyz)
     log = historico.dias_com_foto(unidade, ini, fim)
+    _juntar_vencidos(dias, _filiais_estoque(), comprador, fornec, curva, xyz)
     return jsonify({"ok": True, "unidade": unidade, "dias": dias, "log": log,
                     "filtros": {"comprador": comprador, "fornec": fornec,
                                 "curva": curva, "xyz": xyz},
                     "resumo": _resumo_evolucao(dias, log)})
+
+
+def _juntar_vencidos(dias, filiais, comprador=None, fornec=None, curva=None, xyz=None):
+    """Perda por validade (conta 200042) nas linhas da série — lida do LIVRO, não da foto.
+
+    ⚠️ **Vencido NÃO é fotografado, de propósito, e é o contraste que define o critério da aba.**
+    A baixa por validade é um lançamento contábil DATADO: ele fica no livro e continua lá para
+    sempre, então já existe mês a mês desde antes de a foto existir. Fotografá-lo criaria uma
+    segunda cópia de um dado que a contabilidade já tem — e no dia em que as duas divergissem, a
+    errada seria a nossa. O par com a **validade** (quanto está *a vencer*) é o exemplo inteiro do
+    critério: risco é ESTADO e some se ninguém guardar; perda é EVENTO e nunca some.
+
+    Efeito prático: esta coluna nasce com ANOS de histórico, não com os dias de foto que temos.
+
+    ⚠️ Honra comprador e fornecedor (as linhas do livro trazem os dois), mas **não** curva/XYZ:
+    essas viriam do cadastro de HOJE e reclassificariam baixas antigas com a régua de agora — o
+    oposto do que a foto faz ao gravar a curva no dia. Com um desses filtros ativo a coluna sai
+    ausente e a tela mostra "—" em vez de um número que ignora o recorte em silêncio.
+    """
+    if not dias or curva or xyz:
+        return
+    key = f"venc-dia:{_filiais_key(filiais)}:{comprador or ''}:{fornec or ''}"
+    mapa = pbi._CACHE.get(key)
+    if mapa is None:
+        try:
+            rows = PS.vencidos(filiais) if _pg() else pbi.run_dax(Q.q_vencidos(filiais))
+            # idx vazio: só `em_estoque`/`curva_abc` dependem dele, e nada disso é usado aqui
+            itens = (core.vencidos_por_mes(rows, {}) or {}).get("itens") or []
+            por_dia, por_mes = {}, {}
+            for i in itens:
+                if comprador and str(i.get("codcomprador") or "") != str(comprador):
+                    continue
+                if fornec and str(i.get("codfornec") or "") != str(fornec):
+                    continue
+                d, m, v = i.get("dtsaida"), i.get("mes"), core._n(i.get("total"))
+                if d:
+                    por_dia[d] = por_dia.get(d, 0.0) + v
+                if m:
+                    por_mes[m] = por_mes.get(m, 0.0) + v
+            mapa = {"dia": por_dia, "mes": por_mes}
+        except Exception as e:                                    # noqa: BLE001
+            # degrada para ausente: uma coluna a mais não pode derrubar a série do estoque
+            print(f"[evolucao] vencidos indisponiveis ({e}).")
+            return
+        pbi._CACHE.set(key, mapa, 1800)
+    for d in dias:
+        data = d.get("data") or ""
+        # ⚠️ dia SEM baixa recebe 0,0, não `None`: aqui zero é medição ("não perdemos nada hoje"),
+        # e é justamente o que a aba quer poder mostrar. `None` significaria "não medido", que é o
+        # que as colunas de ESTADO usam quando a foto daquele dia não saiu — não confundir as duas.
+        d["vencido_dia"] = core._round(mapa["dia"].get(data, 0.0))
+        d["vencido_mes"] = core._round(mapa["mes"].get(data[:7], 0.0))
 
 
 # Metricas com direcao INEQUIVOCA — so elas ganham cor na tela. O valor de estoque fica de fora

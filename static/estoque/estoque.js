@@ -620,6 +620,13 @@ async function renderEvolucao(){
       `${pct(x)} <small class="muted">(${int((d.ocupacao||{}).ocupadas)}/${int((d.ocupacao||{}).posicoes)})</small>`},
     {k:'_venc',label:'A vencer R$',num:1,fmt:(_v,d)=>{const t=d.validade;return !t?'—':
       `${money(t.valor)} <small class="muted">(${int(t.itens)})</small>`;}},
+    /* ⚠️ VENCIDO não sai da foto — vem do LIVRO (conta 200042), e por isso nasce com anos de
+       histórico em vez dos dias que temos de foto. É o par da coluna acima e o exemplo inteiro
+       do critério: "a vencer" é ESTADO (some se ninguém guardar), "vencido" é EVENTO (fica).
+       Zero aqui é MEDIÇÃO ("não perdemos nada nesse dia"), diferente do "—" das colunas de
+       estado, que significa "não medido". */
+    {k:'vencido_dia',label:'Vencido R$',num:1,fmt:(x,d)=>x==null?'—':
+      `${x?money(x):'<span class="muted">0</span>'} <small class="muted">· mês ${moneyK(d.vencido_mes||0)}</small>`},
     {k:'_aberto',label:'Pedidos abertos',num:1,fmt:(_v,d)=>{const t=d.pedidos;return !t?'—':
       `${money(t.valor_aberto)} <small class="muted">(${int(t.n_abertos)}${t.n_atrasados?` · ${int(t.n_atrasados)} atras.`:''})</small>`;}},
     {k:'_avaria',label:'Avaria R$',num:1,fmt:(_v,d)=>{const t=d.avaria;return !t?'—':

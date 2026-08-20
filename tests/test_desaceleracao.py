@@ -256,3 +256,52 @@ def test_a_ocupacao_e_dado_PRIMARIO_e_nao_mora_no_rollup():
     assert "ocupacao" not in historico._ROLLUP_CHAVES
     assert "estoque_foto_estado" in inspect.getsource(historico.gravar_estado)
     assert "estoque_foto_estado" in inspect.getsource(historico._estado_por_dia)
+
+
+# ───────────────────────── vencidos: o EVENTO que não se fotografa ─────────────────────────
+
+def test_vencido_NAO_entra_na_foto_porque_e_evento_datado():
+    """⚠️ O par vencido × validade é o critério inteiro da aba de estado.
+
+    Baixa por validade é lançamento contábil DATADO (conta 200042): fica no livro e continua lá
+    para sempre, então já existe mês a mês desde antes de a foto existir. Fotografá-lo criaria
+    uma segunda cópia de um dado que a contabilidade já tem — e no dia em que as duas
+    divergissem, a errada seria a nossa.
+
+    Já a VALIDADE (quanto está *a vencer*) é saldo de lote: sobrescrito, e ninguém consegue
+    dizer depois quanto estava vencendo numa data passada. Essa é fotografada.
+
+    Pedido do diretor 08/2026, que corrigiu "validade" por "vencido" na lista do que salvar —
+    e é justamente a troca que tiraria a única das duas que precisa ser salva.
+    """
+    assert "validade" in historico._ESTADO_DO_DIA, "a que SOME tem de ser fotografada"
+    assert "vencido" not in historico._ESTADO_DO_DIA, "a que FICA no livro não se fotografa"
+    assert "vencidos" not in historico._ESTADO_DO_DIA
+
+
+def test_vencido_sai_ausente_quando_curva_ou_xyz_estao_ativos():
+    """Curva e XYZ viriam do cadastro de HOJE e reclassificariam baixas antigas com a régua de
+    agora — o oposto do que a foto faz ao gravar a curva no dia. Ausente (a tela mostra "—") é
+    melhor que um número que ignora o recorte em silêncio, que é a falha clássica do módulo."""
+    from estoque.routes import _juntar_vencidos
+    for recorte in ({"curva": "A"}, {"xyz": "X"}):
+        dias = [{"data": "2026-08-20"}]
+        _juntar_vencidos(dias, ["3", "5"], **recorte)
+        assert "vencido_dia" not in dias[0], f"{list(recorte)[0]} não pode ser ignorado em silêncio"
+
+
+def test_dia_sem_baixa_recebe_ZERO_e_nao_None(monkeypatch):
+    """⚠️ Zero e "não medido" são coisas diferentes e não podem virar o mesmo símbolo na tela.
+
+    Aqui zero é MEDIÇÃO ("não perdemos nada nesse dia") — e é o que a aba quer poder mostrar.
+    `None` é o que as colunas de ESTADO usam quando a foto daquele dia não saiu. Confundir os
+    dois faria "não perdemos nada" parecer buraco de medição, e vice-versa."""
+    from estoque import pbi, routes
+    monkeypatch.setattr(pbi._CACHE, "get",
+                        lambda k: {"dia": {"2026-08-19": 1105.14}, "mes": {"2026-08": 6272.68}})
+    dias = [{"data": "2026-08-19"}, {"data": "2026-08-20"}]
+    routes._juntar_vencidos(dias, ["3", "5"])
+    assert dias[0]["vencido_dia"] == 1105.14
+    assert dias[1]["vencido_dia"] == 0.0 and dias[1]["vencido_dia"] is not None
+    # o acumulado do mês acompanha os dois dias (mesma competência)
+    assert dias[0]["vencido_mes"] == dias[1]["vencido_mes"] == 6272.68

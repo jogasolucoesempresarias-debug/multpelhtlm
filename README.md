@@ -372,6 +372,21 @@ de ocupação ali também? Só o percentual de ocupação"*). KPI + gráfico pr�
   forçar o zero achataria a linha; é o oposto do gráfico de valor, onde truncar exageraria.
 - **Medido hoje:** Atacado **84,0%** (4.446 de 5.290 posições). ⚠️ As unidades `am`/`ac`/`jid` não
   têm endereçamento no WMS (0 posições) e saem com `—` — degradação correta, não defeito.
+- **Coluna "Vencido R$" na tabela — lida do LIVRO, NÃO fotografada** (08/2026). O diretor listou
+  "ocupação e vencido" como o que vale salvar, corrigindo "validade" por "vencido". ⚠️ **Seguir a
+  correção ao pé da letra tiraria a única das duas que precisa ser salva.** Baixa por validade
+  (conta 200042) é lançamento **datado**: fica no livro e já existe mês a mês desde sempre —
+  fotografá-la criaria uma 2ª cópia do que a contabilidade tem, e no dia em que divergissem a
+  errada seria a nossa. A **validade** (quanto está *a vencer*) é saldo de lote, sobrescrito, e
+  ninguém consegue dizer depois quanto vencia numa data passada. Então: validade fotografada,
+  vencido lido na hora. A coluna nasce com **anos** de histórico em vez dos dias de foto.
+- ⚠️ **`vencido_dia` = 0,0 é MEDIÇÃO, `—` é "não medido".** Dia sem baixa perdeu zero, e isso é
+  informação; as colunas de ESTADO usam `—` quando a foto daquele dia não saiu. Confundir os dois
+  faria "não perdemos nada" parecer buraco de medição.
+- ⚠️ **O vencido honra comprador e fornecedor, mas NÃO curva/XYZ**: essas viriam do cadastro de
+  HOJE e reclassificariam baixas antigas com a régua de agora — o oposto do que a foto faz ao
+  gravar a curva no dia. Com um desses ativo a coluna sai **ausente**, nunca com o número cheio.
+  Gates: `test_vencido_NAO_entra_na_foto_porque_e_evento_datado`, `test_dia_sem_baixa_recebe_ZERO_e_nao_None`.
 - **O merge vive em `serie()`, não em `agregar()`**: o `agregar` é PURO (recebe linhas, não toca
   banco), e é essa pureza que permite recalcular o passado. Fazê-lo ler outra tabela mataria isso.
 
