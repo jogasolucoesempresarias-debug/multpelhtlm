@@ -3491,6 +3491,10 @@ function render(){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   $('#v-'+S.view).classList.add('active');
   applyNav();
+  // Agente de IA: avisa quando o filtro muda com o chat aberto (estoque-ia.js). Fica AQUI porque
+  // e o unico trecho do render() que roda em toda aba — dai para baixo sao early-returns.
+  // `typeof` porque o chat e opcional: se o arquivo nao carregar, o painel nao pode cair junto.
+  if (typeof chatCheckFiltros === 'function') chatCheckFiltros();
   if(S.view==='evolucao'){ renderEvolucao(); savePrefs(); return; }   // base propria (foto diaria), nao usa filtered()
   if(S.view==='orcamento'){ renderOrcamento(); savePrefs(); return; }
   if(S.view==='logistica'){ renderLogistica(); savePrefs(); return; }

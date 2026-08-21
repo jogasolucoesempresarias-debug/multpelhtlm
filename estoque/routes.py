@@ -13,15 +13,37 @@ import os
 import re
 import csv
 import json
+import time
 from datetime import date, timedelta
 
-from flask import Blueprint, jsonify, request, send_from_directory, Response, session
+from flask import (Blueprint, jsonify, request, send_from_directory, Response, session,
+                   stream_with_context)
 
 from . import pbi
 from . import queries as Q
 from . import core
 from . import store
 from . import historico
+# ⚠️ O Agente é OPCIONAL e o import dele é TOLERANTE A FALHA. Sem isto, um erro de import em
+# `ia.py`/`ia_pilares.py` derrubaria o BOOT do app inteiro — levando junto o Comercial e a
+# instância da Multpel, que sequer tem o recurso ligado. Código na imagem é código que pode
+# quebrar a imagem; este `try` é o preço de manter uma linha só de deploy (a mesma imagem
+# servindo produção e demo, com env var decidindo o que existe).
+try:
+    from . import ia
+    from . import ia_conferencia as iac
+except Exception as _e_ia:                                        # noqa: BLE001
+    ia = iac = None
+    print(f"[ia] Agente indisponivel ({_e_ia}) — as rotas /api/ia/* respondem 404.")
+
+
+def _ia_off():
+    """O Agente não existe nesta instância: `ia` fora do `MODULOS` **ou** import quebrado.
+
+    As duas causas levam ao mesmo lugar de propósito — para quem chama a rota, o recurso
+    simplesmente não está lá. A diferença fica no log de boot, para quem for investigar."""
+    return ia is None or not ia.modulo_ligado()
+
 from . import provider_sql as PS   # modo DATA_SOURCE=postgres (lê do joga_demo)
 
 bp = Blueprint("estoque", __name__, url_prefix="/estoque")
@@ -1352,6 +1374,394 @@ def _pesquisa_enriquecida(medicoes, fornec=None):
                     "preco_un": n["preco_un"], "comparavel": n["comparavel"],
                     "delta": g["delta"], "delta_pct": g["delta_pct"]})
     return out
+
+
+# ───────────────────────── Agente de IA (chat do módulo Compras) ─────────────────────────
+@bp.route("/api/ia/status")
+def api_ia_status():
+    """A tela pergunta ANTES de desenhar o chat.
+
+    Responde os TRÊS estados (ver `ia.estado`), e o front precisa dos três:
+      · `modulo=false`  → o widget NEM APARECE. É a instância que não tem o Agente (a Multpel).
+      · `modulo=true, disponivel=false` → aparece com o cadeado e mostra a oferta. Decisão
+        comercial: o Agente é venda adicional e recurso escondido não vende.
+      · `disponivel=true` → chat.
+
+    ⚠️ Este endpoint responde 200 nos três casos, e é o ÚNICO do Agente que faz isso. Ele é a
+    sonda de capacidade que a tela chama no boot — devolver 404 aqui obrigaria o front a tratar
+    "erro de rede" e "recurso ausente" como a mesma coisa, e o widget piscaria em toda falha de
+    conexão. Os endpoints que fazem trabalho (`contexto`, `chat`) devolvem 404 com o módulo
+    desligado, seguindo a regra do README: módulo desligado, rota não existe."""
+    e = "off" if _ia_off() else ia.estado()
+    ok = e == "ativo"
+    return jsonify({"ok": True, "modulo": e != "off", "estado": e,
+                    "disponivel": ok, "motivo": None if ok else e,
+                    "modelo": ia.MODELO if ok else None,
+                    "upsell": ia.UPSELL if e == "oferta" else None})
+
+
+# Cache CURTO do contexto do agente. Medido com Waitress + Power BI quentes: montar o contexto
+# custava **8,6s** e a pergunta pagava isso ANTES do primeiro token — o chat parecia travado.
+# A montagem não é query nova (o snapshot já está em cache); o custo é CPU, reconstruindo os
+# ~4,5 mil produtos e reagregando tudo a cada pergunta.
+# 120s: numa conversa a pessoa faz 3-4 perguntas seguidas e todas caem no cache; e como a fonte
+# (snapshot) tem TTL muito maior, isto não acrescenta defasagem nenhuma ao que a tela já mostra.
+_IA_CTX_TTL = 120
+
+
+_IA_DDL_OK = False
+
+
+def _ia_ensure_tabela(cur):
+    """Cria `estoque_ia_contexto` na 1a vez do processo. O DDL vive no `ia.py` (ver `ia.DDL_LOG`)
+    e NAO no `estoque/store.py`: aquele arquivo e tracked e esta limpo, e por decisao do README o
+    Agente nao pode contaminar arquivo que va para o commit. Idempotente."""
+    global _IA_DDL_OK
+    if _IA_DDL_OK:
+        return
+    cur.execute(ia.DDL_LOG)
+    cur.execute("DELETE FROM estoque_ia_contexto WHERE criado_em < now() - make_interval(days => %s)",
+                (ia.DIAS_RETENCAO_CTX,))
+    _IA_DDL_OK = True
+
+
+def _salvar_contexto_ia(ctx_hash, ctx, prompt_txt):
+    """Grava o prompt COMPLETO que o modelo recebeu, deduplicado pela impressao digital.
+
+    ⚠️ Roda ANTES do streaming, nao depois: se a chamada a API falhar no meio, o que o modelo viu
+    continua registrado — e uma falha e exatamente quando alguem vai querer olhar.
+
+    Falha em silencio, como todo o resto do rastro: auditoria nao pode derrubar o recurso."""
+    try:
+        conn = store.get_db()
+        with conn, conn.cursor() as cur:
+            _ia_ensure_tabela(cur)
+            rec = (ctx or {}).get("recorte") or {}
+            cur.execute(
+                "INSERT INTO estoque_ia_contexto (ctx_hash, unidade, recorte, modelo, prompt) "
+                "VALUES (%s,%s,%s,%s,%s) ON CONFLICT (ctx_hash) DO NOTHING",
+                (ctx_hash, rec.get("unidade"),
+                 json.dumps(rec, ensure_ascii=False)[:1000], ia.MODELO, prompt_txt))
+        conn.close()
+    except Exception as e:                                        # noqa: BLE001
+        print(f"[ia] contexto nao registrado ({e}).")
+
+
+def _log_ia(uid, pergunta, resposta, duracao_ms, erro=None, ctx_hash=None, conferencia=None):
+    """Rastro de uso do Agente em `multpel_log`.
+
+    Existe porque o Agente e VENDIDO: sem registro nao ha como provar adocao para justificar a
+    assinatura, nem como investigar uma resposta ruim depois ("o que ele respondeu naquele dia?").
+
+    ⚠️ **Mudou em 08/2026.** Antes gravava a pergunta e o TAMANHO da resposta, apostando que o
+    `/api/ia/contexto` reconstruiria depois o que o modelo viu. Nao reconstroi: o snapshot muda, o
+    BI atualiza 7x por dia e o cache do contexto dura 120s — o mesmo motivo pelo qual este modulo
+    tira FOTO do estoque em vez de tentar recalcular o passado. Agora grava a RESPOSTA e a
+    impressao digital do prompt (`ctx_hash`), que aponta para `estoque_ia_contexto`.
+
+    ⚠️ `resposta_chars` conta o TEXTO. Antes somava o tamanho do frame SSE inteiro
+    (`data: {"token": "..."}\n\n`), inflando ~25 bytes por token — o numero que provava adocao
+    era ele proprio um numero que nao se conferia.
+
+    Falha em silencio: log nao pode derrubar o chat."""
+    try:
+        conn = store.get_db()
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO multpel_log (usuario_id, rota, parametros, duracao_ms, erro) "
+                "VALUES (%s,%s,%s,%s,%s)",
+                (uid if isinstance(uid, int) else None, "estoque:ia:chat",
+                 json.dumps({"pergunta": (pergunta or "")[:300],
+                             "resposta": (resposta or "")[:8000],
+                             "resposta_chars": len(resposta or ""),
+                             "ctx_hash": ctx_hash,
+                             "conferencia": conferencia,
+                             "modelo": ia.MODELO}, ensure_ascii=False)[:12000],
+                 duracao_ms, erro))
+        conn.close()
+    except Exception as e:                                        # noqa: BLE001
+        print(f"[ia] log indisponivel ({e}).")
+
+
+def _contexto_ia():
+    """O contexto consolidado — montado pelo MESMO caminho das abas (ver `estoque/ia.py`).
+
+    ⚠️ Zero conta nova aqui. Tudo sai de `_build_produtos` + `core.*`, exatamente como o
+    `/api/resumos`. Reimplementar qualquer agregado faria do agente a quarta contagem de ruptura
+    do módulo — o erro que já custou três correções."""
+    # ⚠️ O `role` ENTRA NA CHAVE. A tendência só é montada para admin (mesma guarda do
+    # /api/evolucao) — sem o papel na chave, o contexto de um admin seria servido a um comprador
+    # e o chat entregaria por texto a aba que o HTTP recusa. Cache que vaza é pior que sem cache.
+    _ck = "ia:ctx:%s:%s:%s" % (_unidade(), (session.get("role") or "-"),
+                               "&".join(sorted(f"{k}={v}" for k, v in request.args.items())))
+    _hit = pbi._CACHE.get(_ck)
+    if _hit is not None:
+        return _hit
+    produtos, params, filiais = _build_produtos()
+    hoje = _hoje()
+    prod_f = _aplicar_filtros_cliente(produtos)
+
+    # o orçamento é por NOME de comprador (a meta vem da venda do comprador, não do produto);
+    # a tela manda o CÓDIGO, então traduz aqui em vez de pedir os dois ao front
+    # ⚠️ `_compradores_map()` é {matricula INT: nome} e a querystring traz string — sem o
+    # `int()` o lookup falha em silêncio e o orçamento sai da empresa inteira enquanto a tela
+    # mostra um comprador só.
+    cc = request.args.get("comprador_cod") or ""
+    comprador_nome = (_compradores_map() or {}).get(int(core._n(cc))) if cc else None
+
+    cab = _pedidos_data(filiais, hoje)["cab"]
+    venda_comp = _venda_comprador_30d(filiais, _filiais_venda(), hoje)
+    orc = core.orcamento_winthor(cab, venda_comp, _compradores_map(), _cadastro_fornecedores(),
+                                 _mes_atual(), comprador_nome or "TODOS", pct=0.65, hoje=hoje,
+                                 meta_override=None, cnpj_empresa=MULTPEL_EMPRESA["cnpj"])
+    # os mesmos filtros que o Orçamento não consegue honrar no `/api/resumos` — o agente é
+    # obrigado a avisar em vez de servir um "% da meta" que não corresponde ao recorte
+    _rot = {"curva": "curva", "xyz": "XYZ", "fornec": "fornecedor", "depto": "depto",
+            "busca": "busca de produto"}
+    orc_ignora = [lbl for arg, lbl in _rot.items() if request.args.get(arg)]
+
+    # ⚠️ A TENDÊNCIA é da aba Evolução, que é ADM-only. Sem esta guarda o chat entregaria por
+    # texto exatamente a visão que o `/api/evolucao` recusa por HTTP.
+    tendencia = None
+    if (session.get("role") or "") == "admin":
+        try:
+            serie = historico.serie(_unidade(), hoje - timedelta(days=90), hoje,
+                                    params=request.args.to_dict())
+            tendencia = serie[-12:] if serie else None
+        except Exception as e:                                    # noqa: BLE001
+            print(f"[ia] tendência indisponível ({e}).")
+
+    recorte = {"unidade": _unidade()}
+    if comprador_nome:
+        recorte["comprador"] = comprador_nome
+    for k, lbl in (("curva", "curva"), ("xyz", "XYZ"), ("fornec", "cód. fornecedor"),
+                   ("depto", "cód. depto"), ("busca", "busca")):
+        if request.args.get(k):
+            recorte[lbl] = request.args.get(k)
+
+    # VALIDADE — mesma consulta que o /api/resumos ja faz. Sem isto o agente respondia
+    # "consulte o sistema especifico de controle de validade" para uma pergunta que a aba
+    # Validade/FEFO deste proprio painel responde. Recusar o que a ferramenta faz e pior do que
+    # nao ter a ferramenta. Degrada para None: validade fora do ar nao pode derrubar o chat.
+    val_resumo, lotes_prox = None, []
+    try:
+        idx = {p["codprod"]: p for p in prod_f}
+        _jan = (hoje, hoje + timedelta(days=3650))
+        lotes = PS.validade(*_jan, filiais) if _pg() else pbi.run_dax(Q.q_validade(*_jan, filiais))
+        if len(prod_f) != len(produtos):
+            lotes = [l for l in lotes if int(core._n(l.get("CODPROD"))) in idx]
+        val_resumo = core.resumo_validade(lotes, idx, hoje=hoje)
+        # os lotes que vencem PRIMEIRO (>= hoje): e o que responde "o que vence em N dias"
+        # ⚠️ CONSOLIDA por (produto, validade), como o `core.resumo_validade`. Iterando o lote
+        # cru, o mesmo item saia DUAS vezes com a mesma data (achado no teste: o cod 58267
+        # apareceu 2x vencendo em 7 dias) — e a contagem do agente divergiria da faixa da tela.
+        _agg = {}
+        for l in lotes:
+            dt = core._parse_dt(l.get("DTVAL"))
+            cod = int(core._n(l.get("CODPROD")))
+            if not dt or (dt - hoje).days < 0 or cod not in idx:
+                continue
+            _agg[(cod, dt)] = _agg.get((cod, dt), 0.0) + core._n(l.get("qt"))
+        prox = []
+        for (cod, dt), qt in _agg.items():
+            pr = idx[cod]
+            prox.append({"cod": cod, "desc": (pr.get("descricao") or "").strip()[:42],
+                         "dt_validade": dt.isoformat(), "dias": (dt - hoje).days,
+                         "qt": core._round(qt, 2),
+                         "valor": core._round(qt * core._n(pr.get("custo_unit")))})
+        prox.sort(key=lambda x: (x["dias"], -x["valor"]))
+        lotes_prox = prox[:15]
+    except Exception as e:                                        # noqa: BLE001
+        print(f"[ia] validade indisponivel ({e}).")
+
+    # ── pilares que dependem de I/O. Cada um em seu try: fonte lenta ou fora do ar NAO pode
+    # derrubar o chat, so tirar aquele pilar do contexto (e o indice deixa de anuncia-lo, entao
+    # o agente nao promete o que nao tem).
+    def _tenta(nome, fn):
+        try:
+            return fn()
+        except Exception as e:                                    # noqa: BLE001
+            print(f"[ia] pilar {nome} indisponivel ({e}).")
+            return None
+
+    qual = _tenta("qualidade", lambda: core.qualidade_cadastro(
+        _cadastro_produtos(), _embalagem_map(), _cadastro_fornecedores(), _compradores_map()))
+
+    def _venc():
+        rows = PS.vencidos(filiais) if _pg() else pbi.run_dax(Q.q_vencidos(filiais))
+        vm, vc, vcm = _venda_liq_mensal(_filiais_venda())
+        return core.vencidos_por_mes(rows, {p["codprod"]: p for p in prod_f},
+                                     venda_mes_map=vm, venda_comp_map=vc,
+                                     venda_comp_mes_map=vcm)
+    venc = _tenta("vencidos", _venc)
+
+    def _lead():
+        raw = _leadtime_raw(hoje)
+        return core.leadtime_fornecedores(raw["cab"], raw["entradas"], _cadastro_fornecedores(),
+                                          _compradores_map(), hoje=hoje,
+                                          cnpj_empresa=MULTPEL_EMPRESA["cnpj"],
+                                          comprador=comprador_nome)
+    lead = _tenta("leadtime", _lead)
+
+    def _verb():
+        raw = _verbas_raw(hoje)
+        return core.verbas_fornecedores(raw["verbas"], raw["aplics"], _cadastro_fornecedores(),
+                                        _compradores_map(), hoje=hoje,
+                                        cnpj_empresa=MULTPEL_EMPRESA["cnpj"],
+                                        comprador=comprador_nome)
+    verb = _tenta("verbas", _verb)
+
+    rup_sem_ped = sum(1 for p in prod_f
+                      if core._n(p.get("qtdisp")) <= 0 and core._n(p.get("giro_dia")) > 0
+                      and core._sem_providencia(p))
+
+    ctx = ia.montar_contexto(
+        produtos=prod_f, cockpit=core.cockpit(prod_f),
+        cobertura=core.resumo_cobertura(prod_f),
+        estoque_ideal=core.resumo_estoque_ideal(prod_f, *core.regua_estoque_ideal(params)),
+        ruptura=core.resumo_ruptura(prod_f), ruptura_sem_pedido=rup_sem_ped,
+        orcamento=orc["resumo"], orcamento_ignora=orc_ignora,
+        orcamento_compradores=orc.get("por_comprador"),
+        validade=val_resumo, lotes_proximos=lotes_prox, params=params,
+        qualidade_cadastro=qual, vencidos_res=venc, leadtime_res=lead, verbas_res=verb,
+        tendencia=tendencia, recorte=recorte, hoje=hoje)
+    pbi._CACHE.set(_ck, ctx, _IA_CTX_TTL)
+    return ctx
+
+
+@bp.route("/api/ia/contexto")
+def api_ia_contexto():
+    """O contexto cru + as sugestões. A tela usa as sugestões; o contexto serve para AUDITAR o
+    que o modelo recebeu — quando a resposta sair estranha, é aqui que se olha primeiro.
+
+    ⚠️ 404 com o módulo desligado: a regra do README é "módulo desligado → a rota não existe".
+    Só o `/status` responde 200 nesse caso, porque é a sonda que a tela usa para decidir se
+    desenha o widget."""
+    if _ia_off():
+        return jsonify({"ok": False, "error": "Agente de IA não habilitado nesta instância"}), 404
+    ctx = _contexto_ia()
+    return jsonify({"ok": True, "contexto": ctx, "sugestoes": ia.sugestoes(ctx)})
+
+
+@bp.route("/api/ia/chat", methods=["POST"])
+def api_ia_chat():
+    """Pergunta → resposta em STREAM (SSE).
+
+    Streaming porque a alternativa é o comprador olhando um spinner por vários segundos; o token
+    a token faz a espera parecer conversa. `X-Accel-Buffering: no` é obrigatório: sem ele o proxy
+    segura o corpo e a resposta chega inteira no fim, matando o efeito.
+
+    ⚠️ DOIS "não" diferentes, e a distinção é comercial:
+      · módulo desligado → **404**, o recurso não existe nesta instância (a Multpel);
+      · módulo ligado sem chave → **402**, existe e não está contratado (mostra a oferta)."""
+    if _ia_off():
+        return jsonify({"ok": False, "error": "Agente de IA não habilitado nesta instância"}), 404
+    ok, _motivo = ia.disponivel()
+    if not ok:
+        # 402 e não 403: não é falta de permissão da pessoa, é recurso não contratado pela conta.
+        return jsonify({"ok": False, "upsell": ia.UPSELL}), 402
+
+    # ── teto diario por pessoa (ver ia.LIMITE_DIA) ──
+    # Conta no Redis com expiracao no fim do dia. FAIL-OPEN: se o Redis estiver fora, a pergunta
+    # passa — a mesma politica do limite de login por IP. Um contador indisponivel nao pode
+    # derrubar um recurso pago.
+    _uid = session.get("user_id") or session.get("uid") or "anon"
+    try:
+        # import TARDIO: o `server` importa este blueprint, entao importar no topo daria ciclo.
+        # Em tempo de request o modulo ja esta carregado e o acesso e direto.
+        from server import _R as _r
+        if _r is not None:
+            _k = f"ia:uso:{_uid}:{date.today().isoformat()}"
+            _usos = _r.incr(_k)
+            if _usos == 1:
+                _r.expire(_k, 86400)
+            if _usos > ia.LIMITE_DIA:
+                return jsonify({"ok": False,
+                                "error": f"Limite de {ia.LIMITE_DIA} perguntas por dia atingido. "
+                                         "Ele zera amanha."}), 429
+    except Exception as e:                                        # noqa: BLE001
+        print(f"[ia] contador de uso indisponivel ({e}) — liberando.")
+
+    data = request.get_json(silent=True) or {}
+    pergunta = (data.get("pergunta") or "").strip()
+    if not pergunta:
+        return jsonify({"ok": False, "error": "Pergunta vazia"}), 400
+    if len(pergunta) > 500:
+        return jsonify({"ok": False, "error": "Pergunta muito longa"}), 400
+
+    try:
+        ctx = _contexto_ia()
+    except Exception as e:                                        # noqa: BLE001
+        print(f"[ia] contexto indisponível ({e}).")
+        return jsonify({"ok": False, "error": "Não consegui ler os dados do painel agora."}), 503
+
+    # o prompt e montado UMA vez e vira a identidade do que o modelo viu (`_salvar_contexto_ia`)
+    _sp = ia.system_prompt(ctx)
+    _ctx_hash = ia.impressao(_sp)
+    _salvar_contexto_ia(_ctx_hash, ctx, _sp)
+    mensagens = [{"role": "system", "content": _sp}]
+    for m in (data.get("historico") or [])[-6:]:
+        if m.get("role") in ("user", "assistant") and m.get("content"):
+            mensagens.append({"role": m["role"], "content": str(m["content"])[:4000]})
+    mensagens.append({"role": "user", "content": pergunta})
+
+    def gerar(sink):
+        """`sink` acumula o TEXTO dos tokens — nao o frame SSE — para o rastro de auditoria."""
+        try:
+            from openai import OpenAI
+            # ⚠️ TIMEOUT EXPLÍCITO — ver `ia.IA_TIMEOUT`. Sem ele valem os defaults do SDK
+            # (read=600s, max_retries=2 → 30 min de worker preso), e o Waitress só tem 8
+            # threads: oito chats travados param o painel inteiro, Comercial junto.
+            cli = OpenAI(api_key=os.getenv("OPENAI_API_KEY"),
+                         timeout=ia.IA_TIMEOUT, max_retries=ia.IA_MAX_RETRIES)
+            stream = cli.chat.completions.create(
+                model=ia.MODELO, messages=mensagens, max_tokens=ia.MAX_TOKENS,
+                temperature=0.3, stream=True)
+            for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    sink.append(delta)
+                    yield f"data: {json.dumps({'token': delta})}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:                                    # noqa: BLE001
+            print(f"[ia] falha no chat: {e}")
+            yield f"data: {json.dumps({'erro': 'Falha ao consultar o assistente.'})}\n\n"
+
+    # ── rastro de uso ──
+    # O Agente e vendido: sem registro nao ha como provar adocao para justificar a assinatura,
+    # nem como investigar uma resposta ruim depois ("o que ele respondeu naquele dia?").
+    # Grava pergunta + RESPOSTA + a impressao do prompt. O contexto ja foi gravado acima, antes
+    # do streaming, para sobreviver a uma falha no meio da chamada.
+    _t0 = time.time()
+
+    def gerar_com_log():
+        _partes = []
+        _erro = None
+        try:
+            for pedaco in gerar(_partes):
+                yield pedaco
+        except Exception as e:                                    # noqa: BLE001
+            _erro = str(e)[:400]
+            raise
+        finally:
+            _resp = "".join(_partes)
+            # ⚠️ Conferencia de saida (ver `ia_conferencia.py`): NAO bloqueia — so registra o
+            # que a resposta afirma e o contexto nao sustenta. Bloquear com casamento ingenuo
+            # derrubaria resposta boa (o modelo arredonda em prosa). O valor esta em existir a
+            # pergunta "em quantas respostas ele citou numero fora do contexto?", que hoje nao
+            # tem resposta. Em try proprio: auditoria nao pode derrubar o chat.
+            _conf = None
+            try:
+                _conf = iac.resumo(iac.conferir(_resp, _sp))
+            except Exception as _e:                               # noqa: BLE001
+                print(f"[ia] conferencia indisponivel ({_e}).")
+            _log_ia(_uid, pergunta, _resp, int((time.time() - _t0) * 1000),
+                    _erro, ctx_hash=_ctx_hash, conferencia=_conf)
+
+    return Response(stream_with_context(gerar_com_log()), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @bp.route("/api/evolucao")

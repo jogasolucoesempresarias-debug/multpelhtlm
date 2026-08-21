@@ -175,7 +175,26 @@
 <aside class="drawer" id="drawer"></aside>
 <div class="modal-bg" id="modal-bg"><div class="modal" id="modal"></div></div>
 
+<!-- ═══ Agente de IA ═══
+     Nasce ESCONDIDO e só aparece depois do /api/ia/status. São dois estados possíveis:
+     contratado (chat) e não-contratado (oferta) — e o segundo APARECE de propósito. -->
+<button class="ia-fab" id="ia-fab" hidden onclick="iaToggle()" title="Analista de Compras (IA)">💬</button>
+<div class="ia-box" id="ia-box">
+  <div class="ia-head">
+    <h4><span>🤖</span> <span id="ia-titulo">Analista de Compras</span></h4>
+    <button onclick="iaToggle()" title="Fechar">✕</button>
+  </div>
+  <div class="ia-body" id="ia-body"></div>
+  <div class="ia-in" id="ia-in" hidden>
+    <input type="text" id="ia-input" maxlength="500" placeholder="Pergunte sobre o estoque…"
+           onkeydown="if(event.key==='Enter') iaEnviar()">
+    <button id="ia-send" onclick="iaEnviar()">Enviar</button>
+  </div>
+  <div class="ia-pe" id="ia-pe" hidden></div>
+</div>
+
 <script src="/static/estoque/estoque.js"></script>
+<script src="/static/estoque/estoque-ia.js"></script>
 <script src="/static/joga-header.js"></script>
 </body>
 </html>

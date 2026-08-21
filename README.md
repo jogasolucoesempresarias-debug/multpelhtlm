@@ -47,8 +47,9 @@ Sistema **JOGA** (a Multpel é a cliente) que une, num único Flask com um únic
   eles. A **Administração** é um terceiro lugar neutro (não pertence a nenhuma área).
 - **Módulo é o que a EMPRESA comprou; área é o que a PESSOA acessa.** O acesso efetivo é a
   **interseção** dos dois:
-  - **`MODULOS`** (env var da stack): `comercial,compras` | `comercial` | `compras`. Uma instância
-    por cliente. Se `compras` não estiver aqui, o blueprint `/estoque` **nem é registrado**.
+  - **`MODULOS`** (env var da stack): `comercial,compras` | `comercial` | `compras` (+ `ia`,
+    opcional). Uma instância por cliente. Se `compras` não estiver aqui, o blueprint `/estoque`
+    **nem é registrado**; se `ia` não estiver, o Agente não existe (nem o botão aparece).
   - **`multpel_users.areas`** (JSONB, ex.: `["comercial","compras"]`): o que cada pessoa acessa.
     **Default `["comercial"]`** — ninguém ganha Compras por acidente; o admin libera pessoa a pessoa.
 - **Guardas:** o Comercial (rotas em `server.py`) é protegido por um `before_request` **deny-by-default**;
@@ -113,6 +114,129 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
     e o teste passa mesmo com a fórmula errada. Foi assim que o gate ficou cego. Todo fixture de
     metas leva `[venda_sb]` **diferente** de `[venda]`.
 - **Admin** — CRUD usuários, cron de email, multi-CC, segmento RFM, editor de metas. **+ acesso por área, comprador vinculado e relatórios de Compras** (ver abaixo).
+
+## 🤖 Agente de IA (chat do Compras) — **módulo opcional, venda adicional**
+
+> ### Ligado por MÓDULO, como o Compras
+>
+> O Agente viaja na **mesma imagem** de todas as instâncias e só existe onde foi habilitado —
+> exatamente o princípio de "uma branch, uma imagem; o que muda é env var". São **três estados**:
+>
+> | Estado | Env | O que a pessoa vê |
+> |---|---|---|
+> | `off` | `MODULOS=comercial,compras` | **nada** — o botão nem aparece. É a Multpel. |
+> | `oferta` | `MODULOS=...,ia` sem `OPENAI_API_KEY` | cadeado + o que o Agente faria |
+> | `ativo` | `MODULOS=...,ia` + `OPENAI_API_KEY` | o chat. É a demo. |
+>
+> ⚠️ **Por que três e não dois.** A 1ª versão decidia tudo pela presença da chave: com chave,
+> chat; sem chave, oferta. Isso não serve quando a mesma imagem serve produção e demo — a
+> Multpel, que já paga o painel, veria um upsell que não pediu só porque a chave dela não
+> existe. Separar MÓDULO (o que a empresa contratou) de CREDENCIAL (o que está ligado) deixa a
+> escolha por instância.
+>
+> - **`/api/ia/status` responde 200 nos três casos** e é o único que faz isso: é a sonda que a
+>   tela usa no boot, e um 404 ali obrigaria o front a confundir "erro de rede" com "recurso
+>   ausente" — o widget piscaria em toda falha de conexão. `/contexto` e `/chat` devolvem
+>   **404** com o módulo desligado (regra do README: módulo desligado, rota não existe) e
+>   **402** com o módulo ligado sem chave (existe, não contratado).
+> - ⚠️ **O import do Agente é TOLERANTE A FALHA** (`try/except` no `routes.py`). Código na
+>   imagem é código que pode quebrar a imagem: sem isso, um erro de import em `ia.py` derrubaria
+>   o **boot do app inteiro**, levando junto o Comercial e a instância da Multpel, que nem tem o
+>   recurso ligado. É o risco que a decisão de commitar introduz, e o `try` é o que o paga.
+> - O módulo lê a env **direto** (`ia.modulo_ligado`), não `from server import MODULOS`: em
+>   produção o container roda `python server.py`, então `server` é `__main__` e o import traria
+>   uma segunda cópia do módulo (armadilha já documentada duas vezes no `routes.py`).
+
+Como testar localmente: `MODULOS=comercial,compras,ia python -X utf8 server.py` com a
+`OPENAI_API_KEY` no `.env`. A bateria de qualidade (`tests/smoke_ia_real.py`) precisa de uma
+instância em modo **dev** — em produção o cookie sai `Secure` e o `requests` não o envia por HTTP.
+
+
+Analista que lê os números do painel e conversa. Motor em **`estoque/ia.py`** (puro), endpoints
+`/estoque/api/ia/{status,contexto,chat}`, front em **`static/estoque/estoque-ia.js`**.
+Modelo **`gpt-4.1-mini`** (OpenAI) — decisão de custo: o modelo NÃO calcula, só narra números
+prontos, então capacidade não é o gargalo. Medido no BI real: **~US$ 0,0014 por pergunta**
+(~2.800 tokens de entrada, prompt de ~1.900).
+
+- **Contexto CONSOLIDADO, não por aba.** O módulo tem 22 abas, mas as perguntas do comprador
+  atravessam quase todas ("por que o parado subiu?" mistura 3 abas). Um agente por aba diria
+  "não tenho essa informação" o tempo todo, e isso ensina a pessoa a parar de perguntar.
+- ⚠️ **O contexto vem do SERVIDOR, não da tela** — diferente do chat da DRE (Tabela Auditoria),
+  que é o modelo desta feature. Lá dava para ler `window.dreData` porque a DRE é UMA tela; aqui
+  as abas carregam sob demanda (`S.evo` só existe se a Evolução foi aberta), então montar no
+  front daria um contexto que **depende de quais abas a pessoa visitou**.
+- **Recorte da TELA** (decisão do Gabriel: "senão fica dupla interpretação"): o `filtrosQS()`
+  viaja em toda pergunta, o agente é obrigado a declarar o recorte na 1ª frase, e quando o
+  filtro muda com o chat aberto a tela **avisa** que as respostas acima são do recorte anterior.
+- **Zero conta nova.** Tudo sai de `core.cockpit`/`resumo_*`/`historico.serie` — as MESMAS
+  funções das abas. Recalcular aqui faria do agente a 4ª implementação de ruptura do módulo.
+- ⚠️ **O glossário do prompt é o coração da feature.** Num contexto consolidado, números que a
+  tela mantém em abas separadas ficam LADO A LADO — e o modelo mistura duas réguas na mesma
+  frase. Estão declaradas: as 2 rupturas (real × sem-providência), as 2 réguas de valor
+  (mercadoria × NF), o parado que exclui os "novos", e o sem-giro fora do % ideal.
+- 🩹 **Achado no 1º ensaio com dado REAL** (e a razão de esse ensaio existir): o modelo leu o
+  último ponto da série de Evolução como "o valor de hoje" e anunciou que o capital parado
+  subira de R$ 181 mil para R$ 486 mil. **Os dois números estavam certos** — o placar
+  (`core.eh_parado`) conta parado a partir de **60 dias**, a série (`parado_faixa_de`) a partir
+  de **15**. Duas réguas com o mesmo rótulo, cada uma correta na sua aba. O prompt agora rotula
+  a série de `parado-15d` e proíbe a comparação. ⚠️ **A divergência entre as duas telas é real e
+  continua** — decidir se unifica é outra tarefa.
+- ⚠️ **A série pode estar VAZIA ou quase** — em produção a foto começou em 19/08/2026 (**1 dia**)
+  e todo cliente novo entra com **zero**. O agente checa a `maturidade_serie` com as MESMAS
+  faixas da aba (0 = vazia, <28 enchendo, 28+ útil, 90+ tendência): abaixo de 28 dias ele é
+  **proibido** de dizer que algo melhorou/piorou, e com zero ele explica *por que* não há
+  histórico (estoque é saldo; o de ontem não fica guardado) em vez de parecer defeito. A
+  sugestão "está melhorando?" também some — convidar para a pergunta que ele tem de recusar é
+  frustração no primeiro clique.
+- **PILARES** (`estoque/ia_pilares.py`) — os rankings que respondem pergunta específica. Nasceram
+  do 1º teste com gente clicando: a versão só-placar **recusou 8 de 9 perguntas reais** com
+  "consulte a aba do produto". Honesto e inútil — recusa demais mata a adoção tão rápido quanto
+  invenção. Desenho do João Victor (*"dividir em pilares"*) + Gabriel (*"top 10 dos melhores aos
+  piores"*). **14 pilares**, cobrindo 21 das 22 abas: parado · cobertura · ruptura · meta de
+  ruptura · fornecedores · compradores · desempenho · validade · vencidos · ABC-XYZ · ocupação ·
+  lead time · verbas · qualidade. (Fora: **Plano de reposição** — é simulação semana a semana de
+  UM produto, não pergunta de panorama.)
+  - **Custo zero de query nos 10 primeiros**: saem do `produtos` que o `_build_produtos()` já
+    montou. Só validade, vencidos, lead time e verbas custam I/O, e **cada um degrada sozinho**.
+  - ⚠️ **O ÍNDICE é derivado do texto RENDERIZADO, não da estrutura.** Eu havia chutado as chaves
+    do `core.leadtime_fornecedores` (`lead_mediano` em vez de `lead_real`): o filtro descartava
+    tudo, o pilar saía vazio, e o índice o anunciava assim mesmo — o agente respondia *"o painel
+    não tem lead time"* sobre uma aba que existe. Hoje chave errada degrada para **"não
+    anunciado"** em vez de "prometido e ausente". Gate: `test_pilar_vazio_NAO_e_anunciado_no_indice`.
+  - ⚠️ **SEMPRE o CÓDIGO do produto** em toda menção a item (pedido do diretor 08/2026:
+    *"sempre trazer o cod, pois assim conseguimos validar — essa semana chegou copo, pode ser que
+    isso tenha implicado nessa avaliação"*). É requisito de **auditoria**, não de formatação:
+    sem o código ninguém abre o item no ERP para ver o que aconteceu, e número que não se confere
+    não vira decisão. O dado sempre esteve nas linhas dos pilares; faltava a obrigação de
+    repeti-lo na resposta. Gates: `test_o_prompt_exige_o_CODIGO_do_produto_em_toda_mencao`,
+    `test_toda_linha_de_item_dos_pilares_carrega_o_codigo` e a checagem `_EXIGE_CODIGO` da bateria.
+  - ⚠️ **Recorte que os pilares não têm vira CAMINHO, não muro:** o agente pede para aplicar o
+    filtro no topo do painel e refazer a pergunta — já que ele responde no recorte da tela.
+- 🩹 **Orçamento: `aberto_mes` está DENTRO de `comprado_mes`** (mesmo laço sobre os pedidos do
+  mês em `core.orcamento_winthor`). O agente somou os dois, concluiu "estourado" e **inverteu o
+  sinal de um saldo positivo** que o contexto tinha entregue. Hoje o glossário declara a
+  contenção e as regras **1b/1c** proíbem somar dois números do contexto e contradizer um valor
+  recebido. Achado pelo Gabriel no navegador.
+- **Bateria de qualidade real:** `tests/smoke_ia_real.py` (17 perguntas contra a API e o BI, com
+  asserções nas duas regressões que já aconteceram — *recusou tendo o dado?* e *disse "estourado"
+  com saldo positivo?*). **NÃO** é pytest: consome API paga. Rode contra uma instância em modo
+  **dev** — em produção o cookie sai `Secure` e o `requests` não o envia por HTTP.
+- **Uso registrado e limitado:** cada pergunta grava em `multpel_log` (usuário, pergunta, tamanho
+  da resposta, duração) — prova de adoção e rastro para investigar resposta ruim; e há teto
+  diário por pessoa (`IA_LIMITE_DIA`, default 200, fail-open se o Redis cair).
+- **Sugestões de pergunta** (pedido do Gabriel: facilitar para o usuário). Uma por PILAR, para a
+  pessoa descobrir a largura do agente, e **ordenadas por urgência real** — com item vencendo em
+  7 dias a de validade sobe ao topo. ⚠️ **Voltam depois de CADA resposta**: apareciam só na
+  abertura e sumiam na primeira pergunta, justamente quando passam a ser mais úteis. Sem isso o
+  chat vira uma caixa de texto em branco depois do primeiro uso e ninguém descobre os 14 pilares.
+- **A tendência é ADM-only**, mesma guarda do `/api/evolucao`: sem isso o chat entregaria por
+  texto a visão que o endpoint recusa por HTTP.
+- **O interruptor é a CHAVE.** Sem `OPENAI_API_KEY` a instância mostra a **oferta** no lugar do
+  chat — e o widget **aparece assim mesmo**, de propósito (decisão comercial): é venda adicional,
+  e recurso escondido não vende. O backend ainda recusa com **402**, então não existe caminho em
+  que a instância sem contrato consuma API.
+- Gate: `tests/test_ia_compras.py`. Ensaio com dado real (contexto + API): `_seed_demo/` não
+  cobre isso — roda-se o script de fumaça manualmente contra o BI.
 
 ## 📦 Módulo Compras (features)
 
@@ -827,7 +951,7 @@ ANALYTICS_DB_NAME=joga_demo   # banco analítico (ANALYTICS_DB_* faz fallback pr
 > demo **não envelhece** sem regenerar. O default powerbi usa `TODAY()` normal.
 
 **Gates:** `tests/test_provider_*.py` (Dashboard, Comercial, Metas, Mix, Radar, Estoque, RBAC) +
-`test_medida_compat.py`. Baseline **711 passam / 3 falham** (as 3 são fixture de data do
+`test_medida_compat.py`. Baseline **787 passam / 3 falham** (as 3 são fixture de data do
 Comercial: radar/mix/cohort).
 ⚠️ Até 19/08/2026 o baseline dizia "5 falham", contando 2 do `test_provider_estoque` como
 *"dependem de um `joga_demo` local com venda no mês corrente"*. **Nunca foi ambiente:** elas
@@ -864,6 +988,8 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 │   ├── routes.py                   #   ex-app.py (sem Flask()/CORS/login próprio)
 │   ├── core.py queries.py pbi.py store.py   # regra/DAX/PBI/Postgres (quase intactos)
 │   ├── relatorios.py               #   🆕 catálogo único dos relatórios (Admin + email)
+│   ├── ia.py                       #   🆕 Agente de IA: contexto consolidado + prompt (puro)
+│   ├── ia_pilares.py               #   🆕 Agente de IA: os 14 rankings por tema (puro)
 │   ├── emails.py                   #   🆕 gera anexos PDF+XLSX p/ o email de Compras
 │   ├── pesquisa.html               #   🆕 tela de CAMPO (mobile, autocontida) — NÃO é aba
 │   └── index.html                  #   SPA do módulo (22 abas)
@@ -878,7 +1004,7 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 │   ├── joga-mark.svg / -claro.svg  # 🆕 marca troca com o tema (hexágono creme ↔ preto)
 │   ├── joga-loader.svg / -claro.svg
 │   ├── drill-cliente.* · fetch-resiliente.js · tooltips.*
-│   └── estoque/ (estoque.css, estoque.js, logos)   # assets do Compras
+│   └── estoque/ (estoque.css, estoque.js, estoque-ia.js, logos)   # assets do Compras
 ├── docker-compose.prod.yml         # produção (Comercial antigo)
 ├── docker-compose.teste.yml        # 🆕 stack de validação (painel)
 ├── docs/DEPLOY_TESTE.md            # 🆕 runbook do painel + migração de dados
@@ -889,7 +1015,7 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 ├── docker-compose.demo.yml         # 🆕 stack da instância DEMO (Portainer)
 ├── _seed_demo/                     # 🆕 base sintética reprodutível (joga_demo) + bootstrap + seeder
 │   └── avancar_demo.py             # 🆕 alimentador diário: desloca as datas da demo até hoje
-└── tests/                          # pytest (711 passam; 3 falham por fixture de data — não é regressão)
+└── tests/                          # pytest (787 passam; 3 falham por fixture de data — não é regressão)
 ```
 
 ---
@@ -901,16 +1027,20 @@ cp .env.example .env        # preencher (ver variáveis abaixo)
 docker compose -f docker-compose.dev.yml up -d redis
 python -X utf8 init_db.py   # cria/migra schema + admin default (ADMIN_EMAIL / ADMIN_SENHA)
 python -X utf8 server.py    # http://localhost:5000
-pytest -q                   # 711 passam, 3 falham (fixture de data do Comercial — não é regressão)
+pytest -q                   # 787 passam, 3 falham (fixture de data do Comercial — não é regressão)
 ```
 
 Variáveis novas da fusão no `.env` (além das do Power BI/DB/Redis/Resend):
 ```env
 SECRET_KEY=<hex>            # OBRIGATÓRIA se FLASK_ENV=production (o app NÃO sobe sem ela)
-MODULOS=comercial,compras   # o que esta instância serve
+MODULOS=comercial,compras   # o que esta instância serve (+ `ia` p/ ligar o Agente)
 POWERBI_DATASET_ID_ESTOQUE=32fb60e1-...   # dataset do Compras (default embutido)
 POWERBI_DATASET_ID_RCA=f2fbf288-...        # RCA (mesmo do Comercial)
 CLIENTE_LOGO=               # opcional: logo do cliente no PDF de pedido (fallback = JOGA)
+OPENAI_API_KEY=             # Agente de IA do Compras. A PRESENÇA da chave é o interruptor:
+                            # sem ela a instância mostra a OFERTA no lugar do chat (venda adicional)
+IA_MODELO=gpt-4.1-mini      # opcional
+IA_MAX_TOKENS=800           # opcional
 ```
 
 > **Rodar em modo DEMO/Postgres localmente** (sem BI): monte o `joga_demo` (`_seed_demo/setup_db.py` →
@@ -960,7 +1090,7 @@ uso, dump final dos dados, apontar os usuários — não é só "copiar uma vez"
 > 2. **Alimentador diário** (`_seed_demo/avancar_demo.py`, job `demo_avancar` às 4h05):
 >    **desloca as datas** até hoje em vez de regerar. Regerar leva ~4 min e muda todos os
 >    números — o que faz a demo mudar debaixo de quem a está apresentando. Deslocar leva
->    segundos e preserva tudo. Liga com `DEMO_AUTO_AVANCAR=true` na stack.
+>    segundos e preserva tudo.
 >    - ⚠️ **Três travas**, porque o script reescreve TODAS as datas do banco: só em
 >      `DATA_SOURCE=postgres`, só com `DEMO_AUTO_AVANCAR=true`, e o script **recusa banco sem
 >      "demo" no nome** (mesma política do `seed_metas_demo`).
@@ -1090,6 +1220,9 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 - **Compras (blueprint):** tudo sob `/estoque/...` — `/estoque/`, `/estoque/api/snapshot`,
   `/estoque/api/filtros`, `/estoque/api/orcamento`, `/estoque/api/export/<view>.{csv,xlsx,pdf}`,
   `/estoque/api/pedidos`, `/estoque/api/fornecedores_extra` (ciclo + verba, lazy), etc.
+- **Agente de IA (Compras):** `GET /estoque/api/ia/status` (contratado ou oferta) ·
+  `GET /estoque/api/ia/contexto` (contexto + sugestões — é aqui que se AUDITA o que o modelo
+  recebeu) · `POST /estoque/api/ia/chat` (SSE; **402** quando não contratado)
 - **Admin:** `POST /api/admin/users/<id>/desbloquear` · `GET /api/_internal/compradores-map` ·
   `GET /api/_internal/relatorios-estoque` · `POST /api/admin/enviar-relatorio/<id>?tipo=compras`
 - (Os endpoints do Comercial — dashboard, carteira, vendedores, categorias, mix, tendências, metas —
@@ -1108,7 +1241,7 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 5. **Checagem de API usa `'/api/' in path`, não `startswith`** — por causa de `/estoque/api/...`.
 6. **Não editar `MultpelEstoque/`** (repo congelado) nem publicar em `:latest` sem intenção.
 7. **3 testes falham por fixture de data** (radar/mix/cohort) — pré-existentes, **não** são regressão.
-   O baseline é **711 passam / 3 falham**. As 2 do `test_provider_estoque` que constavam aqui
+   O baseline é **787 passam / 3 falham**. As 2 do `test_provider_estoque` que constavam aqui
    como dependência de ambiente eram, na verdade, o bug de ancoragem de data (armadilha nº 17).
 8. **Verificação visual de tema não confia em captura** das telas de dados (Power BI muda o conteúdo
    entre capturas) — comparar cor computada (`getComputedStyle`), não pixels.

@@ -867,6 +867,70 @@ tinham divergido — hoje ele só renderiza o que o servidor mandou.
 Gates: `tests/test_pesquisa_preco.py` (normalização) e `tests/test_pesquisa_acesso.py`
 (acesso, forma da tela, fila offline, cor, local).
 
+### 7.24 Agente de IA — o analista que conversa *(recurso adicional)*
+
+> ℹ️ **É um MÓDULO OPCIONAL.** O Agente só existe na instância que o contratou
+> (`MODULOS=comercial,compras,ia` na stack). Onde não está ligado, **o botão nem aparece** — não
+> há nada a explicar ao usuário. Se você está lendo isto e não vê o botão no seu painel, é isso.
+
+
+Botão flutuante no canto do painel. Ele lê os números **do recorte que está na sua tela** e
+responde em texto. Não é uma aba: acompanha você em qualquer tela do módulo.
+
+**O que ele enxerga:** o placar consolidado (estoque, capital parado, ruptura, cobertura ideal),
+a compra sugerida e o orçamento do mês, as faixas de cobertura, os maiores ofensores de capital
+parado, as rupturas que mais custam e — para o administrador — a série da Evolução.
+
+**Os 14 pilares.** O agente recebe um ranking por tema, com os 10 maiores (e os menores, onde a
+pergunta é essa):
+
+| Pilar | Responde |
+|---|---|
+| Estoque parado | maiores valores parados, quem está há mais tempo sem vender |
+| Cobertura | maior cobertura, o que vai faltar primeiro, capital preso acima de 120 dias |
+| Ruptura | por curva, por comprador, as que mais custam, as sem providência |
+| Meta de ruptura | o placar por curva contra a meta (régua sem-providência) |
+| Fornecedores | maior estoque, maior/menor lucro, mais capital parado, maior compra sugerida |
+| Compradores | estoque, parado, ruptura e a comprar de cada um |
+| Desempenho | venda, lucro, margem e crescimento AA por comprador |
+| Validade | o que vence primeiro e quanto vale |
+| Vencidos | perda **já consumada** por validade, mês a mês |
+| ABC-XYZ | a matriz inteira |
+| Ocupação | posições, m³ e **espaço morto** |
+| Lead time | quem demora mais e menos para entregar |
+| Verbas | negociado, aplicado e saldo por fornecedor |
+| Qualidade | problemas de cadastro (nos dois universos) |
+
+**O que ele NÃO enxerga:** o catálogo item a item fora dos rankings, e o **Plano de reposição**
+(que é simulação semana a semana de um produto, não pergunta de panorama).
+
+⚠️ **Todo item vem com o CÓDIGO do produto.** Pedido do diretor: *"sempre trazer o cod, pois
+assim conseguimos validar — por exemplo, essa semana chegou copo, pode ser que isso tenha
+implicado nessa avaliação"*. É para você conferir no ERP: um item pode aparecer como maior espaço
+morto justamente na semana em que chegou carga dele, e só com o código dá para ir ver o que
+aconteceu. Vale para fornecedor também (código + nome).
+
+⚠️ **Quando o recorte não está nos pilares, ele NÃO diz apenas "não tenho".** Como os números
+dele respeitam os filtros do topo, ele pede para você aplicar o filtro (um fornecedor, um depto)
+e refazer a pergunta — aí responde no seu recorte.
+
+**Recorte:** os números respeitam os filtros do topo. Ele é obrigado a dizer o recorte na primeira
+frase, e se você mudar o filtro com o chat aberto a conversa avisa que as respostas anteriores
+eram de outro recorte.
+
+⚠️ **Ele não calcula nada** — narra números que o painel já produziu. É por isso que bate com a
+tela sempre: se somasse por conta própria, divergiria no primeiro arredondamento.
+
+⚠️ **A série da Evolução tem régua própria.** Ela conta como parado o item sem venda há **15 dias
+ou mais**; o placar conta a partir de **60**. Por isso o valor da série é sempre bem maior — são
+medições diferentes, não uma variação. O agente é instruído a comparar pontos da série entre si e
+nunca com o placar. *(A divergência entre as duas telas é anterior ao agente.)*
+
+**Sem o recurso contratado**, o botão continua aparecendo e mostra o que o Agente faria — é
+recurso adicional, e o servidor recusa qualquer pergunta (nenhum consumo indevido).
+
+Gate: `tests/test_ia_compras.py` · motor em `estoque/ia.py`.
+
 ## 8. Componentes: drawers e modais
 
 ### 8.1 360° do produto (clique em qualquer produto, de qualquer lista)
