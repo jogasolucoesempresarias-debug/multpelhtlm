@@ -109,6 +109,34 @@ def _n(x):
         return 0.0
 
 
+def cod_str(v):
+    """Código numérico do BI -> string SEM o `.0`. `7.0` vira `"7"`; texto passa limpo.
+
+    ⚠️ Nasceu de um bug de PRODUÇÃO no filtro de Departamento (08/2026, achado pelo diretor no
+    1º clique). O Power BI devolve `PCPRODUT[CODEPTO]` como FLOAT, e os dois lados do filtro
+    formatavam diferente:
+
+        Python  str(7.0)    -> "7.0"   (virava o `value` da <option>)
+        JS      String(7.0) -> "7"     (era o que o `filtered()` comparava)
+
+    O JavaScript derruba o `.0` de um inteiro, o Python mantém — `"7" !== "7.0"` e **nenhum
+    produto casava**. Selecionar qualquer departamento esvaziava a tela nas 22 abas, enquanto o
+    Excel saía com os 152 itens (o `_aplicar_filtros_cliente` comparava com a régua do Python e
+    acertava). Tela vazia ao lado de export cheio.
+
+    Também conserta a ordenação: `sorted()` de string punha `"2.0"` DEPOIS de `"18.0"`.
+
+    ⚠️ Use nas DUAS pontas — na `<option>` e no campo do produto. Normalizar só um lado troca o
+    lado que quebra, não conserta."""
+    if v in (None, ""):
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    return str(int(f)) if f.is_integer() else str(f)
+
+
 def _parse_dt(s):
     if not s:
         return None
@@ -118,8 +146,24 @@ def _parse_dt(s):
         return None
 
 
-def _giro_mensal(row, base):
-    g1, g2, g3 = _n(row.get("giro_m1")), _n(row.get("giro_m2")), _n(row.get("giro_m3"))
+def _giro_mensal(row, base, consumo=None):
+    """Giro mensal do item = venda + CONSUMO DE PRODUÇÃO, nos mesmos 3 meses fechados.
+
+    ⚠️ `consumo` é a demanda que não passa por venda: a rotina 1122 baixa o componente com
+    `NUMNOTA = 0`, movimento interno, e o Winthor **não soma isso em `QTVENDMES1..3`**. Sem ele o
+    módulo enxergava só parte da demanda dos itens de kit — medido no BI, 54 produtos do Atacado
+    com consumo equivalente a 38,7% da venda, cobertura inflada ~3x e sugestão de compra abaixo do
+    necessário. Ver `queries.q_consumo_producao`.
+
+    ⚠️ **As janelas TÊM de estar alinhadas**: `m1/m2/m3` do consumo são os MESMOS 3 meses fechados
+    do `QTVENDMES1/2/3`. Somar 4 meses de consumo com 3 de venda inflaria o giro em silêncio.
+
+    `consumo=None` (default) devolve exatamente o comportamento anterior — é o que mantém a
+    instância sem a tabela `CONSUMO_PRODUCAO` publicada rodando idêntica."""
+    c = consumo or {}
+    g1 = _n(row.get("giro_m1")) + _n(c.get("m1"))
+    g2 = _n(row.get("giro_m2")) + _n(c.get("m2"))
+    g3 = _n(row.get("giro_m3")) + _n(c.get("m3"))
     if base == "m1":
         return g1
     return round((g1 + g2 + g3) / 3)  # media3 — oficial do TI
@@ -724,7 +768,8 @@ TRIB_FONTES_FIRMES = ("isento_cadastro", "trib_entrada")
 def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, venda_map, params,
                        hoje=None, venda_mensal_map=None, ja_pedida_map=None, embalagem_map=None,
                        preco_venda_map=None, venda_ant_map=None, venda_mensal_rs_map=None,
-                       tributacao_map=None, trib_entrada_map=None, bloqueio_map=None):
+                       tributacao_map=None, trib_entrada_map=None, bloqueio_map=None,
+                       consumo_map=None, giro_industria_map=None):
     """snapshot: linhas do PCEST; end_map: {cod: qt_end}; prod_map/forn_map: cadastro;
     comprador_map: {matricula: nome}; venda_map: {cod:{venda,custo,qtd}} líquido do RCA.
     venda_mensal_map: {cod:{AnoMes:qtd}} p/ forecast (opcional; só quando forecast ligado).
@@ -735,7 +780,14 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
     bloqueio_map: {cod: [{qtbloq, dtultent, qtultent}]} — posição de bloqueio POR FILIAL, para
       separar pré-entrada de avaria sem o falso positivo da agregação (ver `qt_em_transicao`).
       Opcional: sem ele, a pré-entrada cai no cálculo agregado antigo.
-    Mantém só produtos do cadastro (revenda/não-FL)."""
+    consumo_map: {cod: {m1, m2, m3}} — consumo de PRODUÇÃO (rotina 1122) nos mesmos 3 meses
+      fechados do QTVENDMES1..3. É demanda que não passa por venda; sem ele o giro dos itens de
+      kit sai subestimado (ver `_giro_mensal`). Opcional: ausente = comportamento anterior.
+    giro_industria_map: {cod: giro MENSAL} da matéria-prima — demanda que vem 100% do consumo de
+      produção, nunca de venda (bobina não vende, se transforma). Quando o item está aqui, este
+      giro SUBSTITUI o de venda em vez de somar: somar seria contar a mesma demanda duas vezes
+      se um dia o item passasse a ter venda também. Janela de 12 meses (ver `routes._industria`).
+    Mantém só produtos do cadastro (revenda/não-FL, + a matéria-prima quando a unidade produz)."""
     hoje = hoje or date.today()
     base = params["base_estoque"]
     forecast_on = bool(params.get("forecast"))
@@ -776,7 +828,13 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         emb = (embalagem_map or {}).get(cod) or {}
         qtunit_emb = _n(emb.get("qtunit"))
 
-        giro_media3 = _giro_mensal(r, params["giro_base"])
+        # ⚠️ Matéria-prima tem giro PRÓPRIO (consumo de 12m) e ele SUBSTITUI o de venda — não
+        # soma. Item de indústria não vende; se um dia vender, somar contaria a demanda 2x.
+        giro_ind = (giro_industria_map or {}).get(cod)
+        if giro_ind is not None:
+            giro_media3 = round(giro_ind)
+        else:
+            giro_media3 = _giro_mensal(r, params["giro_base"], (consumo_map or {}).get(cod))
         serie_am = (venda_mensal_map or {}).get(cod)
         giro_forecast = previsao_giro_mensal(serie_am, fc_meses, hoje) if forecast_on else None
         saz = fatores_sazonais(serie_am, hoje) if sazonal_on else None
@@ -1036,7 +1094,7 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "fornecedor": (forn or {}).get("FORNECEDOR") if forn else None,
             "codcomprador": codcomprador,
             "comprador": comprador,
-            "codepto": cad.get("CODEPTO"),
+            "codepto": cod_str(cad.get("CODEPTO")),   # sem o `.0` — ver `cod_str`
             "ncm": cad.get("NCM"), "marca": cad.get("MARCA"),
             "embalagem": cad.get("EMBALAGEM"),
             "qtunitcx": qtunitcx or None,
@@ -2741,13 +2799,44 @@ def recorta_abertos_por_produto(res, por_pedido):
     for p in abertos:
         p["qt_produto_pedida"] = _round(por_pedido[p["numped"]]["qt_pedida"], 2)
         p["qt_produto_aberta"] = _round(por_pedido[p["numped"]]["qt_aberta"], 2)
+    return _reagrega_abertos(res, abertos, filtro_produto=True)
+
+
+def _reagrega_abertos(res, abertos, **marcas):
+    """Troca a lista de abertos e RECALCULA os agregados que a tela mostra ao lado dela.
+
+    ⚠️ Extraído para ser a fonte única dos dois recortes (produto e fornecedor). Duplicar a
+    reagregação era garantir que um dos dois esquecesse um campo na próxima métrica — e o sintoma
+    seria "15 entregas atrasadas" ao lado de uma tabela com um pedido, exatamente o defeito de
+    dois universos que a aba Verbas teve duas vezes em 08/2026."""
     r = dict(res["resumo"])
     r["n_abertos"] = len(abertos)
     r["n_atrasados"] = sum(1 for p in abertos if p["status_prazo"] == "atrasado")
     r["n_chega7"] = sum(1 for p in abertos if p["status_prazo"] == "chega_7")
     r["valor_aberto"] = _round(sum(p["valor_aberto"] for p in abertos))
-    r["filtro_produto"] = True
+    r.update(marcas)
     return {**res, "resumo": r, "abertos": abertos}
+
+
+def recorta_abertos_por_fornecedor(res, codfornec):
+    """Aplica o recorte de FORNECEDOR ao bloco de pedidos em aberto do Orçamento.
+
+    ⚠️ Achado pelo diretor em 08/2026: *"quando uso o filtro de fornecedor, não está filtrando os
+    pedidos abaixo; apenas quando filtro produto"*. O recorte por produto existia (`?busca=`) e o
+    de fornecedor nunca foi ligado — a tela mostrava GALVANOTEK no filtro e a lista trazia MINAS
+    MAIS, EMVAC, BOMBRIL. Filtro que não responde em silêncio é a falha clássica do módulo.
+
+    ⚠️ Os KPIs de ORÇAMENTO (meta, comprado, saldo, consumido) ficam INTACTOS, mesma razão do
+    recorte por produto: a meta é 65% da venda do COMPRADOR no mês, não tem quebra por fornecedor.
+    Recortá-los produziria um "% da meta" que não corresponde a meta nenhuma. A tela avisa."""
+    try:
+        cf = int(_n(codfornec))
+    except (TypeError, ValueError):
+        return res
+    if not cf:
+        return res
+    abertos = [p for p in res["abertos"] if int(_n(p.get("codfornec"))) == cf]
+    return _reagrega_abertos(res, abertos, filtro_fornecedor=True)
 
 
 def logistica_pedidos(cab, itens, prod_map, embalagem_map, comp_map, forn_map, hoje=None,

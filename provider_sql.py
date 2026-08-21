@@ -939,9 +939,9 @@ def produtos_map():
 
 
 def radar_board(dias, rbac=None, codclis=None):
-    """(rec, ant) por codprod: recente [hoje-dias, hoje] vs anterior [hoje-2d, hoje-dias).
-    rec[cp]={'VendaRec','CliRec'}, ant[cp]={'VendaAnt','CliAnt'}. Escopo via rbac e/ou codclis
-    (espelha o rbac_frag do board: admin=vendedor/supervisor, não-admin=cadastro)."""
+    """(rec, ant, perdidos) por codprod: recente [hoje-dias, hoje] vs anterior [hoje-2d, hoje-dias).
+    rec[cp]={'VendaRec','CliRec'}, ant[cp]={'VendaAnt','CliAnt'}, perdidos[cp]=int.
+    Escopo via rbac e/ou codclis (espelha o rbac_frag do board — hoje sempre por CADASTRO)."""
     h = hoje_analitico()
     d_rec, d_ant = h - timedelta(days=dias), h - timedelta(days=2 * dias)
     d_mid = h - timedelta(days=dias)
@@ -958,7 +958,19 @@ def radar_board(dias, rbac=None, codclis=None):
             GROUP BY codprod""", (d_ant, d_mid))
         ant = {cp: {"VendaAnt": float(v), "CliAnt": int(cli or 0)}
                for cp, v, cli in cur.fetchall() if cp is not None}
-    return rec, ant
+        # ⚠️ PERDIDOS de verdade: quem comprou o produto na janela ANTERIOR e cuja ULTIMA compra
+        # DELE ficou antes da janela recente. NAO e `CliAnt - CliRec` (saldo de contagens) — se 20
+        # clientes param e 20 novos entram, o saldo da zero e esconde os 20 que sairam. Medido no
+        # BI real: 70,1% dos produtos do board subestimavam, escondendo 14.193 clientes no total,
+        # e alguns mostravam ZERO com mais de 100 clientes parados.
+        cur.execute(f"""SELECT codprod, count(*) FROM (
+              SELECT codprod, codcli, max(dtsaida) ult
+                FROM faturamento_vendas
+               WHERE codoper='S' AND dtsaida >= %s{we}
+               GROUP BY codprod, codcli) t
+             WHERE ult < %s GROUP BY codprod""", (d_ant, d_mid))
+        perdidos = {cp: int(n or 0) for cp, n in cur.fetchall() if cp is not None}
+    return rec, ant, perdidos
 
 
 def _radar_por_cli(cur, f_prod, d_ini, d_fim, val_alias, qt_alias):

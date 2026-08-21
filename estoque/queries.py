@@ -28,12 +28,7 @@ def _lista_filiais_dax(filiais):
 
 
 # ───────────────────────── cadastro ─────────────────────────
-def q_cadastro_produto():
-    """Só produtos de revenda e não 'fora de linha' (espelha REVENDA='S' AND OBS2<>'FL')."""
-    return """EVALUATE
-SELECTCOLUMNS(
-    FILTER(PCPRODUT, PCPRODUT[REVENDA] = "S" && PCPRODUT[OBS2] <> "FL"),
-    "CODPROD",   PCPRODUT[CODPROD],
+_CAD_COLS = """    "CODPROD",   PCPRODUT[CODPROD],
     "DESCRICAO", PCPRODUT[DESCRICAO],
     "CODFAB",    PCPRODUT[CODFAB],
     "PERCIPI",   PCPRODUT[PERCIPI],
@@ -53,6 +48,38 @@ SELECTCOLUMNS(
     "PESOBRUTO", PCPRODUT[PESOBRUTO],
     "PESOLIQ",   PCPRODUT[PESOLIQ]
 )"""
+
+
+def q_cadastro_produto(industria_filiais=None):
+    """Cadastro dos produtos.
+
+    Sem argumento: só revenda e não 'fora de linha' (espelha `REVENDA='S' AND OBS2<>'FL'`) — o
+    universo de sempre, byte a byte igual ao que o módulo sempre usou.
+
+    `industria_filiais`: troca o filtro para **os produtos que aquelas filiais CONSOMEM na
+    produção** (movimento `SP` da rotina 1122), SEM o corte de revenda. É por aqui que a
+    matéria-prima entra no módulo: bobina de papel é `REVENDA='N'` e nunca passaria pelo filtro
+    padrão.
+
+    ⚠️ **O universo é o CONSUMO, não o `REVENDA='N'`.** Medido no BI (08/2026): admitir todo
+    `REVENDA='N'` traria **+1.612 itens e +R$ 5,9 mi** ao Atacado (capital parado 5,9x, sem-giro
+    45x); admitir só quem consome traz **43 itens, todos da filial 9**, e o Atacado ganha
+    **R$ 423** — 0,007%. É a diferença entre uma feature e uma regressão.
+
+    ⚠️ As duas variantes compartilham `_CAD_COLS` de propósito. Coluna nova entra uma vez e vale
+    para as duas — listas separadas divergiriam no primeiro cadastro novo, e o modo indústria
+    passaria a ler `None` numa chave que o `core` espera obrigatória.
+    """
+    if industria_filiais:
+        lista = _lista_filiais_dax(industria_filiais)
+        fil = " && CONSUMO_PRODUCAO[CODFILIAL] IN " + lista if lista else ""
+        return ("EVALUATE\nVAR Consumidos = SELECTCOLUMNS(\n"
+                '    FILTER(ALL(CONSUMO_PRODUCAO), CONSUMO_PRODUCAO[CODOPER] = "SP"' + fil + "),\n"
+                '    "c", CONSUMO_PRODUCAO[CODPROD])\nRETURN\nSELECTCOLUMNS(\n'
+                "    FILTER(PCPRODUT, PCPRODUT[CODPROD] IN Consumidos),\n" + _CAD_COLS)
+    return ("EVALUATE\nSELECTCOLUMNS(\n"
+            '    FILTER(PCPRODUT, PCPRODUT[REVENDA] = "S" && PCPRODUT[OBS2] <> "FL"),\n'
+            + _CAD_COLS)
 
 
 def q_cadastro_fornecedor():
@@ -591,6 +618,48 @@ def q_snapshot_estoque(filiais=None):
 FILTER(
     {tabela},
     [qtestger] <> 0 || [giro_m1] <> 0 || [giro_m2] <> 0 || [giro_m3] <> 0
+)"""
+
+
+# ───────────────────────── consumo de produção (rotina 1122) ──────────────────
+def q_consumo_producao(filiais=None, meses=None, oper="SP"):
+    """Consumo por PRODUÇÃO (`CODOPER='SP'`) por produto e mês — tabela `CONSUMO_PRODUCAO`.
+
+    ⚠️ **Isto é demanda que NÃO é venda.** A rotina 1122 (Montar Produtos) dá baixa no componente
+    e o Winthor registra o movimento em PCMOV com `NUMNOTA = 0` — movimento interno. Resultado: a
+    baixa atualiza o `DTULTSAIDA` do item mas **não entra em `QTVENDMES1..3`**, que é de onde o
+    módulo tira o giro. O item consome e o painel enxerga giro zero.
+
+    Medido no BI (08/2026): na filial 3 são **54 produtos de revenda** com consumo, e o consumo
+    equivale a **38,7%** da venda deles no mesmo período — ou seja, o painel via ~72% da demanda
+    real desses itens e sugeria comprar de menos. Na filial 9 (JID, a indústria) é a régua
+    INTEIRA: as bobinas não vendem, só se transformam.
+
+    `oper`: `SP` = saída de produção (consumo do componente) · `EP` = entrada (o produto montado).
+    `meses`: lista de `AnoMes` (YYYYMM) — normalmente `core._meses_anteriores(hoje, 3)`, os mesmos
+    3 meses fechados que o `QTVENDMES1..3` cobre. Alinhar as janelas é obrigatório: somar consumo
+    de 4 meses com venda de 3 inflaria o giro sem ninguém perceber.
+
+    Tabela publicada sob demanda (como `TRIB_ENTRADA`/`PEDIDO_ENTRADA`). Instância sem ela → a
+    chamada falha, o mapa sai vazio e o giro volta a ser só venda, idêntico ao de antes.
+    """
+    lista = _lista_filiais_dax(filiais)
+    fil = f' && CONSUMO_PRODUCAO[CODFILIAL] IN {lista}' if lista else ""
+    if meses:
+        datas = ", ".join(f"DATE({int(m)//100}, {int(m)%100}, 1)" for m in meses)
+        jan = f" && CONSUMO_PRODUCAO[MES] IN {{{datas}}}"
+    else:
+        jan = ""
+    return f"""EVALUATE
+SELECTCOLUMNS(
+    SUMMARIZECOLUMNS(
+        CONSUMO_PRODUCAO[CODPROD],
+        CONSUMO_PRODUCAO[MES],
+        FILTER(ALL(CONSUMO_PRODUCAO),
+            CONSUMO_PRODUCAO[CODOPER] = "{oper}"{fil}{jan}),
+        "qt", SUM(CONSUMO_PRODUCAO[QT])
+    ),
+    "codprod", [CODPROD], "mes", [MES], "qt", [qt]
 )"""
 
 

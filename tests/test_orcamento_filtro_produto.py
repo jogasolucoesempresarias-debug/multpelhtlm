@@ -136,3 +136,82 @@ def test_front_manda_a_busca_e_carrega_a_chave_de_cache():
     assert "'&busca='" in t, 'renderOrcamento parou de mandar a busca ao servidor'
     key = next(l for l in t.splitlines() if 'const orcKey' in l)
     assert 'bq' in key, f'busca fora da chave de cache do Orçamento: {key.strip()}'
+
+
+# ───────────────────── recorte por FORNECEDOR (08/2026) ─────────────────────
+
+def _ped_f(numped, codfornec, valor=1000.0, prazo="atrasado"):
+    return {"numped": numped, "codfornec": codfornec, "valor_aberto": valor,
+            "status_prazo": prazo, "recebido": False}
+
+
+def _res_f(pedidos):
+    return {"abertos": list(pedidos), "pedidos": list(pedidos),
+            "resumo": {"n_abertos": len(pedidos), "n_atrasados": 0, "n_chega7": 0,
+                       "valor_aberto": 0.0, "meta": 100.0, "comprado": 50.0, "saldo": 50.0}}
+
+
+def test_o_filtro_de_fornecedor_recorta_os_pedidos_em_aberto():
+    """⚠️ Achado pelo diretor 08/2026: "quando uso o filtro de fornecedor, não está filtrando os
+    pedidos abaixo; apenas quando filtro produto". O recorte por produto existia (`?busca=`) e o
+    de fornecedor nunca foi ligado — a tela mostrava GALVANOTEK no filtro e a lista trazia MINAS
+    MAIS, EMVAC e BOMBRIL."""
+    from estoque import core
+    res = _res_f([_ped_f(1, 113), _ped_f(2, 999), _ped_f(3, 113)])
+    out = core.recorta_abertos_por_fornecedor(res, 113)
+    assert [p["numped"] for p in out["abertos"]] == [1, 3]
+    assert out["resumo"]["filtro_fornecedor"] is True
+
+
+def test_o_recorte_de_fornecedor_REAGREGA_os_cards_junto_com_a_lista():
+    """⚠️ Os cards de prazo leem a CONTAGEM do resumo e o VALOR da lista. Recortar só um lado
+    deixaria "15 entregas atrasadas" ao lado de uma tabela com um pedido — o defeito de dois
+    universos que a aba Verbas teve duas vezes."""
+    from estoque import core
+    res = _res_f([_ped_f(1, 113, 500.0, "atrasado"), _ped_f(2, 999, 900.0, "atrasado"),
+                _ped_f(3, 113, 250.0, "chega_7")])
+    out = core.recorta_abertos_por_fornecedor(res, 113)
+    r = out["resumo"]
+    assert r["n_abertos"] == 2 == len(out["abertos"])
+    assert r["n_atrasados"] == 1 and r["n_chega7"] == 1
+    assert r["valor_aberto"] == 750.0
+
+
+def test_os_KPIs_de_orcamento_NAO_entram_no_recorte_de_fornecedor():
+    """A meta é 65% da venda do COMPRADOR no mês — não tem quebra por fornecedor. Recortá-la
+    daria um "% da meta" que não corresponde a meta nenhuma. Mesma política do recorte por
+    produto; a tela avisa."""
+    from estoque import core
+    res = _res_f([_ped_f(1, 113), _ped_f(2, 999)])
+    out = core.recorta_abertos_por_fornecedor(res, 113)
+    for k in ("meta", "comprado", "saldo"):
+        assert out["resumo"][k] == res["resumo"][k]
+
+
+def test_fornecedor_vazio_ou_invalido_devolve_a_lista_INTEIRA_sem_estourar():
+    """Querystring montada à mão não pode derrubar a aba — mas também não pode filtrar errado."""
+    from estoque import core
+    res = _res_f([_ped_f(1, 113), _ped_f(2, 999)])
+    for v in ("", None, 0, "abc"):
+        assert len(core.recorta_abertos_por_fornecedor(res, v)["abertos"]) == 2
+
+
+def test_os_DOIS_recortes_usam_a_MESMA_reagregacao():
+    """⚠️ Duplicar a reagregação era garantir que um dos dois esquecesse um campo na próxima
+    métrica. Os dois chamam `_reagrega_abertos`."""
+    import inspect
+    from estoque import core
+    for fn in (core.recorta_abertos_por_produto, core.recorta_abertos_por_fornecedor):
+        assert "_reagrega_abertos" in inspect.getsource(fn)
+
+
+def test_o_fornec_viaja_na_querystring_E_na_chave_de_cache_do_front():
+    """⚠️ Sem o `fornec` na chave de cache, o 1º fornecedor consultado seria servido aos demais
+    pelo cache do cliente — o mesmo defeito da aba Verbas (tabela de um fornecedor ao lado do
+    gráfico da empresa toda)."""
+    import io
+    js = io.open("static/estoque/estoque.js", encoding="utf-8").read()
+    bloco = js[js.index("const bq=(S.cli.busca"):js.index("const bq=(S.cli.busca") + 1200]
+    assert "const fq=(S.cli.fornec" in bloco, "o fornecedor tem de sair na querystring"
+    assert "+bq+'|'+fq" in bloco, "e tem de entrar na chave de cache junto com a busca"
+    assert "'&fornec='+encodeURIComponent(fq)" in bloco

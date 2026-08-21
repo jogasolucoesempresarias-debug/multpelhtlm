@@ -6646,6 +6646,56 @@ def _radar_filtrar_fornec(rows, fornecedor):
     return [r for r in rows if r.get('codfornec') == cf]
 
 
+def _radar_frag_codcli():
+    """Fragmento DAX que restringe o board do Radar AOS MESMOS clientes que o drill lista.
+
+    ⚠️ Existe porque o board e o drill usavam réguas DIFERENTES de escopo (achado do diretor,
+    08/2026: o board dizia "1 cliente perdido" e o drill abria vazio):
+
+        board (admin c/ filtro) → por VENDA:    FATURAMENTO_VENDAS[CODSUPERVISOR]  (quem VENDEU)
+        drill                   → por CADASTRO: PCCLIENT[CODUSUR1]                 (de quem o cliente É)
+
+    Medido no BI: **21,7% dos clientes** (1.502 de 6.922, R$ 6,0 mi em 12m) são atendidos por
+    vendedor de outro time. Caso real do produto 58832: o cliente 1578 teve a venda feita por um
+    vendedor do supervisor 4 mas está cadastrado no CODUSUR 29 — o board o contava, o drill o
+    descartava, e a tela abria "Nenhum cliente".
+
+    Agora as duas pontas partem do MESMO conjunto: `_radar_filtrar_carteira_idx` sobre
+    `_carteira_no_escopo`, que é literalmente o que o drill usa para montar a lista.
+
+    ⚠️ Sem filtro de supervisor/vendedor o admin continua SEM restrição (`''`) — é a visão padrão
+    da tela e ela não pode mudar. Só o caminho COM filtro é que estava errado.
+
+    Retorna (frag, ok). `ok=False` = escopo grande demais para caber no DAX; o chamador decide.
+    Hoje o maior supervisor tem 1.373 clientes, então o caso não acontece — o guard existe para
+    não virar bug silencioso se a base crescer.
+    """
+    role = session.get('role')
+    if role not in ('admin', 'viewer'):
+        return _frag_codcli_cadastro()          # não-admin: trava de RBAC, inalterada
+
+    vend = _radar_vendedor_filtro()
+    sup = _supervisores_filtro()
+    if vend is None and not sup:
+        return ('', True)                        # sem filtro escolhido: empresa toda, como sempre
+
+    idx = _radar_filtrar_carteira_idx({c['codcli']: c for c in _carteira_no_escopo()
+                                       if c.get('codcli') is not None})
+    escopo = set(idx)
+    if not escopo:
+        # filtro que não casa nenhum cliente de CADASTRO: o board tem de vir vazio, não inteiro.
+        return (' && FALSE()', True)
+    if len(escopo) <= 2500:
+        lista = ', '.join(str(c) for c in sorted(escopo))
+        return (f' && FATURAMENTO_VENDAS[CODCLI] IN {{{lista}}}', True)
+    todos = {c['codcli'] for c in _carregar_carteira_full() if c.get('codcli') is not None}
+    complemento = todos - escopo
+    if len(complemento) <= 2500:
+        lista = ', '.join(str(c) for c in sorted(complemento))
+        return (f' && NOT(FATURAMENTO_VENDAS[CODCLI] IN {{{lista}}})', True)
+    return ('', False)
+
+
 def _radar_board_full(dias):
     """Lista COMPLETA de produtos sangrando (janela recente vs anterior), ordenada por queda de
     receita desc, no escopo da SESSÃO (supervisor/vendedor/cadastro). Cacheada por (dias, escopo).
@@ -6653,23 +6703,24 @@ def _radar_board_full(dias):
     d2 = 2 * dias
     sup = _supervisores_filtro()
     vend = _radar_vendedor_filtro()
+    # ⚠️ `v` na chave = VERSAO DO PAYLOAD. Sem ela, um deploy que muda a forma ou o significado
+    # do board continua servindo o payload velho do cache ate o TTL expirar — e ninguem percebe,
+    # porque nao da erro. Subiu para 2 em 08/2026 com duas mudancas: escopo por CADASTRO e
+    # `clientes_perdidos` por CONJUNTO. **Suba sempre que mudar o resultado desta funcao.**
     key = cache_key_for_user('radar:board',
-                             {'dias': dias, 'supervisor': _sup_cache_key(sup), 'vendedor': vend if vend is not None else '-'})
+                             {'v': 2, 'dias': dias, 'supervisor': _sup_cache_key(sup),
+                              'vendedor': vend if vend is not None else '-'})
     cached = _cache_get(key)
     if cached:
         return cached['rows']
 
-    # Escopo. Não-admin: por CADASTRO (mesmo padrão de api_categorias).
-    # Admin/viewer: filtro escolhido por venda (vendedor tem precedência sobre supervisor).
-    if session.get('role') in ('admin', 'viewer'):
-        if vend is not None:
-            rbac_frag = f" && FATURAMENTO_VENDAS[CODUSUR] = {vend}"
-        else:
-            sup_frag = _frag_supervisores('FATURAMENTO_VENDAS', sup)
-            rbac_frag = f" && {sup_frag}" if sup_frag else ''
-    else:
-        frag, ok = _frag_codcli_cadastro()
-        rbac_frag = frag if ok else ((f" && {aplicar_rbac_dax()}") if aplicar_rbac_dax() else '')
+    # Escopo por CADASTRO nas DUAS pontas — board e drill partem do mesmo conjunto de clientes.
+    # ⚠️ Até 08/2026 o caminho admin filtrava por VENDA (`FATURAMENTO_VENDAS[CODSUPERVISOR]`)
+    # enquanto o drill filtrava por CADASTRO, e as duas telas discordavam: o board dizia
+    # "1 cliente perdido" e o drill abria "Nenhum cliente". Ver `_radar_frag_codcli`.
+    # O caminho postgres logo abaixo JÁ usava cadastro — era o Power BI que destoava.
+    frag, ok = _radar_frag_codcli()
+    rbac_frag = frag if ok else ((f" && {aplicar_rbac_dax()}") if aplicar_rbac_dax() else '')
 
     if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
         # Escopo por CODCLI (espelha o rbac_frag: admin/viewer sem filtro → empresa toda = None;
@@ -6679,7 +6730,7 @@ def _radar_board_full(dias):
         else:
             _idx = _radar_filtrar_carteira_idx({c['codcli']: c for c in _carteira_no_escopo()})
             codclis = list(_idx.keys())
-        rec, ant = provider_sql.radar_board(dias, None, codclis)
+        rec, ant, perdidos = provider_sql.radar_board(dias, None, codclis)
     else:
         queries = {
             'rec': f"""EVALUATE
@@ -6698,11 +6749,39 @@ SUMMARIZECOLUMNS(
     "VendaAnt", [VENDA LIQUIDA],
     "CliAnt",   DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI])
 )""",
+            # ⚠️ PERDIDOS de verdade = quem comprou o produto na janela ANTERIOR e cuja ÚLTIMA
+            # compra DELE ficou antes da janela recente. NÃO é `CliAnt - CliRec` (saldo de
+            # contagens): se 20 clientes param e 20 novos entram, o saldo dá zero e esconde os 20
+            # que saíram. Medido no BI real (08/2026, janela 60d): dos 1.557 produtos do board,
+            # **1.091 (70,1%) subestimavam**, escondendo 14.193 clientes no total — e vários
+            # mostravam ZERO com mais de 100 clientes parados (o 57889 dizia 28 contra 266).
+            # A coluna também é opção de ORDENAÇÃO do board, então o ranking saía errado.
+            #
+            # ⚠️ Não dá para trazer os pares produto×cliente e fazer a diferença em Python: são
+            # ~119 mil pares em 60 dias e ~158 mil em 90, e o `executeQueries` corta em 100.000
+            # em silêncio. Por isso o conjunto se resolve no DAX. Custo medido: 1,5s, 2.497 linhas.
+            'perdidos': f"""EVALUATE
+SUMMARIZECOLUMNS(
+    FATURAMENTO_VENDAS[CODPROD],
+    FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[DTSAIDA] >= TODAY() - {d2}{rbac_frag}),
+    "CliPerdidos",
+        COUNTROWS(
+            FILTER(
+                ADDCOLUMNS(
+                    SUMMARIZE(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[CODCLI]),
+                    "@ult", CALCULATE(MAX(FATURAMENTO_VENDAS[DTSAIDA]))
+                ),
+                [@ult] < TODAY() - {dias}
+            )
+        )
+)""",
         }
-        resultados = _executar_dax_paralelo_n(queries, max_workers=2)
+        resultados = _executar_dax_paralelo_n(queries, max_workers=3)
 
         rec = {r['CODPROD']: r for r in clean_rows(_todas_linhas(resultados['rec'])) if r.get('CODPROD') is not None}
         ant = {r['CODPROD']: r for r in clean_rows(_todas_linhas(resultados['ant'])) if r.get('CODPROD') is not None}
+        perdidos = {r['CODPROD']: int(r.get('CliPerdidos') or 0)
+                    for r in clean_rows(_todas_linhas(resultados['perdidos'])) if r.get('CODPROD') is not None}
 
     prod_idx = _carregar_produtos_map()
     deptos_nomes = _carregar_deptos_map()['deptos']
@@ -6711,6 +6790,10 @@ SUMMARIZECOLUMNS(
     for cp in set(rec) | set(ant):
         v_rec = (rec.get(cp, {}).get('VendaRec')) or 0
         v_ant = (ant.get(cp, {}).get('VendaAnt')) or 0
+        # `CliRec`/`CliAnt` seguem sendo lidos das queries mas NAO formam mais o
+        # `clientes_perdidos` — a diferenca deles era o saldo que escondia churn (ver a query
+        # 'perdidos'). Ficam expostos porque respondem "quantos clientes compraram em cada
+        # janela", que e outra pergunta e continua valida.
         c_rec = (rec.get(cp, {}).get('CliRec')) or 0
         c_ant = (ant.get(cp, {}).get('CliAnt')) or 0
         queda = round(v_ant - v_rec, 2)
@@ -6728,8 +6811,11 @@ SUMMARIZECOLUMNS(
             'venda_rec':         round(v_rec, 2),
             'venda_ant':         round(v_ant, 2),
             'queda_receita':     queda,
+            'clientes_rec':      int(c_rec),
+            'clientes_ant':      int(c_ant),
             'pct_queda':         round((queda / v_ant), 4) if v_ant else None,
-            'clientes_perdidos': max(0, c_ant - c_rec),
+            # conjunto (quem parou), nao saldo de contagens — ver a query 'perdidos'
+            'clientes_perdidos': int(perdidos.get(cp, 0)),
         })
     out.sort(key=lambda x: x['queda_receita'], reverse=True)
     _cache_set(key, {'ok': True, 'dias': dias, 'total': len(out), 'rows': out}, 'dax_agregado')

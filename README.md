@@ -70,6 +70,35 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
 - **Vendedores** — ranking YoY, positivação, cockpit individual.
 - **Categorias** — treemap de deptos (tamanho=venda, cor=margem) + top fornecedores + drill.
 - **Mix abandonado** — clientes que pararam de comprar um depto há X dias; drill top 5 deptos perdidos; export CSV.
+- 🩹 **Radar — o board contava por VENDA e o drill listava por CADASTRO** (08/2026, achado pelo
+  diretor). O board dizia "1 cliente perdido" e o drill abria **"Nenhum cliente"**. As duas telas
+  estavam certas, cada uma na sua régua: o board filtrava `FATURAMENTO_VENDAS[CODSUPERVISOR]` (quem
+  VENDEU) e o drill `PCCLIENT[CODUSUR1]` (de quem o cliente É). Medido no BI: **21,7% dos clientes**
+  (1.502 de 6.922, R$ 6,0 mi em 12m) são atendidos por vendedor de outro time — não é caso isolado.
+  Agora as duas pontas partem do MESMO conjunto (`_radar_frag_codcli`), coerente com Carteira,
+  Categorias, Mix e Tendências, que já usavam cadastro.
+  - ⚠️ **Só o caminho admin/viewer COM filtro mudou.** Sem filtro o admin segue sem restrição
+    (fragmento `''`, a visão padrão da tela) e o não-admin segue no `_frag_codcli_cadastro` — que é
+    trava de RBAC, não filtro de tela. Por isso ninguém tinha visto: usuário comum nunca cai no caso.
+  - ⚠️ O caminho **postgres já usava cadastro** — era o Power BI que destoava. Os dois estão alinhados.
+- 🩹 **Radar — "Clientes perdidos" era um SALDO, não os clientes que pararam.** A conta era
+  `DISTINCTCOUNT(anterior) − DISTINCTCOUNT(recente)`: se 20 clientes param e 20 novos entram, o saldo
+  dá **zero** e esconde os 20 que saíram. Medido no BI (janela 60d): dos 1.557 produtos do board,
+  **1.091 (70,1%) subestimavam**, escondendo **14.193 clientes** no total — o 57889 mostrava **28**
+  quando **266** pararam, e vários mostravam **zero** com mais de cem clientes parados. E a coluna é
+  opção de **ordenação** do board, então o ranking saía errado.
+  - A régua certa é **diferença de CONJUNTOS**: quem comprou na janela anterior e cuja ÚLTIMA compra
+    do produto ficou antes da janela recente.
+  - ⚠️ **Resolvido no DAX, não em Python.** Os pares produto×cliente são ~**119 mil** em 60 dias e
+    ~**158 mil** em 90, e o `executeQueries` corta em **100.000 em silêncio** — trazer os pares teria
+    criado um bug pior que o original. Custo medido do DAX: **1,5s**, 2.497 linhas, em paralelo.
+  - ⚠️ A chave do cache do board ganhou **`v` (versão do payload)**. Sem ela, um deploy que muda a
+    forma ou o significado do board segue servindo o payload velho até o TTL expirar, sem erro — foi
+    o próprio teste que expôs isso. **Suba o número sempre que mudar o resultado da função.**
+  - ⚠️ **Board e drill continuam com números diferentes, e é legítimo:** o board compara duas janelas
+    (60 vs 60 dias) e o drill olha **12 meses**. São perguntas diferentes, e o tooltip declara.
+    `CliRec`/`CliAnt` seguem expostos ("quantos compraram em cada janela"), só não formam mais o
+    `clientes_perdidos`.
 - **Tendências** — cohort retention heatmap (M+0..M+12) com filtros vendedor/supervisor em cascata.
 - **Metas** — réplica das 4 telas META (Venda/Rentab/Clientes/Mix): meta própria (Postgres) × realizado (2º dataset META) × projeção, drill de vendedores, editor admin.
   - ⚠️ **A `% Margem` divide pelo realizado BRUTO** (com bonificação), nunca por `venda_sb`
@@ -389,6 +418,92 @@ de ocupação ali também? Só o percentual de ocupação"*). KPI + gráfico pr�
   Gates: `test_vencido_NAO_entra_na_foto_porque_e_evento_datado`, `test_dia_sem_baixa_recebe_ZERO_e_nao_None`.
 - **O merge vive em `serie()`, não em `agregar()`**: o `agregar` é PURO (recebe linhas, não toca
   banco), e é essa pureza que permite recalcular o passado. Fazê-lo ler outra tabela mataria isso.
+
+**Consumo de PRODUÇÃO (rotina 1122) — demanda que não passa por venda** (08/2026). Investigando por
+que a filial 9 (JID, a indústria) aparecia vazia no painel, descobriu-se que a rotina **1122 (Montar
+Produtos)** dá baixa no componente gravando em `PCMOV` com `NUMNOTA = 0` — movimento interno. O
+Winthor atualiza o `DTULTSAIDA` do item mas **não soma em `QTVENDMES1..3`**, que é de onde o módulo
+tira o giro. O item consome e o painel enxerga giro zero.
+
+Publicada a tabela **`CONSUMO_PRODUCAO`** no dataset (mesmo caminho do `TRIB_ENTRADA`): `SP` = saída
+de produção (consumo do componente) · `EP` = entrada (o produto montado), por produto × mês × filial.
+Validada contra o rodapé do relatório da 1122: **20 + 60 + 3 + 40 = 123**, exato, com o número de
+lançamentos batendo com o número de documentos.
+
+Isso destravou **duas** coisas:
+
+- 🩹 **Correção do Atacado.** 50 produtos de revenda das filiais 3+5 têm consumo além da venda — o
+  giro deles estava subestimado e a **cobertura inflada ~3x** (o 67146 dizia 128 dias e eram 49; o
+  67569 dizia 37 e eram 18). O consumo **SOMA** à venda (`core._giro_mensal`). Efeito medido: 35
+  itens mudaram, 20 ganharam sugestão maior, +R$ 10.710 no valor sugerido (0,56%), e dois itens
+  saíram de "sem giro" (cobertura 9999 → 100 e 300 dias).
+- 🆕 **Indústria (filial 9).** A matéria-prima não vende, se transforma: aqui o consumo **SUBSTITUI**
+  a venda como fonte de giro (`giro_industria_map`). A unidade JID saiu de **R$ 0,00 / 29 SKUs** para
+  **R$ 341.815 / 67 SKUs**, com cobertura real e sugestão de compra funcionando.
+
+- ⚠️ **As janelas TÊM de estar alinhadas.** O consumo que soma à venda usa os **mesmos 3 meses
+  fechados** do `QTVENDMES1/2/3` (`core._meses_anteriores(hoje, 3)`). A 1ª medição deu 38,7% de
+  consumo sobre venda porque a janela pegava agosto parcial contra 3 meses de venda — alinhada, o
+  número é outro. Somar 4 meses de consumo com 3 de venda infla o giro **sem erro nenhum**.
+- ⚠️ **A indústria usa 12 meses, não 3.** Quatro itens não consumiram nos últimos 3 meses mas
+  consumiram 2.465, 2.600, 2.273 e 1.878 kg no ano — com média de 3 meses teriam giro ZERO e o
+  painel os chamaria de estoque morto. E o erro vai para os dois lados: o 58562 projeta 1.749 kg/ano
+  em janela de 3 contra 8.280 reais (−79%); o 58565 projeta 30.168 contra 25.663 (+18%). Só 30 dos
+  43 itens consumiram nos últimos 12 meses e 7 consumiram em 2 meses ou menos — demanda errática.
+- ⚠️ **O universo da indústria é o CONSUMO, não o `REVENDA='N'`.** Admitir todo `REVENDA='N'` traria
+  **+1.612 itens e +R$ 5,9 mi** ao Atacado (capital parado 5,9x, sem-giro 45x). Admitir só quem
+  consome traz **43 itens, todos da filial 9**, e o Atacado ganha **R$ 423** — 0,007%. É a diferença
+  entre uma feature e uma regressão.
+- ⚠️ **`FILIAIS_INDUSTRIA` é env EXPLÍCITA (default `9`), não derivada do dado.** A filial 3 (Matriz)
+  também tem movimento de produção — 42.747 lançamentos `SP` no Oracle. Derivar "quem tem SP é
+  indústria" arrastaria os itens dela para o Atacado sem ninguém decidir.
+- ⚠️ **Nada de clamp na cobertura.** As tintas consomem 0,1–3,7 kg/ano e têm cobertura de 31 mil a
+  612 mil dias — é verdade, não defeito, e o módulo já tem a categoria "excesso". Um teto em 9999
+  colidiria com o 9999 que significa "sem giro", e **já existem 5 itens acima de 9999 hoje** (max
+  28.290) que passariam a mentir.
+- **Degradação:** sem a tabela publicada (ou em modo BD), `consumo_map`/`giro_industria_map` saem
+  vazios e o giro volta a ser só venda — **idêntico ao de antes**. Gate: `tests/test_consumo_producao.py`.
+- **Validação:** fingerprint das 5 unidades × todos os resumos × 9.432 produtos, antes e depois.
+  Provado reprodutível (duas rodadas sem mudança = 0 diferenças). Resultado: AM/AC byte a byte
+  iguais, Atacado só nos 35 itens com consumo (**nenhum mudou sem ter**), e valor de estoque,
+  capital parado, venda, lucro e universo intactos nas cinco.
+
+🩹 **Filtro de Departamento não funcionava na tela** (08/2026, achado pelo diretor no 1º clique).
+`PCPRODUT[CODEPTO]` vem do Power BI como **float**, e os dois lados formatavam diferente:
+
+```
+Python  str(7.0)     ->  "7.0"    (virava o value da <option>)
+JS      String(7.0)  ->  "7"      (era o que o filtered() comparava)
+```
+
+O JavaScript derruba o `.0` de um inteiro, o Python mantém — `"7" !== "7.0"` e **nenhum produto
+casava**. Selecionar qualquer departamento esvaziava a lista **nas 22 abas**, enquanto o Excel saía
+com os 152 itens (o `_aplicar_filtros_cliente` comparava com a régua do Python e acertava). Tela
+vazia ao lado de export cheio. Fonte única: **`core.cod_str`**, usada nas DUAS pontas — normalizar só
+um lado troca o lado que quebra.
+- Consertou junto a **ordenação** (`sorted()` de string punha o depto `2` depois do `18`) e o
+  **nome** do departamento, que agora vem do dataset RCA (`FATURAMENTO_DEVOLUCAO`), a mesma fonte
+  que o Comercial já usa — reusar evita duas listas de departamento divergindo.
+- ⚠️ O `CODEPTO` vem **int no RCA** e **float no Estoque**; os dois lados passam pelo `cod_str`,
+  senão a chave seria `"7"` de um lado e `"7.0"` do outro e o join não casaria.
+
+🩹 **Orçamento: o filtro de FORNECEDOR não recortava os pedidos em aberto** (08/2026, achado pelo
+diretor: *"quando uso o filtro de fornecedor, não está filtrando os pedidos abaixo; apenas quando
+filtro produto"*). O recorte por produto existia (`?busca=`, 08/2026) e o de fornecedor **nunca foi
+ligado** — o `fornec` não saía da querystring do front. A tela mostrava GALVANOTEK no filtro e a
+lista trazia MINAS MAIS, EMVAC e BOMBRIL.
+- `core.recorta_abertos_por_fornecedor`, e a reagregação dos cards extraída para
+  **`_reagrega_abertos`**, usada pelos DOIS recortes. Duplicá-la era garantir que um dos dois
+  esquecesse um campo na próxima métrica — e o sintoma seria "15 entregas atrasadas" ao lado de uma
+  tabela com um pedido, o defeito de dois universos que a aba Verbas teve duas vezes.
+- ⚠️ O recorte de fornecedor fica **FORA do `try` do peso/cubagem**: ele não depende daquele bloco,
+  e uma falha lá não pode devolver a lista inteira para quem filtrou um fornecedor.
+- ⚠️ O `fornec` entra na **chave de cache do front** junto com a busca — sem isso o 1º fornecedor
+  consultado seria servido aos demais (mesmo defeito da aba Verbas).
+- Os **KPIs de orçamento ficam intactos**, mesma política do recorte por produto: a meta é 65% da
+  venda do COMPRADOR no mês, não tem quebra por fornecedor. Medido: 65 → 5 abertos no fornecedor
+  113, zero pedidos de outro fornecedor, resumo batendo com a lista.
+  Gates: `tests/test_orcamento_filtro_produto.py`.
 
 **Watchlist "Em desaceleração" — o aviso ANTES do capital parado** (08/2026). Card no Cockpit
 (drill para Análise → Produtos), painel dos maiores ofensores, e métrica na série da Evolução.

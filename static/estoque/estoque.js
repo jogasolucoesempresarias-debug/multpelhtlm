@@ -2506,12 +2506,17 @@ async function renderOrcamento(useCache){
   // pedido não vem para cá). Entra na chave de cache junto do comprador e do arraste —
   // sem isso a 1ª busca ficaria cacheada e serviria as seguintes.
   const bq=(S.cli.busca||'').trim();
-  const orcKey=comp+'|'+(S.orcArrastar?'1':'0')+'|'+bq;
+  /* ⚠️ `fornec` TEM de entrar na chave de cache junto com a busca. Sem ele, o 1º fornecedor
+     consultado seria servido a todos os outros pelo cache do cliente — mesmo defeito que a aba
+     Verbas teve em 08/2026 (tabela de um fornecedor ao lado do gráfico da empresa toda). */
+  const fq=(S.cli.fornec||'').trim();
+  const orcKey=comp+'|'+(S.orcArrastar?'1':'0')+'|'+bq+'|'+fq;
   let o=(useCache&&S.orcKey===orcKey)?S.orcamento:null;
   if(!o){ el.innerHTML=`<div class="loader"><div class="spinner"></div></div>`;
     try{ o=await getJSON('/estoque/api/orcamento?comprador='+encodeURIComponent(comp)
                          +(S.orcArrastar?'&arrastar=1':'')
-                         +(bq?'&busca='+encodeURIComponent(bq):'')); }
+                         +(bq?'&busca='+encodeURIComponent(bq):'')
+                         +(fq?'&fornec='+encodeURIComponent(fq):'')); }
     catch(e){ el.innerHTML=`<div class="empty">Orçamento indisponível: ${e.message}</div>`; return; }
     S.orcamento=o; S.orcKey=orcKey; }
   const r=o.resumo;
@@ -3535,7 +3540,16 @@ async function init(){
     $('#f-unidade').innerHTML=unids.map(u=>`<option value="${u.id}" ${u.id===S.unidade?'selected':''}>${u.cod?esc(u.cod)+' - ':''}${esc(u.nome)}</option>`).join('');
     S.fornecedores=f.fornecedores||[];
     $('#f-fornec-dl').innerHTML=f.fornecedores.map(o=>`<option value="${o.codfornec} · ${esc(o.fornecedor)}">`).join('');
-    $('#f-depto').innerHTML+=f.deptos.map(d=>`<option value="${d}">${d}</option>`).join('');
+    /* ⚠️ `f.deptos` virou [{cod, nome}] em 08/2026. Antes era uma lista de strings vindas de
+       `str(float)` — o value saia "7.0" e o `filtered()` compara com `String(p.codepto)`, que em
+       JS e "7". Nada casava: escolher um departamento esvaziava a tela nas 22 abas enquanto o
+       Excel saia com os itens. O `value` agora e o codigo normalizado (`core.cod_str`), o mesmo
+       que viaja no produto. O `||` aceita a forma antiga por seguranca num deploy fora de ordem. */
+    $('#f-depto').innerHTML+=(f.deptos||[]).map(d=>{
+      const cod = (d && d.cod !== undefined) ? d.cod : d;
+      const nome = (d && d.nome) ? d.nome : '';
+      return `<option value="${esc(cod)}">${esc(cod)}${nome ? ' - ' + esc(nome) : ''}</option>`;
+    }).join('');
     $('#f-comprador').innerHTML='<option value="">Empresa toda</option>'+f.compradores.filter(c=>c.codcomprador>0).map(c=>`<option value="${c.codcomprador}">${esc(c.comprador)}</option>`).join('');
     // Comprador inicial: preferência local (última escolha do usuário) tem prioridade; sem ela,
     // cai no comprador vinculado ao usuário no Admin. É default, não trava — trocar é livre e a

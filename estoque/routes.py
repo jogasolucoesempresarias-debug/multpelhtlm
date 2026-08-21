@@ -203,6 +203,14 @@ NOMES_FILIAL = _env_json("NOMES_FILIAL_JSON", _NOMES_FILIAL_PADRAO,
 UNIDADES = _env_json("UNIDADES_JSON", _UNIDADES_PADRAO, _valida_unidades)
 # padrão tem de EXISTIR no dicionário em uso: apontar para uma unidade inexistente faria toda
 # tela cair no KeyError de UNIDADES[_unidade()]
+# Filiais que PRODUZEM (consomem matéria-prima na rotina 1122). Só elas admitem no painel os
+# itens de consumo — que são `REVENDA='N'` e ficam fora do cadastro padrão.
+#
+# ⚠️ EXPLÍCITO, não derivado do dado, de propósito. A filial 3 (Matriz) TAMBÉM tem movimento
+# de produção, e derivar "quem tem SP é indústria" arrastaria os itens dela para o Atacado sem
+# ninguém ter decidido. Aqui a única forma de mexer no universo do Atacado é alguém digitar.
+FILIAIS_INDUSTRIA = {f.strip() for f in os.getenv("FILIAIS_INDUSTRIA", "9").split(",") if f.strip()}
+
 UNIDADE_PADRAO = os.getenv("UNIDADE_PADRAO", "atacado")
 if UNIDADE_PADRAO not in UNIDADES:
     UNIDADE_PADRAO = next(iter(UNIDADES))
@@ -363,6 +371,85 @@ def _trib_entrada_map():
         print(f"[tributacao] TRIB_ENTRADA indisponível ({e}). Cascata cai no cadastro/histórico.")
     pbi._CACHE.set(key, out, 21600)
     return out
+
+
+def _consumo_map(filiais, hoje):
+    """{cod: {m1, m2, m3}} — consumo de PRODUÇÃO (rotina 1122) nos 3 meses fechados do giro.
+
+    ⚠️ Os meses são os MESMOS que o `QTVENDMES1/2/3` cobre (`core._meses_anteriores(hoje, 3)`),
+    porque o `_giro_mensal` soma os dois lado a lado. Janela desalinhada infla o giro sem erro.
+
+    ⚠️ Degrada para `{}` — instância sem a tabela `CONSUMO_PRODUCAO` publicada (ou o modo BD da
+    demo) volta ao giro só-venda, idêntico ao de antes. Mesmo contrato do `TRIB_ENTRADA`."""
+    meses = core._meses_anteriores(hoje, 3)
+    key = f"consumo:{_filiais_key(filiais)}:{'-'.join(str(m) for m in meses)}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    out = {}
+    try:
+        if _pg():
+            rows = PS.consumo_producao(filiais, meses)
+        else:
+            rows = pbi.run_dax(Q.q_consumo_producao(filiais, meses))
+        # posição do mês na janela: o mais recente é m1 (espelha QTVENDMES1)
+        pos = {int(m): f"m{i + 1}" for i, m in enumerate(meses)}
+        for r in rows:
+            cod = int(core._n(r.get("codprod")))
+            dt = core._parse_dt(r.get("mes"))
+            if not cod or not dt:
+                continue
+            slot = pos.get(dt.year * 100 + dt.month)
+            if slot:
+                out.setdefault(cod, {})[slot] = core._n(r.get("qt"))
+    except Exception as e:                                        # noqa: BLE001
+        print(f"[consumo] CONSUMO_PRODUCAO indisponivel ({e}). Giro segue so por venda.")
+    pbi._CACHE.set(key, out, 1800)
+    return out
+
+
+def _industria(filiais, hoje):
+    """(cadastro_extra, giro_map) da matéria-prima que estas filiais consomem na produção.
+
+    `cadastro_extra`: {cod: linha} dos itens consumidos — eles são `REVENDA='N'` e não entram
+    pelo cadastro padrão. `giro_map`: {cod: giro MENSAL} vindo do CONSUMO, não da venda.
+
+    ⚠️ **Janela de 12 meses, não 3.** Medido no BI: quatro itens não consumiram nos últimos 3
+    meses mas consumiram 2.465, 2.600, 2.273 e 1.878 kg no ano — com média de 3 meses eles teriam
+    giro ZERO e o painel os chamaria de estoque morto. E o erro vai para os dois lados: no 58562
+    a janela de 3 meses projeta 1.749 kg/ano contra 8.280 reais (subestima 79%); no 58565 projeta
+    30.168 contra 25.663 (superestima 18%). Matéria-prima de indústria tem demanda errática —
+    só 30 dos 43 itens consumiram nos últimos 12 meses, e 7 consumiram em 2 meses ou menos.
+
+    ⚠️ Degrada para `({}, {})`: sem a tabela `CONSUMO_PRODUCAO` publicada, ou sem filial
+    industrial na unidade, o comportamento é exatamente o de antes.
+    """
+    if not (set(filiais or []) & FILIAIS_INDUSTRIA):
+        return {}, {}
+    fil = sorted(set(filiais) & FILIAIS_INDUSTRIA)
+    key = f"industria:{'-'.join(fil)}:{hoje.year}{hoje.month:02d}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    cad, giro = {}, {}
+    try:
+        meses = core._meses_anteriores(hoje, 12)
+        rows = (PS.consumo_producao(fil, meses) if _pg()
+                else pbi.run_dax(Q.q_consumo_producao(fil, meses)))
+        acc = {}
+        for r in rows:
+            cod = int(core._n(r.get("codprod")))
+            if cod:
+                acc[cod] = acc.get(cod, 0.0) + core._n(r.get("qt"))
+        # giro MENSAL (é o que o `construir_produtos` espera) = consumo de 12 meses / 12
+        giro = {cod: qt / 12.0 for cod, qt in acc.items() if qt > 0}
+        crows = (PS.cadastro_produto(industria_filiais=fil) if _pg()
+                 else pbi.run_dax(Q.q_cadastro_produto(industria_filiais=fil)))
+        cad = {int(core._n(r["CODPROD"])): r for r in crows}
+    except Exception as e:                                        # noqa: BLE001
+        print(f"[industria] consumo/cadastro indisponível ({e}). Unidade segue só com revenda.")
+    pbi._CACHE.set(key, (cad, giro), 1800)
+    return cad, giro
 
 
 def _hoje():
@@ -802,6 +889,12 @@ def _build_produtos():
     snap = _snapshot_rows(filiais_e)
     end_map = _endereco_map(filiais_e)
     prod_map = _cadastro_produtos()
+    # materia-prima da industria: entra SO nas unidades cujas filiais produzem (FILIAIS_INDUSTRIA).
+    # ⚠️ `prod_map` vem de cache GLOBAL — dai a COPIA. Sem ela, a unidade industrial contaminaria
+    # as outras pelo cache compartilhado e o Atacado passaria a ver bobina sem ninguem ter pedido.
+    cad_ind, giro_ind = _industria(filiais_e, _hoje())
+    if cad_ind:
+        prod_map = {**prod_map, **cad_ind}
     forn_map = _cadastro_fornecedores()
     comp_map = _compradores_map()
     venda_map = _vendas_map(request.args.get("venda_periodo", "mes"), _hoje(), filiais_v)
@@ -827,7 +920,10 @@ def _build_produtos():
                                        preco_venda_map=preco_venda, venda_ant_map=venda_ant,
                                        tributacao_map=_peddata.get("tributacao"),
                                        trib_entrada_map=_trib_entrada_map(),
-                                       bloqueio_map=_bloqueio_map(filiais_e))
+                                       bloqueio_map=_bloqueio_map(filiais_e),
+                                       # demanda que nao passa por venda (rotina 1122)
+                                       consumo_map=_consumo_map(filiais_e, _hoje()),
+                                       giro_industria_map=giro_ind)
     # ocupação WMS: nº de posições por item + volume endereçado (m³) + flag "espaço morto".
     pos_map = _posicoes_map(filiais_e)
     for p in produtos:
@@ -874,13 +970,44 @@ def index():
     return send_from_directory(_PKG_DIR, "index.html")
 
 
+@pbi.cached(ttl=86400, key_fn=lambda: "deptos:nomes:v1")
+def _deptos_nomes():
+    """{codepto: nome} — ex.: `{"7": "UTILIDADES", "9": "PAPEL"}`.
+
+    ⚠️ Vem do dataset **RCA**, não do de Estoque: o nome textual do departamento só existe na
+    `FATURAMENTO_DEVOLUCAO`, e é de lá que o Comercial já o lê (`server._carregar_deptos_map`).
+    Reusar a mesma fonte evita duas listas de departamento divergindo no primeiro cadastro novo.
+
+    ⚠️ O `CODEPTO` vem INT no RCA e FLOAT no Estoque — por isso os dois lados passam pelo
+    `core.cod_str`. Sem isso a chave seria `"7"` de um lado e `"7.0"` do outro e o join não casaria.
+
+    Degrada para `{}`: sem o nome o filtro mostra só o código, como fazia antes."""
+    out = {}
+    try:
+        if _pg():
+            return {}     # a demo tem nomes sinteticos proprios no Comercial; aqui nao faz falta
+        rows = pbi.run_dax_rca("""EVALUATE
+SUMMARIZECOLUMNS(FATURAMENTO_DEVOLUCAO[CODEPTO], FATURAMENTO_DEVOLUCAO[DEPARTAMENTO])""")
+        for r in rows:
+            cd, nm = core.cod_str(r.get("CODEPTO")), r.get("DEPARTAMENTO")
+            if cd and nm:
+                out[cd] = nm
+    except Exception as e:                                        # noqa: BLE001
+        print(f"[deptos] nomes indisponiveis ({e}). Filtro mostra so o codigo.")
+    return out
+
+
 # ───────────────────────── API ─────────────────────────
 @bp.route("/api/filtros")
 def api_filtros():
     prod_map = _cadastro_produtos()
     forn_map = _cadastro_fornecedores()
-    deptos = sorted({str(p.get("CODEPTO")) for p in prod_map.values()
-                     if p.get("CODEPTO") not in (None, "")})
+    # ⚠️ `cod_str` nas duas pontas (aqui e no `codepto` do produto) — ver o porque em `core.cod_str`.
+    # E ordenacao NUMERICA: `sorted()` de string punha o depto "2" depois do "18".
+    _nomes = _deptos_nomes()
+    _cods = {core.cod_str(p.get("CODEPTO")) for p in prod_map.values()}
+    deptos = [{"cod": c, "nome": _nomes.get(c) or ""}
+              for c in sorted((c for c in _cods if c), key=lambda x: (float(x), x))]
     fornecedores = sorted(
         [{"codfornec": cf, "fornecedor": f.get("FORNECEDOR") or f"FORN {cf}"}
          for cf, f in forn_map.items()],
@@ -2953,6 +3080,12 @@ def api_orcamento():
             # ⚠️ Degradar em silêncio aqui devolveria a lista INTEIRA para quem filtrou um
             # produto — o usuário leria "existem 46 pedidos deste item". A tela avisa.
             res["resumo"] = {**res["resumo"], "filtro_produto_falhou": True}
+    # ⚠️ FORNECEDOR recorta a lista DEPOIS e FORA do try acima: ele não depende de peso/cubagem,
+    # então uma falha naquele bloco não pode fazer a lista voltar inteira para quem filtrou um
+    # fornecedor (foi assim que o filtro de produto ganhou o aviso `filtro_produto_falhou`).
+    fornec = (request.args.get("fornec") or "").strip()
+    if fornec:
+        res = core.recorta_abertos_por_fornecedor(res, fornec)
     manuais = store.pedidos_pendentes(mes, comprador) if store.ensure() else []
     return jsonify({"ok": True, "resumo": res["resumo"], "pedidos": res["pedidos"],
                     "abertos": res["abertos"], "por_comprador": res.get("por_comprador", []),

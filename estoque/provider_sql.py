@@ -102,9 +102,14 @@ def _fil_alias(filiais, alias):
 
 
 # ───────────────────────── cadastro produto / fornecedor / comprador ─────────────────────────
-def cadastro_produto():
+def cadastro_produto(industria_filiais=None):
     """Espelha q_cadastro_produto (REVENDA='S' AND OBS2<>'FL'). Dict {CODPROD: row}. NCM=classificfiscal,
-    CTRL_VALIDADE=controlavalidadedolote."""
+    CTRL_VALIDADE=controlavalidadedolote.
+
+    `industria_filiais`: a base sintética não tem produção, então o modo indústria devolve
+    vazio — a unidade industrial simplesmente não existe na demo."""
+    if industria_filiais:
+        return {}
     with analytics_conn() as c:
         cur = c.cursor()
         cur.execute("""
@@ -197,6 +202,17 @@ def trib_entrada():
     """Espelha q_trib_entrada. A base sintética não tem a tributação de entrada do ERP (é
     cadastro fiscal do cliente), então devolve vazio e a cascata degrada para cadastro/histórico
     — mesmo caminho de uma instância cujo TI ainda não publicou a TRIB_ENTRADA."""
+    return []
+
+
+def consumo_producao(filiais=None, meses=None, oper="SP"):
+    """Espelha q_consumo_producao. A base sintética não tem produção (a demo é um distribuidor,
+    não uma indústria), então devolve vazio e o giro segue apenas por venda — exatamente o
+    comportamento de uma instância cujo TI ainda não publicou a CONSUMO_PRODUCAO.
+
+    ⚠️ Existe para o modo BD **declarar** o vazio em vez de estourar `AttributeError` e cair no
+    `except` do chamador: degradação silenciosa por exceção funciona, mas enche o log da demo de
+    erro a cada 30 min e esconde uma falha de verdade no meio."""
     return []
 
 

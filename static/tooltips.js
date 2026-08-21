@@ -27,7 +27,7 @@
       'Radar de Produtos': 'Produtos e clientes que reduziram ou pararam de comprar — onde a receita está escorrendo.',
       'Receita em risco': 'Queda de receita do item vs. o período anterior — quanto se está deixando de faturar.',
       '% queda': 'Queda percentual da receita vs. o período anterior.',
-      'Clientes perdidos': 'Quantos clientes a menos compraram o item vs. o período anterior de mesmo tamanho.',
+      'Clientes perdidos': 'Clientes que compravam o item na janela anterior e NÃO voltaram a comprar na janela recente. Não é o saldo entre as duas janelas: 20 clientes que param e 20 que entram dariam zero e esconderiam a perda. Ao abrir o produto, a lista pode mostrar MAIS clientes — lá o recorte é de 12 meses, aqui é só a janela escolhida.',
       'Situação': 'Situação do cliente no item: esfriando (volume caiu >50%), parou (sem comprar há ≥ a janela) ou perdido (há ≥2× a janela, ou nunca).',
       'Dias parado': 'Dias desde a última compra desse item pelo cliente.',
       'Comprava→Agora': 'Quanto o cliente comprava do item antes vs. agora — mostra a queda de volume.'
