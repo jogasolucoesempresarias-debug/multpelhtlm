@@ -147,6 +147,33 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
 >   produção o container roda `python server.py`, então `server` é `__main__` e o import traria
 >   uma segunda cópia do módulo (armadilha já documentada duas vezes no `routes.py`).
 
+> ### 🛡️ As defesas do Agente (o que existe além do prompt)
+>
+> - **Conferência de saída** (`estoque/ia_conferencia.py`): confere cada NÚMERO CITADO na
+>   resposta contra o contexto que o modelo recebeu. ⚠️ **Não bloqueia**, registra — o modelo
+>   reformata legitimamente (`R$ 118.506,19` vira "R$ 118,5 mil") e um casamento ingênuo
+>   derrubaria resposta boa. O resultado vai para o `multpel_log`, e é o primeiro insumo real
+>   para responder *"em quantas respostas ele citou número que não estava no contexto?"*.
+>   Existe porque o resto da defesa é PROSA: as regras 1/1b/1c mandam não recalcular, não somar
+>   dois números do contexto e não contradizer um valor recebido — prosa orienta, não verifica.
+> - **Timeout** (`IA_TIMEOUT`, `IA_MAX_RETRIES`): protege o **app inteiro**, não o chat. Os
+>   defaults do SDK da OpenAI são `read=600s` × 2 retries = **30 min** de worker preso; o
+>   Waitress serve com `threads=8`, então oito perguntas travadas derrubam o painel todo,
+>   Comercial junto. O `read` conta o silêncio ENTRE CHUNKS, então resposta longa que segue
+>   streamando não é cortada. Gate: `tests/test_ia_timeout.py`.
+> - **Rastro auditável** (`estoque_ia_contexto`, expurgo em `IA_RETENCAO_CTX_DIAS`): grava o
+>   PROMPT que o modelo viu, deduplicado por impressão digital. ⚠️ A ironia que originou isto: o
+>   log gravava pergunta + tamanho da resposta e assumia que o contexto poderia ser reconstruído
+>   depois pelo `/api/ia/contexto`. **Não pode** — é a mesma lição do `PCEST` ser POSIÇÃO: o
+>   snapshot mudou, o BI atualizou, o recorte era outro. Sem a resposta e sem o contexto, "ele
+>   me falou algo errado ontem" não tem investigação, só opinião.
+> - **Teto diário por pessoa** (`IA_LIMITE_DIA`, fail-open se o Redis cair): num recurso vendido
+>   por assinatura, um laço no navegador não pode virar fatura.
+> - **Bateria de qualidade** (`tests/smoke_ia_real.py`, 17 perguntas contra a API e o BI reais).
+>   NÃO é pytest — consome API paga. ⚠️ Precisa de instância em modo **dev**: em produção o
+>   cookie sai `Secure` e o `requests` (ao contrário do curl) não o envia por HTTP, e o sintoma
+>   é um 401 logo depois de um login 200.
+
 > ### 🔜 Próximo passo: o mesmo Agente no COMERCIAL
 >
 > A arquitetura já está pronta para isso — **o que muda é pouco**:
@@ -981,7 +1008,7 @@ ANALYTICS_DB_NAME=joga_demo   # banco analítico (ANALYTICS_DB_* faz fallback pr
 > demo **não envelhece** sem regenerar. O default powerbi usa `TODAY()` normal.
 
 **Gates:** `tests/test_provider_*.py` (Dashboard, Comercial, Metas, Mix, Radar, Estoque, RBAC) +
-`test_medida_compat.py`. Baseline **787 passam / 3 falham** (as 3 são fixture de data do
+`test_medida_compat.py`. Baseline **790 passam / 3 falham** (as 3 são fixture de data do
 Comercial: radar/mix/cohort).
 ⚠️ Até 19/08/2026 o baseline dizia "5 falham", contando 2 do `test_provider_estoque` como
 *"dependem de um `joga_demo` local com venda no mês corrente"*. **Nunca foi ambiente:** elas
@@ -1020,6 +1047,7 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 │   ├── relatorios.py               #   🆕 catálogo único dos relatórios (Admin + email)
 │   ├── ia.py                       #   🆕 Agente de IA: contexto consolidado + prompt (puro)
 │   ├── ia_pilares.py               #   🆕 Agente de IA: os 14 rankings por tema (puro)
+│   ├── ia_conferencia.py           #   🆕 Agente de IA: confere número CITADO × contexto (puro)
 │   ├── emails.py                   #   🆕 gera anexos PDF+XLSX p/ o email de Compras
 │   ├── pesquisa.html               #   🆕 tela de CAMPO (mobile, autocontida) — NÃO é aba
 │   └── index.html                  #   SPA do módulo (22 abas)
@@ -1045,7 +1073,7 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 ├── docker-compose.demo.yml         # 🆕 stack da instância DEMO (Portainer)
 ├── _seed_demo/                     # 🆕 base sintética reprodutível (joga_demo) + bootstrap + seeder
 │   └── avancar_demo.py             # 🆕 alimentador diário: desloca as datas da demo até hoje
-└── tests/                          # pytest (787 passam; 3 falham por fixture de data — não é regressão)
+└── tests/                          # pytest (790 passam; 3 falham por fixture de data — não é regressão)
 ```
 
 ---
@@ -1057,7 +1085,7 @@ cp .env.example .env        # preencher (ver variáveis abaixo)
 docker compose -f docker-compose.dev.yml up -d redis
 python -X utf8 init_db.py   # cria/migra schema + admin default (ADMIN_EMAIL / ADMIN_SENHA)
 python -X utf8 server.py    # http://localhost:5000
-pytest -q                   # 787 passam, 3 falham (fixture de data do Comercial — não é regressão)
+pytest -q                   # 790 passam, 3 falham (fixture de data do Comercial — não é regressão)
 ```
 
 Variáveis novas da fusão no `.env` (além das do Power BI/DB/Redis/Resend):
@@ -1067,11 +1095,29 @@ MODULOS=comercial,compras   # o que esta instância serve (+ `ia` p/ ligar o Age
 POWERBI_DATASET_ID_ESTOQUE=32fb60e1-...   # dataset do Compras (default embutido)
 POWERBI_DATASET_ID_RCA=f2fbf288-...        # RCA (mesmo do Comercial)
 CLIENTE_LOGO=               # opcional: logo do cliente no PDF de pedido (fallback = JOGA)
-OPENAI_API_KEY=             # Agente de IA do Compras. A PRESENÇA da chave é o interruptor:
-                            # sem ela a instância mostra a OFERTA no lugar do chat (venda adicional)
+# ── Agente de IA (Compras) ── ⚠️ o interruptor é o `ia` no MODULOS acima, NÃO a chave.
+# Sem `ia` no MODULOS o Agente não existe (nem o botão aparece); com `ia` e SEM chave, mostra a
+# oferta; com os dois, o chat. Ver a seção 🤖 Agente de IA.
+OPENAI_API_KEY=             # separa `oferta` de `ativo` — não liga nem desliga o módulo
 IA_MODELO=gpt-4.1-mini      # opcional
 IA_MAX_TOKENS=800           # opcional
+IA_TIMEOUT=60               # opcional — silêncio máx. entre chunks (protege o app, não o chat)
+IA_MAX_RETRIES=1            # opcional — pior caso = IA_TIMEOUT × (1 + retries)
+IA_LIMITE_DIA=200           # opcional — teto de perguntas por pessoa/dia
+IA_RETENCAO_CTX_DIAS=90     # opcional — expurgo do prompt guardado p/ auditoria
 ```
+
+> ⚠️ **O baseline só é reproduzível com o banco de teste LIMPO.** A suíte roda contra um Postgres
+> REAL e cria usuários com e-mail fixo (`admin-test@multpel.com.br`, `*@teste.local`…). Quando uma
+> execução é interrompida — Ctrl+C, timeout, dois `pytest` ao mesmo tempo — o teardown não roda e
+> o resíduo quebra a rodada SEGUINTE com `UniqueViolation`, em testes que não têm defeito nenhum.
+> O sintoma que denuncia: **as falhas mudam de lugar a cada execução**. Medido em 21/08/2026: a
+> mesma árvore deu 6 falhas + 4 erros, depois 5 + 6, e só depois de limpar voltou aos 3 conhecidos.
+> Antes de investigar uma falha nova, limpe:
+> ```sql
+> DELETE FROM multpel_log WHERE usuario_id IN (SELECT id FROM multpel_users WHERE email ~* '(test|teste|smoke)');
+> DELETE FROM multpel_users WHERE email ~* '(test|teste|smoke)';
+> ```
 
 > **Rodar em modo DEMO/Postgres localmente** (sem BI): monte o `joga_demo` (`_seed_demo/setup_db.py` →
 > `gerar*.py`), suba com `DATA_SOURCE=postgres ANALYTICS_DB_NAME=joga_demo`. Passo a passo completo
@@ -1281,9 +1327,11 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 - **Compras (blueprint):** tudo sob `/estoque/...` — `/estoque/`, `/estoque/api/snapshot`,
   `/estoque/api/filtros`, `/estoque/api/orcamento`, `/estoque/api/export/<view>.{csv,xlsx,pdf}`,
   `/estoque/api/pedidos`, `/estoque/api/fornecedores_extra` (ciclo + verba, lazy), etc.
-- **Agente de IA (Compras):** `GET /estoque/api/ia/status` (contratado ou oferta) ·
-  `GET /estoque/api/ia/contexto` (contexto + sugestões — é aqui que se AUDITA o que o modelo
-  recebeu) · `POST /estoque/api/ia/chat` (SSE; **402** quando não contratado)
+- **Agente de IA (Compras):** `GET /estoque/api/ia/status` (os 3 estados; **200 sempre**, é a
+  sonda do boot) · `GET /estoque/api/ia/contexto` (contexto + sugestões — é aqui que se AUDITA o
+  que o modelo recebeu) · `POST /estoque/api/ia/chat` (SSE).
+  ⚠️ Os dois últimos: **404** com o módulo desligado (não existe) e **402** com o módulo ligado
+  sem chave (existe, não contratado). São "nãos" diferentes de propósito.
 - **Admin:** `POST /api/admin/users/<id>/desbloquear` · `GET /api/_internal/compradores-map` ·
   `GET /api/_internal/relatorios-estoque` · `POST /api/admin/enviar-relatorio/<id>?tipo=compras`
 - (Os endpoints do Comercial — dashboard, carteira, vendedores, categorias, mix, tendências, metas —
@@ -1302,7 +1350,7 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 5. **Checagem de API usa `'/api/' in path`, não `startswith`** — por causa de `/estoque/api/...`.
 6. **Não editar `MultpelEstoque/`** (repo congelado) nem publicar em `:latest` sem intenção.
 7. **3 testes falham por fixture de data** (radar/mix/cohort) — pré-existentes, **não** são regressão.
-   O baseline é **787 passam / 3 falham**. As 2 do `test_provider_estoque` que constavam aqui
+   O baseline é **790 passam / 3 falham**. As 2 do `test_provider_estoque` que constavam aqui
    como dependência de ambiente eram, na verdade, o bug de ancoragem de data (armadilha nº 17).
 8. **Verificação visual de tema não confia em captura** das telas de dados (Power BI muda o conteúdo
    entre capturas) — comparar cor computada (`getComputedStyle`), não pixels.
