@@ -53,43 +53,82 @@ def copy_stream(cur, table, columns, rows, chunk=100_000):
 
 
 def carregar_giro(cur):
-    """{(codprod,filial): (m1,m2,m3,dtultsaida)} dos últimos 3 meses cheios."""
+    """{(codprod,filial): (m1,m2,m3,dtultsaida)} dos últimos 3 meses cheios.
+
+    ⚠️ Os três meses saem de `perfil.meses_giro()`, não de datas cravadas. Estavam fixos em
+    abr/mai/jun de 2026 — com a janela da base virando deslizante, aquilo passaria a somar
+    quantidade de meses fora do período gerado, o giro sairia ZERO em massa e a demo abriria com
+    quase todo o catálogo classificado como "sem giro"."""
+    (a0, a1), (b0, b1), (c0, c1) = P.meses_giro()
     cur.execute("""
         SELECT codprod, codfilial,
-          coalesce(sum(qt) FILTER (WHERE dtsaida >= DATE '2026-04-01' AND dtsaida < DATE '2026-05-01'),0),
-          coalesce(sum(qt) FILTER (WHERE dtsaida >= DATE '2026-05-01' AND dtsaida < DATE '2026-06-01'),0),
-          coalesce(sum(qt) FILTER (WHERE dtsaida >= DATE '2026-06-01' AND dtsaida < DATE '2026-07-01'),0),
+          coalesce(sum(qt) FILTER (WHERE dtsaida >= %s AND dtsaida < %s),0),
+          coalesce(sum(qt) FILTER (WHERE dtsaida >= %s AND dtsaida < %s),0),
+          coalesce(sum(qt) FILTER (WHERE dtsaida >= %s AND dtsaida < %s),0),
           max(dtsaida)
         FROM faturamento_vendas
         WHERE codoper='S' AND codfilial IN ('3','5')
-        GROUP BY codprod, codfilial""")
+        GROUP BY codprod, codfilial""", (a0, a1, b0, b1, c0, c1))
     return {(r[0], r[1]): (float(r[2]), float(r[3]), float(r[4]), r[5]) for r in cur.fetchall()}
 
 
-def _cobertura_qt(giro_mes):
-    r = rng.random()
+def situacao_do_produto(cod):
+    """Sorteia a SITUAÇÃO de estoque do produto (mesma para as duas filiais).
+
+    ⚠️ É por PRODUTO, não por linha produto×filial: um item "parado" na matriz e "saudável" no
+    depósito não é dead stock nenhum, e o app somaria metade dele no capital parado. Determinístico
+    pelo código para a base ser reprodutível com o mesmo SEED."""
+    r = random.Random(P.SEED * 31 + cod).random()
+    acc = 0.0
+    for nome in ("sem_giro", "parado", "ruptura", "excesso"):
+        acc += P.ESTOQUE_MIX[nome]
+        if r < acc:
+            return nome
+    return "saudavel"
+
+
+def _cobertura_qt(giro_mes, situacao):
+    """Quantidade em estoque a partir do giro e da situação sorteada.
+
+    ⚠️ A distribuição antiga colocava 55% dos itens entre 20 e 45 dias de cobertura — ou seja,
+    ABAIXO do limiar do Estoque ideal (45). O painel gerencial da demo abria com 26% de cobertura
+    ideal contra 59,7% do real, e o gráfico parecia uma empresa em colapso."""
     if giro_mes <= 0:
-        return 0 if r < 0.6 else round(rng.uniform(1, 60))
-    if r < 0.55:
-        cob = rng.uniform(20, 45)     # saudável
-    elif r < 0.70:
-        cob = rng.uniform(60, 250)    # parado
-    elif r < 0.85:
-        cob = rng.uniform(3, 18)      # risco de ruptura
-    else:
-        return 0                       # ruptura
-    return round(giro_mes / 30 * cob)
+        # ⚠️ Dead stock guarda POUCO volume. Com `uniform(1,60)` o capital parado da demo saiu
+        # 6,9% contra 2,9% do real — item parado vira o maior problema da tela e desequilibra a
+        # leitura. Na base real o item parado carrega ~1/5 do valor médio por SKU.
+        return round(rng.uniform(1, 22)) if situacao != "ruptura" else 0
+    if situacao == "ruptura":
+        return 0
+    faixa = ("excesso" if situacao == "excesso"
+             else "risco" if rng.random() < P.RISCO_FRAC else "saudavel")
+    lo, hi = P.COBERTURA_FAIXAS[faixa]
+    return max(1, round(giro_mes / 30 * rng.uniform(lo, hi)))
 
 
 def gen_pcest(giro):
     for p in produtos:
+        sit = situacao_do_produto(p["codprod"])
         for f in FILIAIS:
             m1, m2, m3, dtult = giro.get((p["codprod"], f), (0, 0, 0, None))
+            # SEM GIRO e PARADO não vendem: o giro dos 3 meses vai a zero. Sem isto o item
+            # continuava com `QTVENDMES` cheio e o app o classificava como saudável, por mais
+            # antiga que fosse a última saída.
+            if sit in ("sem_giro", "parado"):
+                m1 = m2 = m3 = 0
             gmes = (m1 + m2 + m3) / 3
-            qtger = _cobertura_qt(gmes)
+            qtger = _cobertura_qt(gmes, sit)
             qtreserv = round(qtger * rng.uniform(0, 0.05))
             qtbloq = round(qtger * rng.uniform(0, 0.03))
-            dtults = dtult.isoformat() if dtult else None
+            # ⚠️ `dias_sem_venda` (e portanto o CAPITAL PARADO) sai daqui. Antes era sempre a
+            # última venda REAL do fato — e como todo produto vendia até o fim do período, quase
+            # nada passava dos 60 dias e o capital parado da demo era 0,1%.
+            if sit == "parado":
+                dtults = (HOJE - timedelta(days=rng.randint(*P.PARADO_DIAS))).isoformat()
+            elif sit == "sem_giro":
+                dtults = (HOJE - timedelta(days=rng.randint(35, 90))).isoformat()
+            else:
+                dtults = dtult.isoformat() if dtult else None
             dtulte = (HOJE - timedelta(days=rng.randint(1, 120))).isoformat()
             yield (p["codprod"], f, qtger, qtreserv, qtbloq, round(qtger * rng.uniform(0, 0.02)),
                    round(qtger * rng.uniform(0, 0.02)), m1, m2, m3, p["custo"], dtults, dtulte)
@@ -140,7 +179,7 @@ def gen_compras():
     """pcpedido/pcitem (alguns em aberto = dtentradaestoque null) + pedido_entrada + lead time."""
     peds, itens, entradas = [], [], []
     nump = 500000
-    for _ in range(1200):
+    for _ in range(P.COMPRAS_N_PEDIDOS):
         nump += 1
         forn = rng.choice(fornecedores)
         f = rng.choice(FILIAIS)
@@ -152,7 +191,7 @@ def gen_compras():
         prods = prod_by_forn.get(forn[0], [])
         if not prods:
             continue
-        sel = rng.sample(prods, min(len(prods), rng.randint(5, 25)))
+        sel = rng.sample(prods, min(len(prods), rng.randint(*P.COMPRAS_ITENS_PED)))
         # Perfil tributário do FORNECEDOR (não do produto) — é assim na base real: medindo 155
         # fornecedores, 44 cobram IPI em todas as linhas, 78 em nenhuma e 33 são mistos; ST
         # aparece em ~7% deles. Determinístico pelo código p/ a base continuar reprodutível.
@@ -161,7 +200,7 @@ def gen_compras():
         st_forn = 20.0 if perfil == 9 else 0.0
         vtot = 0.0
         for p in sel:
-            qtped = round(rng.uniform(20, 500))
+            qtped = round(rng.uniform(*P.COMPRAS_QTD_ITEM))
             qtent = 0 if aberto else qtped
             # fornecedor "misto" (perfil 7): parte dos itens sai isenta
             ipi = 0.0 if (perfil == 7 and p["codprod"] % 3 == 0) else ipi_forn

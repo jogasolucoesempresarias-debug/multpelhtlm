@@ -293,6 +293,12 @@ CREATE TABLE IF NOT EXISTS pcitem (
 );
 -- base semeada antes da v4 não tem as colunas de tributação (o provider faz probe, mas quem
 -- rodar o schema por cima ganha as colunas sem precisar regerar 1,17M linhas)
+-- ⚠️ MIGRATIONS: coluna nova PRECISA de um ALTER aqui, não basta entrar no CREATE.
+-- O `CREATE TABLE IF NOT EXISTS` não toca tabela que já existe, então uma base de demo já
+-- criada (a que está no ar) nunca recebe a coluna — e o gerador quebra no COPY com
+-- "coluna X da relação Y não existe". Foi o que aconteceu com `pcprodut.pesoliq`: a coluna
+-- entrou no CREATE em 08/2026 e a demo publicada seguiu sem ela.
+ALTER TABLE pcprodut ADD COLUMN IF NOT EXISTS pesoliq NUMERIC(12,4);
 ALTER TABLE pcitem ADD COLUMN IF NOT EXISTS periipi NUMERIC(6,2);
 ALTER TABLE pcitem ADD COLUMN IF NOT EXISTS vlipi   NUMERIC(14,6);
 ALTER TABLE pcitem ADD COLUMN IF NOT EXISTS percst  NUMERIC(6,2);

@@ -11,7 +11,7 @@ import io
 import math
 import random
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -94,6 +94,30 @@ rng = G.rng
 sup_de = {v[0]: v[2] for v in vendedores}
 forn_nome = {f[0]: f[1] for f in fornecedores}
 prod_pesos = [p["peso_venda"] for p in produtos]
+
+# ── produtos que PARAM de vender (o dead stock da demo) ────────────────────────────────────
+# ⚠️ Zerar `QTVENDMES` no `pcest` NÃO basta: o app tem um fallback que recalcula o giro pela
+# série mensal do RCA quando o cadastro vem zerado (é o que salva item novo). Como o fato
+# continuava vendendo esses produtos todo mês, o fallback repunha o giro e a demo mostrava
+# **zero** itens sem giro — com 2.103 linhas zeradas no PCEST. O item precisa parar de vender de
+# verdade, que é o que acontece na base real.
+#
+# Cada produto marcado ganha uma data de CORTE: vendeu normalmente até ali e nunca mais.
+import gerar_estoque as _GE   # noqa: E402  (situacao_do_produto: a mesma régua do estoque)
+
+_CORTE = {}
+for _p in produtos:
+    _sit = _GE.situacao_do_produto(_p["codprod"])
+    if _sit in ("sem_giro", "parado"):
+        # para de vender entre 45 e 400 dias atrás — cobre "sem giro" (3 meses) e "parado" (60d+)
+        _CORTE[_p["codprod"]] = P.DATA_FIM - timedelta(days=rng.randint(45, 400))
+print(f"  dead stock: {len(_CORTE):,} produtos param de vender antes do fim da janela")
+
+
+def _vende_em(prod, dt):
+    """O produto ainda vende nessa data? (dead stock tem data de corte)"""
+    corte = _CORTE.get(prod["codprod"])
+    return corte is None or dt < corte
 MESES = month_list(P.DATA_INICIO, P.DATA_FIM)
 NM = len(MESES)
 
@@ -156,6 +180,8 @@ def gen_vendas():
                 vb_nota = 0.0
                 for _l in range(nlin):
                     prod = rng.choices(produtos, weights=prod_pesos)[0]
+                    if not _vende_em(prod, dt):        # dead stock: não vende mais depois do corte
+                        continue
                     qt = max(1, int(rng.choice([1, 2, 3, 6, 12]) * beh["ticket"] * rng.uniform(0.6, 1.6)))
                     linha = _linha_venda(nota, dt, cli, prod, qt, coper)
                     if coper == "S":

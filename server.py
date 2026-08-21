@@ -8990,6 +8990,38 @@ def _fotografar_estoque():
         print(f"[FOTO] falhou: {e}")
 
 
+def _avancar_demo():
+    """Alimentador diário da DEMO — mantém a base sintética terminando HOJE.
+
+    A demo é uma fotografia: sem isto ela envelhece e, semanas depois, o painel abre com uma
+    posição de outro mês na frente de um cliente. Medido em 21/08/2026: a base terminava em
+    24/07. Ver `_seed_demo/avancar_demo.py`.
+
+    ⚠️ TRÊS travas, porque este job REESCREVE TODAS AS DATAS do banco analítico:
+      1. só em `DATA_SOURCE=postgres` (a instância do cliente lê Power BI e nunca entra aqui);
+      2. `DEMO_AUTO_AVANCAR=true` explícito — opt-in, nunca por herança de env;
+      3. o próprio script recusa banco que não tenha "demo" no nome.
+    Fora do `CRON_HABILITADO` de propósito: aquele interruptor é para não mandar e-mail, e a demo
+    roda justamente com ele desligado — precisa estar em dia mesmo assim."""
+    if CONFIG['data_source'] != 'postgres':
+        return
+    if (os.getenv('DEMO_AUTO_AVANCAR', '') or '').lower() != 'true':
+        return
+    try:
+        # `sys` importado aqui: o server.py nao o importa no topo, e um import global so para
+        # este job seria mudanca desnecessaria num arquivo de 9 mil linhas.
+        import subprocess
+        import sys as _sys
+        r = subprocess.run([_sys.executable, '-X', 'utf8', '_seed_demo/avancar_demo.py'],
+                           capture_output=True, text=True, timeout=900,
+                           cwd=os.path.dirname(os.path.abspath(__file__)))
+        print(f"[DEMO] avancar_demo rc={r.returncode}\n{(r.stdout or '')[-1500:]}")
+        if r.returncode != 0:
+            _log_background('demo:avancar', erro=(r.stderr or '')[:500])
+    except Exception as e:
+        print(f"[DEMO] avancar_demo falhou: {e}")
+
+
 def _start_scheduler():
     """Inicia APScheduler in-process. Roda a cada 5min. Idempotente."""
     global _scheduler
@@ -9020,6 +9052,9 @@ def _start_scheduler():
         # refazerem nada, e o teto é 22h para a foto nunca cruzar a meia-noite e gravar a
         # posição de um dia na data do outro.
         _scheduler.add_job(_fotografar_estoque, 'cron', hour='18-22', minute=40, id='foto_estoque')
+        # Demo: avanca a base sintetica ate hoje. 4h05 — bem antes da janela da foto, para que a
+        # foto do dia ja saia sobre a base atualizada (senao a serie da Evolucao fica um dia atras).
+        _scheduler.add_job(_avancar_demo, 'cron', hour=4, minute=5, id='demo_avancar')
         _scheduler.start()
         status = 'ATIVO' if CRON_HABILITADO else 'aguardando CRON_HABILITADO=true'
         print(f"[CRON] Scheduler iniciado ({status})")

@@ -827,7 +827,7 @@ ANALYTICS_DB_NAME=joga_demo   # banco analítico (ANALYTICS_DB_* faz fallback pr
 > demo **não envelhece** sem regenerar. O default powerbi usa `TODAY()` normal.
 
 **Gates:** `tests/test_provider_*.py` (Dashboard, Comercial, Metas, Mix, Radar, Estoque, RBAC) +
-`test_medida_compat.py`. Baseline **690 passam / 3 falham** (as 3 são fixture de data do
+`test_medida_compat.py`. Baseline **711 passam / 3 falham** (as 3 são fixture de data do
 Comercial: radar/mix/cohort).
 ⚠️ Até 19/08/2026 o baseline dizia "5 falham", contando 2 do `test_provider_estoque` como
 *"dependem de um `joga_demo` local com venda no mês corrente"*. **Nunca foi ambiente:** elas
@@ -888,7 +888,8 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 ├── estoque/provider_sql.py         # 🆕 modo postgres do Compras
 ├── docker-compose.demo.yml         # 🆕 stack da instância DEMO (Portainer)
 ├── _seed_demo/                     # 🆕 base sintética reprodutível (joga_demo) + bootstrap + seeder
-└── tests/                          # pytest (690 passam; 3 falham por fixture de data — não é regressão)
+│   └── avancar_demo.py             # 🆕 alimentador diário: desloca as datas da demo até hoje
+└── tests/                          # pytest (711 passam; 3 falham por fixture de data — não é regressão)
 ```
 
 ---
@@ -900,7 +901,7 @@ cp .env.example .env        # preencher (ver variáveis abaixo)
 docker compose -f docker-compose.dev.yml up -d redis
 python -X utf8 init_db.py   # cria/migra schema + admin default (ADMIN_EMAIL / ADMIN_SENHA)
 python -X utf8 server.py    # http://localhost:5000
-pytest -q                   # 690 passam, 3 falham (fixture de data do Comercial — não é regressão)
+pytest -q                   # 711 passam, 3 falham (fixture de data do Comercial — não é regressão)
 ```
 
 Variáveis novas da fusão no `.env` (além das do Power BI/DB/Redis/Resend):
@@ -944,6 +945,62 @@ Runbook completo (criar a stack, popular com dados reais, migrar o `estoque_db`)
 uso, dump final dos dados, apontar os usuários — não é só "copiar uma vez".
 
 ### Instância DEMO (`demo.jogasolucoes.com.br`) — sintética, auto-contida
+
+> #### 🔄 A base da demo ANDA SOZINHA (08/2026)
+>
+> Ela era uma fotografia com `DATA_FIM` cravada e **não envelhecia**: medido em 21/08, terminava
+> em **24/07** — quase um mês atrás, com o Orçamento falando de um mês que já passou. Duas
+> mudanças resolvem:
+>
+> 1. **Janela deslizante.** `perfil.DATA_FIM = date.today()` e `DATA_INICIO` a 940 dias dele —
+>    o volume fica constante em vez de crescer a cada regeração. `DEMO_DATA_FIM` fixa a data
+>    quando for preciso reproduzir uma geração antiga. Os 3 meses do giro (`QTVENDMES1..3`)
+>    saem de `perfil.meses_giro()`; estavam **cravados em abr/mai/jun de 2026**, e com a janela
+>    andando passariam a somar meses fora do período — giro zero em massa.
+> 2. **Alimentador diário** (`_seed_demo/avancar_demo.py`, job `demo_avancar` às 4h05):
+>    **desloca as datas** até hoje em vez de regerar. Regerar leva ~4 min e muda todos os
+>    números — o que faz a demo mudar debaixo de quem a está apresentando. Deslocar leva
+>    segundos e preserva tudo. Liga com `DEMO_AUTO_AVANCAR=true` na stack.
+>    - ⚠️ **Três travas**, porque o script reescreve TODAS as datas do banco: só em
+>      `DATA_SOURCE=postgres`, só com `DEMO_AUTO_AVANCAR=true`, e o script **recusa banco sem
+>      "demo" no nome** (mesma política do `seed_metas_demo`).
+>    - `calendario` é **reconstruído**, não deslocado: `data` é PK e o UPDATE colidiria.
+>    - Faz `VACUUM` (UPDATE diário em 1,1M linhas incha rápido) e limpa o Redis no fim.
+>
+> #### 📊 A base foi CALIBRADA nas proporções da Multpel real
+> A demo estava mansa demais para demonstrar — e uma base sem dor não vende a ferramenta.
+>
+> | | antes | agora | Multpel real |
+> |---|---|---|---|
+> | capital parado | 0,1% | **3,1%** | 2,9% |
+> | itens sem giro | 0 | **462** | 293 |
+> | cobertura ideal | 26,4% | **72,6%** | 59,7% |
+> | ruptura | 4,1% | **11,2%** | 10,7% |
+> | orçamento consumido | 0% | **86,8%** | 84,4% |
+> | cadastro impossível | 3.795 de 3.800 | **127** | 72 de 4.519 |
+>
+> Os botões estão em `_seed_demo/perfil.py` (`ESTOQUE_MIX`, `COBERTURA_FAIXAS`, `COMPRAS_*`,
+> `VOLUME_UN_M3`, `PESO_UN_KG`). Quatro achados que valem a leitura:
+> - ⚠️ **Zerar `QTVENDMES` no PCEST não cria "sem giro".** O app tem um fallback que recalcula o
+>   giro pela série mensal do RCA quando o cadastro vem zerado (é o que salva item novo), e como
+>   o fato continuava vendendo, a demo mostrava **zero** itens sem giro com 2.103 linhas zeradas.
+>   O produto precisa **parar de vender** no fato — `gerar_fato._CORTE` dá uma data de corte a
+>   cada item de dead stock.
+> - ⚠️ **`volume` e `peso` são POR UNIDADE.** Estavam em 0,2–5 m³ e 0,2–8 kg *por unidade* — uma
+>   unidade com o volume de uma geladeira. Vezes o fator de caixa, **3.795 de 3.800** cadastros
+>   estouravam a guarda de plausibilidade e a aba Qualidade dizia que a base inteira estava errada.
+> - ⚠️ **Descrição de produto é parte da demo.** Era `PRODUTO 43015 BOMBRIL`; hoje sai
+>   `VELA UNILEVER 24UN`, com a embalagem coerente com o tipo do item (não existe "SACOLA 2L").
+>   Não muda nenhuma conta — muda se a demo é levada a sério.
+> - ⚠️ **Coluna nova precisa de `ALTER TABLE` no `schema.sql`.** O `CREATE TABLE IF NOT EXISTS`
+>   não toca tabela existente, então a demo já criada nunca recebia a coluna e o gerador quebrava
+>   no COPY. Foi o caso do `pcprodut.pesoliq`.
+>
+> 🩹 **`_mes_atual()` não estava ancorado** — usava `date.today()` e escapou da correção de
+> 08/2026 (armadilha nº 17). O Orçamento da demo procurava pedidos de agosto numa base que
+> parava em julho: "meta 0, comprado 0, nenhum comprador comprou". Em modo Power BI o `_hoje()`
+> devolve `date.today()`, então o cliente real não muda.
+
 
 A **mesma imagem**, subida como outra stack só com env diferente (`DATA_SOURCE=postgres`). Pra
 apresentações, sem depender do BI do cliente. **Não precisa de git/imagem separados** — um código,
@@ -1051,7 +1108,7 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 5. **Checagem de API usa `'/api/' in path`, não `startswith`** — por causa de `/estoque/api/...`.
 6. **Não editar `MultpelEstoque/`** (repo congelado) nem publicar em `:latest` sem intenção.
 7. **3 testes falham por fixture de data** (radar/mix/cohort) — pré-existentes, **não** são regressão.
-   O baseline é **690 passam / 3 falham**. As 2 do `test_provider_estoque` que constavam aqui
+   O baseline é **711 passam / 3 falham**. As 2 do `test_provider_estoque` que constavam aqui
    como dependência de ambiente eram, na verdade, o bug de ancoragem de data (armadilha nº 17).
 8. **Verificação visual de tema não confia em captura** das telas de dados (Power BI muda o conteúdo
    entre capturas) — comparar cor computada (`getComputedStyle`), não pixels.

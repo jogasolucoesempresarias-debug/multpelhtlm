@@ -36,7 +36,15 @@ _PKG_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def _mes_atual():
-    return request.args.get("mes") or date.today().strftime("%Y-%m")
+    """O mês de referência do Orçamento — ANCORADO no dado, como o `_hoje()`.
+
+    ⚠️ Usava `date.today()` puro e escapou da correção de ancoragem de 08/2026 (a armadilha nº
+    17 do README). Efeito medido na demo: o fato sintético terminava em 24/07, o relógio dizia
+    21/08, e o Orçamento procurava pedidos de AGOSTO numa base que parava em julho — resultado,
+    "meta 0, comprado 0, nenhum comprador fez compras neste mês" numa aba que é justamente das
+    que se demonstra. Em modo Power BI o `_hoje()` devolve `date.today()`, então o cliente real
+    não muda nada."""
+    return request.args.get("mes") or _hoje().strftime("%Y-%m")
 
 
 # Logo do CLIENTE impresso no PDF do pedido de compra (o produto é JOGA; o logo aqui é de

@@ -105,3 +105,32 @@ Antes do merge, escolher ~5 rotas no modo **`powerbi+cliente`** e conferir o nú
 diretamente (o mesmo de antes das mudanças). Objetivo: provar que os branches `if data_source=='postgres'`
 **não alteraram 1 centavo** do caminho Multpel. (No modo postgres o dado é sintético; centavo não se aplica.)
 Só depois dessa prova → liberar o merge da branch `feat/multi-fonte` (decisão do Gabriel).
+
+---
+
+## Manter a demo em dia (08/2026)
+
+A base **anda sozinha**: o job `demo_avancar` (4h05) roda o `avancar_demo.py`, que desloca todas
+as datas até hoje. Para ligar na stack, basta a env:
+
+```env
+DEMO_AUTO_AVANCAR=true
+```
+
+À mão, quando quiser:
+
+```bash
+python -X utf8 _seed_demo/avancar_demo.py --dry-run   # mostra quantos dias faltam
+python -X utf8 _seed_demo/avancar_demo.py             # avança até hoje
+```
+
+⚠️ O script **recusa** banco que não tenha "demo" no nome — ele reescreve TODAS as datas, e
+apontá-lo para a base de um cliente seria irreversível.
+
+**Quando REGERAR em vez de avançar:** quando quiser conteúdo novo (outros produtos, outros
+números) ou depois de mexer no `perfil.py`. Aí é o ciclo completo — `gerar.py` → `gerar_fato.py`
+→ `gerar_estoque.py` → `seed_metas_demo.py` → `seed_historico_demo.py` → limpar o Redis.
+⚠️ **Limpe o Redis com o servidor PARADO.** Com ele no ar, o processo repõe o cache velho entre
+o flush e a sua conferência — perdi uma rodada inteira achando que o gerador não tinha aplicado.
+⚠️ Em modo debug o Flask sobe **dois** processos (reloader); matar um só deixa o antigo servindo
+dados velhos na mesma porta.

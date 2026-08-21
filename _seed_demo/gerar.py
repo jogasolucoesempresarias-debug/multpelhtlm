@@ -131,6 +131,76 @@ def gen_fornecedores(compradores):
     return out
 
 
+# ⚠️ Descrição REALISTA por departamento. Era `f"PRODUTO {cod} {marca}"`, e numa apresentação
+# comercial isso denuncia a base fabricada na primeira tela — o cliente lê "PRODUTO 43015 BOMBRIL"
+# e para de olhar o número. O nome não muda nenhuma conta; muda se a demo é levada a sério.
+_ITENS_POR_DEPTO = {
+    "MERCEARIA DOCE": ["ACUCAR REFINADO", "ACHOCOLATADO PO", "DOCE DE LEITE", "GOIABADA",
+                       "LEITE CONDENSADO", "CREME DE LEITE", "COCO RALADO"],
+    "MERCEARIA SALGADA": ["ARROZ TIPO 1", "FEIJAO CARIOCA", "SAL REFINADO", "FARINHA DE TRIGO",
+                          "FUBA MIMOSO", "AMIDO DE MILHO"],
+    "LIMPEZA": ["DETERGENTE NEUTRO", "SABAO EM PO", "AGUA SANITARIA", "AMACIANTE",
+                "DESINFETANTE PINHO", "LIMPADOR MULTIUSO", "ESPONJA DUPLA FACE", "SABAO BARRA"],
+    "HIGIENE/PERFUMARIA": ["SABONETE", "SHAMPOO", "CONDICIONADOR", "CREME DENTAL",
+                           "DESODORANTE AEROSOL", "PAPEL HIGIENICO", "ABSORVENTE"],
+    "BEBIDAS": ["REFRIGERANTE COLA", "SUCO NECTAR", "AGUA MINERAL", "CERVEJA LATA",
+                "ENERGETICO", "REFRESCO PO"],
+    "BISCOITOS": ["BISCOITO RECHEADO", "BISCOITO CREAM CRACKER", "WAFER", "ROSQUINHA",
+                  "BISCOITO MAISENA"],
+    "MATINAIS": ["CAFE TORRADO MOIDO", "LEITE EM PO", "CEREAL MATINAL", "AVEIA EM FLOCOS"],
+    "LATICINIOS": ["LEITE UHT INTEGRAL", "REQUEIJAO", "MANTEIGA", "IOGURTE", "QUEIJO RALADO"],
+    "CONSERVAS": ["MILHO VERDE", "ERVILHA", "SELETA DE LEGUMES", "AZEITONA", "PALMITO"],
+    "DESCARTAVEIS": ["COPO PLASTICO", "PRATO DESCARTAVEL", "BANDEJA ISOPOR", "SACOLA PLASTICA",
+                     "FILME PVC", "PAPEL ALUMINIO", "MARMITA ALUMINIO", "POTE COM TAMPA"],
+    "PET": ["RACAO CAES ADULTO", "RACAO GATOS", "AREIA HIGIENICA", "PETISCO CAES"],
+    "BAZAR": ["VASSOURA", "RODO", "BALDE PLASTICO", "PANO DE CHAO", "CABIDE"],
+    "CEREAIS": ["LENTILHA", "GRAO DE BICO", "CANJICA", "PIPOCA MILHO"],
+    "TEMPEROS": ["OREGANO", "COLORAU", "ALHO TRITURADO", "CALDO DE CARNE", "PIMENTA DO REINO"],
+    "CAFE": ["CAFE EXTRA FORTE", "CAFE GOURMET", "CAPSULA CAFE"],
+    "OLEOS E AZEITES": ["OLEO DE SOJA", "AZEITE EXTRA VIRGEM", "VINAGRE ALCOOL", "OLEO DE MILHO"],
+    "MASSAS": ["MACARRAO ESPAGUETE", "MACARRAO PARAFUSO", "MASSA LASANHA", "MACARRAO INSTANTANEO"],
+    "ENLATADOS": ["SARDINHA", "ATUM SOLIDO", "SALSICHA", "MOLHO DE TOMATE", "EXTRATO DE TOMATE"],
+    "CONFEITARIA": ["CHOCOLATE GRANULADO", "CONFEITO COLORIDO", "FORMINHA PAPEL", "PAPEL MANTEIGA"],
+    "DIVERSOS": ["FOSFORO", "VELA", "PILHA ALCALINA", "ISQUEIRO"],
+}
+# ⚠️ A embalagem tem de casar com o TIPO do item. Sorteando de uma lista única saía
+# "DETERGENTE 400G" e "SACOLA PLASTICA 2L" — o tipo de detalhe que faz alguém desconfiar da
+# base inteira numa demonstração, ainda que nenhuma conta mude.
+_EMB_LIQ  = ["500ML", "1L", "2L", "5L", "200ML", "900ML"]
+_EMB_PESO = ["200G", "400G", "500G", "1KG", "2KG", "5KG"]
+_EMB_UN   = ["12UN", "24UN", "50UN", "100UN", "C/10", "C/50"]
+_QUALIF   = ["", "", "", "TRADICIONAL", "PREMIUM", "CONCENTRADO", "EXTRA"]
+
+_LIQUIDO = ("DETERGENTE", "AGUA", "SUCO", "REFRIGERANTE", "OLEO", "AZEITE", "VINAGRE",
+            "LEITE UHT", "AMACIANTE", "DESINFETANTE", "LIMPADOR", "SHAMPOO", "CONDICIONADOR",
+            "IOGURTE", "CERVEJA", "ENERGETICO", "SANITARIA", "ALHO", "MOLHO", "REQUEIJAO",
+            "LEITE CONDENSADO", "CREME DE LEITE", "DESODORANTE")
+_CONTAVEL = ("COPO", "PRATO", "BANDEJA", "SACOLA", "MARMITA", "POTE", "FORMINHA", "VELA",
+             "PILHA", "FOSFORO", "ISQUEIRO", "CABIDE", "ESPONJA", "PAPEL HIGIENICO",
+             "ABSORVENTE", "CAPSULA", "SABONETE", "SABAO BARRA", "VASSOURA", "RODO", "BALDE",
+             "PANO", "FILME", "PAPEL ALUMINIO", "PAPEL MANTEIGA", "SARDINHA", "ATUM")
+
+
+def _embalagem_de(item):
+    if any(k in item for k in _CONTAVEL):
+        return rng.choice(_EMB_UN)
+    if any(k in item for k in _LIQUIDO):
+        return rng.choice(_EMB_LIQ)
+    return rng.choice(_EMB_PESO)
+
+
+def _descricao_produto(depto_nome, marca):
+    """`DETERGENTE NEUTRO YPE CONCENTRADO 500ML` — parece cadastro de verdade."""
+    base = _ITENS_POR_DEPTO.get(depto_nome)
+    if not base:                                   # depto sem vocabulário → cai num genérico útil
+        base = _ITENS_POR_DEPTO["DIVERSOS"]
+    item = rng.choice(base)
+    # qualificador só onde faz sentido: "COPO PLASTICO CONCENTRADO" é ruído
+    q = "" if any(k in item for k in _CONTAVEL) else rng.choice(_QUALIF)
+    partes = [item, marca] + ([q] if q else []) + [_embalagem_de(item)]
+    return " ".join(partes)
+
+
 def gen_produtos(deptos, secoes, fornecedores):
     sec_ids = list(secoes.keys())
     depto_w = [3 if d[0] in (2, 3, 5, 50) else 1 for d in deptos]
@@ -142,11 +212,13 @@ def gen_produtos(deptos, secoes, fornecedores):
         forn = rng.choice(fornecedores)
         marca = rng.choice(MARCAS)
         prods.append({
-            "codprod": cod, "descricao": f"PRODUTO {cod} {marca}", "codfornec": forn[0],
+            "codprod": cod, "descricao": _descricao_produto(dp[1], marca), "codfornec": forn[0],
             "codcomprador": forn[3], "codepto": dp[0], "codsec": rng.choice(cand), "marca": marca,
             "codmarca": rng.randint(1, 40), "qtunitcx": rng.choice([6, 12, 20, 24, 30, 48]),
             "prazoval": rng.choice([90, 180, 365, 720]), "controla_val": rng.random() < 0.35,
-            "volume": round(rng.uniform(0.2, 5), 4), "peso": round(rng.uniform(0.2, 8), 4),
+            # m³ e kg POR UNIDADE (ver perfil.VOLUME_UN_M3 / PESO_UN_KG) — a caixa é isto x fator
+            "volume": round(rng.uniform(*P.VOLUME_UN_M3), 5),
+            "peso": round(rng.uniform(*P.PESO_UN_KG), 4),
             "custo": round(rng.lognormvariate(1.6, 0.7) + 0.5, 4),
             "margem": min(0.45, max(0.03, rng.gauss(dp[2], 0.04))),
             "st": rng.random() < P.ST_FRAC_PRODUTOS, "pop": rng.random(),
