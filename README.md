@@ -147,6 +147,36 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
 >   produção o container roda `python server.py`, então `server` é `__main__` e o import traria
 >   uma segunda cópia do módulo (armadilha já documentada duas vezes no `routes.py`).
 
+> ### 🔜 Próximo passo: o mesmo Agente no COMERCIAL
+>
+> A arquitetura já está pronta para isso — **o que muda é pouco**:
+>
+> | Reusa como está | Precisa de versão própria |
+> |---|---|
+> | `estoque/ia.py` (motor, prompt-base, 3 estados, teto, log, timeout) | os PILARES (`ia_pilares.py` é do Compras) |
+> | SSE, cache de 120s com o papel na chave, oferta/402 | o GLOSSÁRIO das réguas do Comercial |
+> | widget (`estoque-ia.js`), sugestões, aviso de filtro | o endpoint que monta o contexto |
+> | o gate por `MODULOS` | — |
+>
+> **Os pilares do Comercial** seriam: carteira/RFM (8 segmentos) · vendedores (ranking, YoY,
+> positivação) · metas (venda/rentab/clientes/mix × realizado × projeção) · categorias/deptos ·
+> mix abandonado · tendências/cohort · cobertura de carteira.
+>
+> ⚠️ **O glossário é onde mora o trabalho**, como foi no Compras. As réguas do Comercial que o
+> modelo vai confundir se ninguém disser:
+> - a **`% Margem` divide pelo realizado BRUTO**, nunca por `venda_sb` — o erro cresce com o
+>   bônus do time e já passou 4 semanas em produção;
+> - **RBAC tem DUAS réguas**: por VENDA (`aplicar_rbac_dax`, injeta `CODUSUR`/`CODSUPERVISOR` no
+>   DAX) e por CADASTRO (`_carteira_no_escopo`, recorta em Python). Um agente que misture as duas
+>   entrega número de fora do escopo da pessoa;
+> - **devolução conta por `DTENT`**, não pela data da venda;
+> - **positivação ≠ nº de pedidos** (é cliente distinto que comprou).
+>
+> E as duas lições do Compras que valem em qualquer módulo: **recusar demais mata a adoção tão
+> rápido quanto inventar** (a 1ª versão recusou 8 de 9 perguntas reais), e **o índice tem de sair
+> do que renderizou**, nunca da estrutura — senão um pilar vazio é anunciado e o agente diz que
+> o painel não tem algo que ele tem.
+
 Como testar localmente: `MODULOS=comercial,compras,ia python -X utf8 server.py` com a
 `OPENAI_API_KEY` no `.env`. A bateria de qualidade (`tests/smoke_ia_real.py`) precisa de uma
 instância em modo **dev** — em produção o cookie sai `Secure` e o `requests` não o envia por HTTP.
@@ -1148,6 +1178,37 @@ muitas instâncias; as env vars são o interruptor.
   **`[bootstrap] DEMO PRONTA`** (durante o seed, o login falha — é o passo `init_db` que cria as tabelas de auth).
 - Base reprodutível (SEED=42) em `_seed_demo/`; runbook local (fumaça no navegador) em
   **`_seed_demo/FUMACA_DEMO.md`**; seeder de metas com **trava** (`DEMO_SEED=1` + recusa `multpel_db`).
+
+> ### ⛔ ARMADILHA DO PORTAINER: editar env pela stack REVERTE A IMAGEM
+>
+> **Aconteceu em 21/08/2026 na PRODUÇÃO** e custou uma investigação inteira. O sintoma foi a
+> página `/uso` devolvendo 404 depois de meses funcionando — e a demo funcionando normal.
+>
+> **O mecanismo.** O Swarm **fixa o digest** da imagem no momento em que ela é puxada:
+> 1. alguém roda `docker service update --image ...:latest --force` → o **serviço** passa a
+>    rodar a imagem nova;
+> 2. isso muda o SERVIÇO, **não a stack** — o arquivo da stack segue com o digest antigo;
+> 3. alguém edita um env no Portainer e clica em atualizar → a stack é reaplicada → **o serviço
+>    volta para a imagem antiga**.
+>
+> A produção não deixou de avançar: ela **andou para trás**. Ficou com uma imagem de ~2 semanas
+> antes, e junto com a `/uso` voltaram o "Painel gerencial abrindo pela metade" e a coluna
+> "Valor NF" cortada no modal de pedido — defeitos que o diretor já tinha reportado como
+> corrigidos.
+>
+> **Como diagnosticar em 30 segundos.** Rotas com o mesmo decorator devolvem códigos diferentes
+> quando a versão é velha — 404 é "a rota não existe no código que está rodando", 401 é "existe
+> e me barrou":
+> ```bash
+> curl -s -o /dev/null -w "%{http_code}
+" https://painel.jogasolucoes.com.br/admin   # 401 = ok
+> curl -s -o /dev/null -w "%{http_code}
+" https://painel.jogasolucoes.com.br/uso     # 404 = velho
+> ```
+> Sondando rotas de datas conhecidas dá para **datar a imagem no ar** sem acessar o servidor.
+>
+> **A regra:** depois de QUALQUER edição de env pelo Portainer, rode o `service update --image
+> ... --force` em seguida, para trazer a imagem de volta ao `:latest` de verdade.
 
 ⚠️ **Deploy antes do build terminar** → serviços em erro de *pull* de `:latest`. Espere o
 GitHub Actions ficar verde e dê **Update/Re-pull** na stack.
