@@ -1148,6 +1148,18 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "status_exec": status_exec, "acao_rec": acao_rec,
             "cubagem_caixa_m3": _round(cub_caixa, 5) if cub_caixa else None,
             "peso_caixa_kg": _round(peso_caixa, 3) if peso_caixa else None,
+            # ⚠️ Peso e volume por UNIDADE, além dos por caixa (08/2026, pedido do diretor:
+            # "consegue colocar para aparecer o kg aqui, pois quando vamos alterando o pedido,
+            # não aparece o peso total mais"). É esta a régua do rodapé do modal de pedido —
+            # e é ela que faz o total bater com o PDF, que soma `qtd em UNIDADES × unitário`
+            # (validado contra o rodapé do 211: 14.497,64 kg no pedido 565848). Somar por
+            # CAIXA divergiria no primeiro item digitado fora do múltiplo do fator, que é
+            # justamente o caso dos itens SEM fator de caixa.
+            # ⚠️ Vão como campo próprio em vez de o front dividir `peso_caixa_kg ÷ caixa`:
+            # aquele já está arredondado a 3 casas, e re-derivar dele é o mesmo erro do card
+            # "Em risco" (789 SKUs × 791). Mesma grafia que `qualidade_cadastro` já usa.
+            "peso_un_kg": _round(_med["bruto"], 4) if _med["confiavel"] and _med["bruto"] else None,
+            "volume_un_m3": _round(_med["vol"], 6) if _med["confiavel"] and _med["vol"] else None,
             "medidas_confiaveis": _med["confiavel"],
             "compra_suspensa": compra_suspensa,
             "status_abast": status_abast,

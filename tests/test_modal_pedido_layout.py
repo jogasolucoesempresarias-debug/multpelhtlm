@@ -25,14 +25,46 @@ def test_tabela_do_pedido_tem_layout_fixo():
 
 
 def test_colgroup_declara_as_larguras_e_deixa_o_produto_elastico():
+    """⚠️ A contagem é DERIVADA do cabeçalho, não cravada. A versão anterior travava em 8 e
+    quebrou quando a coluna Cob.proj entrou (08/2026) — o que ela precisa provar é que colgroup
+    e thead têm o MESMO número de colunas, senão as larguras desalinham e o corte volta."""
     js = Path('static/estoque/estoque.js').read_text(encoding='utf-8')
     # começa DEPOIS da abertura: `<colgroup` também casa com `<col` e inflaria a contagem
     ini = js.index('class="pd-tab"><colgroup>') + len('class="pd-tab"><colgroup>')
     trecho = js[ini:js.index('</colgroup>')]
-    # 8 colunas: 7 com largura fixa + a do produto, que é a elástica (um <col> sem style)
-    assert trecho.count('<col') == 8, 'a tabela tem 8 colunas; o colgroup precisa cobrir todas'
+    # ⚠️ procurar o fecho A PARTIR do início do cabeçalho: existe `</tr></thead>` de outras
+    # tabelas ANTES desta no arquivo, e um `index` do zero recortaria uma fatia vazia — o teste
+    # passaria a comparar 9 com 0 e a mensagem não denunciaria o motivo
+    _h0 = js.index('</colgroup><thead><tr>')
+    cab = js[_h0:js.index('</tr></thead>', _h0)]
+    # cabeçalhos = os montados pelo helper `_th` + o `<th></th>` vazio do botão de remover
+    n_th = cab.count('_th(') + cab.count('<th>')
+    assert trecho.count('<col') == n_th, \
+        f'o colgroup tem {trecho.count("<col")} colunas e o cabeçalho {n_th} — precisam casar'
     assert trecho.count('<col>') == 1, \
         'exatamente UMA coluna sem largura (Produto) — é ela que absorve a sobra e trunca'
+    # e o CORPO também: colgroup e cabeçalho podem casar em 9 enquanto a linha tem 8 <td>, e aí
+    # as células deslizam uma coluna para a esquerda sem erro nenhum — o valor cai debaixo do
+    # cabeçalho errado. É a armadilha nº 20 do README (tupla posicional) na versão HTML.
+    _b0 = js.index("itens.map((x,i)=>`<tr>")
+    corpo = js[_b0:js.index("</tr>`).join('')", _b0)]
+    assert corpo.count('<td') == n_th, \
+        f'o cabeçalho tem {n_th} colunas e a linha {corpo.count("<td")} — as células deslizam'
+
+
+def test_as_larguras_fixas_deixam_folga_para_o_produto_na_menor_tela():
+    """A soma das colunas fixas não pode comer a elástica. O modal é `min(1240px, 96vw)` com
+    22px de padding de cada lado; a menor tela em que isto foi verificado é 1280px (→ 1228,8px
+    de modal, 1184,8px de conteúdo). Abaixo de ~300px o nome do produto vira reticências e a
+    conferência linha a linha contra o 211, que é o uso real da tela, deixa de ser possível."""
+    import re
+    js = Path('static/estoque/estoque.js').read_text(encoding='utf-8')
+    ini = js.index('class="pd-tab"><colgroup>') + len('class="pd-tab"><colgroup>')
+    trecho = js[ini:js.index('</colgroup>')]
+    fixas = sum(int(w) for w in re.findall(r'<col style="width:(\d+)px"', trecho))
+    produto = 1280 * 0.96 - 44 - fixas
+    assert produto >= 300, \
+        f'sobram {produto:.0f}px para o nome do produto a 1280px de tela — coluna nova demais'
 
 
 def test_celulas_truncam_em_vez_de_empurrar():

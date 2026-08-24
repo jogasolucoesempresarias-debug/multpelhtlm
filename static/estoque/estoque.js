@@ -2776,6 +2776,18 @@ function modalMeta(r){ openModal(`<h3>Meta de compras — ${r.mes}</h3>
 }
 // monta um item (snapshot) a partir de um produto
 function _prodItem(p,qtd){ return {codprod:p.codprod,descricao:p.descricao,qtdisp:p.qtdisp,cobertura:p.cobertura,
+  // Cobertura PROJETADA + giro do servidor — alimentam a coluna Cob.proj do modal (pedido do
+  // diretor 08/2026: "hora de finalizar o pedido, analisar o que aumentar"). É a MESMA régua da
+  // coluna Cob.proj da Abastecimento (disponível + já pedido + pré-entrada), de propósito: as duas
+  // telas são lidas em sequência e duas réguas com o mesmo rótulo é o defeito do capital parado
+  // 15d × 60d. `estoque_projetado` viaja só para o tooltip de auditoria — a conta ANCORA no
+  // `cobertura_proj` do servidor e nunca refaz o absoluto (ver _cobResult).
+  cobertura_proj:p.cobertura_proj,giro_dia:p.giro_dia,estoque_projetado:p.estoque_projetado,
+  // Peso e volume por UNIDADE — alimentam o rodapé vivo do modal. Vêm por unidade (não por
+  // caixa) porque a quantidade do pedido é em unidades e é essa a régua do PDF/211.
+  // `null` = cadastro ausente ou reprovado pela guarda de plausibilidade: entra como ZERO no
+  // total e o rodapé AVISA quantos ficaram de fora (o total é piso, não medida).
+  peso_un_kg:p.peso_un_kg,volume_un_m3:p.volume_un_m3,medidas_confiaveis:p.medidas_confiaveis,
   // qtd do pedido é sempre em UNIDADES INTEIRAS: a sugestão crua pode ser fracionária (ex.: 0,3 un
   // em item sem fator de caixa) — a tela ceila p/ "1 un", mas se guardar 0,3 o item_master faz
   // round→0 e o Excel/PDF do Winthor PULA a linha (qtd<=0). Ceilar aqui alinha pedido↔tela↔export.
@@ -2844,10 +2856,71 @@ function modalPedido(opts){
   const linhaNF=x=>(+x.qtd||0)*(+x.custo_unit||0)*(1+((+x.perc_ipi||0)+(+x.perc_st||0))/100);
   const totalNF=()=>itens.reduce((s,x)=>s+linhaNF(x),0);
   const incertoNF=()=>itens.reduce((s,x)=>s+(x.trib_firme===false?linhaNF(x):0),0);
+  /* ───── Cobertura projetada da linha (pedido do diretor 08/2026) ─────────────────────────────
+     A pergunta do modal não é "quanta cobertura o item TEM" — isso a Abastecimento já respondeu
+     na tela de trás. É "onde ela FICA se eu aumentar esta linha". Por isso a coluna é REATIVA:
+     número que não se mexe enquanto o comprador digita é o mesmo modo de falha do campo
+     "Parado: dias parados (≥)", que parecia a régua e era só filtro de listagem.
+
+     ⚠️ ANCORADA no `cobertura_proj` que o servidor calculou — NUNCA recalculada como
+     (estoque_projetado + qtd) / giro_dia. `giro_dia` viaja arredondado a 3 casas e `qtdisp` a 2
+     (core.py), e refazer o ABSOLUTO a partir deles reproduz exatamente o defeito do card "Em
+     risco" (789 SKUs no card × 791 na lista, cód. 44398: 104 ÷ 4,3333… = 24d, ÷ 4,333 = 25d).
+     Com qtd=0 a coluna mostra o MESMO número da tela de trás; o que se soma é uma diferença,
+     onde o arredondamento é de 2ª ordem.
+
+     ⚠️ Giro ≤ 0 → `∞`, igual ao helper `cob()`: sem giro a cobertura não é calculável (é o 9999
+     da régua oficial), e somar dias a isso não significaria nada.
+     ⚠️ Item ZERADO com giro tem `cobertura_proj` nulo (o core só calcula com projetado > 0) e a
+     base cai em 0 — que é o valor da régua oficial (`cobertura_dias_oficial(0, giro>0) == 0`).
+     A Abastecimento pinta esse mesmo caso como `∞` porque o `cob()` trata os DOIS nulos igual;
+     aqui não dá para repetir isso, senão a seta sairia "∞ → 24d". Divergência conhecida e
+     declarada no title da célula. */
+  const _cobBase=x=>((+x.giro_dia||0)<=0?null:(x.cobertura_proj==null?0:+x.cobertura_proj));
+  const _cobResult=x=>{const b=_cobBase(x); return b==null?null:b+(+x.qtd||0)/(+x.giro_dia||1);};
+  const cobCel=x=>{
+    const b=_cobBase(x), r=_cobResult(x);
+    if(b==null) return `<span class="muted" title="Item sem giro nos últimos 3 meses — cobertura não é calculável (é o 9999 da régua oficial).">∞</span>`;
+    // ⚠️ SEM cor. O limiar de "cobertura demais" é o `excesso_cob` (120d), que vive no core e
+    // NÃO viaja para o front (S.params não o tem) — pintar contra um 120 cravado aqui seria um
+    // limiar duplicado que mente no dia em que o parâmetro do servidor mudar, e pintar contra o
+    // alvo (lead+cob) acenderia em quase toda linha, porque o arredondamento em caixa fechada já
+    // passa do alvo por construção. Cor só depois que o diretor disser o que é "demais".
+    const t=`Cobertura projetada = disponível + já pedido + pré-entrada, dividido pelo giro/dia — a MESMA régua da coluna Cob.proj da Abastecimento.\nHoje: ${dec(b,0)}d (estoque projetado ${int(x.estoque_projetado||0)} un, giro ${dec(x.giro_dia,2)} un/dia)\nCom este pedido: ${dec(r,0)}d\nAlvo da sugestão: lead ${int(S.params.lead)}d + cobertura ${int(S.params.cob)}d = ${int((+S.params.lead||0)+(+S.params.cob||0))}d (⚙ Parâmetros).`;
+    return (+x.qtd||0)>0
+      ? `<span title="${esc(t)}"><span class="muted">${dec(b,0)}</span> → <b>${dec(r,0)}d</b></span>`
+      : `<span title="${esc(t)}">${dec(b,0)}d</span>`;
+  };
+  /* ───── Peso e cubagem da CARGA, vivos (pedido do diretor 08/2026) ──────────────────────────
+     "consegue colocar para aparecer o kg aqui, pois quando vamos alterando o pedido, não
+     aparece o peso total mais". O peso existia no cabeçalho do fornecedor na Abastecimento
+     (`gr.peso`), calculado sobre a SUGESTÃO e congelado — e morria ao abrir o modal, que é
+     exatamente onde a quantidade passa a mudar.
+
+     ⚠️ Soma `qtd em UNIDADES × unitário`, a MESMA régua do PDF (`_gerar_pdf_pedido`), que é a
+     que reproduz o rodapé do 211 ao centavo (14.497,64 kg no pedido 565848). Somar por CAIXA
+     divergiria no primeiro item digitado fora do múltiplo do fator — e item SEM fator de caixa,
+     que é a maioria num pedido de papel, não tem múltiplo nenhum.
+
+     ⚠️ Item sem cadastro (ou com cadastro reprovado pela guarda de plausibilidade) entra como
+     ZERO, então o total é PISO, não medida. O rodapé diz quantos ficaram de fora — sem isso o
+     comprador fecha carga com um total incompleto achando que está completo, e descobre na
+     doca. Mesma política do `⚠` do cabeçalho da Abastecimento e do `sem_cubagem_itens` da aba
+     Logística. */
+  const _semMed=x=>x.medidas_confiaveis===false||!(+x.peso_un_kg>0);
+  const pesoTotal=()=>itens.reduce((s,x)=>s+(+x.qtd||0)*(+x.peso_un_kg||0),0);
+  const cubTotal=()=>itens.reduce((s,x)=>s+(+x.qtd||0)*(+x.volume_un_m3||0),0);
+  const carga=()=>{
+    const kg=pesoTotal(), m3=cubTotal(), sem=itens.filter(_semMed).length;
+    if(!kg&&!m3) return itens.length
+      ? ` · <span class="muted" title="Nenhum item deste pedido tem peso ou cubagem confiável no cadastro do Winthor.">peso/cubagem não cadastrados</span>` : '';
+    const av=sem?` <span style="color:${C.orange}" title="${sem} item(ns) sem cadastro confiável de peso/volume no Winthor entram como ZERO — o total acima é um PISO, não a medida da carga.">⚠ ${sem} sem cadastro</span>`:'';
+    return ` · <b>${dec(kg,0)} kg</b>${m3>0?` · <b>${dec(m3,2)} m³</b>`:''}${av}`;
+  };
   const rodape=()=>{const t=total(),nf=totalNF(),inc=incertoNF();
-    return nf>t+0.005
+    return (nf>t+0.005
       ? `Mercadoria: <b>${money(t)}</b> · impostos ${money(nf-t)} · <b>Total da NF previsto ${money(nf)}</b> · ${itens.length} itens${notaIncerteza(nf,inc)}`
-      : `Total: <b>${money(t)}</b> · ${itens.length} itens`;};
+      : `Total: <b>${money(t)}</b> · ${itens.length} itens`) + carga();};
   // atualiza só o rodapé + o campo Valor (sem reconstruir a tabela → não rouba o foco do input)
   function refreshTotals(){
     const cl=$('#pd-itens .count-line'); if(cl) cl.innerHTML=rodape();
@@ -2866,6 +2939,9 @@ function modalPedido(opts){
     descricao: (x.descricao || '').toLowerCase(),
     caixas: x.qtunitcx > 1 ? Math.ceil((+x.qtd || 0) / x.qtunitcx) : -1,
     qtd: +x.qtd || 0,
+    // ordena pela cobertura RESULTANTE (é a pergunta da coluna: onde cada linha FICA depois
+    // deste pedido). Sem giro vai para o fim — `∞` não compete por urgência com número.
+    cob: _cobResult(x) == null ? Infinity : _cobResult(x),
     custo_unit: +x.custo_unit || 0,
     perc_ipi: +x.perc_ipi || 0,
     nf: linhaNF(x),
@@ -2887,14 +2963,18 @@ function modalPedido(opts){
       // larguras MEDIDAS no navegador, não estimadas: com 104px a etiqueta "cx" ao lado do campo
       // era cortada em "..", e com 44px o botão de remover também. O produto é a única coluna
       // elástica, então ela absorve a diferença.
+      // ⚠️ 9 colunas desde 08/2026 (entrou a Cob.proj). Mexer aqui é mexer no gate
+      // `test_modal_pedido_layout`: TODA coluna declarada no colgroup e EXATAMENTE UMA elástica
+      // (Produto) — é o que impede a rolagem lateral que já cortou o "Valor NF" duas vezes.
       ? `<div class="tbl-wrap" style="max-height:46vh"><table class="pd-tab"><colgroup>
           <col style="width:74px"><col><col style="width:124px"><col style="width:96px">
-          <col style="width:104px"><col style="width:92px"><col style="width:124px"><col style="width:56px">
+          <col style="width:104px"><col style="width:104px"><col style="width:92px"><col style="width:124px"><col style="width:56px">
         </colgroup><thead><tr>${
           _th('codprod', 'Cód')}${
           _th('descricao', 'Produto')}${
           _th('caixas', 'Caixas', 'num', tipT('Edite direto em CAIXAS — a quantidade em unidades ao lado recalcula sozinha (caixas × fator un/cx do item). Item sem fator de caixa cadastrado mostra "—": nele só dá para digitar unidade. O pedido é sempre enviado ao Winthor em UNIDADES.'))}${
           _th('qtd', 'Qtd (un)', 'num')}${
+          _th('cob', 'Cob.proj', 'num', tipT('Cobertura projetada em dias: estoque disponível + já pedido + pré-entrada, dividido pelo giro/dia — a MESMA régua da coluna Cob.proj da Abastecimento. A seta mostra onde a cobertura FICA com a quantidade desta linha, e acompanha o que você digita. Item sem giro sai como ∞ (cobertura não é calculável).'))}${
           _th('custo_unit', 'Custo', 'num')}${
           _th('perc_ipi', 'IPI %', 'num', tipT('Alíquota que o Winthor deve aplicar na entrada. Vem da tributação de entrada do ERP; quando o item não tem regra fiscal para a UF do fornecedor, é ESTIMATIVA (marcada com ≈) — confira e corrija aqui, o total da NF recalcula.'))}${
           _th('nf', 'Valor NF', 'num')}<th></th></tr></thead><tbody>`+
@@ -2906,21 +2986,30 @@ function modalPedido(opts){
             ?`<input type="number" data-cxi="${i}" value="${Math.ceil((+x.qtd||0)/x.qtunitcx)}" min="0" step="1" style="width:66px;text-align:right" title="${int(x.qtunitcx)} un por caixa"> <span class="muted">cx</span>`
             :'<span class="muted" title="item sem fator de caixa cadastrado — digite em unidades">—</span>'}</td>
           <td class="num"><input type="number" data-qi="${i}" value="${+x.qtd||0}" min="0" style="width:74px;text-align:right"></td>
+          <td class="num" data-cob>${cobCel(x)}</td>
           <td class="num"><input type="number" data-ci="${i}" value="${+x.custo_unit||0}" min="0" step="0.01" style="width:84px;text-align:right"></td>
           <td class="num"><input type="number" data-ipi="${i}" value="${+x.perc_ipi||0}" min="0" max="100" step="0.01" style="width:70px;text-align:right"${x.trib_firme===false?' title="estimativa — o item não tem regra fiscal para esta origem"':''}>${x.trib_firme===false?' ≈':''}</td>
-          <td class="num">${money(linhaNF(x))}</td>
+          <td class="num" data-nf>${money(linhaNF(x))}</td>
           <td><button class="btn sm" data-ri="${i}">✕</button></td></tr>`).join('')+
         `</tbody></table></div><div class="count-line" style="text-align:right">${rodape()}</div>`
       : `<div class="count-line">Nenhum item — adicione produtos acima${opts.itens?'':' (ou lance só com o valor)'}.</div>`;
     const v=$('#pd-valor'); if(itens.length){ v.value=total().toFixed(2); v.disabled=true; } else { v.disabled=false; }
     $('#pd-itens').querySelectorAll('th[data-ord]').forEach(th=>th.onclick=()=>ordenar(th.dataset.ord));
+    // Células DERIVADAS da linha, num lugar só. Antes cada handler escrevia em `tr.children[6]`
+    // (posicional): a coluna Cob.proj entrou ANTES do Valor NF, e três `children[6]` teriam
+    // passado a escrever dinheiro dentro da cobertura — sem erro, só o número no lugar errado.
+    // É a armadilha nº 20 do README (a foto viaja como tupla posicional) na versão DOM.
+    const pintaLinha=(tr,x)=>{
+      const nf=tr.querySelector('[data-nf]'); if(nf) nf.textContent=money(linhaNF(x));
+      const cb=tr.querySelector('[data-cob]'); if(cb) cb.innerHTML=cobCel(x);
+    };
     $('#pd-itens').querySelectorAll('[data-qi]').forEach(inp=>inp.oninput=()=>{
       // NÃO chamar draw() aqui: reconstruir a tabela a cada tecla destruía o input e roubava o
       // foco (não dava pra digitar). Atualiza modelo + as células derivadas (Cx/Valor) na mão.
       const i=+inp.dataset.qi, x=itens[i]; x.qtd=+inp.value||0; const tr=inp.closest('tr');
       const cxin=tr.querySelector('[data-cxi]');   // null em item sem fator de caixa
       if(cxin) cxin.value=Math.ceil((+x.qtd||0)/x.qtunitcx);
-      tr.children[6].textContent = money(linhaNF(x));
+      pintaLinha(tr, x);
       refreshTotals();
     });
     // Edição em CAIXAS: escreve de volta em UNIDADES (qtd continua a única fonte de verdade —
@@ -2932,7 +3021,7 @@ function modalPedido(opts){
       const cx=Math.max(0,Math.floor(+inp.value||0));
       x.qtd=cx*(x.qtunitcx||1);
       tr.querySelector('[data-qi]').value=x.qtd;   // espelha sem redesenhar (não rouba o foco)
-      tr.children[6].textContent = money(linhaNF(x));
+      pintaLinha(tr, x);
       refreshTotals();
     });
     $('#pd-itens').querySelectorAll('[data-ci]').forEach(inp=>inp.onchange=()=>{ itens[+inp.dataset.ci].custo_unit=+inp.value||0; draw(); });
@@ -2940,7 +3029,7 @@ function modalPedido(opts){
     // para os ~5% de itens sem regra fiscal, onde a previsão é estimativa.
     $('#pd-itens').querySelectorAll('[data-ipi]').forEach(inp=>inp.onchange=()=>{
       const i=+inp.dataset.ipi, x=itens[i]; x.perc_ipi=+inp.value||0; x.trib_fonte='manual'; x.trib_firme=true;
-      inp.closest('tr').children[6].textContent = money(linhaNF(x)); refreshTotals();
+      pintaLinha(inp.closest('tr'), x); refreshTotals();
     });
     $('#pd-itens').querySelectorAll('[data-ri]').forEach(b=>b.onclick=()=>{ itens.splice(+b.dataset.ri,1); draw(); });
   }

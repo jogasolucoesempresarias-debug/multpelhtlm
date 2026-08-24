@@ -122,15 +122,24 @@ def test_erro_de_dado_nao_fica_preso_na_fila_para_sempre():
     assert "r.status >= 500" in PAG
 
 
-def test_o_modal_de_pedido_continua_com_8_colunas():
-    """A exibição do preço pesquisado entra como linha sob o nome do produto, NÃO como 9ª
-    coluna: a tabela é `table-layout: fixed` e o diretor já reportou DUAS vezes coluna cortada
-    (ver test_modal_pedido_layout)."""
+def test_o_preco_pesquisado_entra_como_LINHA_e_nao_como_coluna():
+    """A exibição do preço pesquisado entra como linha sob o nome do produto, NÃO como coluna
+    própria: a tabela é `table-layout: fixed` e o diretor já reportou DUAS vezes coluna cortada
+    (ver test_modal_pedido_layout).
+
+    ⚠️ Este gate travava a contagem em 8 e quebrou quando a coluna **Cob.proj** entrou
+    (08/2026) — uma coluna legítima, pedida pelo diretor. Contagem cravada aqui só repetia o
+    que o `test_modal_pedido_layout` já mede melhor (lá ela é DERIVADA do cabeçalho). O que
+    este teste tem de provar é o SEU assunto: que o preço pesquisado não é uma delas."""
     js = Path("static/estoque/estoque.js").read_text(encoding="utf-8")
-    marca = 'class="pd-tab"><colgroup>'
-    ini = js.index(marca) + len(marca)      # DEPOIS da abertura: "<colgroup" também casa "<col"
-    bloco = js[ini:js.index("</colgroup>", ini)]
-    assert bloco.count("<col") == 8, "o modal de pedido ganhou/perdeu coluna"
+    # a chamada vive DENTRO da célula do produto, colada no <span class="prod">
+    assert '</span>${pesqLinha(x.codprod)}</td>' in js, \
+        'o preço pesquisado saiu de dentro da célula do produto'
+    assert '<br><small class="muted">pesquisado' in js, 'tem de ser uma LINHA, com <br>'
+    # e não ganhou cabeçalho próprio no modal
+    cab = js[js.index('</colgroup><thead><tr>'):]
+    assert "_th('pesq" not in cab[:cab.index('</tr></thead>')], \
+        'o preço pesquisado virou coluna — é exatamente o que este gate existe para impedir'
 
 
 def test_o_campo_de_preco_aceita_virgula():
