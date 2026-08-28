@@ -532,3 +532,83 @@ def pesquisa_lista(dias=90, limite=1000):
         out = [_iso_dates(dict(r)) for r in cur.fetchall()]
     conn.close()
     return out
+
+
+# ═══════════════ régua OFICIAL da empresa (⚙ Parâmetros) ═══════════════
+# Decisão de 08/2026 (Gabriel + diretor): os ⚙ Parâmetros deixam de viver no `localStorage` de
+# cada navegador e passam a ter um PADRÃO DA EMPRESA, editável só por quem tem a flag
+# `pode_parametrizar`. Todo mundo ABRE nele; quem quiser testar outro cenário simula na sessão,
+# e a simulação morre com a aba.
+#
+# ⚠️ Por que aqui e não reusando `server._config_get`: em produção o container roda
+# `python server.py`, então `server` é `__main__` — importá-lo daqui traria uma SEGUNDA cópia do
+# módulo, com outro pool de conexão e outro estado. É a mesma armadilha que fez o `ia.py` ler a
+# env direto em vez de `from server import MODULOS`, e ela já mordeu duas vezes no `routes.py`.
+#
+# A tabela `multpel_config` é a MESMA do Comercial (que guarda `cobertura_limiar_pct` e os
+# limiares de login) — daí o PREFIXO: sem ele, `cobertura_total` do Compras colidiria com o
+# `cobertura_coberto_dias` do Painel gerencial na primeira letra errada.
+PARAM_PREFIXO = "estoque_param."
+
+_PARAMS_CACHE = {"em": None, "val": None}
+_PARAMS_TTL = 30            # segundos
+
+
+def params_oficiais(force=False):
+    """A régua oficial da empresa: {nome_do_parametro: valor_texto}.
+
+    Devolve `{}` quando nada foi definido — e `{}` é o caso NORMAL, não um erro: significa
+    "ninguém mexeu, vale o DEFAULTS do código". Foi assim que a Multpel entrou, porque a conta
+    admin nunca teve o ⚙ tocado (os 13 campos batiam com o default, conferido em 28/08/2026).
+
+    Cache curto (30s) porque `_build_produtos` roda a cada requisição e isto é um SELECT de
+    poucas linhas — sem ele, cada troca de aba pagaria um round-trip. `force` fura o cache
+    logo depois de salvar, para o autor da mudança não ver a régua antiga.
+    Falha em silêncio: config indisponível NUNCA pode derrubar o painel; cai no DEFAULTS.
+    """
+    import time
+    agora = time.time()
+    if not force and _PARAMS_CACHE["em"] and (agora - _PARAMS_CACHE["em"]) < _PARAMS_TTL:
+        return dict(_PARAMS_CACHE["val"])
+    out = {}
+    try:
+        conn = get_db()
+        try:
+            with conn, conn.cursor() as cur:
+                cur.execute("SELECT chave, valor FROM multpel_config WHERE chave LIKE %s",
+                            (PARAM_PREFIXO + "%",))
+                out = {c[len(PARAM_PREFIXO):]: v for c, v in cur.fetchall() if v is not None}
+        finally:
+            conn.close()
+    except Exception:                                    # noqa: BLE001
+        return dict(_PARAMS_CACHE["val"] or {})
+    _PARAMS_CACHE.update(em=agora, val=dict(out))
+    return dict(out)
+
+
+def params_oficiais_set(valores, usuario_id=None):
+    """Grava a régua oficial. Retorna o dict gravado.
+
+    ⚠️ Grava também uma linha em `multpel_log` — a régua oficial precisa de HISTÓRICO. Foi a
+    falta dele que deixou a cobertura alvo andar 45 -> 40 -> 30 em cinco semanas, no navegador
+    do diretor, sem registro em lugar nenhum (medido em 27/08/2026). `atualizado_em` diz QUANDO;
+    o log diz QUEM e o QUÊ.
+    """
+    import json
+    valores = {str(k): str(v) for k, v in (valores or {}).items() if v is not None}
+    conn = get_db()
+    try:
+        with conn, conn.cursor() as cur:
+            for k, v in valores.items():
+                cur.execute(
+                    "INSERT INTO multpel_config (chave, valor, atualizado_em) VALUES (%s,%s,NOW()) "
+                    "ON CONFLICT (chave) DO UPDATE SET valor=EXCLUDED.valor, atualizado_em=NOW()",
+                    (PARAM_PREFIXO + k, v))
+            cur.execute(
+                "INSERT INTO multpel_log (usuario_id, rota, parametros) VALUES (%s,%s,%s)",
+                (usuario_id, "estoque:params_oficiais",
+                 json.dumps(valores, ensure_ascii=False)[:12000]))
+    finally:
+        conn.close()
+    _PARAMS_CACHE.update(em=None, val=None)      # próxima leitura busca do banco
+    return valores

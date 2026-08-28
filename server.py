@@ -1640,7 +1640,7 @@ def login_post():
     cur = conn.cursor()
     cur.execute(
         "SELECT id, nome, password_hash, role, ativo, codusur, codsupervisor, must_change_password, codsupervisores, "
-        "areas, area_padrao, codcomprador, bloqueado_ate, tema "
+        "areas, area_padrao, codcomprador, bloqueado_ate, tema, pode_parametrizar "
         "FROM multpel_users WHERE email = %s", (email,)
     )
     user = cur.fetchone()
@@ -1654,8 +1654,10 @@ def login_post():
         _login_ip_falha(ip)
         _log_login(None, email, ip, 'email_inexistente')
         return jsonify({'ok': False, 'error': 'E-mail ou senha inválidos'}), 401
+    # ⚠️ TUPLA POSICIONAL: coluna nova entra no SELECT **e** aqui. Um lado só desloca todos
+    # os campos seguintes sem levantar erro — o mesmo modo de falha da foto do estoque.
     (uid, nome, pw_hash, role, ativo, codusur, codsupervisor, mcp, codsupervisores,
-     areas, area_padrao, codcomprador, bloqueado_ate, tema) = user
+     areas, area_padrao, codcomprador, bloqueado_ate, tema, pode_parametrizar) = user
     if not ativo:
         return jsonify({'ok': False, 'error': 'Conta desativada'}), 403
 
@@ -1690,6 +1692,9 @@ def login_post():
     session['area_padrao']          = area_padrao or 'portal'
     session['codcomprador']         = codcomprador   # filtro default do Compras (não é trava)
     session['tema']                 = tema or 'escuro'
+    # Quem pode gravar a régua OFICIAL do ⚙ Parâmetros do Compras. Vai na sessão junto do
+    # `role` (e não numa consulta por request) porque é lido no POST /estoque/api/params.
+    session['pode_parametrizar']    = bool(pode_parametrizar)
     if mcp:
         return jsonify({'ok': True, 'redirect': '/trocar-senha'})
     destino = destino_pos_login()
@@ -1747,6 +1752,9 @@ def me():
         'codcomprador': session.get('codcomprador'),
         'modulos': MODULOS,
         'tema': session.get('tema') or 'escuro',
+        # ⚙ Parâmetros do Compras: quem vê o botão "Salvar como padrão da empresa".
+        # O front esconder o botão é conveniência; quem barra de verdade é o 403 do POST.
+        'pode_parametrizar': bool(session.get('pode_parametrizar')),
     })
 
 
@@ -7799,7 +7807,7 @@ def api_admin_users_list():
         "SELECT id, nome, email, role, codusur, codsupervisor, telefone, ativo, "
         "cron_enabled, cron_horario::text, cron_frequencia, criado_em, email_cc, segmentos_rfm, codsupervisores, "
         "email_proximo_pedido, email_alerta_cobertura, areas, area_padrao, codcomprador, relatorios_estoque, "
-        "bloqueado_ate "
+        "bloqueado_ate, pode_parametrizar "
         "FROM multpel_users ORDER BY ativo DESC, nome"
     )
     users = []
@@ -7821,6 +7829,8 @@ def api_admin_users_list():
             'codcomprador': r[19],
             'relatorios_estoque': r[20] if r[20] is not None else [],
             'bloqueado': _login_bloqueio_restante(r[21]) > 0,
+            # quem pode gravar a régua OFICIAL do ⚙ Parâmetros (módulo Compras)
+            'pode_parametrizar': bool(r[22]),
         })
     cur.close()
     conn.close()
@@ -7923,6 +7933,10 @@ def api_admin_users_update(user_id):
     campos_permitidos = ['nome', 'email', 'role', 'codusur', 'codsupervisor', 'telefone',
                          'ativo', 'cron_enabled', 'cron_horario', 'cron_frequencia',
                          'email_cc', 'segmentos_rfm', 'email_proximo_pedido', 'email_alerta_cobertura',
+                         # ⚠️ Só no UPDATE: usuário NOVO nasce sem poder mexer na régua da empresa,
+                         # e a permissão é concedida depois, num ato explícito. Mesma política do
+                         # `areas`, que nasce só com "comercial" — ninguém ganha por acidente.
+                         'pode_parametrizar',
                          'area_padrao', 'codcomprador']
     # Pra normalizar email_cc precisa do email principal do user
     email_principal_atual = (data.get('email') or '').strip().lower() or None

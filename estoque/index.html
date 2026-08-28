@@ -86,8 +86,15 @@
     <div class="fb-group"><label title="Fim da janela (exclusivo). Daqui pra frente o item já conta como capital parado e sai da watchlist automaticamente — os dois nunca se sobrepõem.">Desaceleração: até (dias)</label><input type="number" id="p-desacel-ate" value="60" min="2" style="width:80px"></div>
     <div class="fb-group"><label title="Só entra na lista quem tem cobertura ACIMA disto. 90 é o piso útil: a cobertura mediana de um item de curva C que está vendendo normal é de 84 dias nesta base, então abaixo de 90 o filtro para de separar.">Desaceleração: cobertura &gt; (dias)</label><input type="number" id="p-desacel-cob" value="90" min="0" style="width:80px"></div>
     <div class="fb-group"><label title="Piso de valor por item: corta a poeira. Sem ele, 41% da lista custa menos de R$ 200 por item e soma só 6,8% do dinheiro.">Desaceleração: valor mín. (R$)</label><input type="number" id="p-desacel-valor" value="200" min="0" step="50" style="width:90px"></div>
-    <div class="fb-group"><label>&nbsp;</label><button class="btn primary" id="p-apply">Aplicar</button></div>
+    <div class="fb-group"><label>&nbsp;</label><button class="btn primary" id="p-apply" title="Vale só nesta sessão. Ao recarregar, o painel volta ao padrão da empresa.">Aplicar</button></div>
+    <div class="fb-group"><label>&nbsp;</label><button class="btn" id="p-reset" title="Descarta a simulação e volta aos valores oficiais da empresa.">Voltar ao padrão</button></div>
+    <!-- Só aparece para quem tem `pode_parametrizar`. O botão escondido é conveniência: quem
+         barra de verdade é o 403 do POST /estoque/api/params. -->
+    <div class="fb-group"><label>&nbsp;</label><button class="btn" id="p-save" style="display:none" title="Grava estes valores como padrão da EMPRESA — passa a valer para todos os usuários.">Salvar como padrão</button></div>
   </div>
+  <!-- Aviso de SIMULAÇÃO: aparece quando algum parâmetro difere do padrão da empresa.
+       É a alternativa a registrar o que cada pessoa faz — em vez de vigiar, avisar. -->
+  <div id="params-aviso" class="count-line" style="display:none;margin:8px 0 0;padding:8px 10px;border-radius:4px;background:rgba(245,158,11,.12);border:1px solid var(--orange,#f59e0b)"></div>
   <div class="row" style="margin-top:6px;border-top:1px solid var(--line,#1e293b);padding-top:10px">
     <div class="fb-group"><label>Demanda (giro)</label>
       <div class="seg" id="p-forecast">

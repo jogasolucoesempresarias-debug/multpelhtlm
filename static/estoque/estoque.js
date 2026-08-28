@@ -50,6 +50,10 @@ const S = {
   cli:{comprador:'',curva:[],xyz:[],fornec:'',depto:'',busca:'',abast:[],margem:[],parado:'',ruptura:'',valDias:'',cobFaixa:[],parFaixa:[],desacel:false},
   // idealDias/idealMeta = régua do "Estoque ideal" do Painel gerencial (só mede; a compra usa `cob`)
   params:{lead:10,seg:25,cob:45,hor:30,parado:60,forecast:0,sazonal:0,fcmeses:6,arredondacx:1,metaA:2,metaB:5,metaC:10,idealDias:45,idealMeta:90,novoDias:15,desacelDe:20,desacelAte:60,desacelCob:90,desacelValor:200},
+  // régua OFICIAL da empresa (GET /estoque/api/params) e se esta pessoa pode gravá-la.
+  // `oficial` null = ainda carregando; nesse estado o aviso de simulação não aparece,
+  // porque não dá para afirmar divergência sem saber com o quê comparar.
+  oficial:null, podeParam:false,
   charts:{}, sort:{}, valFaixa:null,
   orcArrastar:false,   // Orçamento: descontar o estouro do mês anterior da meta (opt-in)
   vencidos:null, vencidosQS:'', venMes:null, venPer:'2026',
@@ -346,32 +350,108 @@ function tipT(txt){ return tipSpan(txt); }
 // `repAll`/`repOrd` são preferência de EXIBIÇÃO da aba Abastecimento (abrir tudo, ordem da lista).
 // Ficam no localStorage sem cerimônia porque não mudam nenhum número — ao contrário dos ⚙ Parâmetros,
 // onde "por navegador" significa que o painel pode dizer coisas diferentes para cada pessoa.
-function savePrefs(){ try{ localStorage.setItem(PREF, JSON.stringify({comprador:S.cli.comprador,base:S.base,vperiodo:S.vperiodo,unidade:S.unidade,params:S.params,view:S.view,repAll:S.repAll,repOrd:S.repOrd,orcArrastar:S.orcArrastar})); }catch(e){} }
+// ⚠️ `params` NÃO entra mais aqui (08/2026). Enquanto entrava, um ajuste feito para gerar UM
+// pedido — o fluxo que o diretor descreveu: ver o lead real do fornecedor, ajustar, gerar —
+// virava a régua permanente e invisível daquela pessoa, em todas as 22 abas e em todos os
+// pedidos seguintes. Medido: lead 10 -> 22 move a sugestão de R$ 2,17 mi para R$ 3,27 mi.
+// A régua agora abre na OFICIAL da empresa e a simulação morre ao recarregar.
+function savePrefs(){ try{ localStorage.setItem(PREF, JSON.stringify({comprador:S.cli.comprador,base:S.base,vperiodo:S.vperiodo,unidade:S.unidade,view:S.view,repAll:S.repAll,repOrd:S.repOrd,orcArrastar:S.orcArrastar})); }catch(e){} }
 function loadPrefs(){ try{ return JSON.parse(localStorage.getItem(PREF))||{}; }catch(e){ return {}; } }
 
 /* ───────── querystring p/ servidor ───────── */
+/* ───────── ⚙ Parâmetros: MAPA ÚNICO front ↔ backend ↔ formulário ─────────
+   Uma entrada por parâmetro, com o nome no front (`S.params`), o nome que o servidor lê
+   (`core.DEFAULTS`), o id do campo e o clamp.
+
+   ⚠️ Existe para NÃO haver dois mapas. Antes, o `serverQS()` traduzia à mão numa direção e o
+   formulário na outra; com a régua oficial vindo do servidor, apareceu a terceira direção
+   (back → front) e três traduções manuais divergiriam no primeiro parâmetro novo. O sintoma
+   seria um campo do ⚙ que a pessoa muda e nada acontece — silencioso, como sempre.
+
+   `clamp` espelha `core.merge_params`: nenhum destes erra ALTO. Zero/negativo/invertido apenas
+   ESVAZIA o card, e card vazio se lê como "não há problema", nunca como "o parâmetro quebrou". */
+const PARAM_MAP=[
+  {f:'lead',        b:'lead_time',         el:'#p-lead',         d:10,  clamp:v=>Math.max(0,v)},
+  {f:'seg',         b:'dias_seguranca',    el:'#p-seg',          d:25,  clamp:v=>Math.max(0,v)},
+  {f:'cob',         b:'cobertura_total',   el:'#p-cob',          d:45,  clamp:v=>Math.max(1,v)},
+  {f:'hor',         b:'horizonte_val',     el:'#p-hor',          d:30,  clamp:v=>Math.max(1,v)},
+  {f:'parado',      b:'parado_atencao',    el:'#p-parado',       d:60,  clamp:v=>Math.max(1,v)},
+  {f:'metaA',       b:'meta_rup_a',        el:'#p-meta-a',       d:2,   clamp:v=>Math.max(0,v)},
+  {f:'metaB',       b:'meta_rup_b',        el:'#p-meta-b',       d:5,   clamp:v=>Math.max(0,v)},
+  {f:'metaC',       b:'meta_rup_c',        el:'#p-meta-c',       d:10,  clamp:v=>Math.max(0,v)},
+  {f:'idealDias',   b:'ideal_dias',        el:'#p-ideal-dias',   d:45,  clamp:v=>Math.max(1,v)},
+  {f:'idealMeta',   b:'ideal_meta_pct',    el:'#p-ideal-meta',   d:90,  clamp:v=>Math.min(100,Math.max(0,v))},
+  {f:'novoDias',    b:'novo_dias',         el:'#p-novo-dias',    d:15,  clamp:v=>Math.max(1,v)},
+  {f:'desacelDe',   b:'desacel_de',        el:'#p-desacel-de',   d:20,  clamp:v=>Math.max(1,v)},
+  {f:'desacelAte',  b:'desacel_ate',       el:'#p-desacel-ate',  d:60,  clamp:(v,S_)=>Math.max((S_&&S_.desacelDe||1)+1,v)},
+  {f:'desacelCob',  b:'desacel_cob',       el:'#p-desacel-cob',  d:90,  clamp:v=>Math.max(0,v)},
+  {f:'desacelValor',b:'desacel_valor_min', el:'#p-desacel-valor',d:200, clamp:v=>Math.max(0,v)},
+  // toggles (sem campo numérico) — viajam igual, e por isso entram no mesmo mapa
+  {f:'forecast',    b:'forecast',          el:null, d:0, clamp:v=>v?1:0},
+  {f:'sazonal',     b:'forecast_sazonal',  el:null, d:0, clamp:v=>v?1:0},
+  {f:'fcmeses',     b:'forecast_meses',    el:'#p-fcmeses',      d:6,   clamp:v=>Math.max(1,v)},
+  {f:'arredondacx', b:'arredonda_cx',      el:null, d:1, clamp:v=>v?1:0},
+];
+const PARAM_B2F=Object.fromEntries(PARAM_MAP.map(m=>[m.b,m]));
+
 function serverQS(){
   const p=new URLSearchParams();
   p.set('unidade', S.unidade);
   p.set('base_estoque', S.base);
   p.set('venda_periodo', S.vperiodo);
-  p.set('lead_time', S.params.lead); p.set('dias_seguranca', S.params.seg);
-  p.set('cobertura_total', S.params.cob); p.set('horizonte_val', S.params.hor);
-  p.set('parado_atencao', S.params.parado);
-  p.set('forecast', S.params.forecast?1:0); p.set('forecast_meses', S.params.fcmeses);
-  p.set('forecast_sazonal', S.params.sazonal?1:0); p.set('arredonda_cx', S.params.arredondacx?1:0);
-  // régua do Estoque ideal (Painel gerencial) — vai no serverQS porque o filtrosQS() do /api/resumos
-  // é construído em cima dele; a meta viaja em % (0-100) e o servidor converte p/ fração.
-  p.set('ideal_dias', S.params.idealDias); p.set('ideal_meta_pct', S.params.idealMeta);
-  // janela do "produto novo" (aba Estoque parado) — o `parado_faixa` sai do BACKEND, então
-  // sem isto na querystring o card Novos ficaria preso em 15d por mais que o campo mudasse.
-  p.set('novo_dias', S.params.novoDias);
-  // watchlist Em desaceleração: o card sai do BACK (`cockpit`) e o filtro do export é
-  // refeito lá com `merge_params` — sem estes 4 na querystring, mexer em ⚙ Parâmetros
-  // moveria a tela e NÃO moveria o Excel, que é a divergência clássica do módulo.
-  p.set('desacel_de', S.params.desacelDe); p.set('desacel_ate', S.params.desacelAte);
-  p.set('desacel_cob', S.params.desacelCob); p.set('desacel_valor_min', S.params.desacelValor);
+  // ⚠️ TODOS os params viajam, sempre. O `parado_faixa`, o card da watchlist e o filtro do
+  // export saem do BACKEND — parâmetro que não vai na querystring move a tela e NÃO move o
+  // Excel, que é a divergência clássica do módulo.
+  PARAM_MAP.forEach(m=>p.set(m.b, S.params[m.f]));
   return p.toString();
+}
+
+/* A régua está diferente da OFICIAL da empresa? Alimenta o aviso de simulação.
+   Comparação numérica frouxa de propósito: o servidor devolve 45 e o campo devolve "45". */
+function paramsDivergentes(){
+  if(!S.oficial) return [];
+  return PARAM_MAP.filter(m=>{
+    const o=S.oficial[m.b];
+    return o!=null && Number(o)!==Number(S.params[m.f]);
+  });
+}
+
+/* Copia a régua oficial para a de trabalho. É o estado em que o painel SEMPRE abre. */
+function aplicarOficial(){
+  if(!S.oficial) return;
+  PARAM_MAP.forEach(m=>{ const v=S.oficial[m.b]; if(v!=null) S.params[m.f]=Number(v); });
+}
+
+/* Busca a régua oficial + a permissão. Roda ANTES do primeiro loadData: abrir com a régua de
+   ontem e corrigir depois faria a tela mostrar dois números para a mesma pergunta em 1 segundo.
+   Degrada em silêncio para os defaults do front — config fora do ar não pode travar o painel. */
+async function carregarOficial(){
+  try{
+    const r=await getJSON('/estoque/api/params');
+    if(r&&r.ok){ S.oficial=r.oficial; S.podeParam=!!r.pode_editar; aplicarOficial(); }
+  }catch(e){ /* segue nos defaults do front */ }
+  const bs=$('#p-save'); if(bs) bs.style.display=S.podeParam?'':'none';
+  if(typeof escreverParamsNoForm==='function') escreverParamsNoForm();
+  pintarAvisoParams();
+}
+
+/* Aviso de SIMULAÇÃO. Sem ele, a pessoa mexe num parâmetro, esquece, e passa a ler o painel
+   inteiro numa régua que não é a da empresa — e quem receber um print dela não tem como saber.
+   O aviso é a alternativa honesta a registrar o que cada um faz: em vez de vigiar, avisar. */
+function pintarAvisoParams(){
+  const el=$('#params-aviso'); if(!el) return;
+  const dif=paramsDivergentes();
+  if(!dif.length){ el.style.display='none'; el.innerHTML=''; return; }
+  const lista=dif.slice(0,4).map(m=>{
+    const lab=(m.el&&$(m.el)&&$(m.el).closest('.fb-group')&&$(m.el).closest('.fb-group').querySelector('label'));
+    return `<b>${esc(lab?lab.textContent.trim():m.b)}</b>: ${esc(String(S.oficial[m.b]))} → ${esc(String(S.params[m.f]))}`;
+  }).join(' · ');
+  el.style.display='';
+  el.innerHTML=`⚠ <b>Simulando</b> — ${dif.length} parâmetro${dif.length>1?'s':''} fora do padrão da empresa. `
+    +`${lista}${dif.length>4?` · +${dif.length-4}`:''} `
+    +`<button class="btn sm" id="p-reset-inline" style="margin-left:8px">Voltar ao padrão</button>`;
+  const b=$('#p-reset-inline');
+  if(b) b.onclick=()=>{ aplicarOficial(); escreverParamsNoForm(); pintarAvisoParams(); loadData(); };
 }
 
 /* ───────── carga ───────── */
@@ -3615,7 +3695,7 @@ function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast?(
 /* ───────── boot ───────── */
 async function init(){
   const pr=loadPrefs();
-  if(pr.vperiodo) S.vperiodo=pr.vperiodo; if(pr.params) S.params={...S.params,...pr.params};   // base fixa em gerencial (endereçado só p/ validade, que é isolada)
+  if(pr.vperiodo) S.vperiodo=pr.vperiodo;   // `params` ficou de fora: quem manda é a régua oficial (ver savePrefs)   // base fixa em gerencial (endereçado só p/ validade, que é isolada)
   if(pr.unidade) S.unidade=pr.unidade;
   if(pr.view) S.view=pr.view;
   if(pr.repAll) S.repAll=true;                 // quem prefere a Abastecimento aberta não reclica todo dia
@@ -3706,20 +3786,41 @@ async function init(){
     render();
   };
   // meta aceita 0 (tolerância zero), então não dá p/ usar `||default` — vazio/inválido cai no default
-  const _meta=(id,d)=>{const v=($(id).value||'').trim(); return v===''||!isFinite(+v)?d:Math.max(0,+v);};
-  $('#p-apply').onclick=()=>{S.params={lead:+$('#p-lead').value,seg:+$('#p-seg').value,cob:+$('#p-cob').value,hor:+$('#p-hor').value,parado:+$('#p-parado').value||60,forecast:S.params.forecast?1:0,sazonal:S.params.sazonal?1:0,fcmeses:+$('#p-fcmeses').value||6,arredondacx:S.params.arredondacx?1:0,metaA:_meta('#p-meta-a',2),metaB:_meta('#p-meta-b',5),metaC:_meta('#p-meta-c',10),
-    // limiar 0 tornaria TODO item "ideal" → piso de 1 dia aqui (o servidor tem o seu próprio
-    // clamp p/ querystring montada na mão, onde 0/lixo cai no default 45). Meta 0 é válida.
-    idealDias:Math.max(1,_meta('#p-ideal-dias',45)),idealMeta:Math.min(100,_meta('#p-ideal-meta',90)),
-    // piso de 1 dia pelo mesmo motivo do idealDias: 0 esvaziaria o card Novos em silêncio
-    novoDias:Math.max(1,_meta('#p-novo-dias',15)),
-    // Watchlist Em desaceleração. Os clamps espelham `core.merge_params`: janela invertida,
-    // cobertura ou valor negativos NÃO erram alto — só esvaziam o card, e card vazio se lê
-    // como "não há problema", nunca como "o parâmetro está quebrado".
-    desacelDe:Math.max(1,_meta('#p-desacel-de',20)),
-    desacelAte:Math.max(Math.max(1,_meta('#p-desacel-de',20))+1,_meta('#p-desacel-ate',60)),
-    desacelCob:Math.max(0,_meta('#p-desacel-cob',90)),
-    desacelValor:Math.max(0,_meta('#p-desacel-valor',200))};loadData();};
+  // meta aceita 0 (tolerância zero), então não dá p/ usar `||default` — vazio/inválido cai no default
+  const _meta=(id,d)=>{const v=($(id).value||'').trim(); return v===''||!isFinite(+v)?d:+v;};
+  // form → S.params, com os clamps do PARAM_MAP (que espelham `core.merge_params`)
+  window.lerParamsDoForm=()=>{
+    const out={...S.params};
+    PARAM_MAP.forEach(m=>{ if(m.el && $(m.el)) out[m.f]=_meta(m.el,m.d); });
+    // 2ª passada: os clamps que dependem de outro campo (desacelAte > desacelDe)
+    PARAM_MAP.forEach(m=>{ if(m.el && $(m.el)) out[m.f]=m.clamp(out[m.f],out); });
+    return out;
+  };
+  // S.params → form (usado ao abrir e ao voltar para o padrão)
+  window.escreverParamsNoForm=()=>{ PARAM_MAP.forEach(m=>{ const e=m.el&&$(m.el); if(e) e.value=S.params[m.f]; }); };
+  $('#p-apply').onclick=()=>{ S.params=lerParamsDoForm(); pintarAvisoParams(); loadData(); };
+  // "Salvar como padrão da empresa" — só quem tem a flag. O botão escondido é conveniência;
+  // quem barra de verdade é o 403 do POST /estoque/api/params.
+  const bSave=$('#p-save');
+  if(bSave) bSave.onclick=async()=>{
+    S.params=lerParamsDoForm();
+    const body={}; PARAM_MAP.forEach(m=>body[m.b]=S.params[m.f]);
+    bSave.disabled=true;
+    try{
+      const r=await postJSON('/estoque/api/params', body);
+      if(r&&r.ok){ S.oficial=r.oficial; toast('Padrão da empresa salvo ✓'); pintarAvisoParams(); loadData(); }
+      else toast((r&&r.error)||'Não foi possível salvar o padrão', true);
+    }catch(e){
+      // ⚠️ `postJSON` LEVANTA em status != 2xx, então o 403 chega aqui — e "não deu certo" seria
+      // uma mensagem inútil para quem simplesmente não tem a permissão.
+      toast(String(e&&e.message).includes('403')
+        ? 'Só quem tem permissão pode alterar o padrão da empresa'
+        : 'Não foi possível salvar o padrão', true);
+    }
+    finally{ bSave.disabled=false; }
+  };
+  const bReset=$('#p-reset');
+  if(bReset) bReset.onclick=()=>{ if(!S.oficial) return; aplicarOficial(); escreverParamsNoForm(); pintarAvisoParams(); loadData(); };
   document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{S.view=t.dataset.view;S.cli.parado='';S.cli.ruptura='';S.cli.cobFaixa=[];S.cli.cobSub='';render();});
   document.querySelectorAll('.navgroup').forEach(x=>x.onclick=()=>{ const g=x.dataset.group; if(GROUP_OF(S.view)!==g){ S.view=NAV[g][0]; S.cli.parado='';S.cli.ruptura='';S.cli.cobFaixa=[];S.cli.cobSub=''; render(); }});
   $('#overlay').onclick=closeDrawer; $('#modal-bg').onclick=e=>{if(e.target===$('#modal-bg'))closeModal();};
@@ -3727,7 +3828,9 @@ async function init(){
   setStickTop(); window.addEventListener('resize', setStickTop); window.addEventListener('load', setStickTop);
   startProdTitles();   // tooltip da descrição completa na coluna Produto (todas as abas)
   setupTips();         // tooltip de ajuda (ⓘ) nos títulos e cabeçalhos calculados
-  loadData();
+  // A régua oficial vem PRIMEIRO — `carregarOficial` termina chamando o render do aviso e
+  // só então os dados sobem, já na régua certa.
+  carregarOficial().then(loadData);
 }
 // altura real da topbar+filterbar (ambas sticky) → offset do cabeçalho congelado das tabelas
 function setStickTop(){

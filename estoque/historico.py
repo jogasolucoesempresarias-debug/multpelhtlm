@@ -25,7 +25,11 @@ from . import core, pbi, store
 # logado. Os ⚙ Parâmetros vivem no `localStorage` (por pessoa), e uma série gravada com a régua
 # de um usuário não bateria com a tela de nenhum outro. Decisão do João (08/2026): "aqui vamos
 # usar um padrão e manter padrão".
-PARAMS_FOTO = {}          # vazio ⇒ core.merge_params devolve DEFAULTS puro
+# ⚠️ Desde 08/2026 "o padrão do servidor" tem nome: é a régua OFICIAL da empresa, no
+# `multpel_config` (`store.params_oficiais`). O `_build_produtos` já a aplica como base, e a foto
+# roda sem params na querystring — então ela sai na régua oficial sem precisar de nada aqui.
+# Vazio continua correto: é a AUSÊNCIA de simulação de sessão, que é o ponto.
+PARAMS_FOTO = {}          # vazio ⇒ sem simulação: vale a régua oficial (ou DEFAULTS, se não houver)
 
 # Janela de venda usada para apurar a CURVA ABC gravada na foto.
 # ⚠️ NÃO pode ser o default ("mes"), que é o ACUMULADO do mês (`hoje.replace(day=1)`): no dia 1º
@@ -412,8 +416,51 @@ def _linhas_cruas(unidade, ini=None, fim=None, comprador=None, fornecedor=None, 
 
 
 def _regua_padrao(params):
-    p = core.merge_params(params or {})
-    return all(p[k] == core.DEFAULTS[k] for k in _PARAMS_DA_SERIE)
+    """O pedido usa a régua OFICIAL da empresa? Só aí o rollup pronto vale.
+
+    ⚠️ A comparação é contra a régua oficial, **não** contra `core.DEFAULTS`. Quando o
+    `multpel_config` passou a guardar o padrão da empresa (08/2026), comparar com o DEFAULTS
+    passaria a dar `False` para TODA leitura no instante em que alguém salvasse um valor
+    diferente — e a Evolução cairia no cru para sempre, sem erro nenhum, só lenta (3,5s por
+    janela de 45 dias em vez de servir o agregado).
+
+    Falha em silêncio para o lado SEGURO: se a config não puder ser lida, cai no DEFAULTS —
+    no pior caso serve o cru, que é sempre correto. Cache que mente é pior que cache que falta.
+    """
+    try:
+        base = store.params_oficiais()
+    except Exception:                                    # noqa: BLE001
+        base = None
+    oficial = core.merge_params({}, base=base)
+    p = core.merge_params(params or {}, base=base)
+    return all(p[k] == oficial[k] for k in _PARAMS_DA_SERIE)
+
+
+def invalidar_rollup(unidade=None):
+    """Joga fora o rollup — usado quando a régua OFICIAL muda.
+
+    ⚠️ Sem isto, mudar um parâmetro no ⚙ (padrão da empresa) deixaria a Evolução servindo o
+    agregado gravado com a régua ANTERIOR. O selo `_ROLLUP_VERSAO` não pega este caso: ele
+    detecta mudança de CÓDIGO, e aqui o código é o mesmo — o que mudou foi a configuração.
+    Mesmas chaves, número diferente, em silêncio. É o defeito que o `_v` existe para evitar,
+    entrando por outra porta.
+
+    Descartar é seguro e barato: `estoque_foto_dia` é CACHE de `agregar` (a foto crua, que é o
+    dado primário, vive em `estoque_foto_item` e não se toca). A leitura seguinte cai no cru,
+    correta, e o `rebuild_rollup` do deploy devolve a performance.
+    """
+    if not store.ensure():
+        return 0
+    conn = store.get_db()
+    try:
+        with conn, conn.cursor() as cur:
+            if unidade:
+                cur.execute("DELETE FROM estoque_foto_dia WHERE unidade=%s", (unidade,))
+            else:
+                cur.execute("DELETE FROM estoque_foto_dia")
+            return cur.rowcount
+    finally:
+        conn.close()
 
 
 # Chaves que o `agregar` de HOJE produz. Rollup gravado por uma versão anterior não as tem, e

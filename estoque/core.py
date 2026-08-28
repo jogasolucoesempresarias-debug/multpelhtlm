@@ -68,13 +68,23 @@ DEFAULTS = {
     # mostraria 50 itens hoje e 50 depois do problema resolvido pela metade. Numa métrica que a
     # Evolução usa para provar gestão, número constante por construção é pior que não ter métrica.
     "desacel_valor_min": 200,      # R$ mínimos de estoque parado no item p/ entrar na lista
+    # ── Meta de ruptura por curva (placar da aba Meta de ruptura) ──
+    # ⚠️ Estes três são consumidos SÓ NO FRONT (o placar é montado em JS). Entram no DEFAULTS
+    # mesmo assim porque são régua de PLACAR, e desde 08/2026 a régua de placar tem de ser uma
+    # por empresa: sem estarem aqui, ficariam de fora do padrão oficial (`multpel_config`) e
+    # seguiriam sendo a única parte do ⚙ presa ao navegador de cada pessoa — exatamente o
+    # problema que a mudança veio resolver. Nenhum cálculo do servidor os lê hoje.
+    "meta_rup_a":        2.0,      # % s/ pedido tolerado na curva A
+    "meta_rup_b":        5.0,      # curva B
+    "meta_rup_c":       10.0,      # curva C
 }
 _STR_PARAMS = {"giro_base", "base_estoque"}
 
 
-def merge_params(q):
-    """Mescla querystring (dict) sobre os defaults, com cast numérico."""
-    p = dict(DEFAULTS)
+def _aplica(p, q):
+    """Sobrepõe `q` em `p`, só chaves conhecidas, com cast numérico. Valor ilegível é IGNORADO
+    (fica o que já estava) — nunca vira zero, que é o modo de falha silenciosa que os clamps
+    abaixo existem para evitar."""
     for k, v in (q or {}).items():
         if k not in p or v in (None, ""):
             continue
@@ -85,6 +95,31 @@ def merge_params(q):
                 p[k] = float(v) if "." in str(v) else int(v)
             except (TypeError, ValueError):
                 pass
+    return p
+
+
+def merge_params(q, base=None):
+    """Mescla querystring (dict) sobre a régua vigente, com cast numérico.
+
+    TRÊS camadas, nesta ordem — cada uma sobrepõe a anterior:
+      1. `DEFAULTS`  — o que o código traz;
+      2. `base`      — a régua OFICIAL da empresa (`store.params_oficiais()`), definida por quem
+                       tem a flag `pode_parametrizar`. `None`/vazio ⇒ vale o DEFAULTS, que é o
+                       caso normal enquanto ninguém salvou nada;
+      3. `q`         — a querystring, que é a SIMULAÇÃO de sessão de quem está na tela.
+
+    ⚠️ A querystring continua vencendo, e isso é de propósito: é o que mantém o e-mail, o export
+    e o recorte de tela funcionando exatamente como antes. Tirar essa precedência quebraria o
+    fluxo que o diretor descreveu em 08/2026 — ver o lead real do fornecedor, ajustar, gerar o
+    pedido daquele fornecedor.
+
+    ⚠️ **A função continua PURA** (não lê banco). Quem busca a régua oficial é o chamador
+    (`routes._params_oficiais`). Fosse ela a ler, cada teste de parâmetro precisaria de Postgres
+    e o `agregar` do histórico perderia a pureza que permite recalcular o passado.
+    """
+    p = dict(DEFAULTS)
+    _aplica(p, base)
+    _aplica(p, q)
     # Clamp do que vem do usuário. `novo_dias` = 0 não erraria alto: simplesmente esvaziaria o
     # card "Novos" e devolveria os itens ao 121+ sem ninguém perceber — o mesmo modo de falha
     # silenciosa que o `regua_estoque_ideal` já trata para o limiar do Estoque ideal.

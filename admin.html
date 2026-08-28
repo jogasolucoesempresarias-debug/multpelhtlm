@@ -275,6 +275,13 @@
         </label>
       </div>
       <div class="ff">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"
+               title="Deixa esta pessoa gravar o padrão do ⚙ Parâmetros do módulo Compras — lead time, cobertura alvo, estoque ideal etc. Vale para TODOS os usuários. Sem isto, ela ainda pode simular na própria sessão.">
+          <input type="checkbox" id="f_pode_parametrizar" style="width:auto;">
+          Pode definir a régua oficial de Compras (⚙ Parâmetros)
+        </label>
+      </div>
+      <div class="ff">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
           <input type="checkbox" id="f_email_alerta_cobertura" style="width:auto;">
           Receber alerta de baixa performance de cobertura
@@ -714,6 +721,7 @@ function abrirNovo() {
   document.getElementById('f_senha').value = '';
   document.getElementById('f_cron_enabled').checked = false;
   document.getElementById('f_email_proximo_pedido').checked = false;
+  document.getElementById('f_pode_parametrizar').checked = false;
   document.getElementById('f_email_alerta_cobertura').checked = false;
   document.getElementById('f_ativo').checked = true;
   document.getElementById('f_cron_horario').value = '08:00';
@@ -748,6 +756,7 @@ function abrirEdicao(id) {
   document.getElementById('f_senha').value = '';
   document.getElementById('f_cron_enabled').checked = !!u.cron_enabled;
   document.getElementById('f_email_proximo_pedido').checked = !!u.email_proximo_pedido;
+  document.getElementById('f_pode_parametrizar').checked = !!u.pode_parametrizar;
   document.getElementById('f_email_alerta_cobertura').checked = !!u.email_alerta_cobertura;
   document.getElementById('f_ativo').checked = !!u.ativo;
   document.getElementById('f_cron_horario').value = (u.cron_horario || '08:00').substring(0, 5);
@@ -800,6 +809,7 @@ async function salvar() {
       telefone: document.getElementById('f_telefone').value.trim(),
       cron_enabled: document.getElementById('f_cron_enabled').checked,
       email_proximo_pedido: document.getElementById('f_email_proximo_pedido').checked,
+      pode_parametrizar: document.getElementById('f_pode_parametrizar').checked,
       email_alerta_cobertura: document.getElementById('f_email_alerta_cobertura').checked,
       ativo: document.getElementById('f_ativo').checked,
       cron_horario: document.getElementById('f_cron_horario').value,

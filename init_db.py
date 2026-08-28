@@ -72,6 +72,13 @@ cur.execute("""ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS relatorios_est
 # Preferência de tema: 'escuro' (padrão — ninguém é surpreendido) | 'claro'.
 cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS tema VARCHAR(10) DEFAULT 'escuro';")
 
+# ── Quem pode gravar a régua OFICIAL do ⚙ Parâmetros (Compras) ──
+# ⚠️ Flag PRÓPRIA, e não `role='admin'`: a base tem vários admins, e a régua de compra da empresa
+# não pode depender de quem por acaso recebeu o papel. Medido em 28/08/2026: trocar a régua move
+# R$ 808.930,86 na sugestão de compra. Default `false` — ninguém ganha por acidente, igual à
+# política do `areas` (que nasce só com "comercial").
+cur.execute("ALTER TABLE multpel_users ADD COLUMN IF NOT EXISTS pode_parametrizar BOOLEAN DEFAULT false;")
+
 # ── Proteção contra força bruta no login ──
 # Fonte de verdade no Postgres (e não só no Redis) de propósito: é o controle de segurança
 # principal e precisa sobreviver a queda/restart do cache. Falha de login é evento raro,
@@ -213,6 +220,14 @@ if not cur.fetchone():
     print(f"[OK] Admin criado: {admin_email} (senha via ADMIN_SENHA) -- TROCAR no primeiro login!")
 else:
     print(f"[OK] Admin {admin_email} ja existe.")
+
+# A conta admin nasce (e permanece) com a permissão de definir a régua da empresa — decisão do
+# Gabriel com o diretor em 28/08/2026: "só o admin@multpel vai poder mudar as parametrizações
+# oficiais". Idempotente e ADITIVO: nunca REVOGA de quem já recebeu pela tela de Administração.
+cur.execute("UPDATE multpel_users SET pode_parametrizar = true "
+            "WHERE email = %s AND pode_parametrizar IS DISTINCT FROM true", (admin_email,))
+if cur.rowcount:
+    print(f"[OK] {admin_email} agora define a regua oficial do modulo Compras.")
 
 conn.commit()
 cur.close()

@@ -910,12 +910,78 @@ def _venda_comprador_30d(fil_estoque, fil_venda, hoje):
     return m
 
 
+def _params_oficiais():
+    """A régua OFICIAL da empresa, base de todo `merge_params` do módulo.
+
+    ⚠️ FONTE ÚNICA: se um caminho ler a régua oficial e outro não, a tela e o Excel divergem no
+    primeiro parâmetro que alguém salvar — que é a falha clássica deste módulo (o `exportQS` já
+    custou isso uma vez). Hoje são dois chamadores: `_build_produtos` e o filtro da watchlist
+    no export.
+
+    Falha em silêncio para `{}` (= DEFAULTS): banco de config indisponível não pode derrubar o
+    painel inteiro.
+    """
+    try:
+        return store.params_oficiais()
+    except Exception:                                    # noqa: BLE001
+        return {}
+
+
+def _pode_parametrizar():
+    """Quem pode gravar a régua da EMPRESA.
+
+    ⚠️ NÃO é `role == 'admin'`: a base tem vários admins, e a régua de compra da empresa não pode
+    depender de quem por acaso recebeu o papel. É uma flag própria por usuário
+    (`multpel_users.pode_parametrizar`), concedida na tela de Administração — decisão do Gabriel
+    em 28/08/2026, depois de medir que trocar a régua move R$ 808.930,86 na sugestão de compra.
+    """
+    return bool(session.get("pode_parametrizar"))
+
+
+@bp.route("/api/params")
+def api_params_get():
+    """A régua oficial + se quem está pedindo pode alterá-la.
+
+    Devolve os NOMES DE BACKEND (`lead_time`, `novo_dias`…) — os mesmos da querystring. O front
+    tem um mapa só (`PARAM_MAP`) para ida e volta; dois mapas divergiriam no primeiro parâmetro
+    novo, e o sintoma seria um campo do ⚙ que não faz nada.
+    """
+    oficial = core.merge_params({}, base=_params_oficiais())
+    return jsonify({"ok": True, "oficial": oficial,
+                    "pode_editar": _pode_parametrizar(),
+                    "salvos": sorted(_params_oficiais().keys())})
+
+
+@bp.route("/api/params", methods=["POST"])
+def api_params_set():
+    """Grava a régua oficial. Só quem tem a flag.
+
+    ⚠️ Invalida o rollup da Evolução (ver `historico.invalidar_rollup`): o agregado gravado com a
+    régua anterior continuaria sendo servido, com as MESMAS chaves e outro número — em silêncio.
+    """
+    if not _pode_parametrizar():
+        return jsonify({"ok": False, "error": "Sem permissão para alterar o padrão da empresa"}), 403
+    d = request.get_json(silent=True) or {}
+    # só parâmetros conhecidos, e passando pelos mesmos clamps da querystring: gravar um valor
+    # que o `merge_params` depois rejeita faria a tela mostrar um número e o servidor usar outro.
+    limpo = core.merge_params({}, base={k: v for k, v in d.items() if k in core.DEFAULTS})
+    valores = {k: limpo[k] for k in d if k in core.DEFAULTS}
+    if not valores:
+        return jsonify({"ok": False, "error": "Nenhum parâmetro válido"}), 400
+    store.params_oficiais_set(valores, usuario_id=session.get("user_id"))
+    try:
+        historico.invalidar_rollup()
+    except Exception as e:                               # noqa: BLE001
+        print(f"[params] rollup não invalidado: {e}")
+    return jsonify({"ok": True, "oficial": core.merge_params({}, base=store.params_oficiais(force=True))})
+
+
 def _build_produtos():
     """Constrói a lista enriquecida de produtos para a unidade/params atuais.
     Estoque (snapshot/endereço/pedido) usa as filiais de ESTOQUE; venda/forecast usam as de VENDA."""
     filiais_e = _filiais_estoque()
     filiais_v = _filiais_venda()
-    params = core.merge_params(request.args.to_dict())
+    params = core.merge_params(request.args.to_dict(), base=_params_oficiais())
     snap = _snapshot_rows(filiais_e)
     end_map = _endereco_map(filiais_e)
     prod_map = _cadastro_produtos()
@@ -2606,7 +2672,7 @@ def _aplicar_filtros_cliente(produtos, skip=()):
     # combinação de `cob_max`/`par_faixa`: nenhum filtro existente expressa "cobertura MÍNIMA", e
     # montá-lo com as peças de hoje daria tela e export divergindo na primeira mudança de régua.
     if g("desacel") in ("1", "true", "sim"):
-        _pr = core.merge_params(a.to_dict())
+        _pr = core.merge_params(a.to_dict(), base=_params_oficiais())
         out = [p for p in out if core.em_desaceleracao(p, _pr)]
     bs = g("busca")
     if bs:
