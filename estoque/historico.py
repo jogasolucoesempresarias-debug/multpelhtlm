@@ -434,7 +434,12 @@ _ROLLUP_CHAVES = ("valor_estoque", "valor_parado", "n_ruptura", "pct_ideal", "fa
 #       depender de qual dos dois mecanismos salvou é como o parado passou despercebido.
 #   4 → 08/2026: `n_rup_sem_prov` (régua da Meta de ruptura) + o SELECT do cru ganhou
 #       `qtd_ja_pedida`/`qt_transicao`. Rollup gravado antes não tem a chave.
-_ROLLUP_VERSAO = 4
+#   5 → 08/2026: `core.PARADO_RECEM_CHEGADO` — item que já vendeu, parou há 60+ dias e acabou de
+#       receber mercadoria saiu do capital parado. ⚠️ MESMAS CHAVES, número diferente (o
+#       `capital_parado` da série cai ~25%): é exatamente o caso que a checagem por chaves NÃO
+#       pega, e o motivo de o selo `_v` existir. Sem subir aqui, a aba serviria o agregado velho
+#       em silêncio até o TTL — e a série mostraria um DEGRAU onde não houve operação.
+_ROLLUP_VERSAO = 5
 
 
 def _rollup_atual(payload):

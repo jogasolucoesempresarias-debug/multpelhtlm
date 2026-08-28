@@ -1589,13 +1589,21 @@ function drawFaixaChart(id,faixas,onPick){
 // porque o rótulo carrega a janela em dias (`Novos (<15d)`) e ela é parâmetro.
 // "Novos" vem PRIMEIRO: é a leitura cronológica (acabou de chegar → parado há mais tempo) e
 // deixa claro que ele não é uma faixa de "dias parado", e sim a caixa que os tira da conta.
+// ⚠️ Os DOIS primeiros não são faixas de "dias parado": são as caixas que TIRAM itens da conta.
+// `novo` nunca vendeu; `recem_chegado` vendeu, parou e acabou de receber mercadoria. Ficam
+// separados de propósito — entre os `recem_chegado` há bandeja parada há 10,8 anos que chegou
+// anteontem, e chamá-la de "novo" seria a tela mentindo justamente onde a decisão é liquidar.
 const fxParado=()=>[
-  {key:'novo',label:`Novos (<${int(S.params.novoDias)}d)`,color:C.accent},
+  {key:'novo',label:`Novos (≤${int(S.params.novoDias)}d)`,color:C.accent},
+  {key:'recem_chegado',label:`Recém-chegados s/ giro`,color:C.orange},
   {key:'15-30',label:'15-30',color:C.green},{key:'31-60',label:'31-60',color:C.yellow},
   {key:'61-90',label:'61-90',color:C.orange},{key:'91-120',label:'91-120',color:C.red},
   {key:'121+',label:'121+',color:C.purple}];
-// `novo` NÃO é capital parado (espelha `core.eh_parado` — mexeu num, mexa no outro)
-const ehParado=p=>!!p.status_parado&&p.status_parado!=='novo';
+// as chaves que NÃO são faixa de dias (não levam o sufixo " dias" no filtro e não são banda)
+const FX_NAO_FAIXA=['novo','recem_chegado'];
+// espelha `core.eh_parado` / `core._STATUS_FORA_DO_PARADO` — mexeu num, mexa no outro.
+// ⚠️ Pertencimento, não `!==` encadeado: a lista já cresceu uma vez.
+const ehParado=p=>!!p.status_parado&&!FX_NAO_FAIXA.includes(p.status_parado);
 // Espelha `core.em_desaceleracao`. ⚠️ O `ehParado` na 1a linha e o que garante que a watchlist e
 // o capital parado NUNCA se sobreponham, aconteca o que acontecer com os parametros — mesma
 // guarda do back. Se um dia divergirem, a tela soma dois cards que se tocam e passa do estoque.
@@ -1644,15 +1652,16 @@ function renderParado(P){
     {key:'status_saida',label:'Saída',badge:true},{key:'parado_faixa',label:'Faixa',badge:true},
     {key:'_plano',label:'Ação',html:p=>planoCell('parado',String(p.codprod),p.codprod,p.descricao,null)}];
   const nNovos=faixas.find(f=>f.key==='novo')||{qt:0,valor:0};
+  const nRec=faixas.find(f=>f.key==='recem_chegado')||{qt:0,valor:0};
   const el=$('#v-parado');
   el.innerHTML=head('Estoque parado — o que liquidar','parado')
-    +resumoFaixasBlock('Valor parado por faixa (dias sem venda)'+tipT(`Valor de estoque parado em cada faixa de dias sem venda. Clique para filtrar. "Novos" = itens que NUNCA venderam e entraram há menos de ${int(S.params.novoDias)} dias — antes eles caíam em 121+, porque quem nunca vendeu contava como parado há tempo infinito. A janela é editável em ⚙ Parâmetros.`),faixas,par,p=>p.valor,pf,'ch-parado')
+    +resumoFaixasBlock('Valor parado por faixa (dias sem venda)'+tipT(`Valor de estoque parado em cada faixa de dias sem venda. Clique para filtrar. As duas primeiras caixas não são faixas de dias — elas TIRAM itens da conta: "Novos" = nunca venderam e entraram há até ${int(S.params.novoDias)} dias (não tiveram chance); "Recém-chegados s/ giro" = já venderam, estão há 60+ dias sem vender e acabaram de receber mercadoria — o dinheiro é novo, a ociosidade é que é velha. Nenhum dos dois conta como capital parado. A janela é editável em ⚙ Parâmetros.`),faixas,par,p=>p.valor,pf,'ch-parado')
     +`<div class="row" style="gap:14px;margin:6px 0;align-items:flex-end">
         <div class="fb-group"><label>Faixa <small class="muted">(marque várias)</small></label>
           <details class="ms" id="par-faixa"><summary class="fb-control" style="width:auto">${parFaixaLabel(pf)}</summary>
-            <div class="ms-menu">${FXP.map(f=>`<label><input type="checkbox" value="${f.key}" ${pf.includes(f.key)?'checked':''}>${f.label}${f.key==='novo'?'':' dias'}</label>`).join('')}</div>
+            <div class="ms-menu">${FXP.map(f=>`<label><input type="checkbox" value="${f.key}" ${pf.includes(f.key)?'checked':''}>${f.label}${FX_NAO_FAIXA.includes(f.key)?'':' dias'}</label>`).join('')}</div>
           </details></div>
-        <div class="count-line" style="margin:0"><b>${int(totItens)} itens</b> · ${money(totVal)} parados${pf.length?' na(s) faixa(s) marcada(s)':' (≥15 dias)'}. <b>As faixas somam o total.</b> Clique num card/barra ou marque várias faixas.${nNovos.qt?` <b>${int(nNovos.qt)} itens</b> (${money(nNovos.valor)}) estão em <b>Novos</b> — chegaram há menos de ${int(S.params.novoDias)} dias e ainda não venderam; <b>não</b> contam como capital parado.`:''}</div>
+        <div class="count-line" style="margin:0"><b>${int(totItens)} itens</b> · ${money(totVal)} parados${pf.length?' na(s) faixa(s) marcada(s)':' (≥15 dias)'}. <b>As faixas somam o total.</b> Clique num card/barra ou marque várias faixas.${nNovos.qt?` <b>${int(nNovos.qt)} itens</b> (${money(nNovos.valor)}) estão em <b>Novos</b> — chegaram há até ${int(S.params.novoDias)} dias e ainda não venderam.`:''}${nRec.qt?` <b>${int(nRec.qt)} itens</b> (${money(nRec.valor)}) estão em <b>Recém-chegados s/ giro</b> — já venderam, estão há 60+ dias sem vender e acabaram de receber mercadoria: vale conferir a compra. <b>Nenhum dos dois</b> conta como capital parado.`:(nNovos.qt?' <b>Não</b> contam como capital parado.':'')}</div>
       </div>`
     +renderTable(par,cols,'parado');
   drawFaixaChart('ch-parado',faixas,f=>parToggle(f.key));

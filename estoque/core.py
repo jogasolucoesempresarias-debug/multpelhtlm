@@ -440,6 +440,53 @@ def cobertura_faixa_de(cob_dias):
 # duas grafias diferentes era como a Ruptura acabou com três implementações fora de sincronia.
 PARADO_NOVO = "novo"
 
+# Item que JÁ VENDEU um dia, parou, e acabou de receber mercadoria (08/2026, pedido do diretor:
+# "não precisa mudar a regra toda, temos que mudar só os itens que chegaram recentemente e a
+# última venda é maior que 60 dias").
+#
+# ⚠️ **É condição DIFERENTE do `novo`, e por isso tem chave própria.** O `novo` nunca vendeu — não
+# teve chance. Este vendeu, parou, e alguém comprou de novo: é COMPRA QUESTIONÁVEL, não mercadoria
+# à espera. Medido no BI real (27/08/2026, Atacado): 30 itens / R$ 51.214,10, e entre eles bandejas
+# paradas há **2.893, 2.905 e 3.934 dias** (7,9 · 8,0 · 10,8 ANOS) que chegaram há 3 dias. Jogá-las
+# no mesmo card chamado "Novos" faria a tela chamar de novo um item parado há uma década — por isso
+# saem do parado juntas (é o que o diretor pediu) mas aparecem em cards SEPARADOS.
+#
+# ⚠️ Isto **afrouxa os dois placares sem ninguém mexer na operação**. Medido no BI real em dois
+# dias seguidos, e a diferença entre eles é a lição:
+#   27/08: 30 itens / R$ 51.214,10 · 121+ −32,0% · capital parado −24,9%
+#   28/08: 20 itens / R$ 22.351,70 · 121+ −14,5% · capital parado −12,4%
+# A queda pela metade em 24h não é instabilidade da régua: é o cód. 59289 (milho, R$ 24,4 mil,
+# sozinho metade do recorte) que **VENDEU** 4 dias depois de chegar e saiu do parado pela porta
+# normal. Ou seja, a caixa esvazia quando o problema se resolve — que é a propriedade que o piso
+# de valor da watchlist "Em desaceleração" também persegue, e o oposto de uma lista top-N.
+# Comparar antes×depois uma vez ao ligar, senão parece ganho de gestão.
+PARADO_RECEM_CHEGADO = "recem_chegado"
+
+# Piso de dias sem venda a partir do qual o item é dead stock. É a MESMA banda que o
+# `status_parado_de` usa para "atencao" (manual da planilha: 60-90-120) e a que o `eh_parado`
+# responde. Virou constante para o recorte novo não cravar um segundo 60 no código.
+# ⚠️ NÃO confundir com `desacel_ate` (⚙ Parâmetros), que hoje também vale 60: aquele é editável e
+# marca o FIM da watchlist; este é banda fixa do dead stock. Se um dia divergirem, é de propósito.
+PARADO_DIAS_MIN = 60
+
+# Os status que NÃO são capital parado. Conjunto (e não uma cadeia de `!=`) porque a lista já
+# cresceu uma vez: quem acrescentar o terceiro só precisa mexer aqui.
+_STATUS_FORA_DO_PARADO = frozenset({PARADO_NOVO, PARADO_RECEM_CHEGADO})
+
+
+def _recem_chegado(dias_sem_venda, dias_sem_entrada, novo_dias):
+    """True quando o item JÁ VENDEU, virou dead stock (≥ `PARADO_DIAS_MIN` dias sem venda) e
+    recebeu mercadoria dentro da janela de `novo_dias`.
+
+    ⚠️ A fronteira é **inclusiva** (`<= novo_dias`) e a do `novo` foi alinhada nela no mesmo
+    commit. O pedido do diretor foi "chegaram até 20 dias", que em pt-BR inclui o 20 — e dois
+    cards vizinhos com fronteiras diferentes (`<` num, `<=` no outro) é exatamente o defeito que
+    já custou os R$ 26,79 do item de 60 dias exatos documentado logo abaixo."""
+    return (dias_sem_venda is not None
+            and dias_sem_venda >= PARADO_DIAS_MIN
+            and dias_sem_entrada is not None
+            and dias_sem_entrada <= novo_dias)
+
 
 # Bandas FIXAS de dead stock (manual da planilha): ATENCAO 60-90, CRITICO 90-120, M.CRITICO 120+.
 # ⚠️ Extraído do `construir_produtos` em 08/2026 para virar FONTE ÚNICA. Antes esta regra existia
@@ -452,14 +499,21 @@ def status_parado_de(dias_sem_venda, qtdisp, dias_sem_entrada=None, novo_dias=15
     """Status de dead stock do item — `None` quando não é capital parado.
 
     ⚠️ Quem NUNCA vendeu conta os dias a partir da ENTRADA (mesma régua do `parado_faixa_de`);
-    quem chegou dentro de `novo_dias` é `novo` e fica fora do capital parado."""
+    quem chegou dentro de `novo_dias` é `novo` e fica fora do capital parado.
+
+    ⚠️ Quem JÁ VENDEU, parou há ≥ `PARADO_DIAS_MIN` e acabou de receber mercadoria é
+    `recem_chegado` — também fora do capital parado, mas em caixa própria (ver
+    `PARADO_RECEM_CHEGADO`). São os DOIS eixos: mexer só neste e esquecer o `parado_faixa_de`
+    é a armadilha da Ruptura, que passou meses com três implementações fora de sincronia."""
     d = dias_sem_venda
     if d is None and dias_sem_entrada is not None:
         d = dias_sem_entrada
     if (qtdisp or 0) <= 0:
         return None
-    if dias_sem_venda is None and dias_sem_entrada is not None and dias_sem_entrada < novo_dias:
+    if dias_sem_venda is None and dias_sem_entrada is not None and dias_sem_entrada <= novo_dias:
         return PARADO_NOVO           # chegou agora e ainda não teve chance de vender
+    if _recem_chegado(dias_sem_venda, dias_sem_entrada, novo_dias):
+        return PARADO_RECEM_CHEGADO  # vendeu, parou, e chegou mercadoria nova
     if d is None:
         return "muito_critico"       # nunca vendeu e sem data de entrada → pior caso
     if d >= 120:
@@ -477,9 +531,13 @@ def eh_parado(p):
     FONTE ÚNICA da pergunta "isto está parado?" — a resposta é lida em 4 lugares (KPI de capital
     parado e alerta do Cockpit, "maiores ofensores", coluna de valor parado da aba Fornecedores).
     `status_parado` deixou de ser booleano quando ganhou o `novo`: quem testar só a verdade do
-    campo volta a somar produto recém-chegado como dead stock."""
+    campo volta a somar produto recém-chegado como dead stock.
+
+    ⚠️ Hoje são DOIS os valores que não são capital parado (`novo` e `recem_chegado`) — por isso
+    a checagem é de PERTENCIMENTO, não uma comparação a mais. Valor novo entra no conjunto e mais
+    nada; um `!=` encadeado é como se esquece o terceiro."""
     st = p.get("status_parado")
-    return bool(st) and st != PARADO_NOVO
+    return bool(st) and st not in _STATUS_FORA_DO_PARADO
 
 
 def em_desaceleracao(p, params=None):
@@ -557,16 +615,27 @@ def parado_faixa_de(dias_sem_venda, qtdisp, dias_sem_entrada=None, novo_dias=15)
 
     ⚠️ Isto **afrouxa o 121+ sem ninguém mexer na operação** (R$ 116.744 → R$ 102.680).
     Comparar antes×depois uma vez, senão parece ganho de gestão.
+
+    ⚠️ **`recem_chegado` é a exceção IRMÃ, para quem JÁ vendeu** (08/2026). A regra acima exige
+    NUNCA ter vendido, e foi por isso que o cód. 59289 (milho, última venda há 317 dias, 1.632 un
+    recebidas há 3 dias, R$ 24.438,68) continuava em "121+" — corretamente, pela régua de venda, e
+    incomodamente, porque o dinheiro tem 3 dias de casa. Capital parado é valor × TEMPO, e ali a
+    tela multiplicava dinheiro novo por ociosidade velha. Agora ele sai do 121+ pela porta certa,
+    com nome próprio, em vez de a régua inteira passar a contar pela entrada — o que moveria
+    **146 itens / R$ 172.176,33** e levaria junto item saudável (o 51312 gira 376/mês, tem 51 dias
+    de cobertura e só ficou 22 dias sem vender).
     """
     if qtdisp <= 0:
         return None
     if dias_sem_venda is None:
         if dias_sem_entrada is None:
             return "121+"
-        if dias_sem_entrada < novo_dias:
+        if dias_sem_entrada <= novo_dias:
             return PARADO_NOVO
         d = dias_sem_entrada
     else:
+        if _recem_chegado(dias_sem_venda, dias_sem_entrada, novo_dias):
+            return PARADO_RECEM_CHEGADO
         d = dias_sem_venda
     if d < 15:
         return None
