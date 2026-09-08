@@ -309,7 +309,7 @@ prontos, então capacidade não é o gargalo. Medido no BI real: **~US$ 0,0014 p
 
 Navegação em 2 níveis: **Visão · Comprar · Pedidos · Estoque · Análise** (23 abas) + a tela de
 CAMPO da pesquisa de preço, que fica **fora** do painel (`/estoque/pesquisa`). Foco no comprador.
-- **Visão** — Cockpit + Painel gerencial (5 pilares) + Meta de ruptura + **Nota do comprador** +
+- **Visão** — Cockpit + Painel gerencial (5 pilares) + Meta de ruptura + **Performance** +
   **Evolução do estoque** (ADM).
 - **Comprar** — Abastecimento (sugestão de compra), Estoque zerado, Plano reposição.
 - **Pedidos** — Orçamento (meta × realizado × pedidos), geração de pedido de compra (PDF + planilha Winthor).
@@ -757,7 +757,7 @@ Nasceu de um pedido para **derrubar o piso do capital parado de 60 para 20 dias*
 operação**: os itens C que estouravam o teto do bloco passam a ter orçamento próprio. Comparar
 antes×depois uma vez, senão parece ganho operacional.
 
-**Aba Nota do comprador — a Metodologia de Performance do diretor** (09/2026, documento
+**Aba Performance — a Metodologia de Performance do diretor** (09/2026, documento
 `METODOLOGIA PERFORMANCE.docx` de 30/08). Nota de 0 a 10 por comprador a partir de **5 indicadores
 com pesos fixos** — Ruptura 25% · Cobertura A+B 20% · Margem×Meta 20% · Estoque Parado 20% ·
 Compras×Meta 15% — com ranking, prioridade automática e evolução histórica. Escalas e pesos em
@@ -815,6 +815,28 @@ indicadores a partir do que o módulo já calcula: **nenhuma query nova**.
   segundo "comprado no mês" divergente da aba Orçamento — o defeito de dois universos que a aba
   Verbas já teve duas vezes — e tiraria da nota justamente o comportamento que o indicador de
   parado pune, já que **100% do estoque parado é curva C**.
+- 🩹 **A nota tem JANELAS PRÓPRIAS, imunes ao seletor "Venda" do topo** (08/09/2026). Duas coisas
+  faziam a nota de uma pessoa mudar por causa de um filtro que qualquer um deixa ligado na tela —
+  medido no BI real, o mesmo comprador no mesmo dia:
+  - a **margem realizada** seguia o seletor (mês 17,1% · 30d 16,5% · 90d 16,3% · 12m 15,9%); com
+    meta de 17% isso é **nota 9 no "mês" e 7 no "12m"**. E somava períodos diferentes: a meta de
+    margem é MENSAL. Agora usa `PERIODO_MARGEM_NOTA = "mes"`, a mesma competência da meta;
+  - a **curva ABC** é o Pareto da venda do período, então o seletor mudava QUAIS itens são A+B e
+    com eles a Cobertura (65,0% / 59,2% / 54,6% → **notas 9, 7 e 6**). Agora a nota monta os
+    produtos com `historico.PERIODO_CURVA` (90d) — a **mesma janela da foto diária**, o que de
+    quebra alinha a MATRIZ com o GRÁFICO do drill: antes as duas metades da tela respondiam com
+    curvas diferentes. ⚠️ O override é **só da nota** (`_build_produtos(venda_periodo=…)`); as
+    demais abas seguem respeitando o seletor.
+  Verificado: a nota final é idêntica nos cinco valores do seletor. Gates:
+  `test_a_margem_da_nota_NAO_segue_o_seletor_de_venda_do_topo` e
+  `test_a_curva_ABC_da_nota_tem_janela_FIXA_e_nao_a_do_seletor`.
+- **O mês EM CURSO aparece ao lado do de Compras, como informação, e não entra na nota.** O
+  diretor perguntou por que a nota olha o mês anterior — *"no mês atual quem está melhor sou eu"*.
+  A medição respondeu: no dia 8 de 30 o mês corrente **não tem sinal**. Cru dá 44,5% / 35,2% /
+  2,0% e pró-rata dá 166,7% / 132,1% / 7,5% — **nota 4 para os três nos dois casos** (no pró-rata,
+  dois por sobrecompra). Compra é aos trancos, então dividir pelos dias decorridos amplifica o
+  ruído em vez de corrigi-lo. Decisão dele depois de ver os números: *"blz, vamos fazer assim e
+  avaliar"*. Gate: `test_o_mes_em_curso_viaja_como_INFORMACAO_e_nao_entra_na_nota`.
 - 🩹 **A meta de margem é lida na competência de HOJE, não na do mês fechado** (08/09/2026,
   reportado pelo diretor: *"atualizei a meta, mas não veio para cá ainda, tem 1h já"* — e não
   viria nunca). A 1ª versão lia a do mês fechado, errado duas vezes: **descasava** a margem
@@ -842,6 +864,9 @@ indicadores a partir do que o módulo já calcula: **nenhuma query nova**.
 - ⚠️ **O join do Orçamento volta por NOME**: o `por_comprador` do `core` não carrega o
   `codcomprador`. Nome que não casa deixa o indicador em `None` (o comprador vira "meta pendente")
   em vez de receber, calado, o orçamento de outra pessoa. Renomear alguém no `PCEMPR` quebra o join.
+- ⚠️ **Rótulo `Performance`, chave interna `nota`.** `data-view="nota"`, `#v-nota`, `NAV`,
+  `estoque/nota.py` e `/api/nota` seguem com o nome antigo de propósito: renomear a chave
+  quebraria a aba salva no `localStorage` de quem já usou (`savePrefs` guarda o `view`).
 - **Visível a todo mundo com a área `compras`** — como a aba Desempenho comercial já é. ⚠️ **NÃO
   copiar o gate ADM-only da Evolução**, que fica no endpoint vizinho: o sintoma seria a aba não
   abrir para os compradores, sem mensagem. Gate: `tests/test_nota_acesso.py`.
@@ -1451,7 +1476,7 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 - **Compras (blueprint):** tudo sob `/estoque/...` — `/estoque/`, `/estoque/api/snapshot`,
   `/estoque/api/filtros`, `/estoque/api/orcamento`, `/estoque/api/export/<view>.{csv,xlsx,pdf}`,
   `/estoque/api/pedidos`, `/estoque/api/fornecedores_extra` (ciclo + verba, lazy), etc.
-- **Nota do comprador:** `GET /estoque/api/nota` (ranking + matriz dos 5 indicadores + a régua
+- **Performance:** `GET /estoque/api/nota` (ranking + matriz dos 5 indicadores + a régua
   serializada) · `GET /estoque/api/nota/serie?comprador_cod=` (só os 3 indicadores que saem da
   foto) · `GET|PUT /api/admin/metas-margem` (no app principal, `@admin_required`).
 - **Agente de IA (Compras):** `GET /estoque/api/ia/status` (os 3 estados; **200 sempre**, é a

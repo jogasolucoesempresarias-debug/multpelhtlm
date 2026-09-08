@@ -212,3 +212,84 @@ def test_as_duas_competencias_viajam_para_a_tela():
     import inspect
     fonte = inspect.getsource(R.api_nota)
     assert '"mes_meta"' in fonte and '"mes_compras"' in fonte
+
+
+def test_a_margem_da_nota_NAO_segue_o_seletor_de_venda_do_topo():
+    """🩹 A nota não pode mudar por causa de um filtro que alguém deixou ligado na tela.
+
+    Medido no BI real em 08/09/2026, o MESMO comprador no MESMO dia, variando só o seletor:
+        mês 17,1% · 30d 16,5% · 90d 16,3% · 6m 17,1% · 12m 15,9%
+    Com uma meta realista de 17% isso é **nota 9 no "mês" e nota 7 no "12m"** — duas avaliações
+    da mesma pessoa. E junto vinha um erro conceitual: a meta de margem é MENSAL, então comparar
+    12 meses de realizado contra ela soma períodos diferentes.
+
+    ⚠️ As OUTRAS abas seguem respeitando o seletor; quem não pode é a nota."""
+    import inspect
+    assert R.PERIODO_MARGEM_NOTA == "mes", "a margem da nota é a da competência (mês corrente)"
+    fonte = inspect.getsource(R.api_nota)
+    codigo = [l for l in fonte.splitlines() if not l.strip().startswith("#")]
+    for i, linha in enumerate(codigo):
+        if "_desempenho_data(" in linha:
+            assert "PERIODO_MARGEM_NOTA" in linha, \
+                f"a margem da nota voltou a seguir o seletor: {linha.strip()}"
+            assert "venda_periodo" not in linha, linha.strip()
+
+
+def test_o_mes_em_curso_viaja_como_INFORMACAO_e_nao_entra_na_nota():
+    """Decisão do diretor (08/09/2026, depois de ver a medição): *"blz, vamos fazer assim e
+    avaliar"*. Ele queria o mês corrente na nota; a medição mostrou que no dia 8 de 30 ele não
+    discrimina — cru dá 44,5/35,2/2,0 e pró-rata dá 166,7/132,1/7,5, **nota 4 para os três nos
+    dois casos**. Então ele aparece ao lado, e a nota segue no mês fechado.
+
+    ⚠️ Este gate trava o "não entra": `nota_final` só recebe as cinco chaves da régua."""
+    import inspect
+    fonte = inspect.getsource(R.api_nota)
+    codigo = [l for l in fonte.splitlines() if not l.strip().startswith("#")]
+    # o campo existe e viaja
+    assert any('"compras_em_curso"' in l for l in codigo)
+    assert any('"mes_em_curso"' in l for l in codigo)
+    # ...mas nunca alimenta a nota
+    trecho = "\n".join(codigo)
+    inicio = trecho.find("nota.nota_final(")
+    fim = trecho.find(")", trecho.find("compras", inicio))
+    assert "em_curso" not in trecho[inicio:fim + 1], \
+        "o mês em curso não pode entrar no cálculo da nota"
+
+
+def test_a_curva_ABC_da_nota_tem_janela_FIXA_e_nao_a_do_seletor():
+    """🩹 O segundo caminho pelo qual o seletor do topo mexia na nota — e o mais escondido.
+
+    A **curva ABC é o Pareto da venda do PERÍODO**, então trocar o seletor muda QUAIS itens são
+    A+B e, com eles, o indicador de Cobertura. Medido no BI real em 08/09/2026, o mesmo comprador
+    no mesmo dia:
+        mês 65,0% (214 itens A+B) · 90d 59,2% (306) · 12m 54,6% (326)  →  notas 9, 7 e 6.
+
+    A janela fixa é a MESMA da foto diária (`historico.PERIODO_CURVA`, 90 dias), o que de quebra
+    alinha a MATRIZ com o GRÁFICO do drill: a série lê a curva gravada na foto, então antes as
+    duas metades da mesma tela respondiam com curvas diferentes.
+
+    ⚠️ O override é SÓ da nota. As outras abas seguem respeitando o seletor — o default de
+    `_build_produtos` continua sendo ler o `request.args`."""
+    import inspect
+
+    from estoque import historico
+    fonte = inspect.getsource(R.api_nota)
+    codigo = [l for l in fonte.splitlines() if not l.strip().startswith("#")]
+    chamada = [l for l in codigo if "_build_produtos(" in l]
+    assert chamada, "a nota parou de montar produtos?"
+    assert all("historico.PERIODO_CURVA" in l for l in chamada), \
+        f"a nota voltou a herdar a janela do seletor: {chamada}"
+    assert historico.PERIODO_CURVA == "90d"
+    # e o default de `_build_produtos` continua sendo o seletor, para as OUTRAS abas
+    padrao = inspect.signature(R._build_produtos).parameters["venda_periodo"].default
+    assert padrao is None, "o override é SÓ da nota — as outras abas seguem o seletor"
+
+
+def test_a_nota_declara_as_janelas_que_usa():
+    """Numa tela que avalia pessoas, janela não declarada é número sem definição. A resposta leva
+    as quatro: competência da meta, mês de compras, período da margem e janela da curva."""
+    import inspect
+    fonte = inspect.getsource(R.api_nota)
+    for chave in ('"mes_meta"', '"mes_compras"', '"periodo_margem"', '"periodo_curva"',
+                  '"mes_em_curso"'):
+        assert chave in fonte, chave

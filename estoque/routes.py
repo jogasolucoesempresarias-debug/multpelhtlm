@@ -10,6 +10,7 @@ Consome os datasets Power BI "Estoque" (+ RCA p/ comprador/venda).
 
 import io
 import os
+import calendar as _calendario
 import re
 import csv
 import json
@@ -977,9 +978,18 @@ def api_params_set():
     return jsonify({"ok": True, "oficial": core.merge_params({}, base=store.params_oficiais(force=True))})
 
 
-def _build_produtos():
+def _build_produtos(venda_periodo=None):
     """Constrói a lista enriquecida de produtos para a unidade/params atuais.
-    Estoque (snapshot/endereço/pedido) usa as filiais de ESTOQUE; venda/forecast usam as de VENDA."""
+    Estoque (snapshot/endereço/pedido) usa as filiais de ESTOQUE; venda/forecast usam as de VENDA.
+
+    `venda_periodo` sobrepõe o seletor "Venda" do topo. `None` = comportamento de sempre (lê o
+    `request.args`), que é o de TODAS as abas. ⚠️ Só a Nota do comprador passa um valor fixo, e
+    por um motivo específico: a **curva ABC é o Pareto da venda do período**, então o seletor muda
+    QUAIS itens são A+B e com isso o indicador de Cobertura. Medido no BI em 08/09/2026, o mesmo
+    comprador no mesmo dia: 65,0% no "mês", 59,2% no "90d", 54,6% no "12m" — **nota 9, 7 e 6**.
+    A nota não pode depender de um filtro que alguém deixou ligado na tela.
+
+    É a mesma razão pela qual a foto diária fixa `historico.PERIODO_CURVA` em 90 dias."""
     filiais_e = _filiais_estoque()
     filiais_v = _filiais_venda()
     params = core.merge_params(request.args.to_dict(), base=_params_oficiais())
@@ -994,7 +1004,8 @@ def _build_produtos():
         prod_map = {**prod_map, **cad_ind}
     forn_map = _cadastro_fornecedores()
     comp_map = _compradores_map()
-    venda_map = _vendas_map(request.args.get("venda_periodo", "mes"), _hoje(), filiais_v)
+    _vperiodo = venda_periodo or request.args.get("venda_periodo", "mes")
+    venda_map = _vendas_map(_vperiodo, _hoje(), filiais_v)
     # série mensal do RCA (QT): sempre buscada (cache 12h). Com forecast ligado alimenta o
     # forecast; desligado, serve ao fallback de giro dos ITENS NOVOS e à série de 12 meses do
     # 360°. Janela de 12m p/ o gráfico de venda do drawer ficar completo — o giro/forecast leem
@@ -1010,7 +1021,7 @@ def _build_produtos():
     preco_venda = _preco_venda_map(filiais_v)
     # crescimento (YoY): venda líquida do MESMO período no ano anterior, por produto.
     # Serve o item (aba Produtos) e, agregado por fornecedor, a aba Fornecedores.
-    venda_ant = _vendas_ano_ant_map(request.args.get("venda_periodo", "mes"), _hoje(), filiais_v)
+    venda_ant = _vendas_ano_ant_map(_vperiodo, _hoje(), filiais_v)
     produtos = core.construir_produtos(snap, end_map, prod_map, forn_map, comp_map, venda_map, params,
                                        hoje=_hoje(), venda_mensal_map=venda_mensal,
                                        ja_pedida_map=ja_pedida, embalagem_map=embalagem,
@@ -1982,6 +1993,10 @@ def _resumo_evolucao(dias, log):
 
 CURVAS_NOTA_COBERTURA = ("A", "B")     # o documento restringe a cobertura às curvas A+B
 
+# Janela da margem REALIZADA na nota. Fixa em "mes" (o mês corrente acumulado) porque a meta de
+# margem é MENSAL e porque a nota não pode variar com o seletor "Venda" do topo — ver `api_nota`.
+PERIODO_MARGEM_NOTA = "mes"
+
 
 def _pct_nota(n, d, casas=1):
     """Percentual ou None. ⚠️ Denominador zero devolve None (NÃO MEDIDO), nunca 0 — comprador com
@@ -2069,14 +2084,32 @@ def api_nota():
     todo mundo que abre o módulo vê o ranking completo, como já acontece na aba Desempenho
     comercial. **Não copiar o ADM-only da Evolução para cá.**
     """
-    produtos, params, _ = _build_produtos()
+    # ⚠️ Janela FIXA para a curva ABC — a mesma que a foto diária usa (`historico.PERIODO_CURVA`,
+    # 90 dias). Sem isto o seletor "Venda" do topo mudava quais itens são A+B e, com eles, o
+    # indicador de Cobertura: medido no mesmo dia, 65,0% / 59,2% / 54,6% para o mesmo comprador —
+    # notas 9, 7 e 6. E alinha a MATRIZ com o GRÁFICO do drill, que lê a curva gravada na foto:
+    # antes as duas metades da mesma tela respondiam com curvas diferentes.
+    produtos, params, _ = _build_produtos(venda_periodo=historico.PERIODO_CURVA)
     hoje = _hoje()
     ind = _indicadores_estoque(produtos, params)
 
-    # C — margem realizada (RCA). Janela do seletor de venda do topo, como a aba Desempenho.
+    # C — margem realizada (RCA), na COMPETÊNCIA (mês corrente).
+    #
+    # ⚠️ **Janela PRÓPRIA, fixa, imune ao seletor "Venda" do topo** (08/09/2026). A 1ª versão
+    # seguia o seletor, e isso fazia a nota de uma pessoa depender de um filtro que qualquer um
+    # deixa ligado na tela. Medido no BI real no mesmo dia, o mesmo comprador:
+    #     mês 17,1% · 30d 16,5% · 90d 16,3% · 6m 17,1% · 12m 15,9%
+    # Com uma meta realista de 17%, isso é nota 9 no "mês" e nota 7 no "12m" — mesma pessoa,
+    # mesmo dia, duas avaliações. Numa tela que avalia gente isso não pode existir.
+    #
+    # E havia um erro conceitual junto: a meta de margem é MENSAL, então comparar 12 meses de
+    # margem realizada contra ela é somar períodos diferentes. Realizado e meta agora andam na
+    # mesma competência — a de `hoje`, a mesma que o `store.metas_margem` lê logo abaixo.
+    #
+    # As outras abas seguem respeitando o seletor; quem não pode é a nota.
     margens = {}
     try:
-        d = _desempenho_data(request.args.get("venda_periodo", "mes"), hoje, _filiais_venda())
+        d = _desempenho_data(PERIODO_MARGEM_NOTA, hoje, _filiais_venda())
         margens = {l.get("codcomprador"): l.get("margem") for l in (d.get("compradores") or [])}
     except Exception as e:                               # noqa: BLE001
         print(f"[nota] desempenho indisponivel ({e}) - indicador de margem sai vazio")
@@ -2109,24 +2142,40 @@ def api_nota():
     # indicador em None — o comprador aparece como "meta pendente" em vez de receber, calado, o
     # orçamento de outra pessoa. Renomear alguém no PCEMPR quebra o join: é o preço de agregar
     # por nome, e a degradação é visível de propósito.
-    compras = {}
+    compras, compras_em_curso = {}, {}
     try:
         filiais = _filiais_estoque()
         cab = _pedidos_data(filiais, hoje)["cab"]
-        # ⚠️ A meta é ancorada no FECHAMENTO do mês avaliado, não em `hoje` — ver `_fim_do_mes`.
-        # O `hoje` continua indo para o `orcamento_winthor` porque lá ele serve à logística dos
-        # pedidos (atraso, "chega em 7 dias"), que é sobre o presente.
-        venda_comp = _venda_comprador_30d(filiais, _filiais_venda(), _fim_do_mes(mes_ref, hoje))
-        orc = core.orcamento_winthor(cab, venda_comp, _compradores_map(),
-                                     _cadastro_fornecedores(), mes_ref, "TODOS",
-                                     pct=0.65, hoje=hoje,
-                                     cnpj_empresa=MULTPEL_EMPRESA["cnpj"])
         por_nome = {str(v).strip().upper(): k for k, v in (_compradores_map() or {}).items()}
-        for linha in (orc.get("por_comprador") or []):
-            cc = por_nome.get(str(linha.get("comprador") or "").strip().upper())
-            m, c = core._n(linha.get("meta")), core._n(linha.get("comprado"))
-            if cc is not None and m > 0:
-                compras[int(cc)] = core._round(c / m * 100, 1)
+
+        def _pct_do_mes(mes, ancora):
+            """% consumido da meta naquele mês, por codcomprador."""
+            # ⚠️ A meta é ancorada no FECHAMENTO do mês medido, não em `hoje` — ver `_fim_do_mes`.
+            # O `hoje` continua indo para o `orcamento_winthor` porque lá ele serve à logística
+            # dos pedidos (atraso, "chega em 7 dias"), que é sobre o presente.
+            vc = _venda_comprador_30d(filiais, _filiais_venda(), ancora)
+            o = core.orcamento_winthor(cab, vc, _compradores_map(), _cadastro_fornecedores(),
+                                       mes, "TODOS", pct=0.65, hoje=hoje,
+                                       cnpj_empresa=MULTPEL_EMPRESA["cnpj"])
+            saida = {}
+            for linha in (o.get("por_comprador") or []):
+                cc = por_nome.get(str(linha.get("comprador") or "").strip().upper())
+                m, c = core._n(linha.get("meta")), core._n(linha.get("comprado"))
+                if cc is not None and m > 0:
+                    saida[int(cc)] = core._round(c / m * 100, 1)
+            return saida
+
+        compras = _pct_do_mes(mes_ref, _fim_do_mes(mes_ref, hoje))
+        # ⚠️ **O mês EM CURSO é informação, não entra na nota** (decisão do diretor em 08/09/2026,
+        # depois de ver a medição: *"blz, vamos fazer assim e avaliar"*). Ele perguntou por que a
+        # nota olha o mês anterior — *"no mês atual quem está melhor sou eu"* — e a pergunta é
+        # legítima; o que a medição mostrou é que no dia 8 de 30 o mês corrente **não tem sinal**:
+        #     cru       44,5% / 35,2% /  2,0%  → nota 4 para os três
+        #     pró-rata 166,7% / 132,1% / 7,5%  → nota 4 para os três (agora por sobrecompra)
+        # Compra é aos trancos, então dividir pelos dias decorridos amplifica o ruído em vez de
+        # corrigi-lo. A saída é mostrar o esforço do mês ao lado da nota, sem deixá-lo balançar a
+        # avaliação — a tela declara as duas janelas.
+        compras_em_curso = _pct_do_mes(hoje.strftime("%Y-%m"), hoje)
     except Exception as e:                               # noqa: BLE001
         print(f"[nota] orcamento indisponivel ({e}) - indicador de compras sai vazio")
 
@@ -2143,7 +2192,9 @@ def api_nota():
                              "compras": compras.get(cc)})
         linhas.append({**g, **r, "margem_real": margem_real,
                        "margem_meta": float(meta) if meta else None,
-                       "margem_ating": ating, "compras_pct": compras.get(cc)})
+                       "margem_ating": ating, "compras_pct": compras.get(cc),
+                       # informativo: não entra em `nota_final`
+                       "compras_em_curso": compras_em_curso.get(cc)})
     nota.ranking(linhas)
     # quem tem posição vem primeiro, na ordem do ranking; os incompletos descem, por tamanho de
     # carteira — a lista nunca fica sem ordem estável, senão a tela dança a cada F5
@@ -2156,6 +2207,12 @@ def api_nota():
         "mes_compras": mes_ref,
         "competencia_meta": {"ano": ano_meta, "mes": mes_meta},
         "mes_meta": f"{ano_meta}-{mes_meta:02d}",
+        "periodo_margem": PERIODO_MARGEM_NOTA,
+        "periodo_curva": historico.PERIODO_CURVA,
+        # o mês em curso viaja para a tela mostrar ao lado — nunca para a nota
+        "mes_em_curso": hoje.strftime("%Y-%m"),
+        "dias_do_mes": _calendario.monthrange(hoje.year, hoje.month)[1],
+        "dias_decorridos": hoje.day,
         "compradores": linhas,
         "sem_meta": [l["nome"] for l in linhas if "margem" in (l.get("faltando") or [])],
         "regua": nota.escalas_publicas(),

@@ -3724,7 +3724,7 @@ async function renderNota() {
       S.nota = await getJSON('/estoque/api/nota?' + qs);
       S.notaQS = qs;
     } catch (e) {
-      el.innerHTML = `<div class="empty">Nota do comprador indisponível: ${e.message}</div>`;
+      el.innerHTML = `<div class="empty">Performance indisponível: ${e.message}</div>`;
       return;
     }
   }
@@ -3771,7 +3771,15 @@ async function renderNota() {
   const tr = linhas.map(l => {
     const cel = ordem.map(k => {
       const i = (l.itens || []).find(x => x.indicador === k) || {};
-      return `<td class="num">${notaValor(k, i.valor)} ${notaBadge(i.nota)}</td>`;
+      // ⚠️ O mês EM CURSO aparece embaixo do de Compras, em muted, e NÃO entra na nota. O diretor
+      // perguntou por que a nota olha o mês anterior ("no mês atual quem está melhor sou eu") — a
+      // medição mostrou que no dia 8 de 30 o mês corrente não tem sinal (todos nota 4, cru ou
+      // pró-rata). Mostrar o esforço sem deixá-lo balançar a avaliação foi o combinado.
+      const emCurso = (k === 'compras' && l.compras_em_curso != null)
+        ? `<div class="k-sub muted" style="font-size:.68rem">${esc(o.mes_em_curso || '')} em curso:
+           ${dec(l.compras_em_curso, 1)}% · ${int(o.dias_decorridos)}/${int(o.dias_do_mes)}d</div>`
+        : '';
+      return `<td class="num">${notaValor(k, i.valor)} ${notaBadge(i.nota)}${emCurso}</td>`;
     }).join('');
     // ⚠️ A nota parcial SAI, mas nunca sem o selo: é ele que explica a mudança do dia em que a
     // meta entra. Nota parcial sem marcação e nota completa lado a lado, com o mesmo peso visual,
@@ -3803,8 +3811,12 @@ async function renderNota() {
     // explicar em dezembro a nota de setembro — a nota é recalculada, nunca gravada.
     + `<div class="count-line" style="margin-top:12px">
         ${ordem.map(k => `<b>${esc(rot[k] || k)}</b> (${pesos[k]}%): ${esc(reguas[k] || '')}`).join('<br>')}
-        <br>Margem × Meta usa a competência <b>${esc(o.mes_meta || '')}</b> (a mesma do realizado);
-        Compras apura o mês <b>${esc(o.mes_compras || '')}</b> (fechado).
+        <br>Margem × Meta usa a competência <b>${esc(o.mes_meta || '')}</b> — meta e realizado no
+        mesmo mês, com janela <b>própria</b>: ela NÃO segue o seletor "Venda" do topo, senão a nota
+        mudaria conforme o filtro que alguém deixou ligado.
+        Compras apura o mês <b>${esc(o.mes_compras || '')}</b> (fechado) — o mês em curso aparece
+        abaixo de cada valor, como informação, e <b>não entra na nota</b>: no início do mês ele não
+        discrimina (medido no dia 8: todos cairiam na mesma faixa, cru ou pró-rata).
         Cobertura usa o mínimo de <b>${int(o.params && o.params.ideal_dias)}d</b> e produto novo
         até <b>${int(o.params && o.params.novo_dias)}d</b>, do ⚙ Parâmetros.
         · <b>Régua v${int(regua.versao)}</b></div>`;
