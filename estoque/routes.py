@@ -2081,14 +2081,27 @@ def api_nota():
     except Exception as e:                               # noqa: BLE001
         print(f"[nota] desempenho indisponivel ({e}) - indicador de margem sai vazio")
 
-    # C — a META da competência (a única peça da nota que não se recalcula do dado)
-    mes_ref = _mes_fechado(hoje)
-    ano_m, mes_m = (int(x) for x in mes_ref.split("-"))
+    # C — a META da competência (a única peça da nota que não se recalcula do dado).
+    #
+    # ⚠️ **A competência da meta é a de HOJE, e tem de casar com a do REALIZADO acima.** A 1ª
+    # versão lia a do mês FECHADO (`_mes_fechado`) e isso estava errado duas vezes:
+    #   1. descasamento — dividia a margem do mês CORRENTE (o `_desempenho_data` acima roda no
+    #      seletor "Venda", cujo default é o mês em curso) pela meta do mês ANTERIOR;
+    #   2. e o efeito visível: o painel do Admin grava na competência corrente (é o default do
+    #      seletor lá), então a meta caía em 2026-09 e a nota procurava em 2026-08. A busca é
+    #      `(ano*100+mes) <= competência`, então a meta recém-cadastrada simplesmente não existia
+    #      para a nota. Sintoma reportado pelo diretor em 08/09/2026: "atualizei a meta, mas não
+    #      veio para cá ainda, tem 1h já" — e não viria nunca.
+    #
+    # O mês FECHADO continua valendo para o indicador de COMPRAS, que é outra janela de propósito
+    # (ver `_mes_fechado` e `_fim_do_mes`). Meta de margem e margem realizada andam juntas.
+    ano_meta, mes_meta = hoje.year, hoje.month
     try:
-        metas = store.metas_margem(ano_m, mes_m)
+        metas = store.metas_margem(ano_meta, mes_meta)
     except Exception as e:                               # noqa: BLE001
         print(f"[nota] metas de margem indisponiveis ({e})")
         metas = {}
+    mes_ref = _mes_fechado(hoje)
 
     # E — compras × meta no mês FECHADO.
     # ⚠️ O `por_comprador` do Orçamento é chaveado por NOME (o agregado do core não carrega o
@@ -2138,7 +2151,11 @@ def api_nota():
 
     return jsonify({
         "ok": True, "unidade": _unidade(), "hoje": hoje.isoformat(),
-        "mes_compras": mes_ref, "competencia": {"ano": ano_m, "mes": mes_m},
+        # DUAS competências de propósito, e a tela declara as duas: a meta de margem anda com o
+        # realizado (mês corrente); compras apura o mês fechado.
+        "mes_compras": mes_ref,
+        "competencia_meta": {"ano": ano_meta, "mes": mes_meta},
+        "mes_meta": f"{ano_meta}-{mes_meta:02d}",
         "compradores": linhas,
         "sem_meta": [l["nome"] for l in linhas if "margem" in (l.get("faltando") or [])],
         "regua": nota.escalas_publicas(),

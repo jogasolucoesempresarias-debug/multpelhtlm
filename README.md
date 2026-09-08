@@ -815,6 +815,18 @@ indicadores a partir do que o módulo já calcula: **nenhuma query nova**.
   segundo "comprado no mês" divergente da aba Orçamento — o defeito de dois universos que a aba
   Verbas já teve duas vezes — e tiraria da nota justamente o comportamento que o indicador de
   parado pune, já que **100% do estoque parado é curva C**.
+- 🩹 **A meta de margem é lida na competência de HOJE, não na do mês fechado** (08/09/2026,
+  reportado pelo diretor: *"atualizei a meta, mas não veio para cá ainda, tem 1h já"* — e não
+  viria nunca). A 1ª versão lia a do mês fechado, errado duas vezes: **descasava** a margem
+  realizada (que vem do seletor "Venda", default mês corrente) da meta do mês anterior; e o painel
+  do Admin grava na competência **corrente**, então a meta caía em `2026-09` e a nota procurava em
+  `2026-08` — com a busca `(ano*100+mes) <= competência`, ela simplesmente não existia para a nota.
+  Nenhum erro, só `— —` na coluna, para sempre. ⚠️ **São DUAS competências de propósito** e a tela
+  declara as duas: meta+realizado andam no mês corrente, compras apura o fechado.
+  Gate: `test_a_meta_de_margem_e_lida_na_competencia_de_HOJE_e_nao_no_mes_fechado`.
+- ⚠️ **O `S.nota` fica em cache no front até a querystring mudar.** A meta é editada em OUTRA tela
+  (o Admin), então cadastrar e voltar para a aba servia o payload velho — sem erro, só o número de
+  antes. O aviso de meta pendente traz um **"recarregue aqui"** que zera o cache sem F5.
 - ⚠️ **Compras mede o mês FECHADO, nunca o corrente.** No dia 7, o mês em curso dava 42,6% da meta
   no maior comprador: nota 4 por "subcompra" com 23 dias de mês pela frente. Agosto fechado dá 128,1%.
 - 🩹 **E a meta desse mês fechado é ancorada no FECHAMENTO dele, não em `hoje`** (`_fim_do_mes`).

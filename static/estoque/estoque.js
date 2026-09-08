@@ -3710,6 +3710,11 @@ const notaBadge = n => n == null ? '<span class="muted">—</span>'
 // qual — "36,1" sem o % ao lado de "128,1" sem o % faz o leitor comparar coisas diferentes.
 const notaValor = (k, v) => v == null ? '—' : dec(v, 1) + '%';
 
+// A meta de margem é editada em OUTRA tela (Admin). O `S.nota` fica em cache até a querystring
+// mudar, então cadastrar a meta e voltar para a aba servia o payload velho — sem erro, só o
+// número de antes. Isto força a releitura sem F5.
+function notaRecarregar() { S.nota = null; S.notaQS = null; renderNota(); }
+
 async function renderNota() {
   const el = $('#v-nota');
   const qs = serverQS();
@@ -3737,7 +3742,8 @@ async function renderNota() {
       <b>Ao cadastrar a meta, a nota recalcula e muda</b>, para cima ou para baixo: a variação é
       do que passou a ser medido, não do desempenho da pessoa.<br>
       <span class="muted">Faltando: ${semMeta.map(esc).join(' · ')} — cadastre em
-      <a href="/admin" target="_blank">Administração → Metas de margem</a>.</span>
+      <a href="/admin" target="_blank">Administração → Metas de margem</a>
+      e depois <a href="#" onclick="notaRecarregar();return false;">recarregue aqui</a>.</span>
     </div>` : '';
 
   // ── ranking (cards). São 3 a 5 compradores: cartão lê melhor que tabela, e é onde a
@@ -3797,7 +3803,8 @@ async function renderNota() {
     // explicar em dezembro a nota de setembro — a nota é recalculada, nunca gravada.
     + `<div class="count-line" style="margin-top:12px">
         ${ordem.map(k => `<b>${esc(rot[k] || k)}</b> (${pesos[k]}%): ${esc(reguas[k] || '')}`).join('<br>')}
-        <br>Compras apura o mês <b>${esc(o.mes_compras || '')}</b> (fechado).
+        <br>Margem × Meta usa a competência <b>${esc(o.mes_meta || '')}</b> (a mesma do realizado);
+        Compras apura o mês <b>${esc(o.mes_compras || '')}</b> (fechado).
         Cobertura usa o mínimo de <b>${int(o.params && o.params.ideal_dias)}d</b> e produto novo
         até <b>${int(o.params && o.params.novo_dias)}d</b>, do ⚙ Parâmetros.
         · <b>Régua v${int(regua.versao)}</b></div>`;

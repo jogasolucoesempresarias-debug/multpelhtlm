@@ -172,3 +172,43 @@ def test_a_ancora_nunca_passa_do_teto():
     ir ao FUTURO: pediria venda de dias que ainda não aconteceram e a meta sairia menor."""
     from datetime import date
     assert R._fim_do_mes("2026-09", date(2026, 9, 8)) == date(2026, 9, 8)
+
+
+def test_a_meta_de_margem_e_lida_na_competencia_de_HOJE_e_nao_no_mes_fechado():
+    """🩹 O bug que deixou o diretor esperando 1h por uma meta que nunca chegaria (08/09/2026:
+    *"atualizei a meta, mas não veio para cá ainda"*).
+
+    A 1ª versão lia a meta na competência do mês FECHADO, e isso estava errado duas vezes:
+
+    1. **Descasamento.** A margem REALIZADA vem do `_desempenho_data` no seletor "Venda", cujo
+       default é o mês CORRENTE — dividir isso pela meta do mês anterior compara períodos
+       diferentes;
+    2. **E o efeito visível:** o painel do Admin grava na competência corrente (é o default do
+       seletor lá). A meta ia para 2026-09 e a nota procurava em 2026-08; como a busca é
+       `(ano*100+mes) <= competência`, a meta recém-cadastrada não existia para a nota. Nenhum
+       erro em lugar nenhum — só "— —" na coluna, para sempre.
+
+    ⚠️ O mês FECHADO continua certo para o indicador de COMPRAS. São janelas diferentes de
+    propósito, e este gate trava que elas não voltem a se confundir."""
+    import inspect
+    fonte = inspect.getsource(R.api_nota)
+    codigo = [l for l in fonte.splitlines() if not l.strip().startswith("#")]
+    # a meta sai de hoje...
+    assert any("ano_meta, mes_meta = hoje.year, hoje.month" in l for l in codigo), \
+        "a meta de margem tem de ser lida na competência de hoje"
+    assert any("store.metas_margem(ano_meta, mes_meta)" in l for l in codigo)
+    # ...e o mês fechado NÃO pode alimentar a leitura da meta
+    for i, linha in enumerate(codigo):
+        if "metas_margem(" in linha:
+            assert "mes_ref" not in linha and "_mes_fechado" not in linha, \
+                f"a meta voltou a ser lida no mês fechado: {linha.strip()}"
+    # e o mês fechado continua servindo às COMPRAS
+    assert any("_mes_fechado(hoje)" in l for l in codigo)
+
+
+def test_as_duas_competencias_viajam_para_a_tela():
+    """Numa tela que avalia pessoas, janela não declarada é número sem definição. A resposta tem
+    de dizer AS DUAS: a da meta de margem (mês corrente) e a de compras (mês fechado)."""
+    import inspect
+    fonte = inspect.getsource(R.api_nota)
+    assert '"mes_meta"' in fonte and '"mes_compras"' in fonte
