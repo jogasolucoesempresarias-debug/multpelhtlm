@@ -2019,14 +2019,18 @@ def _indicadores_estoque(produtos, params):
     for p in produtos:
         cc = p.get("codcomprador")
         g = por.setdefault(cc, {"codcomprador": cc, "nome": p.get("comprador") or "Sem comprador",
-                                "n_skus": 0, "n_ruptura": 0, "n_parado": 0, "ab": []})
+                                "n_skus": 0, "n_ruptura": 0, "n_parado": 0,
+                                "v_parado": 0.0, "v_estoque": 0.0, "ab": []})
         g["n_skus"] += 1
+        g["v_estoque"] += core._n(p.get("valor"))
         if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0:
             g["n_ruptura"] += 1
         fx = core.parado_faixa_de(p.get("dias_sem_venda"), p.get("qtdisp"),
                                   p.get("dias_sem_entrada"), novo_dias)
         if fx and fx not in core._STATUS_FORA_DO_PARADO:
             g["n_parado"] += 1
+            # ⚠️ O R$ parado é INFORMAÇÃO, não pontua — ver a nota em `parado` no retorno abaixo.
+            g["v_parado"] += core._n(p.get("valor"))
         if (p.get("curva_abc") or "").upper() in CURVAS_NOTA_COBERTURA:
             g["ab"].append(p)
     saida = {}
@@ -2041,6 +2045,19 @@ def _indicadores_estoque(produtos, params):
             "cobertura": core._round(pct_ideal * 100, 1) if pct_ideal is not None else None,
             "parado": _pct_nota(g["n_parado"], g["n_skus"]),
             "n_ruptura": g["n_ruptura"], "n_parado": g["n_parado"],
+            # ⚠️ **O VALOR parado viaja para a TELA, nunca para a nota** (08/09/2026, pergunta do
+            # diretor: *"aqui não deveria ser por valor? quantidade de itens não é o mais
+            # importante e sim o valor que está parado"*). Ele está certo sobre o que importa em
+            # gestão — e a ordem entre os compradores é a MESMA nas duas réguas. O que impede o
+            # valor de pontuar é a concentração: medido no BI, um comprador de carteira pequena
+            # tem **35 itens parados e um único item vale 42% do valor** (top 3 = 58,9%). Por
+            # valor, a nota dele mediria aquele item, não a gestão — e oscilou 2,5%→5,5% nas 47
+            # fotos, uma variação do tamanho de toda a distância entre as três pessoas (3,0 p.p.).
+            # Por SKU os 35 itens pesam igual e ninguém é refém de um deles.
+            # A escala do documento também não serviria: por valor ninguém passa de 8,5% e os três
+            # tirariam 10. O R$ fica ao lado para a conversa que ele quer ter.
+            "parado_valor": core._round(g["v_parado"]),
+            "parado_pct_valor": _pct_nota(g["v_parado"], g["v_estoque"]),
             "cobertura_ab_n": ideal["ideal"]["n"] + ideal["em_risco"]["n"],
         }
     return saida

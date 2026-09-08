@@ -3779,7 +3779,16 @@ async function renderNota() {
         ? `<div class="k-sub muted" style="font-size:.68rem">${esc(o.mes_em_curso || '')} em curso:
            ${dec(l.compras_em_curso, 1)}% · ${int(o.dias_decorridos)}/${int(o.dias_do_mes)}d</div>`
         : '';
-      return `<td class="num">${notaValor(k, i.valor)} ${notaBadge(i.nota)}${emCurso}</td>`;
+      // ⚠️ O R$ parado aparece embaixo do % e NÃO pontua. O diretor perguntou por que a nota não é
+      // por valor ("quantidade de itens não é o mais importante e sim o valor que está parado") —
+      // e ele tem razão sobre o que importa em gestão. O que impede o valor de virar nota é a
+      // concentração: um comprador de carteira pequena tem 35 itens parados com UM valendo 42% do
+      // valor, então a nota mediria aquele item. O número que ele quer fica aqui, ao lado.
+      const parVal = (k === 'parado' && l.parado_valor != null)
+        ? `<div class="k-sub muted" style="font-size:.68rem">${money(l.parado_valor)} parados${
+            l.parado_pct_valor != null ? ` · ${dec(l.parado_pct_valor, 1)}% do estoque` : ''}</div>`
+        : '';
+      return `<td class="num">${notaValor(k, i.valor)} ${notaBadge(i.nota)}${emCurso}${parVal}</td>`;
     }).join('');
     // ⚠️ A nota parcial SAI, mas nunca sem o selo: é ele que explica a mudança do dia em que a
     // meta entra. Nota parcial sem marcação e nota completa lado a lado, com o mesmo peso visual,
@@ -3817,6 +3826,9 @@ async function renderNota() {
         Compras apura o mês <b>${esc(o.mes_compras || '')}</b> (fechado) — o mês em curso aparece
         abaixo de cada valor, como informação, e <b>não entra na nota</b>: no início do mês ele não
         discrimina (medido no dia 8: todos cairiam na mesma faixa, cru ou pró-rata).
+        <br>Estoque Parado pontua por <b>contagem de SKUs</b>; o <b>R$ parado</b> aparece ao lado
+        como informação e não pontua — por valor, um comprador de carteira pequena fica refém de um
+        item só (medido: 35 itens parados com um valendo 42% do valor).
         Cobertura usa o mínimo de <b>${int(o.params && o.params.ideal_dias)}d</b> e produto novo
         até <b>${int(o.params && o.params.novo_dias)}d</b>, do ⚙ Parâmetros.
         · <b>Régua v${int(regua.versao)}</b></div>`;

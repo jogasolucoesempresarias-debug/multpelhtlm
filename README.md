@@ -801,11 +801,26 @@ indicadores a partir do que o módulo já calcula: **nenhuma query nova**.
   comprador em 07/09. Ele corrigiu para *"a aba parado msm, sem contar os produtos até 20 dias /
   novos"*. ⚠️ **A troca de régua vale 3 pontos** no maior comprador (nota 3 → 6) sem ninguém mexer na
   operação — comparar antes×depois uma vez, senão parece ganho de gestão.
-- ⚠️ **O parado é CONTAGEM DE SKUs, não valor**, e é isso que faz o indicador existir. Medido em
-  07/09: por R$ os três compradores dão 3,0% / 1,8% / 1,9% — todos na faixa "até 20%", nota 10, e
-  20% do peso da nota vira constante. Por SKU dão **35,7% / 27,6% / 14,2%** e separam os três.
-  Também **não pode ser A+B**: a curva A+B tem **zero** itens parados hoje, então o indicador
-  seria constante zero para sempre.
+- ⚠️ **O parado é CONTAGEM DE SKUs, não valor**, e é isso que faz o indicador existir. Também
+  **não pode ser A+B**: a curva A+B tem **zero** itens parados hoje, então o indicador seria
+  constante zero para sempre.
+- 🩹 **Por que não é por VALOR** (08/09/2026, pergunta do diretor: *"aqui não deveria ser por
+  valor? quantidade de itens não é o mais importante e sim o valor que está parado"*). Ele está
+  certo sobre o que importa em gestão, e a **ordem entre os compradores é a mesma nas duas
+  réguas** — não é que o valor esteja errado. O que o impede de pontuar, medido nas 47 fotos:
+  - **a escala do documento não serve**: por valor ninguém passa de 8,5% (contra faixas que só
+    começam a punir em 20%), então os três tirariam **10** e 20% do peso viraria constante;
+  - **a amplitude é 7x menor** — 3,0 p.p. entre o melhor e o pior por valor, contra 21,5 por SKU.
+    Qualquer escala por valor teria faixas estreitas;
+  - **e o valor está concentrado**: um comprador tem **35 itens parados com UM valendo 42%** do
+    valor (top 3 = 58,9%, top 10 = 80,3%). Por valor, a nota dele mediria aquele item, não a
+    gestão — e de fato o número dele andou de **5,5% para 8,6%** entre duas medições do mesmo dia,
+    passando de "o melhor" para "empatado com o pior". Por SKU os 35 itens pesam igual.
+  **A saída:** o R$ parado viaja para a TELA, ao lado do %, e não entra no cálculo
+  (`parado_valor`/`parado_pct_valor`). Ele passa a ver o número que quer sem a nota ficar refém de
+  um item. Se um dia o valor tiver de pontuar, a versão honesta é dividir o peso (10% SKU + 10%
+  valor, com escala própria para cada) — não reaproveitar as faixas do documento.
+  Gate: `test_o_valor_parado_viaja_mas_NAO_pontua`.
 - ⚠️ **`n_parado_aba` é a TERCEIRA lente sobre o mesmo item no `agregar`**, ao lado do
   `valor_parado` (régua do Cockpit, 60+, em R$) e do `valor_desacel` (watchlist). Ela é bloco
   INDEPENDENTE, fora da cadeia `if/elif` das outras duas — nasceu no meio dela e o `elif` da

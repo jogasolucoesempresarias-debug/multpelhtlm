@@ -60,10 +60,13 @@ def test_o_parado_DESCARTA_novo_e_recem_chegado():
 
 
 def test_o_parado_e_CONTAGEM_DE_SKUS_e_nao_valor():
-    """⚠️ A escolha que faz o indicador existir. Medido em 07/09: por VALOR os três compradores
-    dão 3,0% / 1,8% / 1,9% — todos na faixa "até 20%", nota 10, e 20% do peso da nota vira
-    constante. Por SKU dão 35,7% / 27,6% / 14,2% e separam os três. Um item parado caríssimo não
-    pode valer mais que um barato nesta conta."""
+    """⚠️ A escolha que faz o indicador existir. Medido nas 47 fotos, **na régua da aba**: por
+    VALOR os três compradores dão 8,5% / 6,2% / 5,5% — todos na faixa "até 20%", nota 10, e 20%
+    do peso da nota vira constante. Por SKU dão 35,7% / 27,6% / 14,2% e separam os três (nota
+    6 / 8 / 10). Um item parado caríssimo não pode valer mais que um barato nesta conta.
+
+    (Os 3,0% / 1,8% / 1,9% que já apareceram nesta discussão são da régua do COCKPIT, 60+ dias —
+    outra régua, outro número. Ver `test_o_valor_parado_viaja_mas_NAO_pontua`.)"""
     caro_parado = _p(dsv=40, valor=1_000_000.0)
     baratos_ok = [_p(dsv=1, valor=1.0) for _ in range(9)]
     r = R._indicadores_estoque([caro_parado] + baratos_ok, PARAMS)[1]
@@ -293,3 +296,45 @@ def test_a_nota_declara_as_janelas_que_usa():
     for chave in ('"mes_meta"', '"mes_compras"', '"periodo_margem"', '"periodo_curva"',
                   '"mes_em_curso"'):
         assert chave in fonte, chave
+
+
+def test_o_valor_parado_viaja_mas_NAO_pontua():
+    """Pergunta do diretor em 08/09/2026: *"aqui não deveria ser por valor? quantidade de itens
+    não é o mais importante e sim o valor que está parado"*.
+
+    Ele está certo sobre o que importa em gestão, e a ORDEM entre os compradores é a mesma nas
+    duas réguas. O que impede o valor de pontuar foi medido nas 47 fotos:
+
+    - **concentração** — um comprador tem 35 itens parados e UM vale 42% do valor (top 3 = 58,9%).
+      Por valor a nota dele mediria aquele item, não a gestão; por SKU os 35 pesam igual;
+    - **volatilidade** — o mesmo comprador oscilou 2,5%→5,5% ao longo das fotos, uma variação do
+      tamanho de toda a distância entre as três pessoas (3,0 p.p. por valor contra 21,5 por SKU);
+    - **e a escala do documento nem serviria**: por valor ninguém passa de 8,5% e os três tirariam
+      10, com o indicador virando constante.
+
+    Então o R$ vai para a TELA, ao lado do %, e não para o cálculo."""
+    prods = [
+        _p(cc=1, dsv=40, valor=1_000_000.0),      # 1 item parado, caríssimo
+        *[_p(cc=1, dsv=1, valor=1.0) for _ in range(9)],
+    ]
+    r = R._indicadores_estoque(prods, PARAMS)[1]
+    # a nota olha SKUs: 1 de 10
+    assert r["parado"] == 10.0
+    assert nota.nota_de("parado", r["parado"]) == 10
+    # o valor viaja, e mostra o outro lado da história (99,999% do estoque parado)
+    assert r["parado_valor"] == 1_000_000.0
+    assert r["parado_pct_valor"] > 99
+    # ⚠️ e o que entra na nota é o %SKU, não o %valor
+    assert nota.nota_de("parado", r["parado_pct_valor"]) == 3, \
+        "se o valor pontuasse, este comprador tiraria 3 em vez de 10 — é a decisão em jogo"
+
+
+def test_o_valor_parado_nao_entra_no_calculo_da_nota():
+    """Gate estrutural: `nota_final` só pode receber as cinco chaves da régua."""
+    import inspect
+    fonte = inspect.getsource(R.api_nota)
+    codigo = "\n".join(l for l in fonte.splitlines() if not l.strip().startswith("#"))
+    i = codigo.find("nota.nota_final(")
+    fim = codigo.find("})", i)
+    assert "parado_valor" not in codigo[i:fim] and "pct_valor" not in codigo[i:fim], \
+        "o R$ parado não pode entrar no cálculo da nota"
