@@ -58,6 +58,16 @@ Sistema **JOGA** (a Multpel é a cliente) que une, num único Flask com um únic
 
 ### Colunas de acesso em `multpel_users` (todas via `init_db.py`, idempotente)
 `areas` (JSONB, default `["comercial"]`) · `area_padrao` (`portal`|`comercial`|`compras`) ·
+🩹 **A rota `/` também honra o `area_padrao`, mas só para mandar a Compras** (09/2026). A fonte
+única do destino é `destino_pos_login()`, e ela é consultada no login, no `/login` e no `/portal`
+— a **raiz não a chamava** para quem tem a área Comercial. Como o cookie dura **12h** e é
+`permanent`, fechar o navegador não derruba a sessão: ao reabrir, a aba restaura em `/`, o login
+não acontece, e a pessoa caía no Comercial mesmo tendo fixado "Gestão de Estoque" no Portal — o
+item de menu prometia o que este caminho desfazia, sem erro nenhum, só a tela errada todo dia.
+⚠️ **Só `/estoque/`, nunca `/portal`:** o default da coluna é `'portal'`, então honrar o
+`area_padrao` inteiro faria quem NUNCA fixou nada (a maioria) receber a tela de escolha no lugar
+do dashboard — consertar quem escolheu incomodando quem não pediu. Gate:
+`tests/test_area_padrao_raiz.py`, que trava os dois lados.
 `codcomprador` (filtro **default** do Compras, não trava) · `relatorios_estoque` (JSONB — quais
 relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`, default `escuro`) ·
 `tentativas_falhas`/`bloqueado_ate`/`bloqueios_seguidos` (bloqueio de login).

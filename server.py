@@ -1567,6 +1567,22 @@ def index_page():
         if destino and destino != '/':
             return redirect(destino)
         return Response('Sem acesso ao módulo Comercial', status=403)
+    # ⚠️ A raiz também honra o "fixar" do Portal — mas SÓ para mandar a Compras (09/2026).
+    #
+    # O que estava quebrado: `destino_pos_login()` é a fonte única do destino e respeita o
+    # `area_padrao`, mas esta rota não a consultava para quem tem a área Comercial. Como o cookie
+    # dura 12h e é `permanent`, fechar o navegador não derruba a sessão: ao reabrir, a aba volta
+    # em `/`, o login não acontece, e a pessoa caía no Comercial mesmo tendo fixado
+    # "Gestão de Estoque" no Portal. O item de menu "Escolher e fixar a área padrão" prometia
+    # uma coisa que este caminho desfazia.
+    #
+    # ⚠️ **Só o `/estoque/`, nunca o `/portal`.** O default da coluna é `'portal'`
+    # (`init_db.py`), então honrar o `area_padrao` inteiro faria quem NUNCA fixou nada — a
+    # maioria — passar a receber a tela de escolha no lugar do dashboard. Seria consertar o caso
+    # de quem escolheu criando incômodo para quem não pediu nada. Quem fixou Comercial ou não
+    # fixou segue exatamente como antes.
+    if destino_pos_login() == '/estoque/':
+        return redirect('/estoque/')
     return send_from_directory('.', 'index.html')
 
 
