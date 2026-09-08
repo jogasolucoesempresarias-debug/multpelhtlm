@@ -418,11 +418,26 @@ def test_a_serie_da_evolucao_usa_a_MESMA_regua_do_cockpit():
 
     fonte = inspect.getsource(historico.agregar)
     assert "status_parado_de" in fonte, "a série tem de usar a fonte única do Cockpit"
-    # só o CÓDIGO: o comentário cita `parado_faixa_de` para explicar por que ele saiu
+    # ⚠️ A régua de 15 dias VOLTOU ao `agregar` em 09/2026 — de propósito e para OUTRA métrica
+    # (`n_parado_aba`, a régua da aba Estoque parado em contagem de SKUs, que a Nota do comprador
+    # pontua). O invariante que este gate protege nunca foi "o nome da função não aparece", e sim
+    # **o capital parado não usar o piso de 15 dias**. Por isso a checagem é sobre o que cada
+    # linha ALIMENTA, não sobre o nome estar no arquivo: a versão por nome recusaria a
+    # coexistência legítima das duas réguas e empurraria alguém a duplicar a função.
     corpo = fonte.split('"""')[-1].splitlines()
     codigo = [l for l in corpo if not l.strip().startswith("#")]
-    assert not any("parado_faixa_de" in l for l in codigo), \
-        "a régua de 15 dias não pode voltar ao capital parado da série"
+    for i, linha in enumerate(codigo):
+        if "parado_faixa_de" in linha:
+            trecho = " ".join(codigo[i:i + 4])
+            assert "valor_parado" not in trecho, \
+                f"a régua de 15 dias não pode alimentar o capital parado: {linha.strip()}"
+    # só as linhas que ACUMULAM (`+=`): o fecho do dia também toca `valor_parado` para arredondar,
+    # e ali não há (nem deve haver) guarda nenhuma
+    acumula = [(i, l) for i, l in enumerate(codigo) if 'd["valor_parado"] +=' in l]
+    assert acumula, "ninguém mais alimenta o capital parado?"
+    for i, linha in acumula:
+        assert "eh_parado" in " ".join(codigo[max(0, i - 3):i]), \
+            "o capital parado tem de continuar guardado pelo `core.eh_parado` (60+ dias)"
 
     d = date(2026, 8, 19)
     # 20 dias sem vender: ROTAÇÃO num distribuidor, não dead stock
@@ -433,6 +448,11 @@ def test_a_serie_da_evolucao_usa_a_MESMA_regua_do_cockpit():
     assert longo[0]["valor_parado"] == 1000.0
     assert core.status_parado_de(70, 10, None, 15) == "atencao"
     assert core.status_parado_de(20, 10, None, 15) is None
+    # ⚠️ E a prova COMPORTAMENTAL de que as duas réguas coexistem sem se contaminar: o item de 20
+    # dias é ROTAÇÃO para o capital parado (R$ 0) e É parado para a aba (1 SKU). Se um dia alguém
+    # unificar as duas, é esta linha que cai — antes de o número aparecer errado em duas telas.
+    assert curto[0]["n_parado_aba"] == 1
+    assert longo[0]["n_parado_aba"] == 1
 
 
 # ───────────────── orçamento: o erro achado no 1º teste no navegador ─────────────────

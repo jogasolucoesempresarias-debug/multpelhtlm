@@ -44,6 +44,7 @@ const PREF = 'multpel_estoque_prefs';
 
 const S = {
   meta:null, produtosAll:[], validade:null, planos:{}, orcamento:null, view:'cockpit',
+  nota:null, notaQS:null,          // cache da aba Nota do comprador (base própria)
   filiaisAll:[], filiaisSel:new Set(), base:'gerencial', vperiodo:'mes', cvDim:'comprador', abcLens:'venda',
   unidade:'atacado', unidadeNome:'Atacado', nomesFilial:{},
   compradorNome:'',
@@ -94,7 +95,7 @@ const sugCxN = p => { if(!(p.sugestao_cx>0)) return '—';
 const embCell = p => { const e=esc(p.embalagem_caixa||''); const cx=p.caixa||1;
   return cx>1 ? `${e||'cx'} <small class="muted">· ${int(cx)} un/cx</small>` : `<span class="muted">${e||'avulso'} · 1 un</span>`; };
 // navegação em 2 níveis: grupo → telas
-const NAV={visao:['cockpit','gerencial','meta_ruptura','evolucao'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento'],estoque:['ruptura','parado','validade','vencidos','ruptura_comprador','ocupacao'],analise:['desempenho','comprasvendas','fornecedores','leadtime','verbas','abcxyz','produtos','qualidade']};
+const NAV={visao:['cockpit','gerencial','meta_ruptura','nota','evolucao'],comprar:['reposicao','estoque_zero','plano'],pedidos:['orcamento'],estoque:['ruptura','parado','validade','vencidos','ruptura_comprador','ocupacao'],analise:['desempenho','comprasvendas','fornecedores','leadtime','verbas','abcxyz','produtos','qualidade']};
 // aba 'logistica' oculta a pedido do diretor (não usa p/ análise) — reversível: re-adicionar em pedidos
 const GROUP_OF=v=>Object.keys(NAV).find(g=>NAV[g].includes(v))||'visao';
 // filtro Curva (global, topo) = MULTI-seleção (ex.: ver ruptura de B+C juntas)
@@ -3673,6 +3674,7 @@ function render(){
   // e o unico trecho do render() que roda em toda aba — dai para baixo sao early-returns.
   // `typeof` porque o chat e opcional: se o arquivo nao carregar, o painel nao pode cair junto.
   if (typeof chatCheckFiltros === 'function') chatCheckFiltros();
+  if(S.view==='nota'){ renderNota(); savePrefs(); return; }        // base propria (/api/nota), nao usa filtered()
   if(S.view==='evolucao'){ renderEvolucao(); savePrefs(); return; }   // base propria (foto diaria), nao usa filtered()
   if(S.view==='orcamento'){ renderOrcamento(); savePrefs(); return; }
   if(S.view==='logistica'){ renderLogistica(); savePrefs(); return; }
@@ -3691,6 +3693,177 @@ function render(){
 // `cobMax`: ele é filtro LOCAL da aba Produtos e sobrevive à troca de aba de propósito (como
 // Abast./Margem), mas quem chega por um card novo tem de ver o recorte daquele card, não o velho.
 function goView(view,filt){ S.view=view; filt=filt||{}; S.cli.abast=filt.abast?(Array.isArray(filt.abast)?filt.abast:[filt.abast]):[]; S.cli.parado=filt.parado||''; S.cli.ruptura=filt.ruptura||''; S.cli.cobFaixa=filt.cobFaixa?(Array.isArray(filt.cobFaixa)?filt.cobFaixa:[filt.cobFaixa]):[]; S.cli.cobSub=''; S.cli.cobMax=(filt.cobMax!=null&&!isNaN(+filt.cobMax))?Math.max(0,+filt.cobMax):''; S.cli.desacel=!!filt.desacel;/* zera quando ausente: sem isto o drill seguinte herda a watchlist */ if(filt.curva!=null){S.cli.curva=Array.isArray(filt.curva)?filt.curva:[filt.curva];syncCurvaUI();} render(); }
+
+/* ───────── Nota do comprador (Metodologia de Performance) ─────────
+   Base PRÓPRIA (/api/nota agrega por comprador no servidor) — não usa filtered(), como a
+   Evolução e o Lead time. Por isso entra como early-return no render(). */
+
+// Cor da nota: verde/amarelo/vermelho vem do BACKEND (`nota.cor_da_nota`), não é decidido aqui.
+// Duas cópias da mesma faixa divergem no primeiro ajuste — foi assim que a aba Fornecedores
+// passou a ser calculada duas vezes.
+const NOTA_COR = { verde: C.green, amarelo: C.yellow, vermelho: C.red };
+// classes de badge que JÁ existem no estoque.css — nada de paleta nova
+const notaBadge = n => n == null ? '<span class="muted">—</span>'
+  : `<span class="badge ${n >= 8 ? 'b-ok' : (n >= 6 ? 'b-atencao' : 'b-critico')}">${n}</span>`;
+
+// Formatação do RESULTADO de cada indicador. Cada um tem unidade própria e a tela precisa dizer
+// qual — "36,1" sem o % ao lado de "128,1" sem o % faz o leitor comparar coisas diferentes.
+const notaValor = (k, v) => v == null ? '—' : dec(v, 1) + '%';
+
+async function renderNota() {
+  const el = $('#v-nota');
+  const qs = serverQS();
+  if (S.notaQS !== qs || !S.nota) {
+    el.innerHTML = `<div class="loader"><div class="spinner"></div></div>`;
+    try {
+      S.nota = await getJSON('/estoque/api/nota?' + qs);
+      S.notaQS = qs;
+    } catch (e) {
+      el.innerHTML = `<div class="empty">Nota do comprador indisponível: ${e.message}</div>`;
+      return;
+    }
+  }
+  const o = S.nota, linhas = o.compradores || [], regua = o.regua || {};
+  const ordem = regua.ordem || ['ruptura', 'cobertura', 'margem', 'parado', 'compras'];
+  const rot = regua.rotulos || {}, pesos = regua.pesos || {}, reguas = regua.reguas || {};
+
+  // ── aviso de meta pendente. ⚠️ Vem ANTES do ranking de propósito: sem ele o usuário vê uma
+  // lista sem notas e conclui que a aba está quebrada, em vez de que falta um cadastro.
+  const semMeta = o.sem_meta || [];
+  const aviso = semMeta.length ? `<div class="empty" style="text-align:left;margin-bottom:14px">
+      <b>${semMeta.length} comprador(es) sem meta de margem — a nota deles é PARCIAL.</b><br>
+      A parcial é calculada sobre os indicadores medidos e reescalada para 0-10, então ela é
+      comparável — mas responde a menos coisa (80% do peso, sem a Margem × Meta).
+      <b>Ao cadastrar a meta, a nota recalcula e muda</b>, para cima ou para baixo: a variação é
+      do que passou a ser medido, não do desempenho da pessoa.<br>
+      <span class="muted">Faltando: ${semMeta.map(esc).join(' · ')} — cadastre em
+      <a href="/admin" target="_blank">Administração → Metas de margem</a>.</span>
+    </div>` : '';
+
+  // ── ranking (cards). São 3 a 5 compradores: cartão lê melhor que tabela, e é onde a
+  // PRIORIDADE (item 8 do documento) fica visível sem precisar abrir nada.
+  const ranked = linhas.filter(l => l.posicao != null);
+  const cards = ranked.map(l => {
+    const cor = NOTA_COR[l.cor] || C.dim;
+    const pior = (l.itens || []).find(i => i.indicador === l.pior) || {};
+    return `<div class="alert" style="--c:${cor}" data-nota-cc="${l.codcomprador}">
+      <div class="a-top">
+        <div class="a-qt">${l.posicao}º</div>
+        <div class="a-valor" style="font-size:1.35rem">${dec(l.nota, 2)}${l.parcial
+          ? ` <span class="badge b-atencao" style="vertical-align:middle" title="Parcial: ${
+              l.peso_medido}% do peso">parcial</span>` : ''}</div>
+      </div>
+      <div class="a-label"><b>${esc(l.nome)}</b></div>
+      <div class="a-label" style="margin-top:6px">Prioridade: <b>${esc(rot[l.pior] || '—')}</b>
+        ${pior.nota != null ? `(nota ${pior.nota})` : ''}</div>
+      <div class="a-go">ver a evolução →</div></div>`;
+  }).join('');
+
+  // ── matriz comprador × indicadores
+  const th = ordem.map(k => `<th class="num">${esc(rot[k] || k)}
+      <small class="muted">${pesos[k]}%</small>${tipT(reguas[k] || '')}</th>`).join('');
+  const tr = linhas.map(l => {
+    const cel = ordem.map(k => {
+      const i = (l.itens || []).find(x => x.indicador === k) || {};
+      return `<td class="num">${notaValor(k, i.valor)} ${notaBadge(i.nota)}</td>`;
+    }).join('');
+    // ⚠️ A nota parcial SAI, mas nunca sem o selo: é ele que explica a mudança do dia em que a
+    // meta entra. Nota parcial sem marcação e nota completa lado a lado, com o mesmo peso visual,
+    // seria comparar réguas diferentes sem dizer.
+    const nf = l.nota == null
+      ? `<span class="badge b-atencao" title="Nenhum indicador medido">sem dado</span>`
+      : `<b style="color:${NOTA_COR[l.cor] || 'inherit'}">${dec(l.nota, 2)}</b>` + (l.parcial
+        ? ` <span class="badge b-atencao" title="Parcial: ${l.peso_medido}% do peso — falta ${
+            (l.faltando || []).map(k => rot[k] || k).join(', ')}. Recalcula quando a meta entrar."
+            >parcial</span>`
+        : '');
+    return `<tr data-nota-cc="${l.codcomprador}" style="cursor:pointer">
+      <td class="num">${l.posicao != null ? l.posicao + 'º' : '—'}</td>
+      <td>${esc(l.nome)}</td>
+      <td class="num">${int(l.n_skus)}</td>${cel}
+      <td class="num">${nf}</td></tr>`;
+  }).join('');
+
+  el.innerHTML = aviso
+    + (cards ? `<div class="alerts">${cards}</div>` : '')
+    + `<h2 class="section"><span>Matriz de indicadores${tipT(
+        'Resultado medido e a nota de cada indicador. Clique na linha para a evolução do comprador.')}</span></h2>`
+    + `<div class="tbl-wrap freeze2"><table><thead><tr>
+        <th class="num">#</th><th>Comprador</th><th class="num">SKUs</th>${th}
+        <th class="num">Nota final</th></tr></thead><tbody>${tr}</tbody></table></div>`
+    + `<div id="nota-drill"></div>`
+    // ⚠️ O rodapé declara as réguas. Numa tela que avalia PESSOAS isso não é enfeite: é o que
+    // permite contestar o número em vez de contestar a pessoa. E o selo da versão é o que permite
+    // explicar em dezembro a nota de setembro — a nota é recalculada, nunca gravada.
+    + `<div class="count-line" style="margin-top:12px">
+        ${ordem.map(k => `<b>${esc(rot[k] || k)}</b> (${pesos[k]}%): ${esc(reguas[k] || '')}`).join('<br>')}
+        <br>Compras apura o mês <b>${esc(o.mes_compras || '')}</b> (fechado).
+        Cobertura usa o mínimo de <b>${int(o.params && o.params.ideal_dias)}d</b> e produto novo
+        até <b>${int(o.params && o.params.novo_dias)}d</b>, do ⚙ Parâmetros.
+        · <b>Régua v${int(regua.versao)}</b></div>`;
+
+  // clique → evolução do comprador (cards e linhas da tabela, um fio só)
+  el.querySelectorAll('[data-nota-cc]').forEach(n =>
+    n.onclick = () => notaDrill(parseInt(n.dataset.notaCc, 10)));
+}
+
+// Evolução histórica dos indicadores de ESTOQUE de um comprador (item 7 do documento).
+// ⚠️ Só os três que saem da FOTO. Margem e compras são evento datado e não se fotografam — e a
+// nota final não é reconstruída dia a dia porque a meta de margem tem competência MENSAL: uma
+// linha diária fingiria uma precisão que a meta não tem. A tela escreve isso.
+async function notaDrill(cc) {
+  const box = $('#nota-drill');
+  if (!box) return;
+  const l = ((S.nota || {}).compradores || []).find(x => x.codcomprador === cc) || {};
+  box.innerHTML = `<h2 class="section"><span>Evolução — ${esc(l.nome || '')}</span></h2>
+    <div class="loader"><div class="spinner"></div></div>`;
+  let d;
+  try {
+    d = await getJSON(`/estoque/api/nota/serie?comprador_cod=${cc}&` + serverQS());
+  } catch (e) {
+    box.innerHTML = `<div class="empty">Evolução indisponível: ${e.message}</div>`;
+    return;
+  }
+  const dias = d.dias || [];
+  box.innerHTML = `<h2 class="section"><span>Evolução — ${esc(l.nome || '')}${tipT(
+      'Os três indicadores que saem da foto diária do estoque. Margem e compras não se fotografam.')}</span></h2>`
+    + (dias.length
+      ? `<div class="panel"><div class="chart-box" style="height:280px"><canvas id="ch-nota-serie"></canvas></div>
+         <div class="count-line">${dias.length} dia(s) de foto, de ${esc(dias[0].data)} a
+         ${esc(dias[dias.length - 1].data)}. Ruptura e Estoque parado: menor é melhor;
+         Cobertura A+B: maior é melhor. A nota final não é reconstruída por dia — a meta de
+         margem é mensal.</div></div>`
+      : `<div class="empty">Sem foto diária no período para este comprador.</div>`);
+  if (!dias.length) return;
+  const lbl = dias.map(x => dt(x.data));
+  chart('ch-nota-serie', {
+    type: 'line',
+    data: {
+      labels: lbl,
+      datasets: [
+        { label: 'Ruptura %', data: dias.map(x => x.ruptura), borderColor: C.red, tension: .25, pointRadius: dias.length > 1 ? 0 : 3 },
+        { label: 'Cobertura A+B %', data: dias.map(x => x.cobertura), borderColor: C.green, tension: .25, pointRadius: dias.length > 1 ? 0 : 3 },
+        { label: 'Estoque parado %', data: dias.map(x => x.parado), borderColor: C.yellow, tension: .25, pointRadius: dias.length > 1 ? 0 : 3 },
+      ],
+    },
+    options: {
+      // ⚠️ Sem isto o Chart.js trava em 2:1 e sobra vão à direita — medido aqui: canvas de 560px
+      // (= 280 de altura × 2) dentro de um box de 1202, com as 47 datas espremidas na metade
+      // esquerda do painel. Todos os gráficos do módulo desligam a proporção fixa; este nasceu
+      // sem e o defeito não dá erro nenhum, só um gráfico que parece ter menos história do que tem.
+      maintainAspectRatio: false,
+      plugins: { legend: { display: true } },
+      // ⚠️ pointRadius 0 numa série de UM dia não desenha nada (o Chart.js pinta segmentos ENTRE
+      // pontos) — foi o bug da 1ª foto em produção, gráficos em branco no primeiro dia de cada
+      // instância nova. Por isso o raio acima depende do tamanho da série.
+      scales: {
+        // a série passa de 90 pontos com o tempo; sem o autoSkip as datas viram uma mancha
+        x: { ticks: { maxTicksLimit: 15, autoSkip: true } },
+        y: { beginAtZero: true, ticks: { callback: v => v + '%' } },
+      },
+    },
+  });
+}
 
 /* ───────── boot ───────── */
 async function init(){

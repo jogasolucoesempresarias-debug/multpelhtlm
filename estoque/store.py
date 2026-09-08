@@ -223,6 +223,37 @@ CREATE TABLE IF NOT EXISTS estoque_pesquisa_preco (
 );
 CREATE INDEX IF NOT EXISTS ix_pesq_preco_prod
     ON estoque_pesquisa_preco (codprod, data_pesquisa DESC);
+
+-- Meta de margem por COMPRADOR e por COMPETÊNCIA — o indicador C da Nota do comprador.
+--
+-- ⚠️ **Por que não é uma coluna em `multpel_users`** (foi a proposta inicial, e a diferença
+-- importa): o campo "Comprador vinculado" mora no usuário, mas a meta é do COMPRADOR, que vem do
+-- `PCEMPR` via BI. Nem todo comprador tem login (medido em 07/09/2026: um dos códigos é uma conta
+-- de consumo, não uma pessoa, e outro só aparece na janela de 90 dias), dois usuários apontam para o
+-- mesmo comprador — e apagar um usuário levaria junto a meta, mudando a nota histórica dele em
+-- silêncio.
+--
+-- ⚠️ **Por que COMPETÊNCIA e não um valor único.** A nota é série histórica e é recalculada, nunca
+-- gravada (ver `nota.py`). Com um valor único, subir a meta do João de 17% para 18% em novembro
+-- DERRUBARIA a nota de setembro dele, e ninguém saberia dizer se ele piorou ou se a régua mudou.
+-- É o mesmo princípio que o Orçamento já respeita no `meta_ant`: "a base da meta do mês passado é
+-- a venda medida NAQUELE fechamento, não a de hoje". Espelha `multpel_metas` (ano, mes, codusur),
+-- que é o precedente do projeto para meta por pessoa por competência.
+--
+-- A meta é a ÚNICA peça da nota que não se recalcula do dado: é decisão, não medição. Se não for
+-- gravada com data, ela não existe em lugar nenhum além da memória de quem a definiu.
+CREATE TABLE IF NOT EXISTS estoque_meta_margem (
+    id             SERIAL PRIMARY KEY,
+    codcomprador   INTEGER NOT NULL,
+    ano            INTEGER NOT NULL,
+    mes            INTEGER NOT NULL,
+    margem_meta    NUMERIC(6,2) NOT NULL,
+    atualizado_em  TIMESTAMP DEFAULT now(),
+    atualizado_por INTEGER,
+    UNIQUE (codcomprador, ano, mes)
+);
+CREATE INDEX IF NOT EXISTS ix_meta_margem_comp
+    ON estoque_meta_margem (codcomprador, ano DESC, mes DESC);
 """
 
 _disponivel = None  # cache do teste de conexão (True/False)
@@ -612,3 +643,106 @@ def params_oficiais_set(valores, usuario_id=None):
         conn.close()
     _PARAMS_CACHE.update(em=None, val=None)      # próxima leitura busca do banco
     return valores
+
+
+# ───────────────── meta de margem por comprador (Nota do comprador) ─────────────────
+
+def _competencia(ano=None, mes=None):
+    """(ano, mes) validados. Sem argumento, o mes corrente do relogio.
+
+    Nao ancora no dado (`_hoje()`) de proposito: competencia e calendario contabil, nao posicao
+    de estoque. O mes de referencia da nota vem de quem chama.
+    """
+    import datetime as _dt
+    hoje = _dt.date.today()
+    # ⚠️ `is None`, não falsy: `mes=0` é ERRO (recusado abaixo), não "não informado". Com o teste
+    # de verdade o zero caía no mês CORRENTE em silêncio — a meta ia parar numa competência que
+    # ninguém pediu, e o único sintoma seria a nota de um mês qualquer mudar sozinha.
+    a = int(ano) if ano is not None else hoje.year
+    m = int(mes) if mes is not None else hoje.month
+    if not (1 <= m <= 12):
+        raise ValueError("mes fora de 1..12")
+    if not (2000 <= a <= 2999):
+        raise ValueError("ano implausivel")
+    return a, m
+
+
+def metas_margem(ano=None, mes=None, historico=False):
+    """Metas VIGENTES na competencia: {codcomprador: {"margem_meta", "ano", "mes",
+    "atualizado_em", "atualizado_por"}}.
+
+    ⚠️ **Vigente NAO e "a linha daquele mes"**: e a linha daquele mes OU a mais recente anterior.
+    Sem essa heranca, o diretor teria de recadastrar as tres metas todo dia 1o, e o mes que ele
+    esquecesse apagaria a nota de todo mundo (o indicador de margem sairia `None` e a nota
+    inteira deixaria de existir). Cadastrar de novo so e necessario quando a meta MUDA.
+
+    `historico=True` devolve todas as linhas, sem colapsar por comprador — e para a tela do Admin
+    mostrar desde quando cada meta vale.
+    """
+    if not ensure():
+        return {} if not historico else []
+    a, m = _competencia(ano, mes)
+    conn = get_db()
+    try:
+        with conn, conn.cursor() as cur:
+            if historico:
+                cur.execute(
+                    "SELECT codcomprador, ano, mes, margem_meta, atualizado_em, atualizado_por "
+                    "  FROM estoque_meta_margem ORDER BY codcomprador, ano DESC, mes DESC")
+                return [{"codcomprador": r[0], "ano": r[1], "mes": r[2],
+                         "margem_meta": float(r[3]),
+                         "atualizado_em": r[4].isoformat() if r[4] else None,
+                         "atualizado_por": r[5]} for r in cur.fetchall()]
+            # DISTINCT ON = a linha mais recente ATE a competencia pedida, por comprador.
+            cur.execute(
+                "SELECT DISTINCT ON (codcomprador) "
+                "       codcomprador, ano, mes, margem_meta, atualizado_em, atualizado_por "
+                "  FROM estoque_meta_margem "
+                " WHERE (ano * 100 + mes) <= %s "
+                " ORDER BY codcomprador, ano DESC, mes DESC", (a * 100 + m,))
+            return {r[0]: {"codcomprador": r[0], "ano": r[1], "mes": r[2],
+                           "margem_meta": float(r[3]),
+                           "atualizado_em": r[4].isoformat() if r[4] else None,
+                           "atualizado_por": r[5]} for r in cur.fetchall()}
+    finally:
+        conn.close()
+
+
+def meta_margem_set(codcomprador, margem_meta, ano=None, mes=None, usuario_id=None):
+    """Grava (ou apaga, com `margem_meta=None`) a meta de UM comprador numa competencia.
+
+    ⚠️ Grava linha em `multpel_log`, exatamente como `params_oficiais_set` — e aqui o motivo e
+    mais forte: isto e a regua que avalia uma PESSOA. Sem historico de quem mudou o que e quando,
+    uma nota contestada nao tem como ser explicada. Foi a falta desse rastro que deixou a
+    cobertura alvo andar 45 -> 40 -> 30 em cinco semanas sem registro em lugar nenhum.
+    """
+    import json
+    if not ensure():
+        return None
+    a, m = _competencia(ano, mes)
+    cc = int(codcomprador)
+    conn = get_db()
+    try:
+        with conn, conn.cursor() as cur:
+            if margem_meta is None or margem_meta == "":
+                cur.execute("DELETE FROM estoque_meta_margem "
+                            " WHERE codcomprador=%s AND ano=%s AND mes=%s", (cc, a, m))
+                valor = None
+            else:
+                valor = round(float(margem_meta), 2)
+                cur.execute(
+                    "INSERT INTO estoque_meta_margem "
+                    "       (codcomprador, ano, mes, margem_meta, atualizado_em, atualizado_por) "
+                    "VALUES (%s,%s,%s,%s,now(),%s) "
+                    "ON CONFLICT (codcomprador, ano, mes) DO UPDATE "
+                    "   SET margem_meta=EXCLUDED.margem_meta, atualizado_em=now(), "
+                    "       atualizado_por=EXCLUDED.atualizado_por",
+                    (cc, a, m, valor, usuario_id))
+            cur.execute(
+                "INSERT INTO multpel_log (usuario_id, rota, parametros) VALUES (%s,%s,%s)",
+                (usuario_id, "estoque:meta_margem",
+                 json.dumps({"codcomprador": cc, "ano": a, "mes": m, "margem_meta": valor},
+                            ensure_ascii=False)[:12000]))
+    finally:
+        conn.close()
+    return {"codcomprador": cc, "ano": a, "mes": m, "margem_meta": valor}

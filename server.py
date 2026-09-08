@@ -4929,6 +4929,79 @@ def api_admin_config_cobertura_set():
     return jsonify({'ok': True, 'limiar_pct': _cobertura_limiar_pct(), 'coberto_dias': _cobertura_coberto_dias()})
 
 
+# ── Metas de margem por comprador (Nota do comprador — módulo Compras) ──
+# ⚠️ Mora aqui e não no blueprint `/estoque` porque é tela do ADMIN, e todo o Admin já é
+# `@admin_required`. A régua oficial do ⚙ usa outra permissão (`pode_parametrizar`), de propósito:
+# aquilo é calibração de painel que o comprador simula na sessão; isto é a meta contra a qual uma
+# PESSOA é avaliada, e não pode sair da tela de administração.
+#
+# ⚠️ A meta é do COMPRADOR (cadastro do `PCEMPR`, via BI), não do usuário. Nem todo comprador tem
+# login — medido em 07/09/2026, um dos códigos é conta de consumo (não é pessoa) e outro só
+# aparece na janela de 90 dias. Por isso a lista da tela vem do `/api/_internal/compradores-map`,
+# que já existe, e não da tabela de usuários.
+
+@app.route('/api/admin/metas-margem', methods=['GET'])
+@admin_required
+def api_admin_metas_margem_get():
+    """Metas vigentes na competência pedida + o histórico completo (a tela mostra 'vigente desde').
+
+    Sem `ano`/`mes` responde pela competência do mês corrente. Falha em silêncio para vazio: a
+    seção do Admin não pode derrubar a página inteira se o Postgres do módulo estiver fora.
+    """
+    from estoque import store as est_store
+    ano = request.args.get('ano', type=int)
+    mes = request.args.get('mes', type=int)
+    try:
+        vigentes = est_store.metas_margem(ano, mes)
+        historico = est_store.metas_margem(historico=True)
+    except Exception as e:                               # noqa: BLE001
+        print(f'[metas-margem] indisponível: {e}')
+        vigentes, historico = {}, []
+    return jsonify({'ok': True,
+                    'vigentes': {str(k): v for k, v in (vigentes or {}).items()},
+                    'historico': historico})
+
+
+@app.route('/api/admin/metas-margem', methods=['PUT'])
+@admin_required
+def api_admin_metas_margem_set():
+    """Grava a meta de UM comprador numa competência. `margem_meta: null` apaga.
+
+    ⚠️ Meta 0 é RECUSADA, não aceita como "meta zero": ela viraria divisão por zero no
+    atingimento, e o comprador cairia na pior faixa por causa de um cadastro. Ausência tem de ser
+    ausência — quem quer tirar a meta manda `null`.
+    """
+    from estoque import store as est_store
+    data = request.get_json() or {}
+    try:
+        cc = int(data['codcomprador'])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'codcomprador inválido'}), 400
+    bruto = data.get('margem_meta')
+    valor = None
+    if bruto not in (None, ''):
+        try:
+            valor = float(str(bruto).replace(',', '.'))
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'margem_meta inválida'}), 400
+        # teto em 100: margem acima disso é erro de digitação (17 virando 170), e o efeito seria
+        # o comprador ficar eternamente em "atingiu 10% da meta" sem ninguém entender por quê
+        if not (0 < valor <= 100):
+            return jsonify({'ok': False,
+                            'error': 'margem_meta deve ser maior que 0 e até 100'}), 400
+    try:
+        est_store.meta_margem_set(cc, valor, data.get('ano'), data.get('mes'),
+                                  usuario_id=session.get('user_id'))
+    except ValueError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+    except Exception as e:                               # noqa: BLE001
+        return jsonify({'ok': False, 'error': f'não foi possível gravar: {e}'}), 500
+    ano = data.get('ano') if data.get('ano') is not None else None
+    mes = data.get('mes') if data.get('mes') is not None else None
+    vig = est_store.metas_margem(ano, mes)
+    return jsonify({'ok': True, 'vigentes': {str(k): v for k, v in (vig or {}).items()}})
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Vendedores + Cockpit individual (Onda C)
 # RBAC: aplicar_rbac_dax() nas queries + pode_acessar_vendedor() em endpoints com <codusur>.

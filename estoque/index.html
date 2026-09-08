@@ -125,6 +125,9 @@
   <div class="tab active" data-view="cockpit" data-group="visao">Cockpit</div>
   <div class="tab" data-view="gerencial" data-group="visao">Painel gerencial</div>
   <div class="tab" data-view="meta_ruptura" data-group="visao">Meta de ruptura</div>
+  <!-- Nota do comprador: visível a todo mundo com a área `compras`, como a aba
+       Desempenho comercial. Sem `hidden` e sem gate de role — decisão do usuário. -->
+  <div class="tab" data-view="nota" data-group="visao">Nota do comprador</div>
   <!-- Evolução: restrita ao ADM enquanto a série não amadurece. Escondida aqui e barrada
        no servidor (/api/evolucao) — esconder no front não é controle de acesso. -->
   <div class="tab" data-view="evolucao" data-group="visao" hidden>Evolução do estoque</div>
@@ -156,6 +159,7 @@
     <section class="view" id="v-gerencial"></section>
     <section class="view" id="v-meta_ruptura"></section>
     <section class="view" id="v-evolucao"></section>
+    <section class="view" id="v-nota"></section>
     <section class="view" id="v-ruptura"></section>
     <section class="view" id="v-estoque_zero"></section>
     <section class="view" id="v-reposicao"></section>

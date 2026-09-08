@@ -228,7 +228,8 @@ def test_rollup_de_versao_antiga_nao_e_servido(monkeypatch):
     # a entrada no `_ROLLUP_CHAVES`: foi assim que a watchlist "Em desaceleração" (08/2026)
     # fez este teste falhar — o gate funcionando, não uma regressão.
     completo = {**velho, "pct_ruptura": 0.0, "ruptura_curva": {},
-                "valor_desacel": 0.0, "n_desacel": 0, "n_rup_sem_prov": 0}
+                "valor_desacel": 0.0, "n_desacel": 0, "n_rup_sem_prov": 0,
+                "n_parado_aba": 0, "pct_parado_aba": 0.0}
     assert historico._rollup_atual(velho) is False, "faltando métrica nova"
     assert historico._rollup_atual(None) is False
     # ⚠️ CHAVES COMPLETAS NÃO BASTAM. Ao alinhar o capital parado com a régua do Cockpit (60+

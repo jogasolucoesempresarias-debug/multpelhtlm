@@ -24,6 +24,7 @@ from . import queries as Q
 from . import core
 from . import store
 from . import historico
+from . import nota
 # ⚠️ O Agente é OPCIONAL e o import dele é TOLERANTE A FALHA. Sem isto, um erro de import em
 # `ia.py`/`ia_pilares.py` derrubaria o BOOT do app inteiro — levando junto o Comercial e a
 # instância da Multpel, que sequer tem o recurso ligado. Código na imagem é código que pode
@@ -1971,6 +1972,216 @@ def _resumo_evolucao(dias, log):
         "faltam_para_util": max(0, 28 - n),
         "variacao": var, "direcao": _EVO_DIRECAO,
     }
+
+
+# ───────────────────────── Nota do comprador (Metodologia de Performance) ─────────────────────
+# Os cinco indicadores do documento do diretor (30/08/2026), por comprador, a partir do que o
+# módulo JÁ calcula. **Nenhuma query nova**: `_build_produtos()` entrega A, B e D numa chamada;
+# C sai do `_desempenho_data` (aba Desempenho comercial) e E do `core.orcamento_winthor` (aba
+# Orçamento). É o que garante que a nota não crie um segundo número para a mesma pergunta.
+
+CURVAS_NOTA_COBERTURA = ("A", "B")     # o documento restringe a cobertura às curvas A+B
+
+
+def _pct_nota(n, d, casas=1):
+    """Percentual ou None. ⚠️ Denominador zero devolve None (NÃO MEDIDO), nunca 0 — comprador com
+    carteira vazia não pode aparecer com ruptura 0% e nota 10."""
+    return core._round(n / d * 100, casas) if d else None
+
+
+def _indicadores_estoque(produtos, params):
+    """A, B e D por comprador, do snapshot. {cc: {...}} — uma passada só na lista de produtos.
+
+    ⚠️ As três réguas são as DECIDIDAS, e cada uma tem uma irmã que daria outro número:
+    · ruptura REAL (não `core._sem_providencia`, que é a régua da Meta de ruptura e é sempre menor);
+    · cobertura só em A+B, sobre os itens QUE GIRAM (é o denominador do Painel gerencial);
+    · parado na régua da ABA (`parado_faixa_de`, piso 15d) descontando `novo`/`recem_chegado`, e
+      contado em SKUs — por VALOR os três compradores dão 3,0/1,8/1,9% e o indicador morre.
+    """
+    limiar, meta_pct = core.regua_estoque_ideal(params)
+    novo_dias = int(params["novo_dias"])
+    por = {}
+    for p in produtos:
+        cc = p.get("codcomprador")
+        g = por.setdefault(cc, {"codcomprador": cc, "nome": p.get("comprador") or "Sem comprador",
+                                "n_skus": 0, "n_ruptura": 0, "n_parado": 0, "ab": []})
+        g["n_skus"] += 1
+        if (p.get("qtdisp") or 0) <= 0 and (p.get("giro_dia") or 0) > 0:
+            g["n_ruptura"] += 1
+        fx = core.parado_faixa_de(p.get("dias_sem_venda"), p.get("qtdisp"),
+                                  p.get("dias_sem_entrada"), novo_dias)
+        if fx and fx not in core._STATUS_FORA_DO_PARADO:
+            g["n_parado"] += 1
+        if (p.get("curva_abc") or "").upper() in CURVAS_NOTA_COBERTURA:
+            g["ab"].append(p)
+    saida = {}
+    for cc, g in por.items():
+        ideal = core.resumo_estoque_ideal(g.pop("ab"), limiar, meta_pct)
+        pct_ideal = ideal["ideal"]["pct"]
+        saida[cc] = {
+            "codcomprador": cc, "nome": g["nome"], "n_skus": g["n_skus"],
+            "ruptura": _pct_nota(g["n_ruptura"], g["n_skus"]),
+            # ⚠️ `pct` do resumo vem em FRAÇÃO (0-1) e a escala pontua em %. A conversão fica
+            # aqui, num lugar só — duas unidades circulando pelo módulo é como nota 10 vira 0,73.
+            "cobertura": core._round(pct_ideal * 100, 1) if pct_ideal is not None else None,
+            "parado": _pct_nota(g["n_parado"], g["n_skus"]),
+            "n_ruptura": g["n_ruptura"], "n_parado": g["n_parado"],
+            "cobertura_ab_n": ideal["ideal"]["n"] + ideal["em_risco"]["n"],
+        }
+    return saida
+
+
+def _mes_fechado(hoje):
+    """'YYYY-MM' do mês ANTERIOR ao de `hoje`.
+
+    ⚠️ O indicador de Compras mede o mês FECHADO, nunca o corrente. Medido em 07/09/2026 (dia 7):
+    o mês em curso dava 42,6% da meta para o João — nota 4 por "subcompra" quando ainda faltavam
+    23 dias de mês. Comparar realizado parcial contra meta cheia é errado por construção, e isto
+    é avaliação de pessoa. O mês fechado de agosto dá 128,1%, que é o número real dele."""
+    return core.mes_anterior(hoje.strftime("%Y-%m"))
+
+
+def _fim_do_mes(mes, teto=None):
+    """Último dia de 'YYYY-MM' (nunca além de `teto`). É a ÂNCORA da meta do mês fechado.
+
+    ⚠️ **Sem isto a nota de um mês fechado ESCORREGA todos os dias.** A meta do Orçamento é 65% da
+    venda líquida dos ÚLTIMOS 30 DIAS, e `_venda_comprador_30d` mede essa janela a partir do
+    `hoje` que recebe. Passando o `hoje` do relógio, o realizado de AGOSTO passa a ser comparado
+    com uma meta de setembro que anda sozinha — flagrado ao virar 07→08/09/2026: duas notas de
+    Compras subiram de 9 para 10 da noite para o dia, sem ninguém comprar nada.
+
+    A janela certa é a que existia no fechamento do mês avaliado. É o mesmo princípio que o
+    Orçamento já respeita no `meta_ant`: "a base da meta do mês passado é a venda de 30d medida
+    NAQUELE fechamento, não a de hoje — reconstruir com a venda atual produziria estouro contra
+    uma meta que nunca existiu".
+    """
+    import calendar
+    a, m = (int(x) for x in str(mes).split("-"))
+    fim = date(a, m, calendar.monthrange(a, m)[1])
+    return min(fim, teto) if teto else fim
+
+
+@bp.route("/api/nota")
+def api_nota():
+    """A Nota do comprador — ranking + matriz dos 5 indicadores.
+
+    Sem gate de role: a guarda do blueprint (login + área `compras`) já é a política decidida —
+    todo mundo que abre o módulo vê o ranking completo, como já acontece na aba Desempenho
+    comercial. **Não copiar o ADM-only da Evolução para cá.**
+    """
+    produtos, params, _ = _build_produtos()
+    hoje = _hoje()
+    ind = _indicadores_estoque(produtos, params)
+
+    # C — margem realizada (RCA). Janela do seletor de venda do topo, como a aba Desempenho.
+    margens = {}
+    try:
+        d = _desempenho_data(request.args.get("venda_periodo", "mes"), hoje, _filiais_venda())
+        margens = {l.get("codcomprador"): l.get("margem") for l in (d.get("compradores") or [])}
+    except Exception as e:                               # noqa: BLE001
+        print(f"[nota] desempenho indisponivel ({e}) - indicador de margem sai vazio")
+
+    # C — a META da competência (a única peça da nota que não se recalcula do dado)
+    mes_ref = _mes_fechado(hoje)
+    ano_m, mes_m = (int(x) for x in mes_ref.split("-"))
+    try:
+        metas = store.metas_margem(ano_m, mes_m)
+    except Exception as e:                               # noqa: BLE001
+        print(f"[nota] metas de margem indisponiveis ({e})")
+        metas = {}
+
+    # E — compras × meta no mês FECHADO.
+    # ⚠️ O `por_comprador` do Orçamento é chaveado por NOME (o agregado do core não carrega o
+    # código), então o join volta pelo `_compradores_map()` invertido. Nome que não casar deixa o
+    # indicador em None — o comprador aparece como "meta pendente" em vez de receber, calado, o
+    # orçamento de outra pessoa. Renomear alguém no PCEMPR quebra o join: é o preço de agregar
+    # por nome, e a degradação é visível de propósito.
+    compras = {}
+    try:
+        filiais = _filiais_estoque()
+        cab = _pedidos_data(filiais, hoje)["cab"]
+        # ⚠️ A meta é ancorada no FECHAMENTO do mês avaliado, não em `hoje` — ver `_fim_do_mes`.
+        # O `hoje` continua indo para o `orcamento_winthor` porque lá ele serve à logística dos
+        # pedidos (atraso, "chega em 7 dias"), que é sobre o presente.
+        venda_comp = _venda_comprador_30d(filiais, _filiais_venda(), _fim_do_mes(mes_ref, hoje))
+        orc = core.orcamento_winthor(cab, venda_comp, _compradores_map(),
+                                     _cadastro_fornecedores(), mes_ref, "TODOS",
+                                     pct=0.65, hoje=hoje,
+                                     cnpj_empresa=MULTPEL_EMPRESA["cnpj"])
+        por_nome = {str(v).strip().upper(): k for k, v in (_compradores_map() or {}).items()}
+        for linha in (orc.get("por_comprador") or []):
+            cc = por_nome.get(str(linha.get("comprador") or "").strip().upper())
+            m, c = core._n(linha.get("meta")), core._n(linha.get("comprado"))
+            if cc is not None and m > 0:
+                compras[int(cc)] = core._round(c / m * 100, 1)
+    except Exception as e:                               # noqa: BLE001
+        print(f"[nota] orcamento indisponivel ({e}) - indicador de compras sai vazio")
+
+    linhas = []
+    for cc, g in ind.items():
+        meta = (metas.get(cc) or {}).get("margem_meta")
+        margem_real = margens.get(cc)
+        # atingimento = realizado ÷ meta. Meta ausente OU zero ⇒ None: dividir por zero e chamar
+        # o resultado de "não atingiu" puniria o comprador por um cadastro que ninguém preencheu.
+        ating = (core._round(core._n(margem_real) / float(meta) * 100, 1)
+                 if (meta and margem_real is not None) else None)
+        r = nota.nota_final({"ruptura": g["ruptura"], "cobertura": g["cobertura"],
+                             "margem": ating, "parado": g["parado"],
+                             "compras": compras.get(cc)})
+        linhas.append({**g, **r, "margem_real": margem_real,
+                       "margem_meta": float(meta) if meta else None,
+                       "margem_ating": ating, "compras_pct": compras.get(cc)})
+    nota.ranking(linhas)
+    # quem tem posição vem primeiro, na ordem do ranking; os incompletos descem, por tamanho de
+    # carteira — a lista nunca fica sem ordem estável, senão a tela dança a cada F5
+    linhas.sort(key=lambda x: (x["posicao"] is None, x["posicao"] or 0, -(x["n_skus"] or 0)))
+
+    return jsonify({
+        "ok": True, "unidade": _unidade(), "hoje": hoje.isoformat(),
+        "mes_compras": mes_ref, "competencia": {"ano": ano_m, "mes": mes_m},
+        "compradores": linhas,
+        "sem_meta": [l["nome"] for l in linhas if "margem" in (l.get("faltando") or [])],
+        "regua": nota.escalas_publicas(),
+        "params": {"ideal_dias": params["ideal_dias"], "novo_dias": params["novo_dias"],
+                   "ideal_meta_pct": params["ideal_meta_pct"]},
+    })
+
+
+@bp.route("/api/nota/serie")
+def api_nota_serie():
+    """Série histórica dos indicadores de ESTOQUE de um comprador (item 7 do documento).
+
+    ⚠️ Só A, B e D viajam aqui — são os que saem da foto, e saem com o histórico INTEIRO porque
+    os ingredientes estão no grão do item desde o 1º dia. Margem e compras são EVENTO datado
+    (ficam no livro do RCA/Winthor) e não se fotografam.
+
+    ⚠️ A nota FINAL não é reconstruída dia a dia de propósito: a meta de margem tem competência
+    MENSAL, então uma nota diária fingiria uma precisão que a meta não tem.
+    """
+    cc = request.args.get("comprador_cod", type=int)
+    if cc is None:
+        return jsonify({"ok": False, "error": "comprador_cod obrigatorio"}), 400
+    if not store.ensure():
+        return jsonify({"ok": True, "dias": [], "indisponivel": "Postgres indisponivel"})
+    params = core.merge_params(request.args.to_dict(), base=_params_oficiais())
+    ini = core._parse_dt(request.args.get("ini")) if request.args.get("ini") else None
+    fim = core._parse_dt(request.args.get("fim")) if request.args.get("fim") else None
+    uid = _unidade()
+    dias = historico.serie(uid, ini, fim, comprador=cc, params=params)
+    # a cobertura da nota é A+B: consulta própria, com o MESMO recorte de comprador.
+    # ⚠️ Percentual de duas curvas não é a soma de dois percentuais — por isso o filtro por lista
+    # em vez de duas chamadas somadas.
+    ab = {d["data"]: d.get("pct_ideal")
+          for d in historico.serie(uid, ini, fim, comprador=cc, params=params,
+                                   curvas=list(CURVAS_NOTA_COBERTURA))}
+    saida = [{
+        "data": d["data"],
+        "ruptura": d.get("pct_ruptura"),
+        "parado": d.get("pct_parado_aba"),
+        "cobertura": (core._round(ab[d["data"]] * 100, 1)
+                      if ab.get(d["data"]) is not None else None),
+    } for d in dias]
+    return jsonify({"ok": True, "unidade": uid, "comprador_cod": cc, "dias": saida})
 
 
 @bp.route("/api/validade")

@@ -297,9 +297,10 @@ prontos, então capacidade não é o gargalo. Medido no BI real: **~US$ 0,0014 p
 
 ## 📦 Módulo Compras (features)
 
-Navegação em 2 níveis: **Visão · Comprar · Pedidos · Estoque · Análise** (22 abas) + a tela de
+Navegação em 2 níveis: **Visão · Comprar · Pedidos · Estoque · Análise** (23 abas) + a tela de
 CAMPO da pesquisa de preço, que fica **fora** do painel (`/estoque/pesquisa`). Foco no comprador.
-- **Visão** — Cockpit + Painel gerencial (5 pilares) + Meta de ruptura + **Evolução do estoque** (ADM).
+- **Visão** — Cockpit + Painel gerencial (5 pilares) + Meta de ruptura + **Nota do comprador** +
+  **Evolução do estoque** (ADM).
 - **Comprar** — Abastecimento (sugestão de compra), Estoque zerado, Plano reposição.
 - **Pedidos** — Orçamento (meta × realizado × pedidos), geração de pedido de compra (PDF + planilha Winthor).
 - **Estoque** — Cobertura, Parado, Validade (FEFO), Vencidos, Ruptura por comprador, Ocupação.
@@ -746,6 +747,107 @@ Nasceu de um pedido para **derrubar o piso do capital parado de 60 para 20 dias*
 operação**: os itens C que estouravam o teto do bloco passam a ter orçamento próprio. Comparar
 antes×depois uma vez, senão parece ganho operacional.
 
+**Aba Nota do comprador — a Metodologia de Performance do diretor** (09/2026, documento
+`METODOLOGIA PERFORMANCE.docx` de 30/08). Nota de 0 a 10 por comprador a partir de **5 indicadores
+com pesos fixos** — Ruptura 25% · Cobertura A+B 20% · Margem×Meta 20% · Estoque Parado 20% ·
+Compras×Meta 15% — com ranking, prioridade automática e evolução histórica. Escalas e pesos em
+**`estoque/nota.py`** (módulo PURO, como `rfm.py`/`cobertura.py`); o endpoint só monta os
+indicadores a partir do que o módulo já calcula: **nenhuma query nova**.
+
+- **A nota NUNCA é gravada** — é recalculada do ingrediente, como toda a aba Evolução. O documento
+  pede o contrário (item 7: "salvar a nota por data/período"), e o contrário é que está certo aqui:
+  gravar congelaria a régua do dia, e numa tela que avalia PESSOAS um degrau de definição é lido
+  como mudança de desempenho. A prova saiu de graça: quando a régua oficial mudou em 01/09, a série
+  de 46 dias se refez inteira sem buraco (limiar 45 → 59,0%; limiar 25 → 75,9% no mesmo comprador).
+- ⚠️ **A meta de margem é a ÚNICA peça que não se recalcula** — é decisão, não medição. Vive em
+  `estoque_meta_margem` **por comprador × COMPETÊNCIA** (espelha `multpel_metas`), e a competência
+  não é detalhe: com um valor único, subir a meta de alguém em novembro **derrubaria a nota de
+  setembro** e ninguém saberia dizer se ele piorou ou se a régua mudou. Mesmo princípio do
+  `meta_ant` do Orçamento. Cadastro em **Admin → Metas de margem**, com auditoria em `multpel_log`.
+- ⚠️ **A meta é do COMPRADOR, não do usuário.** Foi a proposta inicial pendurá-la na coluna do
+  usuário (ao lado de "Comprador vinculado") e ela quebra em quatro pontos: comprador sem login
+  fica sem meta (um dos códigos é conta de consumo, não pessoa; outro só aparece na janela de 90d),
+  dois usuários no mesmo comprador dão duas metas, e apagar o usuário apagaria a nota histórica
+  dele em silêncio. A lista do Admin sai do `/api/_internal/compradores-map`, então ninguém fica
+  inalcançável.
+- **Indicador faltando não impede a nota: ela sai PARCIAL e RENORMALIZADA** (decisão do usuário,
+  08/09/2026 — *"traz a nota mesmo sem a margem; quando inserir, recalcula"*). A 1ª versão recusava
+  emitir nota incompleta; a decisão reverteu isso, e a implementação divide pelo **peso
+  efetivamente medido**.
+  - ⚠️ **A renormalização é o que torna a decisão utilizável.** Sem dividir, quem não tem meta
+    perderia 20 p.p. de peso e teria teto de 8,0 — ficaria atrás por um cadastro, não pelo
+    trabalho. Com a divisão a nota fica na escala 0-10: medido em 08/09, o maior comprador sai **7,94** sobre
+    80% do peso e vai para **8,15** quando a meta entra.
+  - ⚠️ **O que a renormalização NÃO resolve, e a tela declara:** a nota MUDA no dia em que a meta
+    é cadastrada, para cima ou para baixo, e a variação é indistinguível de desempenho para quem
+    olha. Por isso `parcial` viaja na resposta e cada linha parcial leva o selo com o peso medido
+    e o indicador que falta. **Nota parcial sem o selo é o defeito**, não a nota parcial.
+  - ⚠️ Um ranking que mistura completa e parcial compara réguas diferentes. É aceito enquanto
+    declarado: um comprador de 1 SKU entra hoje com **60%** do peso (sem meta *nem* item A+B) ao lado de
+    quem tem 80%. Sem indicador NENHUM medido não há o que renormalizar e a nota sai `None`.
+- 🩹 **O 48,6% de "estoque parado" do documento não era estoque parado.** Nenhuma régua do módulo o
+  reproduzia (o máximo é 36,7%), e a resposta veio do diretor: era **"cobertura de estoque acima de
+  90 dias"**, que o Painel gerencial classifica como parado — medido em **48,8%** para o mesmo
+  comprador em 07/09. Ele corrigiu para *"a aba parado msm, sem contar os produtos até 20 dias /
+  novos"*. ⚠️ **A troca de régua vale 3 pontos** no maior comprador (nota 3 → 6) sem ninguém mexer na
+  operação — comparar antes×depois uma vez, senão parece ganho de gestão.
+- ⚠️ **O parado é CONTAGEM DE SKUs, não valor**, e é isso que faz o indicador existir. Medido em
+  07/09: por R$ os três compradores dão 3,0% / 1,8% / 1,9% — todos na faixa "até 20%", nota 10, e
+  20% do peso da nota vira constante. Por SKU dão **35,7% / 27,6% / 14,2%** e separam os três.
+  Também **não pode ser A+B**: a curva A+B tem **zero** itens parados hoje, então o indicador
+  seria constante zero para sempre.
+- ⚠️ **`n_parado_aba` é a TERCEIRA lente sobre o mesmo item no `agregar`**, ao lado do
+  `valor_parado` (régua do Cockpit, 60+, em R$) e do `valor_desacel` (watchlist). Ela é bloco
+  INDEPENDENTE, fora da cadeia `if/elif` das outras duas — nasceu no meio dela e o `elif` da
+  watchlist passou a pendurar-se no `if` novo, zerando a desaceleração sem erro nenhum (pego pelo
+  `test_a_serie_recalcula_o_passado_com_o_parametro_novo`). `_ROLLUP_VERSAO` → **6**.
+- **Compras segue TODAS as curvas** (o documento diz "A+B") e a tela declara. Restringir criaria um
+  segundo "comprado no mês" divergente da aba Orçamento — o defeito de dois universos que a aba
+  Verbas já teve duas vezes — e tiraria da nota justamente o comportamento que o indicador de
+  parado pune, já que **100% do estoque parado é curva C**.
+- ⚠️ **Compras mede o mês FECHADO, nunca o corrente.** No dia 7, o mês em curso dava 42,6% da meta
+  no maior comprador: nota 4 por "subcompra" com 23 dias de mês pela frente. Agosto fechado dá 128,1%.
+- 🩹 **E a meta desse mês fechado é ancorada no FECHAMENTO dele, não em `hoje`** (`_fim_do_mes`).
+  A meta do Orçamento é 65% da venda líquida dos **últimos 30 dias**, e `_venda_comprador_30d`
+  mede essa janela a partir do `hoje` que recebe — então, com o relógio, o realizado de AGOSTO
+  passava a ser comparado com uma meta de setembro que anda todo dia. Flagrado ao virar
+  **07 → 08/09/2026**: duas notas de Compras subiram de 9 para 10 da noite para o dia, sem
+  ninguém comprar nada (128,1% → 124,3% num comprador; 93,2% → 91,7% noutro). Numa avaliação de pessoa a
+  nota de um mês fechado tem de ser a mesma em qualquer dia em que se olhe para ela. Mesmo
+  princípio do `meta_ant` do Orçamento. Gate: `test_a_meta_do_mes_fechado_e_ancorada_no_FECHAMENTO`.
+- ⚠️ **A ruptura é a REAL** (item zerado com giro, tenha ou não pedido), não a da Meta de ruptura —
+  7,1% contra 4,2% para o mesmo comprador, nota 9 contra 10.
+- ⚠️ **O join do Orçamento volta por NOME**: o `por_comprador` do `core` não carrega o
+  `codcomprador`. Nome que não casa deixa o indicador em `None` (o comprador vira "meta pendente")
+  em vez de receber, calado, o orçamento de outra pessoa. Renomear alguém no `PCEMPR` quebra o join.
+- **Visível a todo mundo com a área `compras`** — como a aba Desempenho comercial já é. ⚠️ **NÃO
+  copiar o gate ADM-only da Evolução**, que fica no endpoint vizinho: o sintoma seria a aba não
+  abrir para os compradores, sem mensagem. Gate: `tests/test_nota_acesso.py`.
+- **A prioridade (item 8) é um `min()`, não a IA** — o Agente é módulo opcional e está desligado na
+  Multpel; prioridade que só existe com IA ligada não é prioridade.
+- O painel **Admin → Metas de margem** nasce **recolhido** (o Admin é sobre usuários; cadastrar
+  meta é episódico), mas o cabeçalho fechado mostra *"N de M sem meta"* — recolhido não pode virar
+  escondido. ⚠️ O carregamento **não** é gateado pelo estado recolhido: o resumo do cabeçalho e a
+  linha somente-leitura do cadastro de usuário leem o mesmo `_metasVigentes`.
+- 🚧 **Fora do catálogo de export e de e-mail** por ora, como a Evolução (`relatorios.py` só admite
+  tela em formato de tabela). A faixa de cor da nota (≥8 verde · 6–7,9 amarelo · <6 vermelho) não
+  está no documento — é nossa, e vive em `nota.py` para ser calibrada.
+- 🚧 **Sem seletor de competência por ora, e isso é decisão medida.** Os 5 indicadores SÃO
+  reconstruíveis por mês (os 3 de estoque saem da foto; margem e compras são evento datado), mas
+  a foto em produção começa em **~19/08/2026**: competência anterior a setembro sairia com meia
+  medição, e — com a renormalização acima — apareceria na mesma escala 0-10 parecendo comparável.
+  Um "6,8 de maio" que só mede margem e compras é pior que não ter maio. Quando entrar, o seletor
+  lista **só as competências com foto** (de `estoque_foto_log`), usa a **média dos dias
+  fotografados** do mês e declara a cobertura ("23 de 30 dias").
+  ⚠️ Ele também força uma decisão pendente: **a aba hoje mistura três janelas** — estoque do
+  snapshot AO VIVO, margem do seletor "Venda" do topo (default: mês corrente) e compras do mês
+  fechado. Com um mês de dados isso passa despercebido; com histórico, vira o defeito de dois
+  números certos que não conversam.
+- Gates: `tests/test_nota_escalas.py` (inclui o exemplo do documento reproduzindo **7,50** linha a
+  linha e a nota parcial renormalizada), `test_nota_indicadores.py` (as réguas + a âncora do mês
+  fechado), `test_meta_margem.py` (competência + auditoria), `test_nota_acesso.py`.
+  `NOTA_VERSAO` está em **2** — subiu quando a nota parcial passou a ser emitida.
+
 ### Metodologia de dados do Compras (v3) — o essencial
 
 Consome no dataset **Estoque**: **PCPEDIDO/PCITEM** (pedido real), **PCEMBALAGEM** (caixa/cubagem),
@@ -1050,7 +1152,7 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 │   ├── ia_conferencia.py           #   🆕 Agente de IA: confere número CITADO × contexto (puro)
 │   ├── emails.py                   #   🆕 gera anexos PDF+XLSX p/ o email de Compras
 │   ├── pesquisa.html               #   🆕 tela de CAMPO (mobile, autocontida) — NÃO é aba
-│   └── index.html                  #   SPA do módulo (22 abas)
+│   └── index.html                  #   SPA do módulo (23 abas)
 ├── portal.html                     # 🆕 tela de escolha de área (+ Administração como faixa)
 ├── index/carteira/vendedores/…html # Páginas do Comercial
 ├── admin.html                      # CRUD + acesso por área + comprador + relatórios de Compras
@@ -1327,6 +1429,9 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 - **Compras (blueprint):** tudo sob `/estoque/...` — `/estoque/`, `/estoque/api/snapshot`,
   `/estoque/api/filtros`, `/estoque/api/orcamento`, `/estoque/api/export/<view>.{csv,xlsx,pdf}`,
   `/estoque/api/pedidos`, `/estoque/api/fornecedores_extra` (ciclo + verba, lazy), etc.
+- **Nota do comprador:** `GET /estoque/api/nota` (ranking + matriz dos 5 indicadores + a régua
+  serializada) · `GET /estoque/api/nota/serie?comprador_cod=` (só os 3 indicadores que saem da
+  foto) · `GET|PUT /api/admin/metas-margem` (no app principal, `@admin_required`).
 - **Agente de IA (Compras):** `GET /estoque/api/ia/status` (os 3 estados; **200 sempre**, é a
   sonda do boot) · `GET /estoque/api/ia/contexto` (contexto + sugestões — é aqui que se AUDITA o
   que o modelo recebeu) · `POST /estoque/api/ia/chat` (SSE).

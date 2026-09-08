@@ -159,6 +159,40 @@
     </div>
   </div>
 
+  <!-- Metas de margem por comprador — o indicador C da aba "Nota do comprador".
+       ⚠️ Fica FORA do cadastro de usuário de propósito: a meta é do COMPRADOR (cadastro do ERP),
+       não do login. Nem todo comprador tem usuário, dois usuários podem apontar para o mesmo
+       comprador, e apagar um usuário levaria junto a meta — mudando a nota histórica dele em
+       silêncio. A lista abaixo vem do mapa de compradores do BI, então ninguém fica inalcançável. -->
+  <div class="panel" id="panel_metas_margem" style="margin-bottom:16px; display:none;">
+    <!-- Recolhido por padrão: são 8 compradores e a tela do Admin é sobre USUÁRIOS. O cadastro de
+         meta é episódico (só quando a meta muda), então ele não pode empurrar a lista de usuários
+         para fora da primeira dobra todo dia. -->
+    <div class="toolbar" id="mm_header" onclick="toggleMetasMargem()"
+         style="cursor:pointer; user-select:none;" title="Clique para abrir/fechar">
+      <h2 style="margin:0;"><span id="mm_chevron">▸</span> Metas de margem (Gestão de Estoque)</h2>
+      <span class="grow"></span>
+      <span id="mm_resumo" style="font-size:0.78rem;color:var(--text-dim);"></span>
+    </div>
+    <div id="mm_corpo" hidden>
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:8px 2px 2px;">
+        <label style="font-size:0.78rem;color:var(--text-dim);display:flex;align-items:center;gap:6px;">
+          Competência
+          <input type="month" id="mm_competencia" onchange="loadMetasMargem()" style="width:160px;">
+        </label>
+      </div>
+      <div style="font-size:0.78rem;color:var(--text-dim);padding:6px 2px 10px;">
+        Meta de margem contra a qual cada comprador é avaliado (indicador de 20% da nota).
+        Sem meta a nota do comprador ainda sai, <b>parcial</b>, reescalada sobre os indicadores
+        medidos — e <b>recalcula quando a meta for cadastrada</b>, para cima ou para baixo.
+        Alterar a meta de uma competência <b>não</b> mexe nas anteriores: a nota de um mês
+        passado continua sendo a que foi calculada com a meta daquele mês.
+      </div>
+      <table id="tbl_metas_margem"></table>
+      <span id="mmMsg" style="font-size:0.8rem;color:var(--text-dim);"></span>
+    </div>
+  </div>
+
   <div class="panel">
     <div class="toolbar">
       <h2 style="margin:0;">Usuários cadastrados</h2>
@@ -255,8 +289,13 @@
         <label>Comprador vinculado
           <span style="color:var(--text-dim);font-size:0.72rem;font-weight:400;">— filtro inicial, não trava</span>
         </label>
-        <input list="dl_compradores" id="f_codcomprador" placeholder="Digite nome ou matrícula">
+        <input list="dl_compradores" id="f_codcomprador" placeholder="Digite nome ou matrícula"
+               onchange="pintarMetaDoComprador()" onblur="pintarMetaDoComprador()">
         <datalist id="dl_compradores"></datalist>
+        <!-- Só leitura: a meta se edita no painel "Metas de margem" lá em cima. A informação
+             aparece aqui porque é onde se pensa nela, mas duas fontes da mesma verdade divergem
+             no primeiro ajuste. -->
+        <div id="ff_meta_margem_info" style="font-size:0.72rem;color:var(--text-dim);margin-top:5px;"></div>
       </div>
       <div class="ff full">
         <label>Senha (deixe vazio pra gerar automática)</label>
@@ -940,12 +979,137 @@ async function salvarConfigCobertura() {
   } catch (e) { msg.textContent = '✗ ' + (e.message || e); }
 }
 
+// ── Metas de margem por comprador (aba "Nota do comprador") ──────────────────────────────────
+let _metasVigentes = {};      // {codcomprador: {margem_meta, ano, mes, ...}}
+let _metasHistorico = [];
+
+function _mmCompetencia() {
+  const v = (document.getElementById('mm_competencia') || {}).value || '';
+  const [a, m] = v.split('-');
+  return { ano: parseInt(a, 10) || null, mes: parseInt(m, 10) || null };
+}
+
+async function loadMetasMargem() {
+  // ⚠️ Carrega mesmo com o corpo RECOLHIDO: o resumo do cabeçalho e a linha somente-leitura do
+  // cadastro de usuário leem `_metasVigentes`. Gatear no estado visual deixaria as duas vazias.
+  const panel = document.getElementById('panel_metas_margem');
+  if (!panel || panel.style.display === 'none') return;
+  const c = _mmCompetencia();
+  const qs = (c.ano && c.mes) ? `?ano=${c.ano}&mes=${c.mes}` : '';
+  try {
+    const d = await (await fetch('/api/admin/metas-margem' + qs, { credentials: 'same-origin' })).json();
+    if (!d.ok) return;
+    _metasVigentes = d.vigentes || {};
+    _metasHistorico = d.historico || [];
+  } catch (e) { _metasVigentes = {}; _metasHistorico = []; }
+  pintarMetasMargem();
+  pintarResumoMetas();
+  pintarMetaDoComprador();
+}
+
+function toggleMetasMargem() {
+  const corpo = document.getElementById('mm_corpo');
+  const chev = document.getElementById('mm_chevron');
+  if (!corpo) return;
+  corpo.hidden = !corpo.hidden;
+  chev.textContent = corpo.hidden ? '\u25B8' : '\u25BE';
+}
+
+// Resumo no cabeçalho fechado: sem ele, "recolhido" viraria "escondido" — o admin não teria como
+// saber que falta cadastrar meta sem abrir o painel para conferir.
+function pintarResumoMetas() {
+  const el = document.getElementById('mm_resumo');
+  if (!el) return;
+  const total = Object.keys(_compradoresMap || {}).length;
+  const comMeta = Object.keys(_metasVigentes || {}).length;
+  if (!total) { el.textContent = ''; return; }
+  const faltam = total - comMeta;
+  el.innerHTML = faltam > 0
+    ? `<span style="color:var(--yellow, #eab308)">${faltam} de ${total} sem meta</span> — nota sai parcial`
+    : `${total} comprador(es) com meta definida`;
+}
+
+function pintarMetasMargem() {
+  const tb = document.getElementById('tbl_metas_margem');
+  if (!tb) return;
+  const compradores = Object.entries(_compradoresMap || {})
+    .sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'pt-BR'));
+  if (!compradores.length) {
+    tb.innerHTML = '<tr><td style="color:var(--text-dim);">Lista de compradores indisponível.</td></tr>';
+    return;
+  }
+  const linhas = compradores.map(([cod, nome]) => {
+    const v = _metasVigentes[String(cod)];
+    const meta = v ? Number(v.margem_meta) : null;
+    // "vigente desde" mostra a competência da linha que está valendo — que pode ser ANTERIOR à
+    // consultada (a meta é herdada até alguém mudá-la). Sem isto ninguém entende por que a meta
+    // aparece num mês em que não foi digitada.
+    const desde = v ? `${String(v.mes).padStart(2, '0')}/${v.ano}` : '—';
+    const quando = v && v.atualizado_em ? new Date(v.atualizado_em).toLocaleDateString('pt-BR') : '—';
+    return `<tr>
+      <td>${nome} <span style="color:var(--text-dim);font-size:0.72rem;">(${cod})</span></td>
+      <td style="width:150px;">
+        <input type="number" step="0.1" min="0" max="100" style="width:100px;"
+               id="mm_v_${cod}" value="${meta !== null ? meta : ''}" placeholder="—">
+      </td>
+      <td style="width:120px;color:var(--text-dim);">${desde}</td>
+      <td style="width:120px;color:var(--text-dim);">${quando}</td>
+      <td style="width:190px;">
+        <button class="btn" onclick="salvarMetaMargem('${cod}')">Salvar</button>
+        <button class="btn" onclick="salvarMetaMargem('${cod}', true)"
+                title="Remove a meta desta competência — o comprador volta a ficar sem nota final">Limpar</button>
+      </td></tr>`;
+  }).join('');
+  tb.innerHTML = `<thead><tr><th>Comprador</th><th>Meta de margem (%)</th><th>Vigente desde</th>
+                  <th>Atualizado</th><th></th></tr></thead><tbody>${linhas}</tbody>`;
+}
+
+async function salvarMetaMargem(cod, limpar) {
+  const msg = document.getElementById('mmMsg');
+  const c = _mmCompetencia();
+  const el = document.getElementById('mm_v_' + cod);
+  const bruto = limpar ? null : (el ? el.value : '');
+  msg.textContent = 'Salvando...';
+  try {
+    const r = await fetch('/api/admin/metas-margem', {
+      method: 'PUT', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ codcomprador: parseInt(cod, 10), margem_meta: bruto === '' ? null : bruto,
+                             ano: c.ano, mes: c.mes }),
+    });
+    const d = await r.json();
+    if (!d.ok) { msg.textContent = '✗ ' + (d.error || 'erro'); return; }
+    msg.textContent = limpar ? '✓ Meta removida.' : '✓ Meta salva.';
+    await loadMetasMargem();
+  } catch (e) { msg.textContent = '✗ ' + (e.message || e); }
+}
+
+function pintarMetaDoComprador() {
+  const el = document.getElementById('ff_meta_margem_info');
+  if (!el) return;
+  const cod = extrairCodigo((document.getElementById('f_codcomprador') || {}).value || '');
+  if (!cod) { el.textContent = ''; return; }
+  const v = _metasVigentes[String(cod)];
+  el.innerHTML = v
+    ? `Meta de margem: <b>${Number(v.margem_meta).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</b>
+       · definida em ${String(v.mes).padStart(2, '0')}/${v.ano}`
+    : 'Meta de margem: <b>— não definida</b> (defina no painel “Metas de margem”, no topo desta página)';
+}
+
 (async () => {
   await loadMe();
   await loadMaps();
   await carregarApoioFusao();   // módulos ativos, catálogo de relatórios e compradores
   await loadUsers();
   await loadConfigCobertura();
+  // o painel só existe onde a empresa comprou o módulo Compras — mesma regra do restante da fusão
+  const pm = document.getElementById('panel_metas_margem');
+  if (pm && (_modulos || []).includes('compras')) {
+    pm.style.display = '';
+    const mc = document.getElementById('mm_competencia');
+    if (mc && !mc.value) { const h = new Date(); mc.value = `${h.getFullYear()}-${String(h.getMonth() + 1).padStart(2, '0')}`; }
+    await loadMetasMargem();
+  }
 })();
 </script>
 </body>

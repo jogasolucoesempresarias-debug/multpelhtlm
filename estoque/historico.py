@@ -395,15 +395,24 @@ _SQL_CRU = """
        AND (%s::int  IS NULL OR codcomprador=%s)
        AND (%s::int  IS NULL OR codfornec=%s)
        AND (%s::text IS NULL OR curva_abc=%s)
+       -- ⚠️ LISTA de curvas, ao lado do filtro de curva única — não no lugar dele. A Nota do
+       -- comprador mede cobertura em A+B (duas curvas), e percentual de duas curvas NÃO é a soma
+       -- de dois percentuais: teria de ser recomposto pelos denominadores, que é exatamente o
+       -- tipo de conta refeita fora do motor que este módulo já pagou caro (o YoY por fornecedor
+       -- somando produtos da tela). Uma consulta só, com o universo certo.
+       AND (%s::text[] IS NULL OR curva_abc = ANY(%s))
        AND (%s::text IS NULL OR xyz=%s)
 """
 
 
 def _linhas_cruas(unidade, ini=None, fim=None, comprador=None, fornecedor=None, dia=None,
-                  curva=None, xyz=None):
+                  curva=None, xyz=None, curvas=None):
     sql = _SQL_CRU + (" AND data=%s" if dia else "")
+    # lista vazia é ausência de filtro, não "nenhuma curva": `curvas=[]` devolveria zero linhas e
+    # a aba abriria vazia sem erro nenhum
+    cvs = list(curvas) if curvas else None
     args = [unidade, ini, ini, fim, fim, comprador, comprador, fornecedor, fornecedor,
-            curva, curva, xyz, xyz]
+            curva, curva, cvs, cvs, xyz, xyz]
     if dia:
         args.append(dia)
     conn = store.get_db()
@@ -467,7 +476,7 @@ def invalidar_rollup(unidade=None):
 # servi-lo faria a aba mostrar "—" numa métrica que o cru sabe calcular.
 _ROLLUP_CHAVES = ("valor_estoque", "valor_parado", "n_ruptura", "pct_ideal", "faixas",
                   "pct_ruptura", "ruptura_curva", "valor_desacel", "n_desacel",
-                  "n_rup_sem_prov")
+                  "n_rup_sem_prov", "n_parado_aba", "pct_parado_aba")
 
 # ⚠️ VERSÃO DA SEMÂNTICA. A checagem por chaves só pega métrica NOVA; ela não vê quando uma
 # métrica existente muda de significado — e foi exatamente o que aconteceu ao alinhar o
@@ -486,7 +495,11 @@ _ROLLUP_CHAVES = ("valor_estoque", "valor_parado", "n_ruptura", "pct_ideal", "fa
 #       `capital_parado` da série cai ~25%): é exatamente o caso que a checagem por chaves NÃO
 #       pega, e o motivo de o selo `_v` existir. Sem subir aqui, a aba serviria o agregado velho
 #       em silêncio até o TTL — e a série mostraria um DEGRAU onde não houve operação.
-_ROLLUP_VERSAO = 5
+#   6 → 09/2026: `n_parado_aba`/`pct_parado_aba` (régua da ABA Estoque parado, em contagem de
+#       SKUs) — o indicador D da Nota do comprador. Aqui as chaves são NOVAS, então a checagem
+#       por chaves já pegaria; o selo sobe assim mesmo porque depender de qual dos dois
+#       mecanismos salvou foi exatamente como o `valor_parado` passou despercebido.
+_ROLLUP_VERSAO = 6
 
 
 def _rollup_atual(payload):
@@ -522,7 +535,7 @@ def _serie_rollup(unidade, ini, fim):
 
 
 def serie(unidade, ini=None, fim=None, comprador=None, fornecedor=None, params=None,
-          curva=None, xyz=None):
+          curva=None, xyz=None, curvas=None):
     """As 4 séries por dia, DERIVADAS da foto crua — nunca de um agregado gravado como verdade.
 
     Caminho rápido: sem filtro e com a régua padrão, lê o rollup (que é cache da MESMA função
@@ -539,13 +552,13 @@ def serie(unidade, ini=None, fim=None, comprador=None, fornecedor=None, params=N
     Contrapeso: `n_ruptura` viaja junto com o valor de estoque de propósito. Estoque caindo,
     sozinho, não é boa notícia — pode ser desabastecimento.
     """
-    sem_recorte = not any((comprador, fornecedor, curva, xyz))
+    sem_recorte = not any((comprador, fornecedor, curva, xyz, curvas))
     if sem_recorte and _regua_padrao(params):
         pronto = _serie_rollup(unidade, ini, fim)
         if pronto is not None:
             return _com_estado(pronto, unidade, ini, fim, sem_recorte)
     dias = agregar(_linhas_cruas(unidade, ini, fim, comprador, fornecedor,
-                                 curva=curva, xyz=xyz), params)
+                                 curva=curva, xyz=xyz, curvas=curvas), params)
     return _com_estado(dias, unidade, ini, fim, sem_recorte)
 
 
@@ -682,7 +695,7 @@ def agregar(linhas, params=None):
         d = por_dia.setdefault(dia, {"data": dia.isoformat(), "n_skus": 0, "valor_estoque": 0.0,
                                      "valor_parado": 0.0, "n_ruptura": 0,
                                      "valor_desacel": 0.0, "n_desacel": 0,
-                                     "n_rup_sem_prov": 0,
+                                     "n_rup_sem_prov": 0, "n_parado_aba": 0,
                                      "faixas": {n: 0.0 for n, _ in core._FAIXAS_COB_LIM},
                                      "ideal_n": 0, "risco_n": 0, "semgiro_n": 0,
                                      "_rup_cv": {c: 0 for c in CURVAS},
@@ -736,6 +749,27 @@ def agregar(linhas, params=None):
                                     "valor": valor}, p):
             d["valor_desacel"] += valor
             d["n_desacel"] += 1
+        # ⚠️ **Bloco INDEPENDENTE, fora da cadeia if/elif acima — e isto é load-bearing.** Ele
+        # nasceu no meio dela e o `elif` da watchlist passou a pendurar-se neste `if` em vez do
+        # `eh_parado`: item em desaceleração deixou de ser contado, sem erro nenhum (pego pelo
+        # `test_a_serie_recalcula_o_passado_com_o_parametro_novo`). São TRÊS lentes sobre o mesmo
+        # item e elas se sobrepõem de propósito:
+        #   · `valor_parado`   — régua do Cockpit (60+ dias), em VALOR;
+        #   · `valor_desacel`  — watchlist, disjunta do parado por construção;
+        #   · `n_parado_aba`   — régua da ABA Estoque parado (piso 15 dias), em CONTAGEM DE SKUs.
+        #
+        # A terceira é a que a Nota do comprador pontua, por decisão do diretor em 07/09/2026
+        # ("vc deve considerar de fato a aba parado msm, sem contar os produtos até 20 dias /
+        # novos"). Não dá para reusar o `valor_parado`: medido no BI no mesmo dia, o parado POR
+        # VALOR na régua de 60+ dá 3,0% / 1,8% / 1,9% para os três compradores — todos na mesma
+        # faixa da escala, indicador morto, 20% do peso da nota virando constante. Por CONTAGEM
+        # DE SKUs na régua da aba dá 35,7% / 27,6% / 14,2%, que separa os três.
+        #
+        # Sai com histórico retroativo de graça: `dtultsaida`/`dtultent`/`qtdisp` estão no grão do
+        # item desde o 1º dia — é o terceiro pagamento da decisão de guardar o INGREDIENTE.
+        fx_par = core.parado_faixa_de(dsv, qtdisp, dse, novo_dias)
+        if fx_par and fx_par not in core._STATUS_FORA_DO_PARADO:
+            d["n_parado_aba"] += 1
         # ⚠️ DUAS convenções, e as duas espelham a tela de propósito:
         # · as FAIXAS seguem o Painel gerencial (`core.resumo_cobertura`), onde giro<=0 vira
         #   cobertura 9999 e cai no 121+. Assim Σ faixas == valor de estoque, que é o que o
@@ -770,5 +804,10 @@ def agregar(linhas, params=None):
                               for c in CURVAS}
         d["pct_parado"] = (core._round(d["valor_parado"] / d["valor_estoque"] * 100, 1)
                            if d["valor_estoque"] else None)
+        # ⚠️ Denominador é o TOTAL de SKUs do recorte, não os "parados possíveis" — é a mesma
+        # base do `pct_ruptura`, e é o que a Nota do comprador pontua. Trocar por "SKUs com
+        # estoque" mudaria o número sem mudar a operação.
+        d["pct_parado_aba"] = (core._round(d["n_parado_aba"] / d["n_skus"] * 100, 1)
+                               if d["n_skus"] else None)
         saida.append(d)
     return saida
