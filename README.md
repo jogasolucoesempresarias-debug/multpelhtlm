@@ -826,6 +826,42 @@ indicadores a partir do que o módulo já calcula: **nenhuma query nova**.
   INDEPENDENTE, fora da cadeia `if/elif` das outras duas — nasceu no meio dela e o `elif` da
   watchlist passou a pendurar-se no `if` novo, zerando a desaceleração sem erro nenhum (pego pelo
   `test_a_serie_recalcula_o_passado_com_o_parametro_novo`). `_ROLLUP_VERSAO` → **6**.
+- 🩹 **A escala de Compras virou ASSIMÉTRICA — o estouro dói ~1,4x mais que a falta** (09/2026,
+  pedido do João Victor: *"punir mais o estouro que a falta de compra"*). `NOTA_VERSAO` → **3**.
+  - **A escala simétrica estava mal calibrada e ninguém tinha medido.** Em 60 comprador-meses
+    (jan/2025–ago/2026), **53% caíam no piso (nota 4)** — 15% do peso da nota era quase constante,
+    o mesmo defeito que fez o "parado por valor" ser recusado. A distribuição real de atingimento
+    é p25 **69%** · mediana **89%** · p75 **111%**, larga demais para bandas de ±5 p.p.
+  - **A assimetria vem da FASE, não do gosto.** Perguntado se o 65% do Orçamento é meta de
+    reposição ou de enxugamento, o diretor respondeu *"nesse momento é calibrar o estoque"*. Sob
+    calibração a meta é **teto, não alvo**: ficar abaixo não desfaz a política, estourar desfaz.
+    ⚠️ Se a empresa voltar a repor, isto tem de voltar a ser simétrico.
+  - ⚠️ **Por que ~1,4x e não 2x** (a leitura literal de "punir mais"): a reposição pura medida em
+    abr–ago/2026 é **80,6% da venda** contra uma meta de 65%, então o comprador só passa a
+    **crescer** estoque a partir de **80,6 ÷ 65 = 124%** da meta. Abaixo disso, mesmo estourando,
+    ele ainda desestoca — punir 122% como sobrecompra grave puniria quem comprou menos do que
+    vendeu. A banda que contém 124% já custa 4 pontos; o castigo pesado começa depois dela.
+    **Se o 65% mudar, o 124% muda junto** — remedir antes de mexer nas faixas.
+  - ⚠️ **Nenhum degrau passa de 2 pontos, e isso é requisito.** O denominador é a venda dos
+    últimos 30 dias, que se mexe sozinha **7,3% ao mês** na mediana (medido em 6 fechamentos; o
+    comprador 47 viu a meta cair **19,1%** de jul para ago). Com penhasco, a nota de uma pessoa
+    vira por causa da venda dos outros.
+  - ❌ **O que foi recusado, e por quê.** A 1ª versão do pedido era `<90 → 5 · 90-100 → 10 ·
+    100-105 → 9 · 105-110 → 7 · >110 → 0`, medindo o **mês corrente** em vez do fechado. Caiu na
+    medição, não na opinião: (a) fazia **0% valer 5 e 111% valer 0** — quem não comprou nada
+    ganhava de quem estourou 1 p.p.; (b) tinha um degrau de **7 pontos em 0,1 p.p.**; (c) produzia
+    **3 notas distintas em 60 casos**, com 53% empatados em 5; (d) no mês corrente a nota
+    **oscila de 0 a 10 dentro do mesmo mês** (um comprador trocaria de nota 11 vezes em 31 dias) e
+    o dia 9 acerta a nota do fechamento em só **53%** dos casos — o mês só vira sinal no **dia 28**,
+    quando faltam dois para fechar.
+  - ❌ **E o 65% NÃO subiu para 80%.** A hipótese era *"a meta deveria ser 80% para a ruptura ser
+    zero"*. Reposição e ruptura são perguntas diferentes — uma é *quanto* em R$, a outra é *quais
+    itens* — e o teste direto inverte a hipótese: quem mais compra não tem menos ruptura
+    (Ronilson atinge 96% e ruptura 13,0%; João atinge 86% e ruptura **7,1%**, a menor). Os dois
+    convivem na mesma pessoa: o João tem 7,1% de ruptura **e** R$ 164 mil parados há 60+ dias — o
+    dinheiro já está no armazém, nos itens errados. Tamanho: destravar TODA a ruptura custa
+    **R$ 292 mil uma vez**; subir a meta para 80% liberaria **R$ 989 mil por mês**.
+    Gates: `tests/test_nota_escalas.py`.
 - **Compras segue TODAS as curvas** (o documento diz "A+B") e a tela declara. Restringir criaria um
   segundo "comprado no mês" divergente da aba Orçamento — o defeito de dois universos que a aba
   Verbas já teve duas vezes — e tiraria da nota justamente o comportamento que o indicador de

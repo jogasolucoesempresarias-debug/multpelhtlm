@@ -28,18 +28,28 @@ def test_todo_indicador_da_ORDEM_tem_peso_rotulo_e_regua():
 
 # ───────────────── 2. o exemplo do documento ─────────────────
 
-def test_o_exemplo_do_documento_reproduz_7_50():
-    """A tabela do item 5 do documento, linha a linha. É a prova de que as escalas foram
-    transcritas certo — e o número que o diretor vai reconhecer."""
+def test_o_exemplo_do_documento_reproduz_7_65_e_so_COMPRAS_divergiu():
+    """A tabela do item 5 do documento, linha a linha.
+
+    ⚠️ O total do documento é **7,50** e hoje o mesmo exemplo dá **7,65**. A diferença é UM
+    indicador e é DELIBERADA: em 09/2026 a escala de Compras deixou de ser simétrica (ver
+    `nota.ESCALA_COMPRAS`), e o 117% do exemplo passou de nota 7 para 8. Os outros quatro
+    seguem reproduzindo o documento no ponto — é isso que este teste protege.
+
+    Mantido como prova de TRANSCRIÇÃO: se algum dia um dos quatro sair do lugar, a falha aparece
+    aqui e não numa tela. Trocar o 7,65 por outro número exige a mesma justificativa que a
+    mudança de 09/2026 teve: medição, não preferência."""
     r = nota.nota_final({"ruptura": 5.9, "cobertura": 74.3, "margem": 95.9,
                          "parado": 48.6, "compras": 117.0})
     assert r["completa"] is True
-    assert r["nota"] == 7.5
     esperado = {"ruptura": (9, 2.25), "cobertura": (10, 2.0), "margem": (8, 1.6),
-                "parado": (3, 0.6), "compras": (7, 1.05)}
+                "parado": (3, 0.6), "compras": (8, 1.2)}
     for i in r["itens"]:
         n, p = esperado[i["indicador"]]
         assert (i["nota"], i["pontos"]) == (n, p), i["indicador"]
+    assert r["nota"] == 7.65
+    # o documento fechava em 7,50 com compras=7; a diferença é exatamente o degrau de 1 ponto
+    assert round(7.65 - (8 - 7) * 0.15, 2) == 7.50
 
 
 def test_o_pior_indicador_do_exemplo_e_o_estoque_parado():
@@ -89,19 +99,58 @@ def test_escala_parado(v, esperado):
 
 
 @pytest.mark.parametrize("v,esperado", [
-    (100, 10), (95, 10), (105, 10), (94.9, 9), (110, 9), (85, 8), (115, 8),
-    (80, 7), (120, 7), (75, 6), (125, 6), (74.9, 4), (125.1, 4), (0, 4), (300, 4),
+    (90, 10), (100, 10), (105, 10), (89.9, 9), (105.1, 9), (80, 9), (112, 9),
+    (70, 8), (119, 8), (58, 6), (128, 6), (44, 4), (138, 4), (138.1, 2), (300, 2), (0, 2),
 ])
 def test_escala_compras(v, esperado):
     assert nota.nota_de("compras", v) == esperado
 
 
-def test_a_escala_de_compras_e_SIMETRICA():
-    """'Comprar acima da meta não significa necessariamente desempenho melhor' — o documento pede
-    explicitamente que subcompra e sobrecompra sejam punidas igual. Se um dia a escala virar
-    'quanto mais melhor', é aqui que aparece."""
-    for d in (0, 5, 10, 15, 20, 25, 40):
-        assert nota.nota_de("compras", 100 - d) == nota.nota_de("compras", 100 + d), d
+def test_a_escala_de_compras_e_ASSIMETRICA_o_estouro_dói_mais():
+    """Pedido do João Victor em 09/2026: *"punir mais o estouro que a falta de compra"*.
+
+    A justificativa não é gosto: perguntado se o 65% do Orçamento é meta de reposição ou de
+    enxugamento, ele respondeu *"nesse momento é calibrar o estoque"*. Numa fase de calibração a
+    meta é TETO, não alvo — ficar abaixo não desfaz a política, estourar desfaz.
+
+    ⚠️ Isto REVERTE o documento, que pedia simetria explícita. A reversão é intencional e o
+    motivo é a fase, não o indicador. Se a empresa voltar a repor estoque, isto tem de voltar."""
+    for lo, hi, _ in nota.ESCALA_COMPRAS[1:]:
+        abaixo = nota.ESCALA_COMPRAS[0][0] - lo         # quanto se pode CAIR
+        acima = hi - nota.ESCALA_COMPRAS[0][1]          # quanto se pode SUBIR
+        assert abaixo > acima, (lo, hi)
+        assert 1.3 <= abaixo / acima <= 1.5, (lo, hi, abaixo / acima)
+
+
+def test_comprar_ZERO_e_o_pior_caso_da_escala():
+    """A 1ª versão do pedido punha "abaixo de 90% → 5" e "acima de 110% → 0" — o que fazia quem
+    **não comprou nada** valer mais que quem estourou 1 p.p., num indicador chamado
+    "Compras × Meta". Este teste é o que impede a ideia de voltar."""
+    piores = min(nota.nota_de("compras", v / 10) for v in range(0, 3001))
+    assert nota.nota_de("compras", 0) == piores
+    for v in (44, 58, 70, 80, 90, 100, 112, 128):
+        assert nota.nota_de("compras", v) > nota.nota_de("compras", 0), v
+
+
+def test_nenhum_degrau_da_escala_de_compras_passa_de_2_pontos():
+    """Requisito, não estética. O denominador é a venda dos últimos 30 dias, que se mexe sozinha
+    **7,3% ao mês** na mediana (medido em 6 fechamentos; um comprador viu a meta cair 19,1% de
+    jul para ago/2026). Com penhasco, a nota de uma pessoa vira por causa da venda dos outros —
+    a proposta original tinha um degrau de **7 pontos em 0,1 p.p.**."""
+    xs = [x / 10 for x in range(0, 3001)]
+    saltos = [abs(nota.nota_de("compras", xs[i]) - nota.nota_de("compras", xs[i - 1]))
+              for i in range(1, len(xs))]
+    assert max(saltos) <= 2
+
+
+def test_a_banda_de_124pct_ja_custa_4_pontos_porque_e_ali_que_o_estoque_CRESCE():
+    """A âncora da assimetria. A meta é 65% da venda líquida e a reposição pura (custo do que se
+    vendeu) medida em abr–ago/2026 é **80,6%** da venda: o comprador só passa a CRESCER estoque
+    a partir de 80,6 ÷ 65 = **124%** da meta. Abaixo disso, mesmo "estourando", ele ainda
+    desestoca — por isso o castigo pesado começa depois dessa banda, não antes.
+    ⚠️ Se o 65% mudar, o 124% muda junto. Remedir antes de mexer nas faixas."""
+    assert nota.nota_de("compras", 124) == 6
+    assert nota.nota_de("compras", 119) == 8
 
 
 # ───────────────── 4. não medido ≠ zero ─────────────────
@@ -239,5 +288,5 @@ def test_escalas_publicas_expoe_as_seis_escalas_serializaveis():
     pub = nota.escalas_publicas()
     json.dumps(pub)                                  # tem de serializar sem ajuda
     assert set(pub["escalas"]) == set(nota.ORDEM)
-    assert pub["escalas"]["compras"]["tipo"] == "simetrica"
+    assert pub["escalas"]["compras"]["tipo"] == "assimetrica"
     assert pub["pesos"] == nota.PESOS

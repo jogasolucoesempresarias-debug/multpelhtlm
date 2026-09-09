@@ -29,7 +29,7 @@ vive em `estoque_meta_margem` com competência (ver `store.metas_margem`).
 #       ⚠️ As faixas e os pesos NÃO mudaram — mudou quando existe nota, e quanto ela vale para
 #       quem está incompleto (antes: nenhuma; agora: 7,94 no lugar de nada). É mudança de
 #       resultado visível para uma pessoa, então o selo sobe mesmo sem escala nova.
-NOTA_VERSAO = 2
+NOTA_VERSAO = 3
 
 # Pesos do documento (item 1). Somam 100 — travado em teste, porque um peso solto redistribui a
 # nota de todo mundo sem erro nenhum.
@@ -63,7 +63,8 @@ REGUAS = {
     "parado":    "SKUs na aba Estoque parado (sem venda há 15+ dias) ÷ SKUs do comprador, "
                  "descontados os novos e os recém-chegados. CONTAGEM DE SKUs, não valor.",
     "compras":   "Comprado ÷ meta do Orçamento no mês fechado. Todas as curvas, como a aba "
-                 "Orçamento. Penaliza subcompra E sobrecompra.",
+                 "Orçamento. Penaliza as duas pontas, e o ESTOURO ~1,4x mais que a falta: a "
+                 "meta é teto da fase de calibração de estoque, não alvo.",
 }
 
 # ── As seis escalas do documento ──────────────────────────────────────────────────────────────
@@ -100,11 +101,40 @@ ESCALA_MARGEM = [(105, 10), (100, 9), (95, 8), (90, 7), (85, 6), (None, 4)]
 # (36,1 / 28,3 / 15,9 → 6 / 8 / 10); o que mudou foi o que se mede, não como se pontua.
 ESCALA_PARADO = [(20, 10), (25, 9), (30, 8), (35, 7), (40, 6), (45, 5), (None, 3)]
 
-# E. Compras × meta (peso 15%) — SIMÉTRICA: comprar demais é tão ruim quanto comprar de menos.
-# Bandas encaixadas (a primeira que contém o valor vence), que é exatamente como o documento
-# escreve ("90% a 94,9% ou 105,1% a 110%" = a banda [90,110] menos a de dentro).
-ESCALA_COMPRAS = [(95, 105, 10), (90, 110, 9), (85, 115, 8), (80, 120, 7), (75, 125, 6)]
-ESCALA_COMPRAS_FORA = 4
+# E. Compras × meta (peso 15%) — ASSIMÉTRICA: estourar dói ~1,4x mais que faltar.
+# Bandas encaixadas (a primeira que contém o valor vence), como o documento escreve
+# ("90% a 94,9% ou 105,1% a 110%" = a banda [90,110] menos a de dentro).
+#
+# ⚠️ **Era simétrica até 09/2026 e estava mal calibrada.** Medido em 60 comprador-meses
+# (jan/2025–ago/2026, 3 compradores): **53% dos casos caíam no piso (nota 4)** — um indicador de
+# 15% do peso que era quase constante, o mesmo defeito que fez o "parado por valor" ser recusado.
+#
+# **Por que assimétrica** (pedido do João Victor, 09/2026: *"punir mais o estouro que a falta de
+# compra"*): perguntado se o 65% do Orçamento é meta de reposição ou de enxugamento, ele
+# respondeu *"nesse momento é calibrar o estoque"*. Sob uma fase de calibração a meta é um
+# **TETO, não um alvo** — ficar abaixo não desfaz a política, estourar desfaz. A simetria antiga
+# contradizia a fase.
+#
+# ⚠️ **Por que ~1,4x e não 2x, que seria a leitura literal de "punir mais".** A meta é 65% da
+# venda líquida e a REPOSIÇÃO PURA (o custo do que se vendeu) medida em abr–ago/2026 é **80,6%**
+# da venda. Logo o comprador só passa a CRESCER estoque a partir de **80,6 ÷ 65 = 124%** da meta;
+# abaixo disso, mesmo "estourando", ele ainda está desestocando. Punir 122% como sobrecompra
+# grave puniria alguém que ainda compra menos do que vendeu. Por isso a banda que contém 124%
+# já custa 4 pontos (10 → 6), e o castigo pesado começa depois dela.
+# ⚠️ Se o 65% mudar, **este 124% muda junto** — a assimetria está ancorada na razão entre a meta
+# e a reposição, não num gosto. Remedir antes de mexer.
+#
+# ⚠️ **Nenhum degrau passa de 2 pontos**, e isso é requisito, não estética: o denominador é a
+# venda dos últimos 30 dias, que se mexe sozinha **7,3% ao mês** na mediana (medido em 6
+# fechamentos; o comprador 47 viu a meta cair 19,1% de jul para ago). Um penhasco faria a nota de
+# uma pessoa virar por causa da venda dos outros. A proposta original tinha um degrau de 7 pontos
+# em 0,1 p.p. — foi o que a medição derrubou.
+#
+# ⚠️ **Comprar ZERO é o pior caso da escala**, nunca melhor que qualquer atingimento positivo.
+# A 1ª versão do pedido punha "abaixo de 90% → 5" e "acima de 110% → 0", o que fazia quem não
+# comprou nada valer mais que quem estourou 1 p.p. num indicador chamado "Compras × Meta".
+ESCALA_COMPRAS = [(90, 105, 10), (80, 112, 9), (70, 119, 8), (58, 128, 6), (44, 138, 4)]
+ESCALA_COMPRAS_FORA = 2
 
 MENOR_MELHOR = ("ruptura", "parado")
 MAIOR_MELHOR = ("cobertura", "margem")
@@ -266,7 +296,7 @@ def escalas_publicas():
             "cobertura": {"tipo": "maior_melhor", "faixas": ESCALA_COBERTURA},
             "margem":    {"tipo": "maior_melhor", "faixas": ESCALA_MARGEM},
             "parado":    {"tipo": "menor_melhor", "faixas": ESCALA_PARADO},
-            "compras":   {"tipo": "simetrica", "faixas": ESCALA_COMPRAS,
+            "compras":   {"tipo": "assimetrica", "faixas": ESCALA_COMPRAS,
                           "fora": ESCALA_COMPRAS_FORA},
         },
     }
