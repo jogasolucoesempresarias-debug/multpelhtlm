@@ -1207,6 +1207,10 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "qtreserv": _round(qtreserv), "qtbloq": _round(qtbloq),
             "qttransito": _round(qttransito), "qtpend": _round(qtpend),
             "custo_unit": _round(custofin, 4),
+            # custo da ÚLTIMA ENTRADA — pedido do diretor 09/2026 na Pesquisa de preço. NÃO é o
+            # `custo_unit`: aquele é o CUSTOFIN (financeiro, custo de reposição contábil) e este é
+            # o que a mercadoria custou de fato ao entrar. Vazio quando o item nunca entrou.
+            "custo_ult_ent": _round(_n(r.get("custoultent")), 4) or None,
             "valor": _round(valor),
             "giro_mes": _round(giro_mes), "giro_dia": _round(giro_dia, 3),
             "giro_media3": _round(giro_media3), "giro_forecast": _round(giro_forecast) if giro_forecast is not None else None,

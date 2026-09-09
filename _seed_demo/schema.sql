@@ -299,6 +299,9 @@ CREATE TABLE IF NOT EXISTS pcitem (
 -- "coluna X da relação Y não existe". Foi o que aconteceu com `pcprodut.pesoliq`: a coluna
 -- entrou no CREATE em 08/2026 e a demo publicada seguiu sem ela.
 ALTER TABLE pcprodut ADD COLUMN IF NOT EXISTS pesoliq NUMERIC(12,4);
+-- custo da ÚLTIMA ENTRADA (≠ custofin, que é o financeiro): é o que o diretor pediu na
+-- Pesquisa de preço em 09/2026 ("preço de custo, puxar a última entrada do item").
+ALTER TABLE pcest    ADD COLUMN IF NOT EXISTS custoultent NUMERIC(14,4);
 ALTER TABLE pcitem ADD COLUMN IF NOT EXISTS periipi NUMERIC(6,2);
 ALTER TABLE pcitem ADD COLUMN IF NOT EXISTS vlipi   NUMERIC(14,6);
 ALTER TABLE pcitem ADD COLUMN IF NOT EXISTS percst  NUMERIC(6,2);

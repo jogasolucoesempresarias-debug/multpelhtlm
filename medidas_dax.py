@@ -2,8 +2,8 @@
 Reconstrução das 6 medidas nativas do dataset RCA — para clientes que têm BI mas NÃO têm
 as medidas prontas no modelo (MEDIDAS=joga). Traz a inteligência JOGA em vez de depender do
 modelo do cliente. As fórmulas foram reverse-engineeradas e validadas contra o BI da Multpel
-(ver memória multpel-rca-medidas-reconstruidas): 5/6 exatas no centavo, VENDA BRUTA a 99,99%
-(cauda de ST de ~0,012% que só fecha com o DAX real da medida).
+(ver memória multpel-rca-medidas-reconstruidas): 6/6 exatas no centavo. A VENDA BRUTA ficou em
+99,99% até 09/2026 por subtrair o VLFECP a mais — ver o comentário na própria reconstrução.
 
 Uso: `reconstruir_medidas(query)` troca os tokens `[VENDA BRUTA]` etc. pela expressão em coluna
 crua. É um POST-PROCESSOR aplicado no executor SOMENTE quando MEDIDAS=joga. Com MEDIDAS=cliente
@@ -22,8 +22,15 @@ FA = "FATURAMENTO_DEVOLUCAO_AVULSA"
 _EXCL_DEV = f'NOT({FD}[CODATIV]=37 && {FD}[CODDEVOL]<>9)'
 
 RECONSTRUCOES = {
+    # ⚠️ NÃO subtrai VLFECP. A medida real do cliente é `VLVENDA − ICMSRETIDO`, e só.
+    # Decodificada em 09/2026 conferindo a medida contra as colunas cruas, produto a produto:
+    #   42253 → 590.061,96 − 135,81 = 589.926,15 (a medida, exato)
+    #   58511 →  63.661,81 − 143,28 =  63.518,53 (exato)
+    #   57433 →  30.344,27 −  17,95 =  30.326,32 (exato)
+    # Em todos os três o FECP (23,69 / 21,92 / 3,09) fica FORA. Era ele o resíduo de ~0,012% que
+    # este arquivo registrava como "cauda de ST que só fecha com o DAX real" — não era ST.
     "[VENDA BRUTA]":
-        f'CALCULATE(SUM({FV}[VLVENDA]) - SUM({FV}[ICMSRETIDO]) - SUM({FV}[VLFECP]), '
+        f'CALCULATE(SUM({FV}[VLVENDA]) - SUM({FV}[ICMSRETIDO]), '
         f'{FV}[CODOPER]="S")',
     "[CUSTO TOTAL]":
         f'CALCULATE(SUMX({FV}, {FV}[VLCUSTOFIN] + {FV}[VLCUSTOFINBONIF]), '

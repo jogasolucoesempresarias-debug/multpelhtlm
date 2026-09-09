@@ -18,6 +18,37 @@ Notas de modelagem:
 
 FILIAIS_PADRAO = ["3", "5"]
 
+# ⚠️ QUANTIDADE DE VENDA: o filtro `CODOPER="S"` é OBRIGATÓRIO e é o mesmo que a medida
+# `[VENDA BRUTA]` aplica. `FATURAMENTO_VENDAS` registra TUDO que sai do armazém — "ST" é
+# transferência entre filiais e "SB" é bonificação (sai com VLVENDA = 0,00). Somar `QT` sem ele
+# põe no DENOMINADOR o que o numerador não conta, e todo preço médio (venda ÷ qtd) sai diluído.
+#
+# Achado em 09/2026 pelo diretor na Pesquisa de preço ("nosso preço aí está errado"): a esponja
+# 58511 saía a R$ 2,07 quando o realizado era R$ 4,74 — 56% do denominador dela era transferência
+# — e o relatório anunciava que estávamos 189% abaixo do concorrente quando estávamos 26%. O
+# detergente 42253 saía a R$ 1,65 com CUSTOULTENT de R$ 1,87: a tela dizia que vendíamos abaixo
+# do custo e ninguém viu, porque as duas colunas nunca ficaram lado a lado.
+#
+# Medido no BI (11/06→09/09/2026, filiais 3/7/8): das 3.026.236 unidades, 284.760 (9,4%) são ST e
+# 15.548 (0,5%) são SB. Afeta 157 de 2.478 produtos, 22 deles com erro ≥ 25% e o pior a 90%.
+#
+# ⚠️ O sintoma NÃO é uniforme: item sem transferência sai certo (o 57433 batia no centavo), então
+# conferir um punhado de produtos não prova nada — foi por isso que passou despercebido.
+# ⚠️ Já tinha mordido uma vez, e o conserto foi na ponta errada: no top vendedores do drawer 360°
+# a transferência aparece como `CODUSUR 999` com R$ 0,00, e a saída foi excluir esse código no
+# `_vendedores_tecnicos()` em vez de filtrar o CODOPER aqui. Por isso o veneno seguiu chegando ao
+# preço. Filtro de saneamento por código de vendedor não substitui a régua da natureza da operação.
+QT_VENDA = 'CALCULATE(SUM(FATURAMENTO_VENDAS[QT]), FATURAMENTO_VENDAS[CODOPER] = "S")'
+
+# Mesma armadilha do outro lado: `[TOTAL DEVOLUCAO]` exclui a devolução de TRANSFERÊNCIA
+# (CODATIV=37 com CODDEVOL<>9) e a quantidade tem de excluir também. Sem isto o app subtraía
+# 371.096 unidades onde a devolução real são 53.120 — 7x — e a "Qtd vendida" saía a menos.
+# Validado no 42253: a linha excluída (CODATIV=37/CODDEVOL=65, 37.440 un, R$ 68.741,86) é
+# EXATAMENTE a diferença entre `SUM(VLDEVOLUCAO)` e o que a medida devolve, e a devolução que
+# sobra sai a R$ 2,4992/un — coerente com o preço de venda real de R$ 2,40. Confere em 3 de 3.
+QT_DEVOL = ('CALCULATE(SUM(FATURAMENTO_DEVOLUCAO[QT]), '
+            'NOT(FATURAMENTO_DEVOLUCAO[CODATIV] = 37 && FATURAMENTO_DEVOLUCAO[CODDEVOL] <> 9))')
+
 
 def _lista_filiais_dax(filiais):
     """['3','5'] -> '{\"3\",\"5\"}'. Vazio/None -> None (sem filtro)."""
@@ -303,7 +334,7 @@ FILTER(
             FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)} && FATURAMENTO_VENDAS[DTSAIDA] <= {_d(data_fim)}{_fv_and('FATURAMENTO_VENDAS', filiais)}),
         "venda", [VENDA BRUTA],
         "custo", [CUSTO TOTAL],
-        "qtd",   SUM(FATURAMENTO_VENDAS[QT])
+        "qtd",   {QT_VENDA}
     ),
     [venda] <> 0 || [qtd] <> 0
 )"""
@@ -325,7 +356,7 @@ FILTER(
             FATURAMENTO_DEVOLUCAO[DTENT] >= {_d(data_ini)} && FATURAMENTO_DEVOLUCAO[DTENT] <= {_d(data_fim)}{_fv_and('FATURAMENTO_DEVOLUCAO', filiais)}),
         "dev",  [TOTAL DEVOLUCAO],
         "cdev", [CUSTO TOTAL DEVOLUCAO],
-        "qtdev", SUM(FATURAMENTO_DEVOLUCAO[QT])
+        "qtdev", {QT_DEVOL}
     ),
     [dev] <> 0
 )"""
@@ -344,7 +375,8 @@ RETURN
 GROUPBY(
     base,
     FATURAMENTO_VENDAS[CODPROD], [AM],
-    "qtd", SUMX(CURRENTGROUP(), FATURAMENTO_VENDAS[QT])
+    "qtd", SUMX(CURRENTGROUP(),
+        IF(FATURAMENTO_VENDAS[CODOPER] = "S", FATURAMENTO_VENDAS[QT], 0))
 )"""
 
 
@@ -360,7 +392,7 @@ FILTER(
             FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)} && FATURAMENTO_VENDAS[DTSAIDA] <= {_d(data_fim)}{_fv_and('FATURAMENTO_VENDAS', filiais)}),
         "venda",        [VENDA BRUTA],
         "custo",        [CUSTO TOTAL],
-        "qtd",          SUM(FATURAMENTO_VENDAS[QT]),
+        "qtd",          {QT_VENDA},
         "clientes_pos", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI]),
         "fornecedores", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODFORNEC])
     ),
@@ -455,7 +487,15 @@ def q_vendedores_do_produto_rca(codprod, data_ini, data_fim, filiais=None):
 
     Bruta, sem parear devolução: o objetivo é "quem sabe vender este item" (ranking), não fechar
     centavo com o RCA. Parear devolução por vendedor exigiria uma 2ª query (DTENT ≠ DTSAIDA) para
-    mudar a ordem em quase nada — e o drawer já traz a venda líquida do item logo acima."""
+    mudar a ordem em quase nada — e o drawer já traz a venda líquida do item logo acima.
+
+    ⚠️ Bruta, mas **de venda** (`QT_VENDA`). A lista ordena por QUANTIDADE, então a transferência
+    entre filiais chegava aqui como o "top vendedor": no cód. 42253, o `CODUSUR 999` sozinho tinha
+    110.808 un com R$ 0,00 de faturamento. Ela não aparecia na tela porque o
+    `_vendedores_tecnicos()` exclui o 999 pelo nome — um saneamento por CÓDIGO DE VENDEDOR que
+    vinha segurando um problema de NATUREZA DE OPERAÇÃO, e que ruiria no dia em que uma
+    transferência saísse com o código de uma pessoa de verdade. O filtro do 999 continua, pela
+    razão dele: não existe ninguém para ligar."""
     return f"""EVALUATE
 FILTER(
     SUMMARIZECOLUMNS(
@@ -464,7 +504,7 @@ FILTER(
             FATURAMENTO_VENDAS[CODPROD] = {int(codprod)}
             && FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)}
             && FATURAMENTO_VENDAS[DTSAIDA] <= {_d(data_fim)}{_fv_and('FATURAMENTO_VENDAS', filiais)}),
-        "qtd",   SUM(FATURAMENTO_VENDAS[QT]),
+        "qtd",   {QT_VENDA},
         "valor", [VENDA BRUTA]
     ),
     [qtd] <> 0 || [valor] <> 0
@@ -497,7 +537,7 @@ FILTER(
             FATURAMENTO_VENDAS[CODFORNEC] = {int(codfornec)}
             && FATURAMENTO_VENDAS[DTSAIDA] >= {_d(data_ini)}
             && FATURAMENTO_VENDAS[DTSAIDA] <= {_d(data_fim)}{_fv_and('FATURAMENTO_VENDAS', filiais)}),
-        "qtd",   SUM(FATURAMENTO_VENDAS[QT]),
+        "qtd",   {QT_VENDA},
         "valor", [VENDA BRUTA]
     ),
     [qtd] <> 0 || [valor] <> 0
@@ -609,6 +649,7 @@ def q_snapshot_estoque(filiais=None):
         "giro_m2",    CALCULATE(SUM(PCEST[QTVENDMES2])),
         "giro_m3",    CALCULATE(SUM(PCEST[QTVENDMES3])),
         "custofin",   CALCULATE(MAX(PCEST[CUSTOFIN])),
+        "custoultent", CALCULATE(MAX(PCEST[CUSTOULTENT])),
         "dtultsaida", CALCULATE(MAX(PCEST[DTULTSAIDA])),
         "dtultent",   CALCULATE(MAX(PCEST[DTULTENT]))
     )"""

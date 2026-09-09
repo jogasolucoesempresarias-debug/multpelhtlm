@@ -1046,28 +1046,43 @@ def _build_produtos(venda_periodo=None):
     return produtos, params, filiais_e
 
 
-def _preco_venda_map(filiais):
-    """{cod: preço de venda unitário} — realizado médio dos ÚLTIMOS 3 MESES (RCA), janela FIXA
-    (independe do filtro de período), p/ a 'venda perdida' não variar com o seletor de venda e
-    alinhar com a janela do giro (também 3m). O preço de tabela do BI (PCPRODUT[PVENDA]) está
-    vazio; usar o realizado 3m como referência. Cache mensal (6h)."""
+PRECO_VENDA_DIAS = 90          # venda perdida: alinhada à janela do giro (3 meses)
+PRECO_VENDA_DIAS_PESQUISA = 30  # Pesquisa de preço: o diretor pediu o último mês
+
+
+def _preco_venda_map(filiais, dias=PRECO_VENDA_DIAS):
+    """{cod: preço de venda unitário} — realizado médio LÍQUIDO na janela, do RCA.
+
+    Janela FIXA (independe do seletor "Venda" do topo), p/ a 'venda perdida' não variar com o
+    filtro de tela e alinhar com a janela do giro (também 3m). O preço de tabela do BI
+    (`PCPRODUT[PVENDA]`) vem VAZIO nesta base — conferido de novo em 09/2026, e `PCPRODFILIAL`
+    também não o tem; o preço de tabela por região mora no `PCTABPR`, que não está publicado.
+    Por isso a referência é o realizado. Cache mensal (6h).
+
+    ⚠️ **Deriva de `_vendas_liquidas`, e não de uma query própria.** Até 09/2026 esta função
+    montava `q_vendas_rca` na mão e dividia venda BRUTA por quantidade BRUTA, enquanto o
+    `_vendas_liquidas` (que alimenta o `preco_medio` do drawer 360°) dividia LÍQUIDA por
+    LÍQUIDA. Duas fórmulas para o mesmo número: no cód. 42253, na mesma gaveta e na mesma janela
+    de 90 dias, o card dizia "Preço médio R$ 1,84/un" e a linha da Pesquisa de preço logo abaixo
+    dizia "+75% do nosso preço", que implica R$ 1,65. Os dois errados, e errados de formas
+    diferentes. Hoje é uma fórmula só — o certo é R$ 2,40.
+
+    ⚠️ E o modo **postgres já estava certo**: ele sempre chamou `PS.vendas_por_produto`, a mesma
+    fonte do `_vendas_liquidas`. Quem destoava era o caminho Power BI. Mesmo padrão do Radar
+    (board × drill) de 08/2026 — quando os dois modos discordam, desconfie do DAX.
+
+    ⚠️ O `dias` é parâmetro porque os DOIS usos têm janelas legítimas e diferentes: a Pesquisa
+    de preço usa 30 dias (pedido do diretor: "a média do último mês, melhor que a média dos
+    últimos 3 meses") e a venda perdida segue em 90, casada com o giro. Unificar quebraria um
+    dos dois em silêncio."""
     hoje = _hoje()
-    if pbi.CONFIG["data_source"] == "postgres":   # Inc.2: preço realizado 3m do joga_demo
-        vp = PS.vendas_por_produto(hoje - timedelta(days=90), hoje, filiais)
-        return {c: d["venda"] / d["qtd"] for c, d in vp.items()
-                if (d.get("qtd") or 0) > 0 and (d.get("venda") or 0) > 0}
-    key = f"precov:{_filiais_key(filiais)}:{hoje.isoformat()[:7]}"
+    key = f"precov:{_filiais_key(filiais)}:{dias}:{hoje.isoformat()[:7]}"
     hit = pbi._CACHE.get(key)
     if hit is not None:
         return hit
-    m = {}
-    try:
-        for r in pbi.run_dax_rca(Q.q_vendas_rca(hoje - timedelta(days=90), hoje, filiais)):
-            c = int(core._n(r["CODPROD"])); v = core._n(r.get("venda")); q = core._n(r.get("qtd"))
-            if q > 0 and v > 0:
-                m[c] = v / q
-    except Exception as e:
-        print(f"[preco_venda] RCA indisponível ({e}). Venda perdida cai no custo.")
+    vp = _vendas_liquidas(hoje - timedelta(days=dias), hoje, filiais)
+    m = {c: d["venda"] / d["qtd"] for c, d in vp.items()
+         if (d.get("qtd") or 0) > 0 and (d.get("venda") or 0) > 0}
     pbi._CACHE.set(key, m, 6 * 3600)
     return m
 
@@ -1427,11 +1442,25 @@ def _pesquisa_enriquecida(medicoes, fornec=None):
     com etiqueta errada. Sem preço realizado, a coluna sai VAZIA.
     """
     prod, forn = _cadastro_produtos(), _cadastro_fornecedores()
-    # Preço de venda = realizado médio dos ÚLTIMOS 3 MESES: o `PCPRODUT[PVENDA]` está vazio nesta
-    # base, e o diretor aprovou a régua ("pode pegar a média de preço dos últimos 3 meses").
-    # Cache de 6h do `_preco_venda_map` — esta tela não custa consulta nova ao BI.
+    # Custo da ÚLTIMA ENTRADA, do snapshot que já está em cache — nenhuma query nova.
+    # ⚠️ É coluna SEPARADA, não substituta: em 08/2026 o "nosso preço" TROCOU de custo para preço
+    # de venda e o custo simplesmente sumiu da tela. O diretor cobrou em 09/2026 ("eu tinha te
+    # pedido para vc trazer o preço de custo ali também... vc pode ter substituído e ter tirado o
+    # preço de vendas"). São perguntas diferentes: por quanto ENTROU × por quanto SAI × por
+    # quanto o concorrente VENDE. Uma coluna não responde as três.
     try:
-        pv_map = _preco_venda_map(_filiais_venda())
+        custo_ue = {int(core._n(r["CODPROD"])): core._n(r.get("custoultent"))
+                    for r in _snapshot_rows(_filiais_estoque())}
+    except Exception as e:                                    # noqa: BLE001
+        print(f"[pesquisa] custo de última entrada indisponível ({e}).")
+        custo_ue = {}
+    # Preço de venda = realizado médio LÍQUIDO do ÚLTIMO MÊS. A régua começou em 3 meses
+    # ("pode pegar a média de preço dos últimos 3 meses") e o diretor a encurtou em 09/2026:
+    # "preço de vendas pegar a média do último mês, melhor que a média dos últimos 3 meses".
+    # ⚠️ Só a PESQUISA encurtou — a venda perdida segue em 90 dias, casada com o giro. Ver
+    # `_preco_venda_map`. Cache de 6h — esta tela não custa consulta nova ao BI.
+    try:
+        pv_map = _preco_venda_map(_filiais_venda(), PRECO_VENDA_DIAS_PESQUISA)
     except Exception as e:                                    # noqa: BLE001
         print(f"[pesquisa] preço de venda indisponível ({e}).")
         pv_map = {}
@@ -1449,6 +1478,7 @@ def _pesquisa_enriquecida(medicoes, fornec=None):
                     "descricao": (cad.get("DESCRICAO") or f"PRODUTO {m['codprod']}").strip(),
                     "codfornec": cf, "fornecedor": (forn.get(cf) or {}).get("FORNECEDOR"),
                     "preco_venda_unit": core._round(nosso, 4) if nosso else None,
+                    "custo_ult_ent": core._round(custo_ue.get(m["codprod"]), 4) or None,
                     "preco_un": n["preco_un"], "comparavel": n["comparavel"],
                     "delta": g["delta"], "delta_pct": g["delta_pct"]})
     return out
@@ -3223,6 +3253,9 @@ def _export_data(view):
                                        request.args.get("fornec"))
         cols = ["data_pesquisa", "codprod", "descricao", "fornecedor", "preco", "unidade",
                 "preco_un", "preco_venda_unit", "delta", "delta_pct", "origem", "usuario", "obs"]
+        # ⚠️ O custo entra na PLANILHA (ferramenta de trabalho do comprador) e NÃO no PDF, que é
+        # o documento enviado ao fornecedor. Ver `_PDF_COLS["pesquisa"]`.
+        cols.insert(6, "custo_ult_ent")
     elif view == "qualidade":
         # produtos com cadastro/saldo inconsistente. cat opcional filtra 1 categoria.
         produtos = _aplicar_filtros_cliente(_build_produtos()[0])
@@ -3516,6 +3549,13 @@ _PDF_COLS["pesquisa"] = [
     ("unidade", "Un", "text"), ("preco_venda_unit", "Nosso preço", "money"),
     ("delta_pct", "Dif.", "dec"), ("origem", "Onde pesquisou", "text", 18),
     ("usuario", "Quem pesquisou", "text", 16)]
+# O MESMO PDF é o documento que vai ao fornecedor e o relatório que o diretor lê. As duas
+# leituras pedem colunas diferentes, então o custo é OPT-IN (`?custo=1`), nunca default:
+# esquecer de tirar uma coluna é fácil, e o que vaza é o nosso custo de aquisição para quem
+# negocia conosco. Preço de venda é público (está na gôndola); custo de compra não.
+_PDF_COLS["pesquisa_custo"] = (_PDF_COLS["pesquisa"][:5]
+                               + [("custo_ult_ent", "Custo últ.ent.", "money")]
+                               + _PDF_COLS["pesquisa"][5:])
 _PDF_TITULO = {"pesquisa": "Pesquisa de preço", "produtos": "Produtos", "comprasvendas": "Compras × Vendas", "reposicao": "Reposição",
                "parado": "Estoque parado", "ruptura": "Cobertura de estoque", "validade": "Validade / FEFO",
                "fornecedores": "Fornecedores", "compradores": "Compradores", "estoque_zero": "Estoque zerado",
@@ -3561,7 +3601,13 @@ def _gerar_pdf(view, linhas, group_by=None, group_valor=None, group_rotulo="Esto
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.enums import TA_LEFT
 
-    spec = _PDF_COLS.get(view) or _PDF_COLS["produtos"]
+    # `?custo=1` troca a lista de colunas, não a view: o título, o nome do arquivo e o resto do
+    # documento seguem sendo a Pesquisa de preço (ver `_PDF_COLS["pesquisa_custo"]`).
+    if view == "pesquisa" and request.args.get("custo") in ("1", "true", "sim"):
+        view_cols = "pesquisa_custo"
+    else:
+        view_cols = view
+    spec = _PDF_COLS.get(view_cols) or _PDF_COLS["produtos"]
     titulo = _PDF_TITULO.get(view, view.capitalize())
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=landscape(A4),

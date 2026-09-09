@@ -30,9 +30,23 @@ def test_tokens_aninhados_nao_corrompem():
 
 
 def test_venda_bruta_reconstruida_esperada():
+    """A fórmula é `VLVENDA − ICMSRETIDO`, e o **FECP fica de fora**.
+
+    Até 09/2026 a reconstrução subtraía também o `VLFECP` e este teste travava isso. Decodificada
+    medindo a medida do cliente contra as colunas cruas, produto a produto, no BI real:
+
+        42253 → 590.061,96 − 135,81 = 589.926,15  (= [VENDA BRUTA], exato)
+        58511 →  63.661,81 − 143,28 =  63.518,53  (exato)
+        57433 →  30.344,27 −  17,95 =  30.326,32  (exato)
+
+    Nos três o FECP (23,69 / 21,92 / 3,09) fica FORA. Era ele o resíduo de ~0,012% que o
+    `medidas_dax.py` registrava como "cauda de ST que só fecha com o DAX real da medida" — a
+    hipótese estava errada, e o jeito de descobrir foi conferir num grão pequeno o bastante para
+    o resíduo aparecer sozinho. No agregado, 0,012% se lê como arredondamento."""
     out = M.reconstruir_medidas('[VENDA BRUTA]')
     assert out == ('CALCULATE(SUM(FATURAMENTO_VENDAS[VLVENDA]) - SUM(FATURAMENTO_VENDAS[ICMSRETIDO])'
-                   ' - SUM(FATURAMENTO_VENDAS[VLFECP]), FATURAMENTO_VENDAS[CODOPER]="S")')
+                   ', FATURAMENTO_VENDAS[CODOPER]="S")')
+    assert 'VLFECP' not in out
 
 
 def test_default_medidas_e_cliente():

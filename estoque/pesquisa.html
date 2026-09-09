@@ -158,6 +158,11 @@
     <div class="row" style="margin-top:10px">
       <a class="btn-exp" id="exp-xlsx" href="#">⬇ Excel</a>
       <a class="btn-exp" id="exp-pdf" href="#">⬇ PDF</a>
+      <!-- ⚠️ DESMARCADO por default: este PDF é o documento que vai ao FORNECEDOR, e o custo de
+           aquisição é a única coisa que não se manda a quem negocia conosco. O Excel leva o custo
+           sempre — ele é ferramenta de trabalho interna, não sai da casa. -->
+      <label id="lb-custo" style="font-size:12px;display:inline-flex;align-items:center;gap:5px">
+        <input type="checkbox" id="c-custo"> custo no PDF</label>
     </div>
     <div class="card" id="c-lista"></div>
   </div>
@@ -349,7 +354,7 @@ function expQS(){
 async function carregarConsulta(){
   const qs=expQS();
   $('#exp-xlsx').href='/estoque/api/export/pesquisa.xlsx?'+qs;
-  $('#exp-pdf').href='/estoque/api/export/pesquisa.pdf?'+qs;
+  $('#exp-pdf').href='/estoque/api/export/pesquisa.pdf?'+qs+($('#c-custo').checked?'&custo=1':'');
   $('#c-escopo').textContent = forn ? `Somente ${forn.nome}.` : 'Todos os fornecedores.';
   $('#c-lista').innerHTML='<div class="med muted">Carregando…</div>';
   try{
@@ -363,14 +368,18 @@ async function carregarConsulta(){
          leitura de "oportunidade", e a dele é a certa para quem compra: vermelho é "pago mal". */
       const d=m.comparavel&&m.delta_pct!=null
         ? ` <span style="color:${m.delta_pct<0?'var(--red)':'var(--green)'}">${m.delta_pct<0?'':'+'}${Math.round(m.delta_pct)}%</span>` : '';
-      // "nosso" = preço de VENDA (média realizada 3m). Vazio quando o item não vendeu em 3
-      // meses: melhor coluna vazia do que cair no custo, que era o bug desta tela.
+      /* "nosso" = preço de VENDA (média realizada LÍQUIDA dos últimos 30 dias — o diretor
+         encurtou de 3 meses para 1 em 09/2026). Vazio quando o item não vendeu na janela:
+         melhor coluna vazia do que cair no custo, que era o bug desta tela.
+         ⚠️ O custo viaja ao LADO, nunca no lugar — são perguntas diferentes (por quanto entrou
+         × por quanto sai). Foi substituir uma pela outra que originou a queixa de 09/2026. */
       const cu=m.preco_venda_unit?` · nosso R$ ${(+m.preco_venda_unit).toFixed(2)}`:'';
+      const ce=m.custo_ult_ent?` · custo R$ ${(+m.custo_ult_ent).toFixed(2)}`:'';
       const local=m.origem?`<b style="color:var(--accent);font-weight:600">${m.origem}</b>`:'<span class="muted">local não informado</span>';
       return `<div class="med"><b>${m.descricao}</b>
         <div class="l"><span class="muted">${m.codprod}${m.fornecedor?' · '+m.fornecedor:''}</span>
           <span>R$ ${(+m.preco).toFixed(2)}/${m.unidade}${d}</span></div>
-        <div class="l"><span>📍 ${local}</span><span class="muted">${m.data_pesquisa}${m.usuario?' · '+m.usuario:''}${cu}</span></div></div>`;
+        <div class="l"><span>📍 ${local}</span><span class="muted">${m.data_pesquisa}${m.usuario?' · '+m.usuario:''}${cu}${ce}</span></div></div>`;
     }).join('') : '<div class="med muted">Nenhuma pesquisa no período.</div>';
   }catch(e){ $('#c-lista').innerHTML='<div class="med erro">Sem conexão para consultar.</div>'; }
 }

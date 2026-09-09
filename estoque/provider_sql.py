@@ -44,11 +44,16 @@ def snapshot_estoque(filiais=None):
     (qtbloqueada→qtbloq, qtpendente→qtpend, qtvendmes1..3→giro_m1..3)."""
     with analytics_conn() as c:
         cur = c.cursor()
+        # `custoultent` entrou em 09/2026. Base sintética antiga não tem a coluna, e referenciá-la
+        # direto derruba o módulo inteiro com `column does not exist` — mesma defesa do `qtultent`.
+        cur.execute("""SELECT 1 FROM information_schema.columns
+                       WHERE table_name='pcest' AND column_name='custoultent'""")
+        col_cue = "max(custoultent)" if cur.fetchone() else "NULL::numeric"
         cur.execute(f"""
             SELECT codprod,
                    sum(qtestger), sum(qtreserv), sum(qtbloqueada), sum(qtpendente), sum(qttransito),
                    max(custofin), sum(qtvendmes1), sum(qtvendmes2), sum(qtvendmes3),
-                   max(dtultsaida), max(dtultent)
+                   max(dtultsaida), max(dtultent), {col_cue}
             FROM pcest WHERE 1=1{_fil(filiais)}
             GROUP BY codprod
             HAVING sum(qtestger)<>0 OR sum(qtvendmes1)<>0 OR sum(qtvendmes2)<>0 OR sum(qtvendmes3)<>0
@@ -56,8 +61,8 @@ def snapshot_estoque(filiais=None):
         return [{"CODPROD": cod, "qtestger": _f(qeg), "qtreserv": _f(qr), "qtbloq": _f(qb),
                  "qtpend": _f(qp), "qttransito": _f(qt), "custofin": _f(cf),
                  "giro_m1": _f(g1), "giro_m2": _f(g2), "giro_m3": _f(g3),
-                 "dtultsaida": _iso(dts), "dtultent": _iso(dte)}
-                for (cod, qeg, qr, qb, qp, qt, cf, g1, g2, g3, dts, dte) in cur.fetchall()]
+                 "dtultsaida": _iso(dts), "dtultent": _iso(dte), "custoultent": _f(cue)}
+                for (cod, qeg, qr, qb, qp, qt, cf, g1, g2, g3, dts, dte, cue) in cur.fetchall()]
 
 
 # ───────────────────────── bloqueio por filial (pré-entrada × avaria) ─────────────────────────

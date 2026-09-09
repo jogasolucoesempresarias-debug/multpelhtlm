@@ -910,6 +910,40 @@ indicadores a partir do que o módulo já calcula: **nenhuma query nova**.
   fechado), `test_meta_margem.py` (competência + auditoria), `test_nota_acesso.py`.
   `NOTA_VERSAO` está em **2** — subiu quando a nota parcial passou a ser emitida.
 
+**Pesquisa de preço — TRÊS preços, três perguntas** (09/2026). A tela de campo compara o que o
+concorrente vende com o que nós vendemos. O diretor cobrou a coluna que faltava: *"eu tinha te
+pedido para vc trazer o preço de custo ali também... vc pode ter substituído e ter tirado o preço
+de vendas"*. Ele tem razão — em 08/2026 a referência **trocou** de custo para preço de venda em
+vez de virarem duas colunas.
+
+| coluna | pergunta | fonte |
+|---|---|---|
+| `Custo últ. entrada` | por quanto **entrou** | `PCEST[CUSTOULTENT]` — ⚠️ **não** o `CUSTOFIN`, que é o financeiro |
+| `Nosso preço` | por quanto **sai** | realizado líquido dos últimos **30 dias** |
+| `Pesquisado` | por quanto o concorrente **vende** | medição de campo |
+
+- ⚠️ **O custo entra na PLANILHA e no CAMPO, mas NÃO no PDF por default.** O mesmo PDF é o
+  relatório que o diretor lê **e** o documento que vai ao FORNECEDOR — e custo de aquisição é a
+  única coisa que não se manda a quem negocia conosco (foi o defeito de 08/2026). Por isso é
+  **opt-in**: checkbox "custo no PDF" → `?custo=1`. Esquecer de tirar uma coluna é fácil;
+  esquecer de marcá-la só custa um clique.
+- ⚠️ **A janela encurtou para 30 dias**, a pedido do diretor (*"a média do último mês, melhor que
+  a média dos últimos 3 meses"*). **Só a Pesquisa** — a **venda perdida** segue em 90 dias,
+  casada com a janela do giro. É o parâmetro `dias` do `_preco_venda_map`; unificar os dois
+  quebraria um deles em silêncio.
+- ⚠️ **`_preco_venda_map` deriva de `_vendas_liquidas`, não de query própria.** Até 09/2026 eram
+  duas fórmulas para o mesmo número: no cód. 42253, **na mesma gaveta e na mesma janela**, o card
+  dizia "Preço médio R$ 1,84/un" e a linha da Pesquisa logo abaixo dizia "+75% do nosso preço",
+  que implica R$ 1,65. Os dois errados, de formas diferentes. Hoje é uma fórmula só (R$ 2,40).
+  E o **modo postgres já estava certo** — ele sempre usou a mesma fonte; quem destoava era o DAX.
+  Mesmo padrão do Radar: quando os dois modos discordam, desconfie do Power BI.
+- 🚧 **Preço de TABELA não dá para entregar hoje.** O diretor pediu (*"Preço de tabela revenda ES
+  R$ 2,82"*). Conferido em 09/2026: `PCPRODUT[PVENDA]` vem **nulo**, `PCPRODFILIAL` não tem
+  `PVENDA`, e o `VLTABELA` do fato dá R$ 2,47 no 42253 — nenhum é o número dele. O preço de tabela
+  por região mora no **`PCTABPR`, que não está publicado** no dataset. É o caminho do
+  `TRIB_ENTRADA`/`CONSUMO_PRODUCAO`: pedir a publicação ao TI. Até lá a régua honesta é o
+  realizado, e a tela diz qual é.
+
 ### Metodologia de dados do Compras (v3) — o essencial
 
 Consome no dataset **Estoque**: **PCPEDIDO/PCITEM** (pedido real), **PCEMBALAGEM** (caixa/cubagem),
@@ -961,6 +995,34 @@ Doc completa das fórmulas em **`docs/estoque/planilha_v3.md`**.
 - **Lista de compradores** ≠ folha inteira: deriva da base (`compradores_reais()` — fornecedor com produto de revenda → `CODCOMPRADOR`). Usar `PCEMPR` cru traz vendedores/financeiro.
 
 **Armadilhas de dados (landmines — não repita):**
+- ⚠️ **Medida FILTRADA no numerador × `SUM` CRU no denominador — o defeito que mais se repete
+  aqui.** `FATURAMENTO_VENDAS` registra TUDO que sai do armazém: `CODOPER="S"` é venda, `"ST"` é
+  **transferência entre filiais** e `"SB"` é **bonificação** (sai com `VLVENDA = 0,00`). A medida
+  `[VENDA BRUTA]` conta só `"S"`; `SUM(QT)` contava tudo. Todo preço médio (venda ÷ qtd) saía
+  diluído. Fonte única: **`queries.QT_VENDA`**.
+  - Achado pelo diretor em 09/2026 na Pesquisa de preço (*"nosso preço está errado... exemplo
+    limpol, esponja"*). A esponja **58511** saía a **R$ 2,07** contra R$ 4,74 reais — **56% do
+    denominador dela era transferência** — e o relatório anunciava que estávamos **189% abaixo**
+    do concorrente quando estávamos **26%**. Uma tela que inventa competitividade.
+  - ⚠️ **O sintoma NÃO é uniforme**, e é por isso que passou: item sem transferência saía certo
+    (o 57433 batia no centavo). Conferir um punhado de produtos não prova nada aqui. Medido:
+    **157 de 2.478** produtos erravam, 22 deles com ≥25% e o pior a 90%. No agregado da base o
+    erro é de só 9,9% — **olhar o total esconde o defeito**.
+  - ⚠️ **A devolução tem a MESMA armadilha, do outro lado.** `[TOTAL DEVOLUCAO]` exclui a
+    devolução de transferência (`CODATIV=37 && CODDEVOL<>9`) e a quantidade não excluía: o app
+    subtraía **371.096** unidades onde a real são **53.120** — 7x. Fonte única: **`QT_DEVOL`**.
+    A **avulsa** fica de fora de propósito — a medida dela é `SUM` puro, então a quantidade crua
+    já está pareada; "consertar" por simetria criaria o defeito espelhado.
+  - ⚠️ **Já tinha mordido, e o conserto foi na ponta errada.** No top vendedores do drawer 360° a
+    transferência aparece como `CODUSUR 999` com R$ 0,00 e a lista ordena por quantidade — ela
+    seria o "top vendedor" do item. A saída na época foi excluir o 999 no `_vendedores_tecnicos()`.
+    Saneamento por **código de vendedor** segurando um problema de **natureza de operação**: o
+    veneno seguiu chegando ao preço por mais um ano. Se o defeito reaparece noutra tela, conserte
+    na origem.
+  - **O invariante que teria pego tudo isso no 1º dia:** o 42253 saía a **R$ 1,65** com
+    `CUSTOULTENT` de **R$ 1,87** — a tela dizia que vendíamos abaixo do custo. Ninguém viu porque
+    as duas colunas nunca tinham ficado lado a lado. Hoje elas ficam, e o gate trava.
+    Gate: `tests/test_regua_codoper.py`.
 - ⚠️ **NÃO tire peso nem cubagem da `PCEMBALAGEM`.** Ela parece a fonte certa (é a tabela de
   embalagens) e está publicada com todas as colunas, mas **`PESOBRUTO` vem vazio em 75,6%** dos
   produtos de revenda e **`VOLUME` em 100%** — 13 linhas preenchidas em 191.804. Foi ela a fonte
