@@ -1234,7 +1234,7 @@ ANALYTICS_DB_NAME=joga_demo   # banco analítico (ANALYTICS_DB_* faz fallback pr
 > demo **não envelhece** sem regenerar. O default powerbi usa `TODAY()` normal.
 
 **Gates:** `tests/test_provider_*.py` (Dashboard, Comercial, Metas, Mix, Radar, Estoque, RBAC) +
-`test_medida_compat.py`. Baseline **790 passam / 3 falham** (as 3 são fixture de data do
+`test_medida_compat.py`. Baseline **968 passam / 5 falham** (3 são fixture de data do
 Comercial: radar/mix/cohort).
 ⚠️ Até 19/08/2026 o baseline dizia "5 falham", contando 2 do `test_provider_estoque` como
 *"dependem de um `joga_demo` local com venda no mês corrente"*. **Nunca foi ambiente:** elas
@@ -1299,7 +1299,7 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 ├── docker-compose.demo.yml         # 🆕 stack da instância DEMO (Portainer)
 ├── _seed_demo/                     # 🆕 base sintética reprodutível (joga_demo) + bootstrap + seeder
 │   └── avancar_demo.py             # 🆕 alimentador diário: desloca as datas da demo até hoje
-└── tests/                          # pytest (790 passam; 3 falham por fixture de data — não é regressão)
+└── tests/                          # pytest (968 passam; 5 falham — pré-existentes, não é regressão)
 ```
 
 ---
@@ -1311,7 +1311,7 @@ cp .env.example .env        # preencher (ver variáveis abaixo)
 docker compose -f docker-compose.dev.yml up -d redis
 python -X utf8 init_db.py   # cria/migra schema + admin default (ADMIN_EMAIL / ADMIN_SENHA)
 python -X utf8 server.py    # http://localhost:5000
-pytest -q                   # 790 passam, 3 falham (fixture de data do Comercial — não é regressão)
+pytest -q                   # 968 passam, 5 falham (pré-existentes — ver armadilha nº 7)
 ```
 
 Variáveis novas da fusão no `.env` (além das do Power BI/DB/Redis/Resend):
@@ -1578,8 +1578,15 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 4. **URLs do `estoque.js` são absolutas com `/estoque/...`** — nunca `/api/...` (cairia no Comercial → 404).
 5. **Checagem de API usa `'/api/' in path`, não `startswith`** — por causa de `/estoque/api/...`.
 6. **Não editar `MultpelEstoque/`** (repo congelado) nem publicar em `:latest` sem intenção.
-7. **3 testes falham por fixture de data** (radar/mix/cohort) — pré-existentes, **não** são regressão.
-   O baseline é **790 passam / 3 falham**. As 2 do `test_provider_estoque` que constavam aqui
+7. **5 testes falham, todos pré-existentes** e **nenhum** é regressão. São **3 por fixture de
+   data** (radar/mix/cohort) e **2 em `test_ia_timeout.py`**, estes últimos medidos em 09/2026
+   contra a árvore limpa (`git stash`) — falham com e sem qualquer mudança.
+   ⚠️ **Antes de acusar um teste de novo, rode-o ISOLADO e depois com `git stash`.** Em 09/2026 o
+   `test_carteira_export_nome::test_pdf_quatro_filtros_concatenam` falhou numa rodada cheia,
+   passou isolado nas duas árvores e **sumiu na rodada seguinte, sem nenhuma mudança** — é o
+   acoplamento entre testes que esta seção já descreve, não defeito. Falha que muda de lugar é
+   sintoma de ambiente; falha que fica é regressão.
+   O baseline é **968 passam / 5 falham**. As 2 do `test_provider_estoque` que constavam aqui
    como dependência de ambiente eram, na verdade, o bug de ancoragem de data (armadilha nº 17).
 8. **Verificação visual de tema não confia em captura** das telas de dados (Power BI muda o conteúdo
    entre capturas) — comparar cor computada (`getComputedStyle`), não pixels.
