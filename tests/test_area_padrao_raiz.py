@@ -81,6 +81,28 @@ def test_quem_SO_tem_compras_segue_indo_pro_estoque(client, usuario):
     assert r.headers["Location"].endswith("/estoque/")
 
 
+def test_quem_fixou_COMPRAS_ENTRA_no_comercial_clicando_de_dentro_do_painel(client, usuario):
+    """🩹 Regressão de 14/09/2026: a 1ª versão redirecionava TODA ida a `/`, e `/` é o destino do
+    card Comercial do Portal, do seletor de área e do "Dashboard" do menu — quem fixou Gestão de
+    Estoque não entrava no Comercial por clique nenhum. O padrão é só para ABRIR o painel."""
+    usuario("compras")
+    host = "http://localhost"
+    r = client.get("/", headers={"Referer": f"{host}/portal"}, follow_redirects=False)
+    assert r.status_code == 200, f"clique no Portal foi desviado: {r.headers.get('Location')}"
+    r = client.get("/", headers={"Sec-Fetch-Site": "same-origin"}, follow_redirects=False)
+    assert r.status_code == 200, f"clique no seletor foi desviado: {r.headers.get('Location')}"
+
+
+def test_quem_fixou_COMPRAS_ainda_ABRE_no_estoque_por_endereco_ou_favorito(client, usuario):
+    """O outro lado: digitar o endereço / favorito (`Sec-Fetch-Site: none`) ou vir de outro site
+    segue abrindo na área fixada — senão a correção desfaria o ajuste original."""
+    usuario("compras")
+    r = client.get("/", headers={"Sec-Fetch-Site": "none"}, follow_redirects=False)
+    assert r.status_code in (301, 302) and r.headers["Location"].endswith("/estoque/")
+    r = client.get("/", headers={"Referer": "https://www.google.com/"}, follow_redirects=False)
+    assert r.status_code in (301, 302) and r.headers["Location"].endswith("/estoque/")
+
+
 def test_a_raiz_reusa_destino_pos_login_em_vez_de_reimplementar_a_regua():
     """⚠️ São QUATRO caminhos decidindo o mesmo destino (`/`, `GET /login`, `POST /api/login`,
     `/portal`). Uma segunda cópia da régua na raiz sairia de sincronia no primeiro ajuste — é o

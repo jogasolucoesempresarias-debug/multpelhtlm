@@ -68,6 +68,12 @@ item de menu prometia o que este caminho desfazia, sem erro nenhum, só a tela e
 `area_padrao` inteiro faria quem NUNCA fixou nada (a maioria) receber a tela de escolha no lugar
 do dashboard — consertar quem escolheu incomodando quem não pediu. Gate:
 `tests/test_area_padrao_raiz.py`, que trava os dois lados.
+🩹 **O padrão vale só para ABRIR, não para navegar** (14/09/2026). A 1ª versão redirecionava
+TODA ida a `/` — e `/` é o destino do card Comercial do Portal, do seletor de área e do
+"Dashboard" do menu: quem fixou Gestão de Estoque **não entrava no Comercial por clique nenhum**.
+Hoje a raiz só desvia quando não é navegação interna (`_navegacao_interna`: `Sec-Fetch-Site`
+same-origin ou `Referer` do mesmo host). ⚠️ Aba **restaurada** pelo navegador pode reenviar o
+referer antigo e abrir no Comercial — o custo aceito para nunca prender a pessoa numa área.
 `codcomprador` (filtro **default** do Compras, não trava) · `relatorios_estoque` (JSONB — quais
 relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`, default `escuro`) ·
 `tentativas_falhas`/`bloqueado_ate`/`bloqueios_seguidos` (bloqueio de login).

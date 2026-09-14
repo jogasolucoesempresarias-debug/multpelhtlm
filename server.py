@@ -1557,6 +1557,19 @@ def trocar_senha_page():
     return send_from_directory('.', 'trocar-senha.html')
 
 
+def _navegacao_interna():
+    """True quando a pessoa chegou clicando DENTRO do painel (Portal, seletor de área, menu).
+
+    `Sec-Fetch-Site` é o sinal direto do navegador (endereço digitado/favorito = 'none'); o
+    `Referer` do mesmo host cobre navegador sem Fetch Metadata e o F5, que reenvia o referer
+    original. Sem nenhum dos dois, é abertura."""
+    from urllib.parse import urlparse
+    if request.headers.get('Sec-Fetch-Site') in ('same-origin', 'same-site'):
+        return True
+    ref = request.headers.get('Referer') or ''
+    return bool(ref) and urlparse(ref).netloc == request.host
+
+
 @app.route('/')
 @login_required
 def index_page():
@@ -1581,7 +1594,13 @@ def index_page():
     # maioria — passar a receber a tela de escolha no lugar do dashboard. Seria consertar o caso
     # de quem escolheu criando incômodo para quem não pediu nada. Quem fixou Comercial ou não
     # fixou segue exatamente como antes.
-    if destino_pos_login() == '/estoque/':
+    #
+    # 🩹 **O padrão vale só para ABRIR, nunca para navegar** (14/09/2026). A 1ª versão
+    # redirecionava toda requisição a `/` — e `/` é o endereço de TODO caminho para o Comercial
+    # (card do Portal, seletor de área, "Dashboard" do menu). Quem fixou Gestão de Estoque ficou
+    # sem conseguir entrar no Comercial por clique nenhum. Regra do Gabriel: "o padrão é só pra
+    # abrir, a pessoa pode visitar a página que quiser".
+    if destino_pos_login() == '/estoque/' and not _navegacao_interna():
         return redirect('/estoque/')
     return send_from_directory('.', 'index.html')
 
