@@ -84,6 +84,15 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
 
 - **Dashboard executivo** — KPIs do mês + série 12m + YoY recalculado RCA + Top 10 deptos/vendedores + top clientes. Filtro multi-supervisor.
 - **Carteira RFM** — 8 segmentos canônicos + receita/positivação 12m + drill mensal + drill 360° por cliente. Export CSV/PDF.
+  - **Carteira por PRAÇA** (09/2026, pedido do João Victor: *"segmentação por praça, respeitando os
+    filtros acima"*). Segundo gráfico ao lado da rosca RFM, os dois **abaixo dos filtros** (a rosca
+    desceu). Praça = **UF do cadastro** (decisão do Gabriel; a praça do Winthor, `PCPRACA`, não está
+    no dataset); com uma UF filtrada desce para **cidade**. Barras horizontais (top 12 + "outras"),
+    três medidas (clientes · venda 12m · receita em risco) e **clique na barra vira filtro**.
+    ⚠️ **O valor é o cruzamento, não a distribuição**: sai do MESMO conjunto filtrado dos cards e da
+    tabela (`_carteira_por_praca`, no laço de `_filtrar_carteira` — zero query), então clicar em
+    "Perdidos" mostra ONDE estão os perdidos; UF sozinha seria a distribuição estática que todo
+    mundo sabe. Gate: `tests/test_carteira_praca.py`.
 - **Vendedores** — ranking YoY, positivação, cockpit individual.
 - **Categorias** — treemap de deptos (tamanho=venda, cor=margem) + top fornecedores + drill.
 - **Mix abandonado** — clientes que pararam de comprar um depto há X dias; drill top 5 deptos perdidos; export CSV.
@@ -117,6 +126,54 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
     `CliRec`/`CliAnt` seguem expostos ("quantos compraram em cada janela"), só não formam mais o
     `clientes_perdidos`.
 - **Tendências** — cohort retention heatmap (M+0..M+12) com filtros vendedor/supervisor em cascata.
+- **Curva ABC** (09/2026, pedido do João Victor: *"uma gerente me pediu a curva ABC de produtos do
+  time dela"*) — produtos do **escopo** ranqueados por venda líquida 12m, Pareto **A ≤ 80% · B ≤ 95% · C**
+  (os mesmos cortes do Compras), KPIs por classe clicáveis, gráfico de Pareto (top 100), tabela
+  ordenável com filtros de classe/depto/fornecedor/busca, export CSV/PDF e drawer do item (série
+  mensal no escopo + quem do time vende). Motor puro em **`curva_abc.py`**; endpoints `/api/abc*`.
+  - **Mora no COMERCIAL, não no Compras — e a razão é o modelo de dados, não organização.** O
+    pedido original era "um filtro de time na gestão de estoque". Lá o estoque, o giro e a
+    cobertura **não têm dono** (o snapshot é por filial, `_build_produtos` não tem
+    `CODUSUR`/`CODSUPERVISOR` em query nenhuma): um filtro de time recortaria só a venda e deixaria
+    saldo/cobertura/parado da empresa inteira ao lado — o defeito de dois universos que o módulo
+    mais repete. E o universo do Compras é o **snapshot**: produto que o time vende mas está zerado
+    hoje some (o bug do YoY de fornecedores de novo). Curva do time sai do **fato**.
+  - **Régua de VENDA (quem vendeu)**, não de cadastro. Medido no BI real em 15/09/2026 (12m): nos
+    4 times de campo grandes as duas réguas concordam em **97–99,8%** das classes e a venda difere
+    < 4%; em **Lojas e Diretoria divergem 40–66%** (cliente cadastrado num time, vendido por outro).
+    A tela declara a régua na 1ª linha. Se a gerente for de Lojas/Diretoria, o número dela **não
+    vai bater com a Carteira**, que é por cadastro — e é por construção.
+  - **A curva do time é MATERIALMENTE diferente da da empresa** — sem isso a aba seria redundante.
+    Medido: entre **17% e 40% dos produtos mudam de classe** quando a curva é do time (AFONSO
+    82,8% iguais · G. VITÓRIA 60,0%). E 75–82% da venda de cada time de campo já vem de produtos A
+    da empresa: o mix grosso é o mesmo, a diferença está na cauda.
+  - **Acesso = RBAC que já existe** (decisão do Gabriel): admin/viewer vê tudo e filtra por
+    `?supervisor=`/`?vendedor=` (os mesmos helpers do Radar); supervisor vê o(s) time(s) dele;
+    vendedor só ele. A querystring **não amplia** escopo de quem não é admin
+    (`_radar_vendedor_filtro`/`_supervisores_filtro` devolvem `None`). Gate: `test_vendedor_fica_no_proprio_escopo_e_ignora_querystring`.
+  - ⚠️ **Fonte única de "curva A" no app.** `curva_abc.classificar` replica a regra do
+    `estoque/core._aplicar_curva` (fronteira inclusiva, venda ≤ 0 = C) e **não a importa** de
+    propósito — o Comercial não pode depender do pacote de Compras, que é módulo opcional por
+    instância. O gate `test_mesma_regua_do_compras` compara as duas em 20 amostras aleatórias.
+    Pareto degenerado (1 item = 100%) cai em **C** nos dois — travado para ninguém "consertar" só
+    de um lado.
+  - ⚠️ **Amostra pequena AVISA, não esconde** (`AMOSTRA_MIN_PRODUTOS`=200 / `AMOSTRA_MIN_VENDA`=
+    R$ 100 mil): E-COMMERCE tem 266 produtos e R$ 42 mil em 12m, GLEICIANE 51 — "curva A" de 5
+    itens é ruído. A tela entrega a lista com faixa amarela e cards sem cor.
+  - ⚠️ **Filtro de tela viaja no export** (`curva_abc.filtrar` no servidor reaplica classe/depto/
+    fornecedor/busca) — a armadilha que o Compras já pagou. O resumo do PDF é do **escopo inteiro**
+    (a classe é relativa ao todo), só a tabela sai recortada. `CODEPTO` passa por `_cod_str` nas
+    duas pontas (float no BI, int no Postgres). Gate: `test_export_csv_sai_com_o_filtro_da_tela`.
+  - Custo: **1 query** por escopo (produto × 12m, ~2,5 mil linhas; medido 7,3 s para todos os
+    times de uma vez), cache 1h com `v` na chave. Modo BD em `provider_sql.abc_produtos`.
+  - 🚧 **Fase 2 (quando o diretor liberar): comparativo com a empresa, só admin.** Mesma tela,
+    colunas "classe na empresa"/"share do time" e bloco "Oportunidades" (A da empresa que o time
+    vende como C ou não vende). Medido: para cada time existem **26 a 174** desses produtos — o
+    maior time vende **0,2%** do produto A nº 1 da empresa (48957, R$ 229 mil). A gerente **não vê**
+    a empresa (RBAC); se a lista tiver de chegar a ela, é por export/e-mail do admin. Pergunta
+    aberta: régua VENDA × CADASTRO importa em Lojas/Diretoria e o comparativo herda a escolha.
+  - Gate: `tests/test_curva_abc.py` (21 testes: motor, RBAC, cache por escopo, export, amostra,
+    drawer, modo postgres).
 - **Metas** — réplica das 4 telas META (Venda/Rentab/Clientes/Mix): meta própria (Postgres) × realizado (2º dataset META) × projeção, drill de vendedores, editor admin.
   - ⚠️ **A `% Margem` divide pelo realizado BRUTO** (com bonificação), nunca por `venda_sb`
     (`[Realizado Sem Bonus]`). É a régua da medida oficial `[MARGEM(%)]` do dataset META
@@ -1306,6 +1363,7 @@ Ancorado o `_hoje()` no dado, passaram — ver a armadilha nº 17.
 Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-estoque)
 ├── server.py                       # Backend Comercial + registro do blueprint + auth/acesso/tema/segurança (~7,8k linhas)
 ├── rfm.py · cohort.py · metas.py   # Módulos puros do Comercial (matemática)
+├── curva_abc.py                    # 🆕 Curva ABC por time (Pareto 80/95, filtros, amostra) — puro
 ├── cobertura.py                    # Motor de cobertura (Gerencial)
 ├── init_db.py                      # Migrations Postgres (idempotente) — inclui as tabelas estoque_* 🆕
 ├── estoque/                        # 🆕 MÓDULO COMPRAS (ex-MultpelEstoque), blueprint /estoque
@@ -1321,6 +1379,7 @@ Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-esto
 │   └── index.html                  #   SPA do módulo (23 abas)
 ├── portal.html                     # 🆕 tela de escolha de área (+ Administração como faixa)
 ├── index/carteira/vendedores/…html # Páginas do Comercial
+├── abc.html                        # 🆕 aba Curva ABC (molde do Radar: filtros → KPIs → Pareto → tabela → drawer)
 ├── admin.html                      # CRUD + acesso por área + comprador + relatórios de Compras
 ├── login.html · trocar-senha.html
 ├── static/
@@ -1466,6 +1525,13 @@ uso, dump final dos dados, apontar os usuários — não é só "copiar uma vez"
 > - ⚠️ **Descrição de produto é parte da demo.** Era `PRODUTO 43015 BOMBRIL`; hoje sai
 >   `VELA UNILEVER 24UN`, com a embalagem coerente com o tipo do item (não existe "SACOLA 2L").
 >   Não muda nenhuma conta — muda se a demo é levada a sério.
+> - ⚠️ **O nome do departamento da demo vem do SEED, não de uma lista temática** (09/2026, achado
+>   pelo Gabriel na Curva ABC: azeite, óleo de soja e vinagre saíam em "Automotivo"). O seed
+>   (`gerar.gen_deptos`) nomeia os códigos em ordem crescente com `DEPTO_NOMES` e usa esse nome para
+>   escolher o vocabulário das descrições — mas não grava o nome, e o `deptos_map_sintetico` rotulava
+>   por posição com outra lista. Hoje ele espelha `DEPTO_NOMES` (gate
+>   `test_nomes_de_depto_da_demo_espelham_o_seed`); a chave de cache subiu para `deptos_map:v2`.
+>   Vale para Categorias, Mix, Radar e ABC — mesma função.
 > - ⚠️ **Coluna nova precisa de `ALTER TABLE` no `schema.sql`.** O `CREATE TABLE IF NOT EXISTS`
 >   não toca tabela existente, então a demo já criada nunca recebia a coluna e o gerador quebrava
 >   no COPY. Foi o caso do `pcprodut.pesoliq`.
@@ -1595,6 +1661,10 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 - **Compras (blueprint):** tudo sob `/estoque/...` — `/estoque/`, `/estoque/api/snapshot`,
   `/estoque/api/filtros`, `/estoque/api/orcamento`, `/estoque/api/export/<view>.{csv,xlsx,pdf}`,
   `/estoque/api/pedidos`, `/estoque/api/fornecedores_extra` (ciclo + verba, lazy), etc.
+- **Curva ABC (Comercial):** `GET /abc` · `GET /api/abc` (curva do escopo + resumo + régua +
+  `amostra_ok`) · `GET /api/abc/{csv,pdf}` (honra `classe`/`codepto`/`codfornec`/`busca` da tela) ·
+  `GET /api/abc/produto/<codprod>` (série mensal + vendedores no escopo). Escopo: `?supervisor=`/
+  `?vendedor=` só para admin/viewer.
 - **Performance:** `GET /estoque/api/nota` (ranking + matriz dos 5 indicadores + a régua
   serializada) · `GET /estoque/api/nota/serie?comprador_cod=` (só os 3 indicadores que saem da
   foto) · `GET|PUT /api/admin/metas-margem` (no app principal, `@admin_required`).
@@ -1707,6 +1777,13 @@ espelhando o DAX (Comercial + Compras + drills + exports), reconstrução das me
 (`medidas_dax.py`), rede de segurança contra vazamento, base sintética `joga_demo` + stack DEMO
 auto-contida. Zero regressão na Multpel **provada centavo-a-centavo** no BI real (antes×depois idêntico);
 2 sweeps HTTP (100% dos endpoints branchados); baseline 293 testes.
+
+**Carteira por praça** (09/2026): gráfico UF→cidade ao lado da rosca RFM, do mesmo conjunto filtrado; rosca desceu para baixo dos filtros.
+
+**Curva ABC por time** (09/2026): aba nova no Comercial — o pedido era "filtro de time no Estoque" e a
+medição no BI mostrou por que não (estoque sem dono, snapshot ≠ fato) e por que sim (17–40% dos produtos
+mudam de classe por time). Fase 1 = curva do escopo com RBAC existente; fase 2 (comparativo com a
+empresa, admin) aguarda o diretor. Motor `curva_abc.py`, 21 testes.
 
 **Foto diária virou medição de verdade** (08/2026, `4a5e09e` + `841e8e9`): o horário saiu de 6h-12h
 para **18h-22h** (o BI atualiza 7x/dia e a última é 17:44 — de manhã a foto gravava o fechamento de

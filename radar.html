@@ -797,6 +797,9 @@ function fecharDrill() {
   await loadBoard();
   document.getElementById('loading').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
+  // Deep link (?produto=COD) — a Curva ABC manda para cá pelo botão "Ver no Radar".
+  const _pIni = parseInt(new URLSearchParams(location.search).get('produto'), 10);
+  if (_pIni > 0) abrirProduto(_pIni);
 })();
 </script>
 </body>
