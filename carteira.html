@@ -69,11 +69,14 @@
     display: flex; align-items: center; gap: 10px;
   }
   .bloco-titulo::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-  .bloco-grid {
-    display: grid; gap: 14px;
-    grid-template-columns: 1.4fr 1fr;
-  }
-  @media (max-width: 1100px) { .bloco-grid { grid-template-columns: 1fr; } }
+  /* Filtros em cima; os dois gráficos (RFM × praça) lado a lado embaixo, obedecendo aos filtros
+     (desenho do João Victor, 09/2026). Antes a rosca ficava ao lado dos filtros. */
+  .bloco-grid { display: grid; gap: 14px; grid-template-columns: 1fr; }
+  .graficos-grid { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 1100px) { .graficos-grid { grid-template-columns: 1fr; } }
+  .praca-toggle { display: flex; gap: 6px; margin-bottom: 6px; }
+  .praca-toggle .chip { padding: 3px 9px; font-size: 0.68rem; }
+  .chart-card h3 .nivel { color: var(--accent); }
 
   /* Cards */
   .cards-grid {
@@ -307,14 +310,6 @@
             <label>&nbsp;</label>
             <button class="btn-sm" onclick="limparFiltros()">Limpar</button>
           </div>
-          <div class="ff">
-            <label>&nbsp;</label>
-            <button class="btn-export" onclick="exportarCSV()" title="Baixar como Excel/CSV">⬇ CSV</button>
-          </div>
-          <div class="ff">
-            <label>&nbsp;</label>
-            <button class="btn-export" onclick="exportarPDF()" title="Baixar como PDF" style="background:linear-gradient(135deg,var(--orange),var(--red));">📄 PDF</button>
-          </div>
         </div>
         <div class="filtros-card" style="margin-top: 0;">
           <div class="ff grow">
@@ -330,11 +325,29 @@
               <span class="chip g-lost"               data-val="lost"               onclick="toggleChip('segmento', this)">Perdidos</span>
             </div>
           </div>
+          <!-- CSV e PDF são um PAR à direita da linha do Segmento: a 1ª linha de filtros já não os
+               comportava em 1540px e o PDF caía sozinho na linha de baixo. -->
+          <div class="ff" style="margin-left:auto;display:flex;gap:6px;align-self:flex-end;">
+            <button class="btn-export" onclick="exportarCSV()" title="Baixar como Excel/CSV">⬇ CSV</button>
+            <button class="btn-export" onclick="exportarPDF()" title="Baixar como PDF" style="background:linear-gradient(135deg,var(--orange),var(--red));">📄 PDF</button>
+          </div>
         </div>
       </div>
-      <div class="chart-card">
-        <h3>Segmentação RFM (8 segmentos)</h3>
-        <div class="chart-wrap"><canvas id="chartDonut"></canvas></div>
+      <div class="graficos-grid">
+        <div class="chart-card">
+          <h3>Segmentação RFM (8 segmentos)</h3>
+          <div class="chart-wrap"><canvas id="chartDonut"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <h3>Carteira por praça — <span class="nivel" id="praca_nivel">UF</span>
+            <span id="praca_dica" style="font-weight:400;text-transform:none;letter-spacing:0;margin-left:6px;">· obedece aos filtros · clique numa barra para filtrar</span></h3>
+          <div class="praca-toggle" id="praca_toggle">
+            <span class="chip active" data-m="clientes" onclick="setPracaMedida('clientes')">Clientes</span>
+            <span class="chip" data-m="venda_12m" onclick="setPracaMedida('venda_12m')">Venda 12m</span>
+            <span class="chip" data-m="receita_perdida" onclick="setPracaMedida('receita_perdida')">Receita em risco</span>
+          </div>
+          <div class="chart-wrap" style="height:210px;"><canvas id="chartPraca"></canvas></div>
+        </div>
       </div>
     </div>
   </div>
@@ -733,6 +746,65 @@ function renderDonut(segs) {
   });
 }
 
+// ── Carteira por praça (UF; cidade quando uma UF está filtrada) ──
+let _pracas = null;
+let _pracaMedida = 'clientes';
+const PRACA_TOP = 8;
+const PRACA_CORES = ['#38bdf8', '#34d399', '#fbbf24', '#f87171', '#a78bfa', '#fb923c', '#2dd4bf', '#f472b6'];
+const PRACA_LABEL = { clientes: 'Clientes', venda_12m: 'Venda 12m', receita_perdida: 'Receita em risco' };
+
+function setPracaMedida(m) {
+  _pracaMedida = m;
+  document.querySelectorAll('#praca_toggle .chip').forEach(c => c.classList.toggle('active', c.dataset.m === m));
+  renderPraca();
+}
+
+function renderPraca() {
+  // Rosca no mesmo molde da Segmentação RFM (pedido do João Victor): top 8 praças + "outras",
+  // legenda à direita, % na fatia. Clique na fatia vira filtro (UF ou cidade).
+  if (!_pracas) return;
+  const nivel = _pracas.nivel;
+  document.getElementById('praca_nivel').textContent = nivel === 'cidade' ? `cidades de ${_filtros.uf || 'UF'}` : 'UF';
+  const m = _pracaMedida;
+  const itens = (_pracas.itens || []).slice().sort((a, b) => (b[m] || 0) - (a[m] || 0));
+  const top = itens.slice(0, PRACA_TOP);
+  const resto = itens.slice(PRACA_TOP);
+  const total = itens.reduce((s, p) => s + (p[m] || 0), 0);
+  const labels = top.map(p => p.praca);
+  const data = top.map(p => p[m] || 0);
+  if (resto.length) { labels.push(`outras (${resto.length})`); data.push(resto.reduce((s, p) => s + (p[m] || 0), 0)); }
+  const cores = labels.map((l, i) => i < top.length ? PRACA_CORES[i % PRACA_CORES.length] : '#475569');
+  const fmt = v => m === 'clientes' ? NUM.format(v) : BRL.format(v);
+  document.getElementById('praca_dica').textContent = itens.length
+    ? `· ${NUM.format(itens.length)} ${nivel === 'cidade' ? 'cidades' : 'UFs'} · ${PRACA_LABEL[m]} · clique numa fatia para filtrar`
+    : '· nenhum cliente no recorte';
+  drawChart('chartPraca', {
+    type: 'doughnut',
+    data: { labels, datasets: [{ data, backgroundColor: cores, borderWidth: 0 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      onClick: (ev, els) => {
+        if (!els.length || els[0].index >= top.length) return;   // "outras" não vira filtro
+        const p = top[els[0].index];
+        if (nivel === 'cidade') document.getElementById('filt_cidade').value = p.praca;
+        else document.getElementById('filt_uf').value = p.praca;
+        aplicarFiltros();
+      },
+      plugins: {
+        legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: { callbacks: { label: c => `${c.label}: ${fmt(c.parsed)} (${total ? (c.parsed / total * 100).toFixed(1) : '0'}%)` } },
+        datalabels: {
+          display: true,
+          color: '#0a0e17',
+          font: { weight: 'bold', size: 11 },
+          formatter: (value) => (!total || value / total < 0.04) ? '' : (value / total * 100).toFixed(1) + '%',
+        }
+      }
+    },
+    plugins: [ChartDataLabels],
+  });
+}
+
 const MESES_ABREV = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
 
 async function renderReceitaPositivacao() {
@@ -838,6 +910,7 @@ async function loadClientes() {
   if (r.segmentos) {
     atualizarCardsEDonut(r.segmentos, r.total);
   }
+  if (r.pracas) { _pracas = r.pracas; renderPraca(); }
   // Chart Receita+Positivação também reage aos filtros (fire-and-forget)
   renderReceitaPositivacao();
 }

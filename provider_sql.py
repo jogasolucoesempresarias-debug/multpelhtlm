@@ -809,24 +809,38 @@ def metas_realizado(ano, mes, escopo):
 
 
 # ───────────────────────── nomes de depto sintéticos (demo) ─────────────────────────
-# A demo não tem nome textual de depto (gerar_fato grava "DEVOLUCAO"). Damos nomes temáticos de
-# atacadista, atribuídos por posição (sorted codepto) → estáveis e sem colisão até 40 deptos.
+# Nomes de departamento da demo. O seed (`_seed_demo/gerar.py:gen_deptos`) atribui os códigos em
+# ordem crescente ([2,3,5,8,11,12,50] e depois 100+i) e dá a cada um o nome de `DEPTO_NOMES` NA MESMA
+# ORDEM — e é esse nome que orienta o vocabulário das descrições ("OLEOS E AZEITES" → azeite, óleo,
+# vinagre). O seed não grava o nome (gerar_fato grava "DEVOLUCAO"), então reproduzimos a lista aqui.
+# ⚠️ Espelho de `gerar.DEPTO_NOMES`: gate `test_curva_abc.py::test_nomes_de_depto_da_demo_espelham_o_seed`.
+# Até 09/2026 os rótulos eram temáticos por posição (`_DEPTO_TEMAS`), sem olhar o conteúdo — e o
+# depto 117 (azeite, óleo de soja, vinagre) saía como "Automotivo" na Curva ABC, Categorias, Mix e Radar.
+_DEPTO_NOMES_SEED = [
+    "MERCEARIA DOCE", "MERCEARIA SALGADA", "LIMPEZA", "HIGIENE/PERFUMARIA", "BEBIDAS",
+    "BISCOITOS", "MATINAIS", "LATICINIOS", "CONSERVAS", "DIVERSOS", "DESCARTAVEIS",
+    "PET", "BAZAR", "CONFEITARIA", "CEREAIS", "TEMPEROS", "CAFE", "OLEOS E AZEITES",
+    "MASSAS", "ENLATADOS",
+]
+# Sobra (deptos além dos 20 nomeados, que no seed viram "DEPTO 1xx" e têm descrição genérica):
+# rótulos temáticos por posição, só para a tela não mostrar número.
 _DEPTO_TEMAS = [
-    "Higiene Pessoal", "Alimentos", "Bebidas", "Limpeza", "Bazar", "Descartáveis", "Perfumaria",
-    "Cosméticos", "Matinais", "Mercearia Doce", "Mercearia Salgada", "Laticínios", "Congelados",
-    "Pet Shop", "Farmácia", "Papelaria", "Utilidades", "Automotivo", "Ferramentas", "Eletroportáteis",
-    "Cama & Banho", "Brinquedos", "Festas", "Calçados", "Vestuário", "Jardinagem", "Construção",
-    "Tabacaria", "Confeitaria", "Hortifruti", "Padaria", "Frios", "Sucos", "Snacks", "Higiene do Lar",
-    "Beleza", "Infantil", "Saúde", "Bebidas Quentes", "Limpeza Pesada",
+    "Utilidades", "Papelaria", "Festas", "Jardinagem", "Ferramentas", "Eletroportáteis",
+    "Cama & Banho", "Brinquedos", "Calçados", "Vestuário", "Construção", "Tabacaria",
+    "Hortifruti", "Padaria", "Frios", "Snacks", "Higiene do Lar", "Beleza", "Infantil", "Saúde",
 ]
 
 
 def deptos_map_sintetico():
-    """{'deptos': {codepto_str: nome}, 'secoes': {}} — nomes temáticos p/ a demo (Categorias/Mix/Radar)."""
+    """{'deptos': {codepto_str: nome}, 'secoes': {}} — nomes da demo (Categorias/Mix/Radar/ABC).
+    Ordem crescente de código = ordem de geração do seed, então o i-ésimo código recebe o i-ésimo nome."""
     with analytics_conn() as c:
         cur = c.cursor()
         cur.execute("SELECT DISTINCT codepto FROM faturamento_vendas WHERE codepto IS NOT NULL ORDER BY codepto")
-        deptos = {str(cd): _DEPTO_TEMAS[i % len(_DEPTO_TEMAS)] for i, (cd,) in enumerate(cur.fetchall())}
+        cods = [cd for (cd,) in cur.fetchall()]
+    n = len(_DEPTO_NOMES_SEED)
+    deptos = {str(cd): (_DEPTO_NOMES_SEED[i] if i < n else _DEPTO_TEMAS[(i - n) % len(_DEPTO_TEMAS)])
+              for i, cd in enumerate(cods)}
     return {"deptos": deptos, "secoes": {}}
 
 
@@ -1041,3 +1055,49 @@ def _radar_por_cli_prod(cur, f_cli, d_ini, d_fim, val_alias, qt_alias):
         GROUP BY codprod""", (d_ini, *((d_fim,) if d_fim else ())))
     return {r[0]: {val_alias: float(r[1]), qt_alias: float(r[2])}
             for r in cur.fetchall() if r[0] is not None}
+
+
+# ───────────────────────── Curva ABC por time (Comercial) ─────────────────────────
+def _abc_escopo(rbac, supervisores=None, vendedor=None, tab="faturamento_vendas"):
+    """Escopo por VENDA: RBAC da sessão + override ?supervisor=/?vendedor= (só admin/viewer —
+    o app já zera os overrides para os demais). Espelha `server._abc_escopo_frag`."""
+    we = escopo_where(rbac, tab)
+    if vendedor is not None:
+        we += f" AND {tab}.codusur = {int(vendedor)}"
+    elif supervisores:
+        we += f" AND {tab}.codsupervisor IN ({','.join(str(int(s)) for s in supervisores)})"
+    return we
+
+
+def abc_produtos(rbac, supervisores=None, vendedor=None):
+    """Venda líq. 12m + clientes distintos por codprod no escopo. Espelha a query DAX de
+    `server._abc_full`: [{CODPROD, Venda, Clientes}], só Venda > 0."""
+    d0, _ = periodo_sql("12m")
+    we = _abc_escopo(rbac, supervisores, vendedor)
+    with analytics_conn() as c:
+        cur = c.cursor()
+        cur.execute(f"""SELECT codprod, {VB} v, count(DISTINCT codcli) FILTER (WHERE codoper='S') cli
+            FROM faturamento_vendas WHERE dtsaida >= %s{we}
+            GROUP BY codprod HAVING {VB} > 0""", (d0,))
+        return [{"CODPROD": cp, "Venda": float(v), "Clientes": int(cli or 0)}
+                for cp, v, cli in cur.fetchall() if cp is not None]
+
+
+def abc_produto_detalhe(codprod, rbac, supervisores=None, vendedor=None):
+    """Drawer do item NO ESCOPO: série mensal 12m (venda, qt, clientes) + venda por vendedor.
+    {'serie': [{AnoMes, Venda, Qt, Clientes}], 'vendedores': [{CODUSUR, Venda, Qt}]}."""
+    d0, _ = periodo_sql("12m")
+    we = _abc_escopo(rbac, supervisores, vendedor)
+    f = f"codprod = {int(codprod)} AND dtsaida >= %s{we}"
+    with analytics_conn() as c:
+        cur = c.cursor()
+        cur.execute(f"""SELECT {_AM_FAT} am, {VB} v, coalesce(sum(qt) FILTER (WHERE codoper='S'),0) q,
+                count(DISTINCT codcli) FILTER (WHERE codoper='S') cli
+            FROM faturamento_vendas WHERE {f} GROUP BY 1 ORDER BY 1""", (d0,))
+        serie = [{"AnoMes": int(am), "Venda": float(v), "Qt": float(q), "Clientes": int(cli or 0)}
+                 for am, v, q, cli in cur.fetchall() if am is not None]
+        cur.execute(f"""SELECT codusur, {VB} v, coalesce(sum(qt) FILTER (WHERE codoper='S'),0) q
+            FROM faturamento_vendas WHERE {f} GROUP BY codusur HAVING {VB} > 0""", (d0,))
+        vendedores = [{"CODUSUR": cu, "Venda": float(v), "Qt": float(q)}
+                      for cu, v, q in cur.fetchall() if cu is not None]
+    return {"serie": serie, "vendedores": vendedores}

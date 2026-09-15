@@ -28,6 +28,7 @@
     { href: '/carteira', rotulo: 'Carteira' },
     { href: '/vendedores', rotulo: 'Vendedores', exceto: ['vendedor'] },
     { href: '/categorias', rotulo: 'Categorias' },
+    { href: '/abc', rotulo: 'Curva ABC' },
     { href: '/mix', rotulo: 'Mix' },
     { href: '/radar', rotulo: 'Radar' },
     { href: '/tendencias', rotulo: 'Tendências' },

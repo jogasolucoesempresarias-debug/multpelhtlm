@@ -3981,7 +3981,31 @@ def _filtrar_carteira(clientes, args, vendedor_forcado=None):
         'limit': limit,
         'rows': rows,
         'segmentos': segmentos_count,
+        'pracas': _carteira_por_praca(filtrados, nivel='cidade' if uf else 'uf'),
     }
+
+
+def _carteira_por_praca(filtrados, nivel='uf'):
+    """Carteira por PRAÇA do conjunto FILTRADO (pedido do João Victor 09/2026: "segmentação por
+    praça, respeitando os filtros acima"). Praça = UF do cadastro (decisão do Gabriel); com uma UF
+    filtrada desce para CIDADE, senão o gráfico teria uma fatia só. Mesma passada dos segmentos e
+    mesmo conjunto — clicar em "Perdidos" mostra ONDE estão os perdidos, que é o valor da coisa.
+    Três medidas por praça porque contagem e R$ discordam: 40 perdidos numa cidade podem valer
+    mais que 200 noutra. Ordenado por clientes desc."""
+    acc = {}
+    for c in filtrados:
+        k = (c.get(nivel) or '').strip().upper() or '—'
+        p = acc.get(k)
+        if p is None:
+            p = acc[k] = {'praca': k, 'clientes': 0, 'venda_12m': 0.0, 'receita_perdida': 0.0}
+        p['clientes'] += 1
+        p['venda_12m'] += c.get('venda_12m') or 0
+        p['receita_perdida'] += c.get('receita_perdida_proj') or 0
+    itens = sorted(acc.values(), key=lambda x: (-x['clientes'], x['praca']))
+    for p in itens:
+        p['venda_12m'] = round(p['venda_12m'], 2)
+        p['receita_perdida'] = round(p['receita_perdida'], 2)
+    return {'nivel': nivel, 'itens': itens}
 
 
 @app.route('/api/carteira/clientes')
@@ -5517,7 +5541,7 @@ def tendencias_page():
 def _carregar_deptos_map():
     """Cache 24h. Carrega {CODEPTO: nome} via FATURAMENTO_DEVOLUCAO (única tabela
     que tem o nome textual). CODSEC: {CODSEC: nome} também."""
-    key = 'multpel:deptos_map:v1'
+    key = 'multpel:deptos_map:v2'   # v2: nomes da demo passaram a espelhar o seed (provider_sql)
     cached = _cache_get(key)
     if cached:
         return cached
@@ -7752,6 +7776,333 @@ def api_cohort_drill(aquisicao, mes_relativo):
         'total':         len(codclis),
         'rows':          rows,
     })
+
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Curva ABC por time — o que o time VENDE, ranqueado (Pareto 80/95, 12m)
+# Pedido do João Victor 15/09/2026 ("uma gerente me pediu a curva ABC de
+# produtos do time dela"). Vive no COMERCIAL, não no Compras: lá o estoque,
+# o giro e a cobertura não têm dono (o snapshot é por filial) — um filtro
+# de time mostraria venda recortada ao lado de saldo da empresa inteira, o
+# defeito de dois universos que o README do Compras mais repete.
+# Motor puro em curva_abc.py. Escopo = RBAC de VENDA (quem vendeu).
+# Fase 2 (comparativo com a empresa, só admin) fica reservada: mesma tela,
+# colunas a mais. Ver README.
+# ──────────────────────────────────────────────────────────────────────
+import curva_abc  # módulo puro
+
+# Quantidade vendida na régua da medida (só CODOPER "S"): SUM cru somaria transferência ("ST") e
+# bonificação ("SB") — a armadilha do preço médio da Pesquisa de preço (README, Compras).
+_ABC_QT = 'CALCULATE(SUM(FATURAMENTO_VENDAS[QT]), FATURAMENTO_VENDAS[CODOPER] = "S")'
+
+
+def _abc_escopo_frag():
+    """Fragmento DAX ' && …' do escopo por VENDA. Admin/viewer: honra ?vendedor= (precedência)
+    ou ?supervisor=; demais: só o RBAC da sessão (os helpers já devolvem None p/ eles, então
+    ninguém amplia escopo pela querystring). '' = empresa inteira (admin sem filtro)."""
+    vend = _radar_vendedor_filtro()
+    if vend is not None:
+        return f" && FATURAMENTO_VENDAS[CODUSUR] = {int(vend)}"
+    sup_frag = _frag_supervisores('FATURAMENTO_VENDAS', _supervisores_filtro())
+    if sup_frag:
+        return f" && {sup_frag}"
+    r = aplicar_rbac_dax()
+    return f" && {r}" if r else ''
+
+
+def _abc_escopo_nome():
+    """Rótulo humano do escopo (p/ tela, PDF e nome de arquivo)."""
+    vend = _radar_vendedor_filtro()
+    if vend is not None:
+        v = _carregar_vendedores_map().get(str(vend))
+        return f"Vendedor: {v.get('nome') if v else vend}"
+    sups = _supervisores_filtro()
+    if session.get('role') not in ('admin', 'viewer'):
+        if session.get('codusur'):
+            v = _carregar_vendedores_map().get(str(session['codusur']))
+            return f"Vendedor: {v.get('nome') if v else session['codusur']}"
+        sups = _session_supervisores()
+    if sups:
+        nomes = []
+        for cs in sups:
+            s = _carregar_supervisores_map().get(str(cs))
+            nomes.append(s.get('nome') if s else str(cs))
+        return 'Time: ' + ' + '.join(nomes)
+    return 'Empresa inteira'
+
+
+def _abc_full():
+    """Curva completa do escopo (lista classificada, ordenada por venda desc). Cache 1h por
+    (escopo, v). ⚠️ `v` na chave = versão do payload — suba ao mudar forma/significado (lição do
+    board do Radar: sem isso um deploy serve o payload velho até o TTL, sem erro)."""
+    vend = _radar_vendedor_filtro()
+    sup = _supervisores_filtro()
+    key = cache_key_for_user('abc:full', {'v': 1, 'supervisor': _sup_cache_key(sup),
+                                          'vendedor': vend if vend is not None else '-'})
+    cached = _cache_get(key)
+    if cached:
+        return cached['rows']
+
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        rows = provider_sql.abc_produtos(_rbac_sql(), supervisores=sup, vendedor=vend)
+    else:
+        query = f"""EVALUATE
+FILTER(
+    SUMMARIZECOLUMNS(
+        FATURAMENTO_VENDAS[CODPROD],
+        FILTER(FATURAMENTO_VENDAS,
+            FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -{curva_abc.MESES}){_abc_escopo_frag()}),
+        "Venda",    [VENDA LIQUIDA],
+        "Clientes", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI])
+    ),
+    [Venda] > 0
+)"""
+        token = get_token_cached()
+        payload = retry_dax(execute_dax)(token, query)
+        rows = clean_rows(_todas_linhas(payload))
+
+    idx = _carregar_produtos_map()
+    deptos = _carregar_deptos_map()['deptos']
+    itens = []
+    for r in rows:
+        cp = r.get('CODPROD')
+        if cp is None:
+            continue
+        cps = str(int(cp)) if isinstance(cp, float) else str(cp)
+        meta = idx.get(cps) or idx.get(str(cp)) or {}   # o índice guarda str(CODPROD) cru
+        cd = meta.get('codepto')
+        itens.append({
+            'codprod':     int(float(cp)),
+            'descricao':   meta.get('descricao') or f'Produto {cps}',
+            'codepto':     cd,
+            'depto_nome':  deptos.get(curva_abc._cod_str(cd)) if cd is not None else None,
+            'codfornec':   meta.get('codfornec'),
+            'fornec_nome': meta.get('fornec_nome'),
+            'venda':       round(r.get('Venda') or 0, 2),
+            'clientes':    int(r.get('Clientes') or 0),
+        })
+    classificados = curva_abc.classificar(itens)
+    _cache_set(key, {'rows': classificados}, 'dax_agregado')
+    return classificados
+
+
+def _abc_filtros_args():
+    a = request.args
+    return {'classe': a.get('classe'), 'codepto': a.get('codepto'),
+            'codfornec': a.get('codfornec'), 'busca': a.get('busca')}
+
+
+@app.route('/abc')
+@login_required
+def abc_page():
+    return send_from_directory('.', 'abc.html')
+
+
+@app.route('/api/abc')
+@login_required
+def api_abc():
+    """Curva ABC do escopo + KPIs + régua declarada. A tabela vem INTEIRA (≤ ~3,7 mil linhas):
+    filtros de classe/depto/fornecedor/busca são de tela e rodam no front; o export reaplica os
+    mesmos no servidor (curva_abc.filtrar) para sair com o que a pessoa vê."""
+    rows = _abc_full()
+    ok, motivo = curva_abc.amostra_confiavel(rows)
+    return jsonify({
+        'ok': True,
+        'escopo': _abc_escopo_nome(),
+        'regua': {'meses': curva_abc.MESES, 'corte_a': curva_abc.CORTE_A, 'corte_b': curva_abc.CORTE_B,
+                  'base': 'venda líquida · quem vendeu (CODSUPERVISOR/CODUSUR do faturamento)'},
+        'amostra_ok': ok, 'amostra_motivo': motivo,
+        'resumo': curva_abc.resumo(rows),
+        'total': len(rows),
+        'rows': rows,
+    })
+
+
+def _abc_nome_arquivo(ext):
+    from datetime import date as _date
+    partes = ['curva_abc', f'{curva_abc.MESES}m', _slug_export(_abc_escopo_nome().split(': ', 1)[-1])]
+    f = _abc_filtros_args()
+    if f['classe']:
+        partes.append('classe-' + f['classe'].replace(',', ''))
+    return '_'.join(p.replace(' ', '_') for p in partes if p) + f"_{_date.today().isoformat()}.{ext}"
+
+
+@app.route('/api/abc/csv')
+@login_required
+def api_abc_csv():
+    rows = curva_abc.filtrar(_abc_full(), **_abc_filtros_args())
+    cabecalho = ['Rank', 'Classe', 'CodProd', 'Produto', 'Departamento', 'Fornecedor',
+                 'Venda12m', 'PctVenda', 'PctAcumulado', 'Clientes']
+
+    def gerar():
+        yield CSV_PREAMBULO
+        yield _csv_linha(cabecalho)
+        for r in rows:
+            yield _csv_linha([r['rank'], r['classe'], r['codprod'], r['descricao'], r.get('depto_nome'),
+                              r.get('fornec_nome'), r['venda'], round(r['pct'], 2),
+                              round(r['pct_acum'], 2), r['clientes']])
+
+    return Response(stream_with_context(gerar()), mimetype='text/csv; charset=utf-8',
+                    headers={'Content-Disposition': _content_disposition(_abc_nome_arquivo('csv'))})
+
+
+def _gerar_pdf_abc(rows, resumo, escopo, filtros=''):
+    """PDF da curva. Landscape A4, zebra — mesmo molde do board do Radar."""
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT
+    from io import BytesIO
+    from datetime import date as _date
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=1.2*cm, rightMargin=1.2*cm,
+                            topMargin=1.2*cm, bottomMargin=1.5*cm,
+                            title=f"Curva ABC JOGA {_date.today().isoformat()}")
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle('titulo', parent=styles['Heading1'], fontSize=14, alignment=TA_LEFT,
+                                  textColor=colors.HexColor('#0a0e17'))
+    sub_style = ParagraphStyle('sub', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#475569'))
+
+    def brl(v):
+        return f"R$ {(v or 0):,.0f}".replace(',', '.')
+
+    c = resumo['classes']
+    story = [Paragraph('<b>JOGA Analytics</b> — Curva ABC · produtos do time', titulo_style),
+             Paragraph(f"Gerado em {_date.today().strftime('%d/%m/%Y')} · {escopo} · últimos "
+                       f"{curva_abc.MESES} meses · venda líquida de quem vendeu · A ≤ {curva_abc.CORTE_A:.0f}% "
+                       f"· B ≤ {curva_abc.CORTE_B:.0f}% · {len(rows)} produtos"
+                       + (f" · {filtros}" if filtros else ''), sub_style),
+             Paragraph(f"A: {c['A']['qt']} itens · {brl(c['A']['venda'])} ({c['A']['pct_venda']}%) &nbsp;&nbsp; "
+                       f"B: {c['B']['qt']} itens · {brl(c['B']['venda'])} ({c['B']['pct_venda']}%) &nbsp;&nbsp; "
+                       f"C: {c['C']['qt']} itens · {brl(c['C']['venda'])} ({c['C']['pct_venda']}%) &nbsp;&nbsp; "
+                       f"{resumo['concentracao_pct_itens']}% dos itens fazem {curva_abc.CORTE_A:.0f}% da venda",
+                       sub_style),
+             Spacer(1, 0.3*cm)]
+
+    data = [['#', 'Cl.', 'Cód', 'Produto', 'Departamento', 'Fornecedor', 'Venda 12m', '% venda', '% acum', 'Clientes']]
+    for r in rows:
+        data.append([r['rank'], r['classe'], r['codprod'], (r['descricao'] or '')[:38],
+                     (r.get('depto_nome') or '')[:18], (r.get('fornec_nome') or '')[:22],
+                     brl(r['venda']), f"{r['pct']:.2f}%", f"{r['pct_acum']:.1f}%", r['clientes']])
+    tbl = Table(data, repeatRows=1,
+                colWidths=[1*cm, 0.9*cm, 1.4*cm, 7.2*cm, 3.4*cm, 4.2*cm, 2.6*cm, 1.6*cm, 1.6*cm, 1.7*cm])
+    tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e293b')),
+        ('TEXTCOLOR',  (0,0), (-1,0), colors.white),
+        ('FONTNAME',   (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE',   (0,0), (-1,-1), 7),
+        ('GRID',       (0,0), (-1,-1), 0.3, colors.HexColor('#cbd5e1')),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8fafc')]),
+        ('ALIGN',      (6,0), (9,-1), 'RIGHT'),
+        ('ALIGN',      (1,0), (1,-1), 'CENTER'),
+        ('VALIGN',     (0,0), (-1,-1), 'MIDDLE'),
+        ('LEFTPADDING',(0,0), (-1,-1), 3),
+        ('RIGHTPADDING',(0,0), (-1,-1), 3),
+    ]))
+    story.append(tbl)
+
+    def _rodape(canvas, doc):
+        canvas.saveState()
+        canvas.setFont('Helvetica', 7)
+        canvas.setFillColor(colors.HexColor('#94a3b8'))
+        canvas.drawRightString(doc.pagesize[0] - 1.2*cm, 0.8*cm, f"Página {doc.page}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_rodape, onLaterPages=_rodape)
+    return buf.getvalue()
+
+
+@app.route('/api/abc/pdf')
+@login_required
+def api_abc_pdf():
+    full = _abc_full()
+    f = _abc_filtros_args()
+    rows = curva_abc.filtrar(full, **f)
+    partes = []
+    if f['classe']:
+        partes.append('classe ' + '/'.join(f['classe'].split(',')))
+    if f['codepto'] not in (None, ''):
+        partes.append('depto ' + (_carregar_deptos_map()['deptos'].get(curva_abc._cod_str(f['codepto'])) or f['codepto']))
+    if f['codfornec'] not in (None, ''):
+        partes.append('fornecedor ' + (_radar_fornec_nome(f['codfornec']) or str(f['codfornec'])))
+    if f['busca']:
+        partes.append(f'busca "{f["busca"]}"')
+    # O resumo é do ESCOPO INTEIRO (a curva), não do recorte da tabela — a classe é relativa ao todo.
+    pdf = _gerar_pdf_abc(rows, curva_abc.resumo(full), _abc_escopo_nome(), ' · '.join(partes))
+    return Response(pdf, mimetype='application/pdf',
+                    headers={'Content-Disposition': _content_disposition(_abc_nome_arquivo('pdf'))})
+
+
+@app.route('/api/abc/produto/<int:codprod>')
+@login_required
+def api_abc_produto(codprod):
+    """Drawer: o item NO ESCOPO — série mensal 12m + quem do time o vende. O Radar já mostra os
+    clientes que pararam; aqui é o que ele não tem (a leitura por time)."""
+    vend = _radar_vendedor_filtro()
+    sup = _supervisores_filtro()
+    key = cache_key_for_user('abc:produto', {'v': 1, 'cod': codprod, 'supervisor': _sup_cache_key(sup),
+                                             'vendedor': vend if vend is not None else '-'})
+    cached = _cache_get(key)
+    if cached:
+        return jsonify(cached)
+
+    if CONFIG['data_source'] == 'postgres':
+        d = provider_sql.abc_produto_detalhe(codprod, _rbac_sql(), supervisores=sup, vendedor=vend)
+        serie_raw, vend_raw = d['serie'], d['vendedores']
+    else:
+        frag = _abc_escopo_frag()
+        base = (f"FATURAMENTO_VENDAS[CODPROD] = {int(codprod)} && "
+                f"FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -{curva_abc.MESES}){frag}")
+        queries = {
+            'serie': f"""EVALUATE
+SUMMARIZECOLUMNS(
+    CALENDARIO[AnoMes],
+    FILTER(FATURAMENTO_VENDAS, {base}),
+    "Venda",    [VENDA LIQUIDA],
+    "Qt",       {_ABC_QT},
+    "Clientes", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI])
+)""",
+            'vendedores': f"""EVALUATE
+FILTER(
+    SUMMARIZECOLUMNS(
+        FATURAMENTO_VENDAS[CODUSUR],
+        FILTER(FATURAMENTO_VENDAS, {base}),
+        "Venda", [VENDA LIQUIDA],
+        "Qt",    {_ABC_QT}
+    ),
+    [Venda] > 0
+)""",
+        }
+        res = _executar_dax_paralelo_n(queries, max_workers=2)
+        serie_raw = clean_rows(_todas_linhas(res['serie']))
+        vend_raw = clean_rows(_todas_linhas(res['vendedores']))
+
+    serie = sorted(({'anomes': int(r['AnoMes']), 'venda': round(r.get('Venda') or 0, 2),
+                     'qt': round(r.get('Qt') or 0, 1), 'clientes': int(r.get('Clientes') or 0)}
+                    for r in serie_raw if r.get('AnoMes') is not None), key=lambda x: x['anomes'])
+    vmap = _carregar_vendedores_map()
+    vendedores = []
+    for r in vend_raw:
+        cu = r.get('CODUSUR')
+        if cu is None or int(cu) in VENDEDORES_TECNICOS:   # 999 = transferência, não é vendedor
+            continue
+        v = vmap.get(str(int(cu)))
+        vendedores.append({'codusur': int(cu), 'nome': (v or {}).get('nome') or f'RCA {int(cu)}',
+                           'venda': round(r.get('Venda') or 0, 2), 'qt': round(r.get('Qt') or 0, 1)})
+    vendedores.sort(key=lambda x: x['venda'], reverse=True)
+    total_v = sum(v['venda'] for v in vendedores)
+    for v in vendedores:
+        v['pct'] = round(v['venda'] / total_v * 100, 1) if total_v else 0.0
+
+    item = next((r for r in _abc_full() if r['codprod'] == codprod), None)
+    resp = {'ok': True, 'codprod': codprod, 'item': item, 'escopo': _abc_escopo_nome(),
+            'serie': serie, 'vendedores': vendedores}
+    _cache_set(key, resp, 'dax_agregado')
+    return jsonify(resp)
 
 
 # ──────────────────────────────────────────────────────────────────────
