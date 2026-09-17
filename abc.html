@@ -52,6 +52,10 @@
   .cl-B { background: rgba(var(--yellow-rgb), 0.18); color: var(--yellow); }
   .cl-C { background: rgba(var(--red-rgb), 0.14); color: var(--red); }
   .kpi-card.sem-cor .cl { background: var(--surface2); color: var(--text-dim); }
+  .kpi-card .sub .mg { color: var(--text); font-weight: 600; }
+  .periodo-sel { display: flex; gap: 4px; align-self: flex-end; }
+  .periodo-sel .chip { padding: 6px 11px; border-radius: 6px; }
+  td.num .neg { color: var(--red); }
 
   .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 11px; padding: 14px 16px; margin-bottom: 12px; }
   .chart-card h3 { font-size: 0.8rem; font-weight: 600; margin-bottom: 4px; }
@@ -90,7 +94,7 @@
   .side-head button { background: none; border: none; color: var(--text-dim); font-size: 1.3rem; cursor: pointer; }
   .side-body { flex: 1; overflow-y: auto; padding: 18px; }
   .side-body h4 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); margin: 14px 0 8px; }
-  .mini-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .mini-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
   .mini-kpis div { background: var(--surface2); border-radius: 8px; padding: 8px 10px; }
   .mini-kpis .l { font-size: 0.62rem; color: var(--text-dim); text-transform: uppercase; }
   .mini-kpis .v { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 0.95rem; }
@@ -110,8 +114,9 @@
   <script src="/static/joga-header.js"></script>
 
   <div class="regua" id="regua">
-    <strong id="r_escopo">Seu time</strong> — produtos ranqueados pela <strong>venda líquida dos últimos 12 meses</strong>
+    <strong id="r_escopo">Seu time</strong> — produtos ranqueados pela <strong>venda líquida</strong> · <strong id="r_periodo">últimos 12 meses</strong>
     (régua de <strong>quem vendeu</strong>). Classe <strong>A</strong> = itens que fazem 80% da venda · <strong>B</strong> = até 95% · <strong>C</strong> = a cauda.
+    Margem = lucro ÷ venda líquida no período. <span id="r_aviso_janela"></span>
     Clique num cartão ou na classe para filtrar; clique no produto para ver a série no time.
   </div>
   <div id="avisoAmostra" class="aviso hidden"></div>
@@ -139,6 +144,15 @@
       <label>Vendedor</label>
       <input list="dl_vend" id="filt_vend" placeholder="Todos · digite" autocomplete="off" onchange="onVendChange()">
       <datalist id="dl_vend"></datalist>
+    </div>
+    <div class="ff">
+      <label>Período</label>
+      <div class="periodo-sel" id="periodo_sel">
+        <span class="chip active" data-periodo="12m" onclick="setPeriodo('12m')">12 meses</span>
+        <span class="chip" data-periodo="6m" onclick="setPeriodo('6m')">6 meses</span>
+        <span class="chip" data-periodo="3m" onclick="setPeriodo('3m')">3 meses</span>
+        <span class="chip" data-periodo="mes_atual" onclick="setPeriodo('mes_atual')">Mês atual</span>
+      </div>
     </div>
     <div class="ff" style="align-self:flex-end;">
       <button id="btnLimpar" class="btn-sm" style="display:none;" onclick="limparTudo()">Limpar filtros</button>
@@ -196,9 +210,10 @@
           <th class="th-sort" data-col="descricao" onclick="ordenar('descricao')">Produto</th>
           <th class="th-sort" data-col="depto_nome" onclick="ordenar('depto_nome')">Departamento</th>
           <th class="th-sort" data-col="fornec_nome" onclick="ordenar('fornec_nome')">Fornecedor</th>
-          <th class="num th-sort" data-col="venda" onclick="ordenar('venda')">Venda 12m</th>
+          <th class="num th-sort" data-col="venda" onclick="ordenar('venda')"><span id="th_venda">Venda 12m</span></th>
           <th class="num th-sort" data-col="pct" onclick="ordenar('pct')">% venda</th>
           <th class="num th-sort" data-col="pct_acum" onclick="ordenar('pct_acum')">% acum.</th>
+          <th class="num th-sort" data-col="margem" onclick="ordenar('margem')" title="Lucro total ÷ venda líquida do item no período (ponderada, não média de meses)">Margem</th>
           <th class="num th-sort" data-col="clientes" onclick="ordenar('clientes')">Clientes</th>
         </tr></thead>
         <tbody id="tbody"></tbody>
@@ -234,6 +249,15 @@ let _rows = [];              // linhas classificadas (escopo inteiro)
 let _classes = new Set();    // filtro de classe ativo (vazio = todas)
 let _sort = { col: 'rank', dir: 'asc' };
 let _chart = null;
+let _periodo = '12m';        // 12m | 6m | 3m | mes_atual — a curva é o Pareto DA JANELA
+let _me = null;
+
+function setPeriodo(p) {
+  if (p === _periodo) return;
+  _periodo = p;
+  document.querySelectorAll('#periodo_sel .chip').forEach(el => el.classList.toggle('active', el.dataset.periodo === p));
+  carregar();
+}
 
 // ── escopo (só admin/viewer) — mesmo mecanismo do Radar ──
 let _supMap = {}, _vendMap = {}, _supSel = '', _vendSel = '';
@@ -245,17 +269,27 @@ function extrairCodigo(v) {
   return '';
 }
 function _scopeQS() {
-  if (_vendSel) return '&vendedor=' + _vendSel;
-  if (_supSel)  return '&supervisor=' + _supSel;
-  return '';
+  let qs = '&periodo=' + _periodo;
+  if (_vendSel) qs += '&vendedor=' + _vendSel;
+  else if (_supSel) qs += '&supervisor=' + _supSel;
+  return qs;
 }
 async function loadScopeMaps() {
-  if (_role !== 'admin' && _role !== 'viewer') return;
+  // Admin/viewer: empresa inteira. SUPERVISOR: só os times dele (Time aparece se tiver mais de um)
+  // e os RCAs desses times — estreita o próprio escopo, nunca amplia (o servidor ignora o resto).
+  const isAdmin = _role === 'admin' || _role === 'viewer';
+  const meusTimes = (_me && Array.isArray(_me.codsupervisores)) ? _me.codsupervisores.map(String) : [];
+  if (!isAdmin && !(_role === 'supervisor' && meusTimes.length)) return;
   document.querySelectorAll('.scope-filtro').forEach(el => el.classList.remove('hidden'));
+  if (!isAdmin && meusTimes.length < 2) document.getElementById('filt_sup').closest('.scope-filtro').classList.add('hidden');
   try {
     const [vs, ss] = await Promise.all([fetchJSON('/api/_internal/vendedores-map'), fetchJSON('/api/_internal/supervisores-map')]);
     _vendMap = vs.vendedores || {};
     _supMap = ss.supervisores || {};
+    if (!isAdmin) {
+      _supMap = Object.fromEntries(Object.entries(_supMap).filter(([cs]) => meusTimes.includes(cs)));
+      _vendMap = Object.fromEntries(Object.entries(_vendMap).filter(([_, v]) => meusTimes.includes(String(v.codsupervisor))));
+    }
     document.getElementById('dl_sup').innerHTML = Object.entries(_supMap)
       .sort((a, b) => (a[1].nome || '').localeCompare(b[1].nome || ''))
       .map(([cs, v]) => `<option value="${v.nome} (${cs})">`).join('');
@@ -328,7 +362,7 @@ function atualizarBotaoLimpar() {
   document.getElementById('btnLimpar').style.display = ativo ? '' : 'none';
 }
 
-async function loadMe() { try { _role = (await fetchJSON('/api/me')).role; } catch (e) {} }
+async function loadMe() { try { _me = await fetchJSON('/api/me'); _role = _me.role; } catch (e) {} }
 
 // ── carga principal ──
 async function carregar() {
@@ -341,6 +375,11 @@ async function carregar() {
     return;
   }
   document.getElementById('r_escopo').textContent = _data.escopo || 'Seu time';
+  const per = _data.periodo || { rotulo: 'últimos 12 meses', curto: '12m', tok: '12m' };
+  document.getElementById('r_periodo').textContent = per.rotulo;
+  document.getElementById('r_aviso_janela').textContent = per.tok === '12m' ? '' :
+    '⚠ A classe A/B/C é relativa à janela: um item A em 12 meses pode ser B ou C aqui.' + (per.tok === 'mes_atual' ? ' Mês parcial.' : '');
+  document.getElementById('th_venda').textContent = 'Venda ' + per.curto;
   const info = document.getElementById('escopoInfo');
   if (_supSel || _vendSel) { info.textContent = '▣ ' + _data.escopo; info.classList.remove('hidden'); }
   else info.classList.add('hidden');
@@ -363,10 +402,12 @@ function renderKpis() {
   const r = _data.resumo, c = r.classes;
   for (const k of ['A', 'B', 'C']) {
     document.getElementById('k_' + k).textContent = NUM.format(c[k].qt) + ' itens';
-    document.getElementById('k_' + k + '_sub').textContent = `${BRL.format(c[k].venda)} · ${PCT1(c[k].pct_venda)} da venda`;
+    document.getElementById('k_' + k + '_sub').innerHTML =
+      `${BRL.format(c[k].venda)} · ${PCT1(c[k].pct_venda)} da venda · margem <span class="mg">${PCT1(c[k].margem)}</span>`;
   }
   document.getElementById('k_conc').textContent = PCT1(r.concentracao_pct_itens);
-  document.getElementById('k_conc_sub').textContent = `${NUM.format(c.A.qt)} de ${NUM.format(r.total_produtos)} itens fazem 80% de ${BRL.format(r.total_venda)}`;
+  document.getElementById('k_conc_sub').textContent = `${NUM.format(c.A.qt)} de ${NUM.format(r.total_produtos)} itens fazem 80% de ${BRL.format(r.total_venda)}`
+    + (r.margem != null ? ` · margem do escopo ${PCT1(r.margem)}` : '');
 }
 
 function popularFiltros() {
@@ -454,6 +495,7 @@ function ordenar(col) {
 function renderTabela() {
   const rows = aplicarFiltros(_rows).slice().sort((a, b) => {
     const va = a[_sort.col], vb = b[_sort.col];
+    if (_sort.col === 'margem' && (va == null) !== (vb == null)) return va == null ? 1 : -1;   // sem margem no fim
     const cmp = (typeof va === 'string' || typeof vb === 'string') ? String(va || '').localeCompare(String(vb || '')) : (va || 0) - (vb || 0);
     return _sort.dir === 'asc' ? cmp : -cmp;
   });
@@ -473,8 +515,9 @@ function renderTabela() {
       <td class="num">${BRL.format(r.venda)}<div class="bar"><i style="width:${Math.min(100, r.pct / maxPct * 100).toFixed(1)}%"></i></div></td>
       <td class="num">${PCT2(r.pct)}</td>
       <td class="num">${PCT1(r.pct_acum)}</td>
+      <td class="num">${r.margem == null ? '—' : `<span class="${r.margem < 0 ? 'neg' : ''}">${PCT1(r.margem)}</span>`}</td>
       <td class="num">${NUM.format(r.clientes)}</td>
-    </tr>`).join('') || '<tr><td colspan="9" style="color:var(--text-dim)">Nenhum produto com esses filtros.</td></tr>';
+    </tr>`).join('') || '<tr><td colspan="10" style="color:var(--text-dim)">Nenhum produto com esses filtros.</td></tr>';
 }
 
 function exportar(fmt) { window.location.href = `/api/abc/${fmt}?x=1${_scopeQS()}${filtroQS()}`; }
@@ -491,16 +534,18 @@ async function abrirProduto(codprod) {
     const d = await fetchJSON(`/api/abc/produto/${codprod}?x=1${_scopeQS()}`);
     const it = d.item || item || {};
     const vend = d.vendedores || [];
+    const per = d.periodo || { rotulo: 'últimos 12 meses', curto: '12m', tok: '12m', anomes_inicio: 0 };
     document.getElementById('d_body').innerHTML = `
-      <div style="font-size:0.74rem;color:var(--text-dim);margin-bottom:10px;">${d.escopo} · ${it.depto_nome || '—'} · ${it.fornec_nome || '—'}</div>
+      <div style="font-size:0.74rem;color:var(--text-dim);margin-bottom:10px;">${d.escopo} · ${per.rotulo} · ${it.depto_nome || '—'} · ${it.fornec_nome || '—'}</div>
       <div class="mini-kpis">
-        <div><div class="l">Venda 12m</div><div class="v">${BRL.format(it.venda || 0)}</div></div>
+        <div><div class="l">Venda ${per.curto}</div><div class="v">${BRL.format(it.venda || 0)}</div></div>
         <div><div class="l">% da venda</div><div class="v">${PCT2(it.pct)}</div></div>
+        <div><div class="l">Margem</div><div class="v"${it.margem < 0 ? ' style="color:var(--red)"' : ''}>${PCT1(it.margem)}</div></div>
         <div><div class="l">Clientes</div><div class="v">${NUM.format(it.clientes || 0)}</div></div>
       </div>
-      <h4>Venda mensal no escopo (12 meses)</h4>
-      ${svgSerie(d.serie || [])}
-      <h4>Quem vende este item${vend.length ? ` · ${vend.length} vendedor${vend.length > 1 ? 'es' : ''}` : ''}</h4>
+      <h4>Venda mensal no escopo (12 meses${per.tok !== '12m' ? ' · janela ativa em destaque' : ''})</h4>
+      ${svgSerie(d.serie || [], per.tok === '12m' ? 0 : per.anomes_inicio)}
+      <h4>Quem vende este item (${per.rotulo})${vend.length ? ` · ${vend.length} vendedor${vend.length > 1 ? 'es' : ''}` : ''}</h4>
       ${vend.length ? vend.slice(0, 15).map(v => `
         <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 4px;border-bottom:1px solid var(--border);font-size:0.8rem;">
           <div><div style="font-weight:600;">${v.nome}</div><div class="cod">${v.codusur} · ${NUM.format(v.qt)} un</div></div>
@@ -512,20 +557,20 @@ async function abrirProduto(codprod) {
   }
 }
 
-function svgSerie(serie) {
+function svgSerie(serie, inicioJanela = 0) {
   const W = 440, H = 120, padX = 8, padTop = 10, padBot = 20;
   const now = new Date(); const slots = [];
   for (let i = 11; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    slots.push({ am: d.getFullYear() * 100 + (d.getMonth() + 1), mes: d.getMonth() + 1, ano: d.getFullYear(), venda: 0, qt: 0, cli: 0 });
+    slots.push({ am: d.getFullYear() * 100 + (d.getMonth() + 1), mes: d.getMonth() + 1, ano: d.getFullYear(), venda: 0, qt: 0, cli: 0, mg: null });
   }
   const byAm = {}; (serie || []).forEach(s => { byAm[s.anomes] = s; });
   // Em modo BD o "hoje" é o do dado, não o do relógio: se nenhum mês casar, usa os meses da série
   if (!slots.some(s => byAm[s.am]) && serie && serie.length) {
     slots.length = 0;
-    serie.slice(-12).forEach(s => slots.push({ am: s.anomes, mes: s.anomes % 100, ano: Math.floor(s.anomes / 100), venda: 0, qt: 0, cli: 0 }));
+    serie.slice(-12).forEach(s => slots.push({ am: s.anomes, mes: s.anomes % 100, ano: Math.floor(s.anomes / 100), venda: 0, qt: 0, cli: 0, mg: null }));
   }
-  slots.forEach(s => { const m = byAm[s.am]; if (m) { s.venda = m.venda || 0; s.qt = m.qt || 0; s.cli = m.clientes || 0; } });
+  slots.forEach(s => { const m = byAm[s.am]; if (m) { s.venda = m.venda || 0; s.qt = m.qt || 0; s.cli = m.clientes || 0; s.mg = m.margem == null ? null : m.margem; } });
   if (!slots.some(s => s.venda > 0)) return '<div style="color:var(--text-dim);font-size:0.82rem">Sem venda nos últimos 12 meses neste escopo.</div>';
   const max = Math.max(...slots.map(s => s.venda), 1);
   const bw = (W - padX * 2) / slots.length, baseY = H - padBot;
@@ -534,7 +579,8 @@ function svgSerie(serie) {
     let mark;
     if (s.venda > 0) {
       const h = Math.max(3, (s.venda / max) * (baseY - padTop));
-      mark = `<rect x="${x + 2.5}" y="${baseY - h}" width="${bw - 5}" height="${h}" rx="2" fill="#38bdf8" opacity="0.9"><title>${MESES[s.mes]}/${String(s.ano).slice(2)}: ${BRL.format(s.venda)} · ${NUM.format(s.qt)} un · ${s.cli} clientes</title></rect>`;
+      const fora = inicioJanela && s.am < inicioJanela;   // mês antes da janela ativa: esmaecido
+      mark = `<rect x="${x + 2.5}" y="${baseY - h}" width="${bw - 5}" height="${h}" rx="2" fill="#38bdf8" opacity="${fora ? 0.28 : 0.9}"><title>${MESES[s.mes]}/${String(s.ano).slice(2)}: ${BRL.format(s.venda)} · margem ${PCT1(s.mg)} · ${NUM.format(s.qt)} un · ${s.cli} clientes${fora ? ' (fora da janela)' : ''}</title></rect>`;
     } else {
       mark = `<circle cx="${cx}" cy="${baseY - 1.5}" r="1.4" fill="#475569"><title>${MESES[s.mes]}/${String(s.ano).slice(2)}: sem venda</title></circle>`;
     }

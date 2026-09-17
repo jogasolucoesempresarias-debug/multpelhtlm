@@ -96,6 +96,11 @@ def periodo_sql(tipo):
         return date(hoje.year - 1, 1, 1), date(hoje.year - 1, 12, 31)
     if tipo == "12m":
         return hoje - timedelta(days=365), hoje
+    if tipo in ("6m", "3m"):                       # janelas da Curva ABC (espelham EDATE(TODAY(), -n))
+        n = int(tipo[:-1]); y, m = hoje.year, hoje.month - n
+        while m <= 0:
+            m += 12; y -= 1
+        return date(y, m, min(hoje.day, calendar.monthrange(y, m)[1])), hoje
     if tipo == "12m_anterior":
         return hoje - timedelta(days=730), hoje - timedelta(days=365)
     if tipo == "24m":
@@ -1069,35 +1074,37 @@ def _abc_escopo(rbac, supervisores=None, vendedor=None, tab="faturamento_vendas"
     return we
 
 
-def abc_produtos(rbac, supervisores=None, vendedor=None):
-    """Venda líq. 12m + clientes distintos por codprod no escopo. Espelha a query DAX de
-    `server._abc_full`: [{CODPROD, Venda, Clientes}], só Venda > 0."""
-    d0, _ = periodo_sql("12m")
+def abc_produtos(rbac, supervisores=None, vendedor=None, periodo="12m"):
+    """Venda líq. + lucro + clientes distintos por codprod no escopo e na janela. Espelha a query
+    DAX de `server._abc_full`: [{CODPROD, Venda, Lucro, Clientes}], só Venda > 0."""
+    d0, _ = periodo_sql(periodo)
     we = _abc_escopo(rbac, supervisores, vendedor)
     with analytics_conn() as c:
         cur = c.cursor()
-        cur.execute(f"""SELECT codprod, {VB} v, count(DISTINCT codcli) FILTER (WHERE codoper='S') cli
+        cur.execute(f"""SELECT codprod, {VB} v, {LUCRO} l, count(DISTINCT codcli) FILTER (WHERE codoper='S') cli
             FROM faturamento_vendas WHERE dtsaida >= %s{we}
             GROUP BY codprod HAVING {VB} > 0""", (d0,))
-        return [{"CODPROD": cp, "Venda": float(v), "Clientes": int(cli or 0)}
-                for cp, v, cli in cur.fetchall() if cp is not None]
+        return [{"CODPROD": cp, "Venda": float(v), "Lucro": float(l), "Clientes": int(cli or 0)}
+                for cp, v, l, cli in cur.fetchall() if cp is not None]
 
 
-def abc_produto_detalhe(codprod, rbac, supervisores=None, vendedor=None):
-    """Drawer do item NO ESCOPO: série mensal 12m (venda, qt, clientes) + venda por vendedor.
-    {'serie': [{AnoMes, Venda, Qt, Clientes}], 'vendedores': [{CODUSUR, Venda, Qt}]}."""
+def abc_produto_detalhe(codprod, rbac, supervisores=None, vendedor=None, periodo="12m"):
+    """Drawer do item NO ESCOPO: série mensal SEMPRE 12m (venda, lucro, qt, clientes) + venda por
+    vendedor NA JANELA escolhida. {'serie': [{AnoMes, Venda, Lucro, Qt, Clientes}],
+    'vendedores': [{CODUSUR, Venda, Qt}]}."""
     d0, _ = periodo_sql("12m")
+    d0p, _ = periodo_sql(periodo)
     we = _abc_escopo(rbac, supervisores, vendedor)
     f = f"codprod = {int(codprod)} AND dtsaida >= %s{we}"
     with analytics_conn() as c:
         cur = c.cursor()
-        cur.execute(f"""SELECT {_AM_FAT} am, {VB} v, coalesce(sum(qt) FILTER (WHERE codoper='S'),0) q,
+        cur.execute(f"""SELECT {_AM_FAT} am, {VB} v, {LUCRO} l, coalesce(sum(qt) FILTER (WHERE codoper='S'),0) q,
                 count(DISTINCT codcli) FILTER (WHERE codoper='S') cli
             FROM faturamento_vendas WHERE {f} GROUP BY 1 ORDER BY 1""", (d0,))
-        serie = [{"AnoMes": int(am), "Venda": float(v), "Qt": float(q), "Clientes": int(cli or 0)}
-                 for am, v, q, cli in cur.fetchall() if am is not None]
+        serie = [{"AnoMes": int(am), "Venda": float(v), "Lucro": float(l), "Qt": float(q), "Clientes": int(cli or 0)}
+                 for am, v, l, q, cli in cur.fetchall() if am is not None]
         cur.execute(f"""SELECT codusur, {VB} v, coalesce(sum(qt) FILTER (WHERE codoper='S'),0) q
-            FROM faturamento_vendas WHERE {f} GROUP BY codusur HAVING {VB} > 0""", (d0,))
+            FROM faturamento_vendas WHERE {f} GROUP BY codusur HAVING {VB} > 0""", (d0p,))
         vendedores = [{"CODUSUR": cu, "Venda": float(v), "Qt": float(q)}
                       for cu, v, q in cur.fetchall() if cu is not None]
     return {"serie": serie, "vendedores": vendedores}

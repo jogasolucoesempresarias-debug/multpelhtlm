@@ -5,6 +5,9 @@ O que trava:
 - o escopo é de VENDA e a querystring NÃO amplia o escopo de quem não é admin;
 - o export sai com o filtro da tela (classe/depto/fornecedor/busca), não com o universo;
 - amostra pequena AVISA em vez de esconder;
+- a janela (12m/6m/3m/mês atual) muda a query, o cache e o piso da amostra — e a curva é DA JANELA;
+- a margem é lucro ÷ venda líquida (régua do Comercial), por item e por classe, e viaja no export;
+- supervisor ESTREITA o próprio escopo (time dele / RCA do time dele) e nunca amplia;
 - modo BD responde nas mesmas formas (produtização).
 """
 import random
@@ -114,8 +117,13 @@ def _payload(rows):
 
 def _abc_rows(n=300, seed=1):
     rnd = random.Random(seed)
-    return [{'FATURAMENTO_VENDAS[CODPROD]': 1000 + i, '[Venda]': round(rnd.expovariate(1 / 2000), 2) + 1,
-             '[Clientes]': rnd.randint(1, 50)} for i in range(n)]
+    rows = []
+    for i in range(n):
+        venda = round(rnd.expovariate(1 / 2000), 2) + 1
+        # ⚠️ lucro DIFERENTE por item (e um negativo) — fixture com lucro = k×venda testaria nada de margem
+        rows.append({'FATURAMENTO_VENDAS[CODPROD]': 1000 + i, '[Venda]': venda,
+                     '[Lucro]': round(venda * (rnd.uniform(-0.1, 0.4)), 2), '[Clientes]': rnd.randint(1, 50)})
+    return rows
 
 
 def _rotas(cap, n=300):
@@ -147,9 +155,11 @@ def test_api_abc_admin_com_filtro_de_time(client, usuario_admin, mock_dax_captur
     assert '[CODSUPERVISOR] IN {18}' in _q_abc(mock_dax_capture)[-1]
     assert 'EDATE(TODAY(), -12)' in _q_abc(mock_dax_capture)[-1]
     # forma de cada linha + régua declarada
-    assert {'codprod', 'descricao', 'depto_nome', 'fornec_nome', 'venda', 'clientes',
+    assert {'codprod', 'descricao', 'depto_nome', 'fornec_nome', 'venda', 'lucro', 'margem', 'clientes',
             'rank', 'pct', 'pct_acum', 'classe'} <= set(d['rows'][0])
     assert d['regua']['corte_a'] == 80 and d['regua']['meses'] == 12
+    assert d['periodo']['tok'] == '12m' and d['periodo']['rotulo'] == 'últimos 12 meses'
+    assert '[LUCRO TOTAL]' in _q_abc(mock_dax_capture)[-1]
     assert d['rows'][0]['rank'] == 1 and d['rows'][0]['classe'] == 'A'
     c = d['resumo']['classes']
     assert c['A']['qt'] + c['B']['qt'] + c['C']['qt'] == 300
@@ -209,6 +219,7 @@ def test_export_csv_sai_com_o_filtro_da_tela(client, usuario_admin, mock_dax_cap
     linhas = [l for l in r.get_data(as_text=True).splitlines() if l.strip()]
     assert linhas[0].lstrip('﻿') == 'sep=;'
     assert linhas[1].startswith('Rank;Classe;CodProd')
+    assert 'Lucro12m;MargemPct;Clientes' in linhas[1]
     assert len(linhas) - 2 == n_a                      # só as A
     assert all(l.split(';')[1] == 'A' for l in linhas[2:])
     assert 'classe-A' in r.headers['Content-Disposition']
@@ -268,6 +279,150 @@ def test_menu_tem_a_aba():
     assert "href: '/abc'" in js
 
 
+# ───────────────────────── margem ─────────────────────────
+def test_margem_por_item_e_por_classe_na_regua_do_comercial():
+    """Margem = lucro ÷ venda líquida (a conta do Dashboard/Categorias), ponderada — nunca média
+    de margens. Item sem venda: None. Classe: Σ lucro ÷ Σ venda dos itens dela."""
+    out = curva_abc.classificar([
+        {'codprod': 1, 'venda': 100.0, 'lucro': 30.0},   # A (50%) — 30%
+        {'codprod': 2, 'venda': 60.0,  'lucro': -6.0},   # A (80%) — -10%
+        {'codprod': 3, 'venda': 30.0,  'lucro': 3.0},    # B (95%) — 10%
+        {'codprod': 4, 'venda': 10.0,  'lucro': 5.0},    # C — 50%
+        {'codprod': 5, 'venda': 0.0,   'lucro': 2.0},    # C, sem venda
+    ])
+    m = {i['codprod']: i['margem'] for i in out}
+    assert m == {1: 30.0, 2: -10.0, 3: 10.0, 4: 50.0, 5: None}
+    r = curva_abc.resumo(out)
+    assert r['classes']['A']['margem'] == pytest.approx(24 / 160 * 100, abs=0.01)   # ponderada, não (30-10)/2
+    assert r['classes']['B']['margem'] == 10.0 and r['classes']['C']['margem'] == 50.0
+    assert r['classes']['C']['qt'] == 2                                          # o sem venda conta como item
+    assert r['margem'] == pytest.approx(32 / 200 * 100, abs=0.01) and r['total_lucro'] == 32.0
+    # item sem 'lucro' (fixture antiga / provider sem a coluna) não ganha a chave — sem KeyError
+    assert 'margem' not in curva_abc.classificar([{'codprod': 9, 'venda': 5}])[0]
+
+
+def test_api_abc_margem_bate_com_lucro_dividido_por_venda(client, usuario_admin, mock_dax_capture, clean_redis):
+    _rotas(mock_dax_capture)
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+    d = client.get('/api/abc').get_json()
+    for r in d['rows'][:20]:
+        assert r['margem'] == pytest.approx(r['lucro'] / r['venda'] * 100, abs=0.02)
+    c = d['resumo']['classes']
+    for k in 'ABC':
+        assert c[k]['margem'] == pytest.approx(c[k]['lucro'] / c[k]['venda'] * 100, abs=0.02)
+    assert any(r['margem'] < 0 for r in d['rows'])           # negativa aparece, não é escondida
+    # CSV leva lucro e margem do item
+    linhas = [l for l in client.get('/api/abc/csv').get_data(as_text=True).splitlines() if l.strip()]
+    cab = linhas[1].split(';'); i_l, i_m, i_c = cab.index('Lucro12m'), cab.index('MargemPct'), cab.index('CodProd')
+    prim = linhas[2].split(';'); row = next(r for r in d['rows'] if str(r['codprod']) == prim[i_c])
+    assert float(prim[i_l].replace(',', '.')) == pytest.approx(row['lucro']) and float(prim[i_m].replace(',', '.')) == pytest.approx(row['margem'])
+
+
+# ───────────────────────── período ─────────────────────────
+def test_normalizar_periodo_e_piso_da_amostra_escala_com_a_janela():
+    assert curva_abc.normalizar_periodo(None) == '12m'
+    assert curva_abc.normalizar_periodo('xyz') == '12m'
+    assert curva_abc.normalizar_periodo('MES_ATUAL') == 'mes_atual'
+    # 300 itens × R$ 100 = R$ 30 mil: pouco p/ 12m (piso 100 mil), suficiente p/ 3m (25 mil)
+    itens = _itens([100] * 300)
+    assert curva_abc.amostra_confiavel(itens)[0] is False
+    assert curva_abc.amostra_confiavel(itens, periodo='3m')[0] is True
+    assert curva_abc.amostra_confiavel(itens, periodo='mes_atual')[0] is True
+
+
+def test_api_abc_periodo_muda_a_query_o_cache_e_o_rotulo(client, usuario_admin, mock_dax_capture, clean_redis):
+    _rotas(mock_dax_capture)
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+    d6 = client.get('/api/abc?periodo=6m').get_json()
+    assert 'EDATE(TODAY(), -6)' in _q_abc(mock_dax_capture)[-1]
+    assert d6['periodo'] == {**d6['periodo'], 'tok': '6m', 'meses': 6, 'rotulo': 'últimos 6 meses', 'curto': '6m'}
+    assert d6['regua']['meses'] == 6
+    dm = client.get('/api/abc?periodo=mes_atual').get_json()
+    q = _q_abc(mock_dax_capture)[-1]
+    assert 'DATE(YEAR(TODAY()), MONTH(TODAY()), 1)' in q and 'EDATE' not in q
+    assert dm['periodo']['tok'] == 'mes_atual' and dm['periodo']['rotulo'].startswith('mês atual · 01–')
+    assert dm['periodo']['anomes_inicio'] == dm['periodo']['anomes_fim']
+    # token inválido cai no padrão E reaproveita o cache do 12m (uma query só p/ os dois)
+    client.get('/api/abc'); client.get('/api/abc?periodo=lixo')
+    assert len(_q_abc(mock_dax_capture)) == 3
+    # export carrega a janela no nome do arquivo e no cabeçalho
+    r = client.get('/api/abc/csv?periodo=3m')
+    assert 'curva_abc_3m_' in r.headers['Content-Disposition']
+    assert 'Venda3m;PctVenda;PctAcumulado;Lucro3m' in r.get_data(as_text=True)
+    assert client.get('/api/abc/pdf?periodo=mes_atual').data[:4] == b'%PDF'
+
+
+def test_drawer_serie_fica_em_12m_e_vendedores_seguem_a_janela(client, usuario_admin, mock_dax_capture, clean_redis):
+    _rotas(mock_dax_capture)
+    mock_dax_capture.routes = [
+        ('CALENDARIO[AnoMes]', _payload([{'CALENDARIO[AnoMes]': 202607, '[Venda]': 100.0, '[Lucro]': 25.0, '[Qt]': 10.0, '[Clientes]': 4}])),
+        ('FATURAMENTO_VENDAS[CODUSUR],', _payload([{'FATURAMENTO_VENDAS[CODUSUR]': 573.0, '[Venda]': 120.0, '[Qt]': 12.0}])),
+    ] + mock_dax_capture.routes
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+    d = client.get('/api/abc/produto/1000?periodo=3m').get_json()
+    assert d['ok'] and d['periodo']['tok'] == '3m'
+    assert d['serie'][0]['margem'] == 25.0 and d['serie'][0]['lucro'] == 25.0
+    qd = [q for q in mock_dax_capture.queries if 'CODPROD] = 1000' in q]
+    q_serie = next(q for q in qd if 'CALENDARIO[AnoMes]' in q)
+    q_vend = next(q for q in qd if 'FATURAMENTO_VENDAS[CODUSUR],' in q)
+    assert 'EDATE(TODAY(), -12)' in q_serie and '[LUCRO TOTAL]' in q_serie      # contexto: sempre 12m
+    assert 'EDATE(TODAY(), -3)' in q_vend                                       # quem vende: a janela
+
+
+# ───────────────────────── supervisor estreita o escopo ─────────────────────────
+def _vendedores_map_fake(monkeypatch):
+    monkeypatch.setattr(server, '_carregar_vendedores_map', lambda: {
+        '573': {'nome': 'RCA DO 18', 'codsupervisor': 18},
+        '700': {'nome': 'RCA DO 19', 'codsupervisor': 19},
+        '800': {'nome': 'RCA DO 99', 'codsupervisor': 99},
+    })
+
+
+def test_supervisor_filtra_rca_do_proprio_time_e_ignora_rca_de_fora(client, usuario_supervisor, mock_dax_capture, clean_redis, monkeypatch):
+    """O supervisor da loja pediu "filtro de time/RCA" (17/09/2026): ele estreita o escopo dele.
+    O RBAC continua no filtro (um RCA que mudou de time no fato não traz venda de outro time)."""
+    _rotas(mock_dax_capture); _vendedores_map_fake(monkeypatch)
+    login_as(client, usuario_supervisor['email'], usuario_supervisor['senha'])
+    d = client.get('/api/abc?vendedor=573').get_json()
+    q = _q_abc(mock_dax_capture)[-1]
+    assert '[CODSUPERVISOR] IN {18}' in q and 'FATURAMENTO_VENDAS[CODUSUR] = 573' in q
+    assert d['escopo'] == 'Vendedor: RCA DO 18'
+    # RCA de outro time: ignorado → curva do time (e cache separado do anterior)
+    d2 = client.get('/api/abc?vendedor=800').get_json()
+    q2 = _q_abc(mock_dax_capture)[-1]
+    assert '[CODSUPERVISOR] IN {18}' in q2 and 'CODUSUR' not in q2 and '800' not in q2
+    assert d2['escopo'].startswith('Time: ')
+    assert len(_q_abc(mock_dax_capture)) == 2
+
+
+def test_supervisor_multi_area_escolhe_um_dos_times_dele(client, usuario_supervisor_multi, mock_dax_capture, clean_redis, monkeypatch):
+    _rotas(mock_dax_capture); _vendedores_map_fake(monkeypatch)
+    login_as(client, usuario_supervisor_multi['email'], usuario_supervisor_multi['senha'])
+    client.get('/api/abc')
+    assert '[CODSUPERVISOR] IN {18, 19}' in _q_abc(mock_dax_capture)[-1]
+    client.get('/api/abc?supervisor=19')
+    q = _q_abc(mock_dax_capture)[-1]
+    assert q.count('CODSUPERVISOR') == 2 and '[CODSUPERVISOR] IN {19}' in q      # RBAC + estreitamento
+    client.get('/api/abc?supervisor=99')                                          # de fora: ignorado
+    q = _q_abc(mock_dax_capture)[-1]
+    assert '99' not in q and '[CODSUPERVISOR] IN {18, 19}' in q
+    client.get('/api/abc?supervisor=19,99')                                       # interseção
+    assert '[CODSUPERVISOR] IN {19}' in _q_abc(mock_dax_capture)[-1]
+    # RCA do 19 vale (é área dele); ?supervisor= junto é ignorado porque vendedor tem precedência
+    client.get('/api/abc?vendedor=700&supervisor=18')
+    q = _q_abc(mock_dax_capture)[-1]
+    assert 'CODUSUR] = 700' in q and '[CODSUPERVISOR] IN {18, 19}' in q
+
+
+def test_vendedor_nao_estreita_nem_amplia(client, usuario_vendedor, mock_dax_capture, clean_redis, monkeypatch):
+    _rotas(mock_dax_capture); _vendedores_map_fake(monkeypatch)
+    login_as(client, usuario_vendedor['email'], usuario_vendedor['senha'])
+    client.get('/api/abc?vendedor=700&supervisor=18&periodo=3m')
+    q = _q_abc(mock_dax_capture)[-1]
+    assert 'FATURAMENTO_VENDAS[CODUSUR] = 573' in q and '700' not in q and 'CODSUPERVISOR' not in q
+    assert 'EDATE(TODAY(), -3)' in q                                              # período ele pode
+
+
 # ───────────────────────── modo postgres (joga_demo local) ─────────────────────────
 def _postgres(monkeypatch):
     server._R.flushall()
@@ -297,10 +452,20 @@ def test_abc_modo_postgres_admin_e_supervisor(client, usuario_admin, usuario_sup
     dt = client.get(f'/api/abc?supervisor={sup}').get_json()
     assert dt['ok'] and 0 < dt['resumo']['total_venda'] < total_admin
     assert dt['escopo'].startswith('Time: ')
+    assert all(r['margem'] == pytest.approx(r['lucro'] / r['venda'] * 100, abs=0.02) for r in dt['rows'][:30])
+    assert dt['resumo']['classes']['A']['margem'] is not None
+    # janela menor = venda menor ou igual, e a curva é da janela (rank pode mudar)
+    d3 = client.get(f'/api/abc?supervisor={sup}&periodo=3m').get_json()
+    assert d3['ok'] and d3['periodo']['tok'] == '3m' and d3['resumo']['total_venda'] <= dt['resumo']['total_venda']
+    dm = client.get(f'/api/abc?supervisor={sup}&periodo=mes_atual').get_json()
+    assert dm['ok'] and dm['resumo']['total_venda'] <= d3['resumo']['total_venda']
 
     # drawer + exports no modo BD
     dp = client.get(f'/api/abc/produto/{cp}?supervisor={sup}').get_json()
     assert dp['ok'] and dp['serie'] and dp['vendedores']
+    assert 'margem' in dp['serie'][0] and 'lucro' in dp['serie'][0]
+    dp3 = client.get(f'/api/abc/produto/{cp}?supervisor={sup}&periodo=3m').get_json()
+    assert dp3['ok'] and len(dp3['serie']) == len(dp['serie'])                    # série continua 12m
     assert client.get(f'/api/abc/csv?supervisor={sup}&classe=A').status_code == 200
     assert client.get(f'/api/abc/pdf?supervisor={sup}').status_code == 200
 

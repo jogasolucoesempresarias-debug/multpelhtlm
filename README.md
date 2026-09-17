@@ -172,8 +172,36 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
     maior time vende **0,2%** do produto A nº 1 da empresa (48957, R$ 229 mil). A gerente **não vê**
     a empresa (RBAC); se a lista tiver de chegar a ela, é por export/e-mail do admin. Pergunta
     aberta: régua VENDA × CADASTRO importa em Lojas/Diretoria e o comparativo herda a escolha.
-  - Gate: `tests/test_curva_abc.py` (21 testes: motor, RBAC, cache por escopo, export, amostra,
-    drawer, modo postgres).
+  - **Período selecionável — 12 · 6 · 3 meses · mês atual** (17/09/2026, pedido do João Victor:
+    *"uma janela de 12 meses muda muito a performance do produto"*). `?periodo=` em `/api/abc*`,
+    tokens em `curva_abc.PERIODOS`. ⚠️ **A curva é o Pareto DA JANELA: trocar o período muda quais
+    itens são A/B/C** — aqui é o desejado (é o oposto da nota do Compras, onde a janela foi travada
+    de propósito); a régua da tela avisa fora do 12m. Mês atual = 1º dia até hoje, parcial, e a
+    tela mostra o intervalo real ("mês atual · 01–17/09"). O piso de VENDA da amostra escala com a
+    janela (`AMOSTRA_MIN_VENDA × meses/12`; mês atual vale 1) — senão todo time cai na faixa
+    amarela no dia 3; o de PRODUTOS não. A **série do drawer fica sempre em 12m** (contexto — em
+    "3 meses" viraria 3 barras), com a janela ativa em destaque; "quem vende" segue a janela.
+    `periodo` entra na chave de cache (`v`=2) e no nome do arquivo (`curva_abc_3m_…`). Modo BD:
+    `periodo_sql` ganhou `6m`/`3m`.
+  - **Margem por item e por classe** (17/09/2026, pedido do João Victor). Régua do Comercial:
+    **`LUCRO TOTAL ÷ VENDA LÍQUIDA`** (a mesma do Dashboard e da Categorias — NÃO a das Metas, que
+    divide pelo bruto), **ponderada no período** (Σ lucro ÷ Σ venda), nunca média de margens
+    mensais. Uma medida a mais na mesma query. Aparece na coluna da tabela (ordenável, negativa em
+    vermelho — é informação, não erro), nos 3 cards ("carro-chefe é 80% da venda com X% de
+    margem"), no CSV/PDF e na série do drawer. Item sem venda → `None`/"—".
+  - **Supervisor ESTREITA o próprio escopo** (17/09/2026, o supervisor da loja *"não consegue
+    filtrar time e vendedor"*). Os filtros Supervisor/Vendedor eram só admin/viewer — trava certa
+    (querystring não amplia), feature faltando (não dava para ver a curva de UM RCA do time).
+    `_abc_supervisores_filtro`/`_abc_vendedor_filtro`: supervisor multi-área escolhe um dos times
+    dele (subconjunto de `codsupervisores`); vendedor só se o `codsupervisor` do cadastro está nas
+    áreas dele; fora disso → ignorado (curva do time, não 403). O RBAC **fica sempre no filtro**
+    (`CODSUPERVISOR IN {áreas} && CODUSUR = v`) — RCA que mudou de time no fato não traz venda de
+    outro time. O front mostra o filtro Time só com >1 área e a lista de vendedores só dos times
+    dele. Os helpers do Radar **não mudaram** (5 abas dependem da semântica atual). ⚠️ Lojas e
+    Diretoria: a régua é VENDA, então "o RCA X" é o que o X **faturou** — se a loja fatura por
+    código de balcão, o filtro por RCA dá quase nada. Confirmar com o cliente como a loja fatura.
+  - Gate: `tests/test_curva_abc.py` (30 testes: motor, RBAC, cache por escopo, export, amostra,
+    drawer, período, margem, estreitamento do supervisor, modo postgres).
 - **Metas** — réplica das 4 telas META (Venda/Rentab/Clientes/Mix): meta própria (Postgres) × realizado (2º dataset META) × projeção, drill de vendedores, editor admin.
   - ⚠️ **A `% Margem` divide pelo realizado BRUTO** (com bonificação), nunca por `venda_sb`
     (`[Realizado Sem Bonus]`). É a régua da medida oficial `[MARGEM(%)]` do dataset META
@@ -1662,9 +1690,10 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
   `/estoque/api/filtros`, `/estoque/api/orcamento`, `/estoque/api/export/<view>.{csv,xlsx,pdf}`,
   `/estoque/api/pedidos`, `/estoque/api/fornecedores_extra` (ciclo + verba, lazy), etc.
 - **Curva ABC (Comercial):** `GET /abc` · `GET /api/abc` (curva do escopo + resumo + régua +
-  `amostra_ok`) · `GET /api/abc/{csv,pdf}` (honra `classe`/`codepto`/`codfornec`/`busca` da tela) ·
-  `GET /api/abc/produto/<codprod>` (série mensal + vendedores no escopo). Escopo: `?supervisor=`/
-  `?vendedor=` só para admin/viewer.
+  `periodo` + `amostra_ok`) · `GET /api/abc/{csv,pdf}` (honra `classe`/`codepto`/`codfornec`/`busca`
+  da tela) · `GET /api/abc/produto/<codprod>` (série mensal 12m + vendedores na janela). Todos
+  aceitam `?periodo=12m|6m|3m|mes_atual`. Escopo: `?supervisor=`/`?vendedor=` para admin/viewer
+  (empresa) e para supervisor (só dentro das áreas dele).
 - **Performance:** `GET /estoque/api/nota` (ranking + matriz dos 5 indicadores + a régua
   serializada) · `GET /estoque/api/nota/serie?comprador_cod=` (só os 3 indicadores que saem da
   foto) · `GET|PUT /api/admin/metas-margem` (no app principal, `@admin_required`).
@@ -1784,6 +1813,9 @@ auto-contida. Zero regressão na Multpel **provada centavo-a-centavo** no BI rea
 medição no BI mostrou por que não (estoque sem dono, snapshot ≠ fato) e por que sim (17–40% dos produtos
 mudam de classe por time). Fase 1 = curva do escopo com RBAC existente; fase 2 (comparativo com a
 empresa, admin) aguarda o diretor. Motor `curva_abc.py`, 21 testes.
+**Curva ABC: período + margem + filtro do supervisor** (17/09/2026): seletor 12/6/3 meses/mês atual
+(a curva é da janela), margem lucro÷venda líquida por item e por classe, e o supervisor passa a
+estreitar o próprio escopo (time/RCA dele). 30 testes.
 
 **Foto diária virou medição de verdade** (08/2026, `4a5e09e` + `841e8e9`): o horário saiu de 6h-12h
 para **18h-22h** (o BI atualiza 7x/dia e a última é 17:44 — de manhã a foto gravava o fechamento de
