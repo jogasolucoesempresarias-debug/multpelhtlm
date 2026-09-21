@@ -116,7 +116,7 @@
   <div class="regua" id="regua">
     <strong id="r_escopo">Seu time</strong> — produtos ranqueados pela <strong>venda líquida</strong> · <strong id="r_periodo">últimos 12 meses</strong>
     (régua de <strong>quem vendeu</strong>). Classe <strong>A</strong> = itens que fazem 80% da venda · <strong>B</strong> = até 95% · <strong>C</strong> = a cauda.
-    Margem = lucro ÷ venda líquida no período. <span id="r_aviso_janela"></span>
+    Margem = lucro ÷ venda líquida no período. <span id="r_aviso_janela"></span> <span id="r_aviso_cliente"></span>
     Clique num cartão ou na classe para filtrar; clique no produto para ver a série no time.
   </div>
   <div id="avisoAmostra" class="aviso hidden"></div>
@@ -144,6 +144,11 @@
       <label>Vendedor</label>
       <input list="dl_vend" id="filt_vend" placeholder="Todos · digite" autocomplete="off" onchange="onVendChange()">
       <datalist id="dl_vend"></datalist>
+    </div>
+    <div class="ff">
+      <label>Cliente</label>
+      <input list="dl_cli" id="filt_cli" placeholder="Todos · nome ou código" autocomplete="off" oninput="onCliInput()" onchange="onCliChange()">
+      <datalist id="dl_cli"></datalist>
     </div>
     <div class="ff">
       <label>Período</label>
@@ -214,7 +219,7 @@
           <th class="num th-sort" data-col="pct" onclick="ordenar('pct')">% venda</th>
           <th class="num th-sort" data-col="pct_acum" onclick="ordenar('pct_acum')">% acum.</th>
           <th class="num th-sort" data-col="margem" onclick="ordenar('margem')" title="Lucro total ÷ venda líquida do item no período (ponderada, não média de meses)">Margem</th>
-          <th class="num th-sort" data-col="clientes" onclick="ordenar('clientes')">Clientes</th>
+          <th class="num th-sort col-cli" data-col="clientes" onclick="ordenar('clientes')">Clientes</th>
         </tr></thead>
         <tbody id="tbody"></tbody>
       </table>
@@ -261,6 +266,9 @@ function setPeriodo(p) {
 
 // ── escopo (só admin/viewer) — mesmo mecanismo do Radar ──
 let _supMap = {}, _vendMap = {}, _supSel = '', _vendSel = '';
+// ── cliente (todo papel) — ESCOPO, como time/vendedor: a curva do cliente é recalculada no servidor.
+// Type-ahead pelo /api/_internal/clientes-busca (o mesmo do Mix e do Radar, já dentro do RBAC).
+let _cliSel = '', _cliTimer = null, _cliNomes = {};
 function extrairCodigo(v) {
   if (!v) return '';
   const m = String(v).match(/\((\d+)\)\s*$/);
@@ -272,7 +280,31 @@ function _scopeQS() {
   let qs = '&periodo=' + _periodo;
   if (_vendSel) qs += '&vendedor=' + _vendSel;
   else if (_supSel) qs += '&supervisor=' + _supSel;
+  if (_cliSel) qs += '&codcli=' + _cliSel;
   return qs;
+}
+function onCliInput() {
+  const el = document.getElementById('filt_cli');
+  const q = el.value.trim();
+  clearTimeout(_cliTimer);
+  if (q.length < 2 || extrairCodigo(q)) return;          // já é uma escolha "NOME (cod)" ou código puro
+  _cliTimer = setTimeout(async () => {
+    try {
+      const d = await fetchJSON('/api/_internal/clientes-busca?limit=15&q=' + encodeURIComponent(q));
+      const lista = d.clientes || [];
+      lista.forEach(c => { _cliNomes[c.codcli] = c.cliente; });
+      document.getElementById('dl_cli').innerHTML = lista
+        .map(c => `<option value="${c.cliente} (${c.codcli})">${c.cidade || '—'}/${c.uf || '—'} · ${c.vendedor || '—'}</option>`).join('');
+    } catch (e) { /* type-ahead nunca derruba a tela */ }
+  }, 250);
+}
+function onCliChange() {
+  const el = document.getElementById('filt_cli');
+  const novo = extrairCodigo(el.value);
+  if (!el.value.trim()) { if (_cliSel) { _cliSel = ''; carregar(); } return; }
+  if (!novo || novo === _cliSel) return;                   // texto solto (sem escolher) não dispara
+  _cliSel = novo;
+  carregar();
 }
 async function loadScopeMaps() {
   // Admin/viewer: empresa inteira. SUPERVISOR: só os times dele (Time aparece se tiver mais de um)
@@ -349,16 +381,16 @@ function toggleClasse(c) {
 function limparTudo() {
   _classes.clear();
   document.querySelectorAll('[data-classe]').forEach(el => el.classList.remove('active'));
-  ['f_busca', 'f_fornec', 'filt_sup', 'filt_vend'].forEach(id => { document.getElementById(id).value = ''; });
+  ['f_busca', 'f_fornec', 'filt_sup', 'filt_vend', 'filt_cli'].forEach(id => { document.getElementById(id).value = ''; });
   document.getElementById('f_depto').value = '';
-  const tinhaEscopo = _supSel || _vendSel;
-  _supSel = ''; _vendSel = '';
+  const tinhaEscopo = _supSel || _vendSel || _cliSel;
+  _supSel = ''; _vendSel = ''; _cliSel = '';
   repopularVendDatalist();
   if (tinhaEscopo) carregar(); else onFiltroTela();
 }
 function atualizarBotaoLimpar() {
   const f = filtrosTela();
-  const ativo = f.classes.size || f.busca || f.codepto || f.codfornec || _supSel || _vendSel;
+  const ativo = f.classes.size || f.busca || f.codepto || f.codfornec || _supSel || _vendSel || _cliSel;
   document.getElementById('btnLimpar').style.display = ativo ? '' : 'none';
 }
 
@@ -381,8 +413,12 @@ async function carregar() {
     '⚠ A classe A/B/C é relativa à janela: um item A em 12 meses pode ser B ou C aqui.' + (per.tok === 'mes_atual' ? ' Mês parcial.' : '');
   document.getElementById('th_venda').textContent = 'Venda ' + per.curto;
   const info = document.getElementById('escopoInfo');
-  if (_supSel || _vendSel) { info.textContent = '▣ ' + _data.escopo; info.classList.remove('hidden'); }
+  if (_supSel || _vendSel || _cliSel) { info.textContent = '▣ ' + _data.escopo; info.classList.remove('hidden'); }
   else info.classList.add('hidden');
+  // cliente ativo: a régua declara o que a curva é (não é o aviso amarelo de amostra — aqui poucos
+  // itens é o normal) e a coluna "Clientes" some (seria sempre 1).
+  document.getElementById('r_aviso_cliente').textContent = (_data.regua && _data.regua.cliente) ? '· ' + _data.regua.cliente + '.' : '';
+  document.querySelectorAll('.col-cli').forEach(el => el.classList.toggle('hidden', !!_cliSel));
 
   const av = document.getElementById('avisoAmostra');
   if (_data.amostra_ok === false) {
@@ -516,7 +552,7 @@ function renderTabela() {
       <td class="num">${PCT2(r.pct)}</td>
       <td class="num">${PCT1(r.pct_acum)}</td>
       <td class="num">${r.margem == null ? '—' : `<span class="${r.margem < 0 ? 'neg' : ''}">${PCT1(r.margem)}</span>`}</td>
-      <td class="num">${NUM.format(r.clientes)}</td>
+      <td class="num col-cli${_cliSel ? ' hidden' : ''}">${NUM.format(r.clientes)}</td>
     </tr>`).join('') || '<tr><td colspan="10" style="color:var(--text-dim)">Nenhum produto com esses filtros.</td></tr>';
 }
 
@@ -541,7 +577,7 @@ async function abrirProduto(codprod) {
         <div><div class="l">Venda ${per.curto}</div><div class="v">${BRL.format(it.venda || 0)}</div></div>
         <div><div class="l">% da venda</div><div class="v">${PCT2(it.pct)}</div></div>
         <div><div class="l">Margem</div><div class="v"${it.margem < 0 ? ' style="color:var(--red)"' : ''}>${PCT1(it.margem)}</div></div>
-        <div><div class="l">Clientes</div><div class="v">${NUM.format(it.clientes || 0)}</div></div>
+        ${_cliSel ? '' : `<div><div class="l">Clientes</div><div class="v">${NUM.format(it.clientes || 0)}</div></div>`}
       </div>
       <h4>Venda mensal no escopo (12 meses${per.tok !== '12m' ? ' · janela ativa em destaque' : ''})</h4>
       ${svgSerie(d.serie || [], per.tok === '12m' ? 0 : per.anomes_inicio)}

@@ -1063,22 +1063,25 @@ def _radar_por_cli_prod(cur, f_cli, d_ini, d_fim, val_alias, qt_alias):
 
 
 # ───────────────────────── Curva ABC por time (Comercial) ─────────────────────────
-def _abc_escopo(rbac, supervisores=None, vendedor=None, tab="faturamento_vendas"):
+def _abc_escopo(rbac, supervisores=None, vendedor=None, tab="faturamento_vendas", codcli=None):
     """Escopo por VENDA: RBAC da sessão + override ?supervisor=/?vendedor= (só admin/viewer —
-    o app já zera os overrides para os demais). Espelha `server._abc_escopo_frag`."""
+    o app já zera os overrides para os demais) + ?codcli= (todo papel, restringe por último).
+    Espelha `server._abc_escopo_frag`."""
     we = escopo_where(rbac, tab)
     if vendedor is not None:
         we += f" AND {tab}.codusur = {int(vendedor)}"
     elif supervisores:
         we += f" AND {tab}.codsupervisor IN ({','.join(str(int(s)) for s in supervisores)})"
+    if codcli is not None:
+        we += f" AND {tab}.codcli = {int(codcli)}"
     return we
 
 
-def abc_produtos(rbac, supervisores=None, vendedor=None, periodo="12m"):
+def abc_produtos(rbac, supervisores=None, vendedor=None, periodo="12m", codcli=None):
     """Venda líq. + lucro + clientes distintos por codprod no escopo e na janela. Espelha a query
     DAX de `server._abc_full`: [{CODPROD, Venda, Lucro, Clientes}], só Venda > 0."""
     d0, _ = periodo_sql(periodo)
-    we = _abc_escopo(rbac, supervisores, vendedor)
+    we = _abc_escopo(rbac, supervisores, vendedor, codcli=codcli)
     with analytics_conn() as c:
         cur = c.cursor()
         cur.execute(f"""SELECT codprod, {VB} v, {LUCRO} l, count(DISTINCT codcli) FILTER (WHERE codoper='S') cli
@@ -1088,13 +1091,13 @@ def abc_produtos(rbac, supervisores=None, vendedor=None, periodo="12m"):
                 for cp, v, l, cli in cur.fetchall() if cp is not None]
 
 
-def abc_produto_detalhe(codprod, rbac, supervisores=None, vendedor=None, periodo="12m"):
+def abc_produto_detalhe(codprod, rbac, supervisores=None, vendedor=None, periodo="12m", codcli=None):
     """Drawer do item NO ESCOPO: série mensal SEMPRE 12m (venda, lucro, qt, clientes) + venda por
     vendedor NA JANELA escolhida. {'serie': [{AnoMes, Venda, Lucro, Qt, Clientes}],
     'vendedores': [{CODUSUR, Venda, Qt}]}."""
     d0, _ = periodo_sql("12m")
     d0p, _ = periodo_sql(periodo)
-    we = _abc_escopo(rbac, supervisores, vendedor)
+    we = _abc_escopo(rbac, supervisores, vendedor, codcli=codcli)
     f = f"codprod = {int(codprod)} AND dtsaida >= %s{we}"
     with analytics_conn() as c:
         cur = c.cursor()

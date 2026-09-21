@@ -7875,30 +7875,62 @@ def _abc_vendedor_filtro():
     return vend if cs in set(_session_supervisores()) else None
 
 
+def _abc_cliente_filtro():
+    """?codcli= na ABC (09/2026, pedido do João Victor: "o filtro de cliente"). É ESCOPO, não
+    filtro de tela: a curva do cliente é o Pareto das compras DELE, recalculado no servidor — as
+    linhas são por produto e não têm dimensão de cliente. Vale para todo papel: o RBAC continua
+    no filtro (régua de VENDA), então um vendedor vê só o que ELE vendeu ao cliente — nunca amplia.
+    Inválido → None (curva do escopo, não erro)."""
+    raw = (request.args.get('codcli') or '').strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _abc_escopo_frag():
     """Fragmento DAX ' && …' do escopo por VENDA. Admin/viewer: honra ?vendedor= (precedência)
     ou ?supervisor=. Supervisor: RBAC da sessão E o estreitamento (time dele / RCA do time dele) —
     o RBAC fica sempre no filtro, então um RCA que mudou de time no fato não traz venda de outro
-    time. Vendedor: só o RBAC. '' = empresa inteira (admin sem filtro)."""
+    time. Vendedor: só o RBAC. '' = empresa inteira (admin sem filtro).
+    ?codcli= entra por ÚLTIMO, somado (AND) a tudo isso — cliente restringe, nunca substitui."""
     role = session.get('role')
     vend = _abc_vendedor_filtro()
     sup = _abc_supervisores_filtro()
     if role in ('admin', 'viewer'):
         if vend is not None:
-            return f" && FATURAMENTO_VENDAS[CODUSUR] = {int(vend)}"
-        sup_frag = _frag_supervisores('FATURAMENTO_VENDAS', sup)
-        return f" && {sup_frag}" if sup_frag else ''
-    r = aplicar_rbac_dax()
-    frag = f" && {r}" if r else ''
-    if vend is not None:
-        frag += f" && FATURAMENTO_VENDAS[CODUSUR] = {int(vend)}"
-    elif sup:
-        frag += f" && {_frag_supervisores('FATURAMENTO_VENDAS', sup)}"
+            frag = f" && FATURAMENTO_VENDAS[CODUSUR] = {int(vend)}"
+        else:
+            sup_frag = _frag_supervisores('FATURAMENTO_VENDAS', sup)
+            frag = f" && {sup_frag}" if sup_frag else ''
+    else:
+        r = aplicar_rbac_dax()
+        frag = f" && {r}" if r else ''
+        if vend is not None:
+            frag += f" && FATURAMENTO_VENDAS[CODUSUR] = {int(vend)}"
+        elif sup:
+            frag += f" && {_frag_supervisores('FATURAMENTO_VENDAS', sup)}"
+    cli = _abc_cliente_filtro()
+    if cli is not None:
+        frag += f" && FATURAMENTO_VENDAS[CODCLI] = {cli}"
     return frag
 
 
 def _abc_escopo_nome():
-    """Rótulo humano do escopo (p/ tela, PDF e nome de arquivo)."""
+    """Rótulo humano do escopo (p/ tela, PDF e nome de arquivo). Com ?codcli=, "Cliente: NOME"
+    na frente e o escopo de pessoas depois (quando não é a empresa inteira)."""
+    base = _abc_escopo_nome_pessoas()
+    cli = _abc_cliente_filtro()
+    if cli is None:
+        return base
+    nome = next((c.get('cliente') for c in _carregar_carteira_full() if c.get('codcli') == cli), None)
+    rot = f"Cliente: {nome or f'#{cli}'}"
+    return rot if base == 'Empresa inteira' else f"{rot} · {base}"
+
+
+def _abc_escopo_nome_pessoas():
     vend = _abc_vendedor_filtro()
     if vend is not None:
         v = _carregar_vendedores_map().get(str(vend))
@@ -7922,19 +7954,22 @@ def _abc_full():
     """Curva completa do escopo (lista classificada, ordenada por venda desc). Cache 1h por
     (escopo, período, v). ⚠️ `v` na chave = versão do payload — suba ao mudar forma/significado
     (lição do board do Radar: sem isso um deploy serve o payload velho até o TTL, sem erro).
-    v2 (09/2026): + lucro/margem e janela selecionável."""
+    v2 (09/2026): + lucro/margem e janela selecionável. v3: + cliente no escopo."""
     vend = _abc_vendedor_filtro()
     sup = _abc_supervisores_filtro()
+    cli = _abc_cliente_filtro()
     periodo = _abc_periodo()
-    key = cache_key_for_user('abc:full', {'v': 2, 'supervisor': _sup_cache_key(sup),
+    key = cache_key_for_user('abc:full', {'v': 3, 'supervisor': _sup_cache_key(sup),
                                           'vendedor': vend if vend is not None else '-',
+                                          'codcli': cli if cli is not None else '-',
                                           'periodo': periodo})
     cached = _cache_get(key)
     if cached:
         return cached['rows']
 
     if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
-        rows = provider_sql.abc_produtos(_rbac_sql(), supervisores=sup, vendedor=vend, periodo=periodo)
+        rows = provider_sql.abc_produtos(_rbac_sql(), supervisores=sup, vendedor=vend, periodo=periodo,
+                                         codcli=cli)
     else:
         query = f"""EVALUATE
 FILTER(
@@ -7998,15 +8033,27 @@ def api_abc():
     mesmos no servidor (curva_abc.filtrar) para sair com o que a pessoa vê."""
     rows = _abc_full()
     periodo = _abc_periodo()
-    ok, motivo = curva_abc.amostra_confiavel(rows, periodo=periodo)
+    cli = _abc_cliente_filtro()
+    # Com cliente no escopo a amostra é pequena POR NATUREZA (um cliente compra 30-80 itens): o
+    # aviso amarelo acenderia em toda consulta e viraria ruído. Em vez de esconder, a régua declara
+    # o que a curva É — concentração do que ele compra, não Pareto estatístico (decisão 21/09/2026).
+    if cli is not None:
+        ok, motivo = True, ''
+    else:
+        ok, motivo = curva_abc.amostra_confiavel(rows, periodo=periodo)
     info = _abc_periodo_info(periodo)
+    regua = {'meses': info['meses'], 'corte_a': curva_abc.CORTE_A, 'corte_b': curva_abc.CORTE_B,
+             'base': 'venda líquida · quem vendeu (CODSUPERVISOR/CODUSUR do faturamento)',
+             'margem': 'lucro total ÷ venda líquida (ponderada no período)'}
+    if cli is not None:
+        regua['cliente'] = ('curva do cliente: concentração do que ele compra de você no período, '
+                            'não Pareto estatístico — poucos itens é o normal aqui')
     return jsonify({
         'ok': True,
         'escopo': _abc_escopo_nome(),
+        'codcli': cli,
         'periodo': info,
-        'regua': {'meses': info['meses'], 'corte_a': curva_abc.CORTE_A, 'corte_b': curva_abc.CORTE_B,
-                  'base': 'venda líquida · quem vendeu (CODSUPERVISOR/CODUSUR do faturamento)',
-                  'margem': 'lucro total ÷ venda líquida (ponderada no período)'},
+        'regua': regua,
         'amostra_ok': ok, 'amostra_motivo': motivo,
         'resumo': curva_abc.resumo(rows),
         'total': len(rows),
@@ -8147,9 +8194,11 @@ def api_abc_produto(codprod):
     clientes que pararam; aqui é o que ele não tem (a leitura por time)."""
     vend = _abc_vendedor_filtro()
     sup = _abc_supervisores_filtro()
+    cli = _abc_cliente_filtro()      # o drawer segue o cliente da tabela — senão são dois universos
     periodo = _abc_periodo()
-    key = cache_key_for_user('abc:produto', {'v': 2, 'cod': codprod, 'supervisor': _sup_cache_key(sup),
+    key = cache_key_for_user('abc:produto', {'v': 3, 'cod': codprod, 'supervisor': _sup_cache_key(sup),
                                              'vendedor': vend if vend is not None else '-',
+                                             'codcli': cli if cli is not None else '-',
                                              'periodo': periodo})
     cached = _cache_get(key)
     if cached:
@@ -8159,7 +8208,7 @@ def api_abc_produto(codprod):
     # janela ativa); QUEM VENDE segue a janela escolhida, como a tabela.
     if CONFIG['data_source'] == 'postgres':
         d = provider_sql.abc_produto_detalhe(codprod, _rbac_sql(), supervisores=sup, vendedor=vend,
-                                             periodo=periodo)
+                                             periodo=periodo, codcli=cli)
         serie_raw, vend_raw = d['serie'], d['vendedores']
     else:
         frag = _abc_escopo_frag()

@@ -200,8 +200,25 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
     dele. Os helpers do Radar **não mudaram** (5 abas dependem da semântica atual). ⚠️ Lojas e
     Diretoria: a régua é VENDA, então "o RCA X" é o que o X **faturou** — se a loja fatura por
     código de balcão, o filtro por RCA dá quase nada. Confirmar com o cliente como a loja fatura.
-  - Gate: `tests/test_curva_abc.py` (30 testes: motor, RBAC, cache por escopo, export, amostra,
-    drawer, período, margem, estreitamento do supervisor, modo postgres).
+  - **Filtro de CLIENTE** (21/09/2026, pedido do João Victor: *"vc vai conseguir colocar o filtro de
+    cliente aqui?"*). É **escopo, não filtro de tela**: as linhas são por produto, sem dimensão de
+    cliente, então a curva do cliente é o Pareto das compras DELE, recalculado no servidor como
+    time/vendedor (`?codcli=` em `/api/abc*`, `_abc_cliente_filtro`). Type-ahead pelo
+    `/api/_internal/clientes-busca` (o mesmo do Mix/Radar, já dentro do RBAC). Vale para todo
+    papel — e o **RBAC continua no filtro** (`CODUSUR/CODSUPERVISOR && CODCLI`): o vendedor vê o
+    que ELE vendeu ao cliente, nunca amplia.
+    ⚠️ **Com cliente ativo o aviso de amostra pequena NÃO acende** — um cliente compra 30-80 itens,
+    amarelo permanente vira ruído. Em vez de esconder, a régua declara o que a curva é (*"concentração
+    do que ele compra, não Pareto estatístico"*) e os cards saem coloridos. Decisão do Gabriel.
+    ⚠️ O **drawer segue o cliente** (a chave `abc:produto` levou `codcli`, `v`=3) — senão tabela do
+    cliente com série da empresa. A coluna "Clientes" some (seria sempre 1). Régua VENDA × CADASTRO:
+    o type-ahead lista a carteira (cadastro) e a curva mede venda — para cliente de Lojas/Diretoria
+    o vendedor pode achar o cliente e ver menos do que a Carteira mostra, por construção.
+    Validado na demo: BOM PRECO (5043) sai com 235 itens / R$ 23.277 contra 3.659 da empresa; drawer,
+    CSV e "Limpar filtros" honram o cliente. Fase 2 (cliente × empresa: o que ele não compra)
+    **não** foi pedida — "fase 1 basta".
+  - Gate: `tests/test_curva_abc.py` (37 testes: motor, RBAC, cache por escopo, export, amostra,
+    drawer, período, margem, estreitamento do supervisor, cliente, modo postgres).
 - **Metas** — réplica das 4 telas META (Venda/Rentab/Clientes/Mix): meta própria (Postgres) × realizado (2º dataset META) × projeção, drill de vendedores, editor admin.
   - ⚠️ **A `% Margem` divide pelo realizado BRUTO** (com bonificação), nunca por `venda_sb`
     (`[Realizado Sem Bonus]`). É a régua da medida oficial `[MARGEM(%)]` do dataset META
@@ -1711,7 +1728,8 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
   `periodo` + `amostra_ok`) · `GET /api/abc/{csv,pdf}` (honra `classe`/`codepto`/`codfornec`/`busca`
   da tela) · `GET /api/abc/produto/<codprod>` (série mensal 12m + vendedores na janela). Todos
   aceitam `?periodo=12m|6m|3m|mes_atual`. Escopo: `?supervisor=`/`?vendedor=` para admin/viewer
-  (empresa) e para supervisor (só dentro das áreas dele).
+  (empresa) e para supervisor (só dentro das áreas dele); `?codcli=` para todo papel (restringe,
+  somado ao RBAC).
 - **Performance:** `GET /estoque/api/nota` (ranking + matriz dos 5 indicadores + a régua
   serializada) · `GET /estoque/api/nota/serie?comprador_cod=` (só os 3 indicadores que saem da
   foto) · `GET|PUT /api/admin/metas-margem` (no app principal, `@admin_required`).

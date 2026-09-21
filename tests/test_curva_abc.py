@@ -490,3 +490,122 @@ def test_nomes_de_depto_da_demo_espelham_o_seed():
 
 def test_abc_default_powerbi_intocado():
     assert server.CONFIG['data_source'] == 'powerbi'
+
+
+# ───────────────────────── cliente como ESCOPO (09/2026, pedido do João Victor) ─────────────────────────
+# "vc vai conseguir colocar o filtro de cliente aqui?" — cliente NÃO é filtro de tela (as linhas são por
+# produto, sem dimensão de cliente): é a 4ª dimensão de escopo, recalculada no servidor como time/vendedor.
+# O RBAC fica no filtro (régua de VENDA): o vendedor vê o que ELE vendeu ao cliente, nunca mais que isso.
+
+def _carteira_fake(monkeypatch):
+    monkeypatch.setattr(server, '_carregar_carteira_full', lambda: [
+        {'codcli': 4242, 'cliente': 'PADARIA DO ZE', 'codusur': 573},
+        {'codcli': 7, 'cliente': 'MERCADO SETE', 'codusur': 999},
+    ])
+
+
+def test_cliente_entra_no_dax_no_rotulo_e_no_cache(client, usuario_admin, mock_dax_capture, clean_redis, monkeypatch):
+    _rotas(mock_dax_capture)
+    _carteira_fake(monkeypatch)
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+    d = client.get('/api/abc?codcli=4242').get_json()
+    assert d['ok'] and d['codcli'] == 4242
+    q = _q_abc(mock_dax_capture)[-1]
+    assert 'FATURAMENTO_VENDAS[CODCLI] = 4242' in q
+    assert d['escopo'] == 'Cliente: PADARIA DO ZE'
+    assert 'cliente' in d['regua'] and 'concentração' in d['regua']['cliente']
+    # cliente + time: os dois no filtro, rótulo composto
+    d2 = client.get('/api/abc?codcli=4242&supervisor=18').get_json()
+    q2 = _q_abc(mock_dax_capture)[-1]
+    assert '[CODCLI] = 4242' in q2 and '[CODSUPERVISOR] IN {18}' in q2
+    assert d2['escopo'].startswith('Cliente: PADARIA DO ZE · Time: ')
+    # cache separa clientes (lição da aba Verbas): 2 clientes = 2 queries, repetir = 0
+    n = len(_q_abc(mock_dax_capture))
+    client.get('/api/abc?codcli=4242'); client.get('/api/abc?codcli=7')
+    assert len(_q_abc(mock_dax_capture)) == n + 1
+    assert '[CODCLI] = 7' in _q_abc(mock_dax_capture)[-1]
+    # cliente sem nome no cadastro sai com o código, nunca com erro
+    assert client.get('/api/abc?codcli=31337').get_json()['escopo'] == 'Cliente: #31337'
+
+
+def test_cliente_dispensa_o_aviso_de_amostra_mas_declara_a_regua(client, usuario_admin, mock_dax_capture, clean_redis, monkeypatch):
+    """Um cliente compra 30-80 itens: o aviso amarelo acenderia SEMPRE e viraria ruído. Com cliente
+    ativo a curva sai colorida e a régua diz o que ela é (decisão 21/09/2026)."""
+    _rotas(mock_dax_capture, n=40)
+    _carteira_fake(monkeypatch)
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+    sem = client.get('/api/abc').get_json()
+    assert sem['amostra_ok'] is False                       # sem cliente: a regra continua
+    com = client.get('/api/abc?codcli=4242').get_json()
+    assert com['amostra_ok'] is True and com['amostra_motivo'] == ''
+    assert com['regua']['cliente']
+    assert 'cliente' not in sem['regua']
+
+
+def test_vendedor_com_cliente_mantem_o_rbac_no_filtro(client, usuario_vendedor, mock_dax_capture, clean_redis, monkeypatch):
+    """O cliente restringe, nunca substitui: o CODUSUR do vendedor continua no DAX."""
+    _rotas(mock_dax_capture)
+    _carteira_fake(monkeypatch)
+    login_as(client, usuario_vendedor['email'], usuario_vendedor['senha'])
+    d = client.get('/api/abc?codcli=7&supervisor=18').get_json()
+    assert d['ok']
+    q = _q_abc(mock_dax_capture)[-1]
+    assert 'FATURAMENTO_VENDAS[CODUSUR] = 573' in q and '[CODCLI] = 7' in q
+    assert 'CODSUPERVISOR' not in q
+
+
+def test_codcli_invalido_e_ignorado(client, usuario_admin, mock_dax_capture, clean_redis):
+    _rotas(mock_dax_capture)
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+    d = client.get('/api/abc?codcli=abc').get_json()
+    assert d['ok'] and d['codcli'] is None and d['escopo'] == 'Empresa inteira'
+    assert 'CODCLI] =' not in _q_abc(mock_dax_capture)[-1]
+
+
+def test_drawer_e_export_seguem_o_cliente(client, usuario_admin, mock_dax_capture, clean_redis, monkeypatch):
+    """Tabela do cliente com drawer da empresa seria o defeito de dois universos."""
+    _rotas(mock_dax_capture)
+    _carteira_fake(monkeypatch)
+    mock_dax_capture.routes = [
+        ('CALENDARIO[AnoMes]', _payload([{'CALENDARIO[AnoMes]': 202607, '[Venda]': 100.0, '[Qt]': 10.0, '[Clientes]': 1}])),
+        ('FATURAMENTO_VENDAS[CODUSUR],', _payload([{'FATURAMENTO_VENDAS[CODUSUR]': 573.0, '[Venda]': 100.0, '[Qt]': 10.0}])),
+    ] + mock_dax_capture.routes
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+    d = client.get('/api/abc/produto/1000?codcli=4242').get_json()
+    assert d['ok'] and d['escopo'] == 'Cliente: PADARIA DO ZE'
+    qd = [q for q in mock_dax_capture.queries if 'CODPROD] = 1000' in q]
+    assert len(qd) == 2 and all('[CODCLI] = 4242' in q for q in qd)
+    r = client.get('/api/abc/csv?codcli=4242')
+    assert r.status_code == 200 and 'PADARIA' in r.headers.get('Content-Disposition', '')
+    assert client.get('/api/abc/pdf?codcli=4242').status_code == 200
+
+
+def test_abc_modo_postgres_cliente(client, usuario_admin, monkeypatch):
+    _postgres(monkeypatch)
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+    import provider_sql
+    conn = provider_sql.analytics_conn(); cur = conn.cursor()
+    cur.execute("SELECT codcli FROM faturamento_vendas WHERE codoper='S' AND codcli IS NOT NULL "
+                "GROUP BY 1 ORDER BY count(*) DESC LIMIT 1")
+    cc = cur.fetchone()[0]
+    cur.execute("SELECT codprod FROM faturamento_vendas WHERE codoper='S' AND codcli=%s "
+                "GROUP BY 1 ORDER BY count(*) DESC LIMIT 1", (cc,))
+    cp = cur.fetchone()[0]
+    conn.close()
+    tudo = client.get('/api/abc').get_json()
+    d = client.get(f'/api/abc?codcli={cc}').get_json()
+    assert d['ok'] and d['codcli'] == cc and d['escopo'].startswith('Cliente: ')
+    assert 0 < d['resumo']['total_venda'] < tudo['resumo']['total_venda']
+    assert d['total'] < tudo['total']
+    assert all(r['clientes'] == 1 for r in d['rows'])        # a coluna vira constante (a tela a esconde)
+    assert d['amostra_ok'] is True and d['regua']['cliente']
+    dp = client.get(f'/api/abc/produto/{cp}?codcli={cc}').get_json()
+    assert dp['ok'] and dp['serie'] and all(s['clientes'] <= 1 for s in dp['serie'])
+    assert client.get(f'/api/abc/csv?codcli={cc}').status_code == 200
+
+
+def test_front_tem_o_filtro_de_cliente_e_o_leva_no_escopo():
+    html = open('abc.html', encoding='utf-8').read()
+    assert 'id="filt_cli"' in html and '/api/_internal/clientes-busca' in html
+    assert "if (_cliSel) qs += '&codcli=' + _cliSel;" in html, 'o cliente tem de viajar em TODA chamada (/api/abc, drawer, export)'
+    assert "'filt_cli'" in html.split('function limparTudo')[1].split('\n}')[0], 'Limpar filtros tem de zerar o cliente'
