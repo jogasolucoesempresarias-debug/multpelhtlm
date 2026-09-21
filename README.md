@@ -541,6 +541,24 @@ ciclo menor que o lead = pedido novo antes do anterior chegar.
   ⚠️ Ao conferir com o 111, **igualar a filial**: o relatório sai com todas e a tela usa a unidade.
   Gate: `tests/test_fornecedores_ciclo_verba.py` (caso da PEGON travado nos números reais).
 
+**Aba Fornecedores — 3 cards de total (Venda · Lucro · Margem)** (09/2026, pedido do João Victor:
+*"fui fazer uma análise ali naquela tela de rentabilidade por curva ABC e não tem o total em lugar
+nenhum, seja da margem, receita ou lucro… tenho que ir em outra tela da JOGA olhar"*). São os
+mesmos cards do Cockpit, no topo da aba, somados sobre **o que a tabela lista** (filtros do topo +
+Curva + Classe). Motor puro `fornTotais(rows, extraPronto)` no `estoque.js`; zero query.
+- ⚠️ **Margem = Σlucro ÷ Σvenda** (ponderada), nunca média das margens das linhas — a régua do
+  `margem_total` do Cockpit. Sem venda → `—`, não 0%.
+- ⚠️ **Soma `Ff`, nunca `base`/`F`/as 300 renderizadas**: card e tabela com universos diferentes é
+  o defeito do "Em risco" (789 × 791). Validado na demo: sem filtro, os três cards batem centavo a
+  centavo com o Cockpit (R$ 962.237,11 · R$ 147.510,56 · 15,3%) e com a soma da tabela.
+- ⚠️ **Com o filtro Curva ativo o total NÃO bate com o Cockpit, por construção** — aqui Curva é a
+  ABC do *fornecedor* (Opção A), lá é a do produto. A tela declara quando o filtro está ligado;
+  sem o aviso, a primeira comparação entre as duas telas vira chamado de "número errado".
+- **"c/ verba"** no sub-label de Lucro e Margem segue o `/api/fornecedores_extra` com os 3 estados
+  da coluna Cresc. AA: enquanto carrega ou se falhar sai `—`, nunca o bruto disfarçado.
+- Só cards, sem linha de total no Excel/PDF (decisão de escopo). Gate: `tests/test_fornecedores_cards.py`
+  (executa a função pura no Node + gates de código).
+
 **Drawer 360° do FORNECEDOR** (07/2026, pedido do diretor: "venda mês a mês do fornecedor, igual
 tem a do produto"). Clique na linha da aba Fornecedores → venda 12m **com o mesmo mês do ano
 anterior sobreposto**, ciclo × lead, pedidos em aberto, a comprar (c/ impostos) e top produtos.

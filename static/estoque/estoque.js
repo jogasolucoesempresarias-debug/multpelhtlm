@@ -1854,6 +1854,22 @@ function abcFornecedorMap(){
   return m;
 }
 
+/* Totais dos 3 cards da aba Fornecedores (09/2026, pedido do João Victor: "não tem o total em
+   lugar nenhum, seja da margem, receita ou lucro — tenho que ir em outra tela da JOGA olhar").
+   PURA: recebe as linhas EXIBIDAS (depois de Curva e Classe — nunca `base`, nunca as 300 da
+   render) e devolve venda/lucro/margem, mais a versão c/ verba quando o extra já chegou.
+   ⚠️ Margem é Σlucro ÷ Σvenda (ponderada), NUNCA média das margens das linhas — a régua do
+   Cockpit (`margem_total`) e da Curva ABC. Sem venda → null (a tela mostra "—", não 0%).
+   ⚠️ `extraPronto=false` (verba ainda carregando ou falhou) → lucro/margem c/ verba saem null:
+   mesma política do Cresc. AA — número provisório que parece pronto é pior que célula vazia. */
+function fornTotais(rows, extraPronto){
+  const venda=rows.reduce((s,r)=>s+(r.venda||0),0), lucro=rows.reduce((s,r)=>s+(r.lucro||0),0);
+  const verba=extraPronto?rows.reduce((s,r)=>s+(r.verba||0),0):null;
+  return {n:rows.length, venda, lucro, margem:venda?lucro/venda*100:null,
+          lucro_verba:verba==null?null:lucro+verba,
+          margem_verba:(verba==null||!venda)?null:(lucro+verba)/venda*100};
+}
+
 function renderFornecedores(P){
   // Opção A: nesta aba o filtro "Curva" age pela ABC do FORNECEDOR (não do produto).
   // Agrega ignorando a curva do produto (filtered(true)) e filtra os fornecedores por ABC no fim.
@@ -1912,12 +1928,27 @@ function renderFornecedores(P){
   // filtros de recorte — mesma política do card de Orçamento, que também avisa em vez de mentir.
   const _rot={curva:'curva',xyz:'XYZ',depto:'depto',busca:'busca'};
   const crIgnora=Object.keys(_rot).filter(k=>S.cli[k]&&S.cli[k].length).map(k=>_rot[k]);
+  // Cards: os MESMOS do Cockpit (Venda · Lucro · Margem), somados sobre `Ff` — o que a tabela
+  // lista, depois de Curva e Classe. Card e lista com universos diferentes é o defeito do "Em
+  // risco" (789 × 791); aqui a fonte é uma só.
+  // ⚠️ Com o filtro Curva ativo o total NÃO bate com o Cockpit, por construção: aqui Curva é a
+  // ABC do FORNECEDOR, lá é a do produto. A tela declara (senão vira chamado de "número errado").
+  const T=fornTotais(Ff, !exLoading&&!_fx.erro);
+  const periodoLbl={mes:'no mês','90d':'90 dias','6m':'6 meses','12m':'12 meses'}[S.vperiodo]||'período';
+  const curvaAtiva=!!(S.cli.curva&&S.cli.curva.length);
+  const cards=`<div class="kpi-grid" style="max-width:720px">
+     ${kpi('Venda '+periodoLbl,money(T.venda),int(T.n)+' fornecedores listados',C.green)}
+     ${kpi('Lucro bruto',money(T.lucro),T.lucro_verba==null?'c/ verba —':'c/ verba '+money(T.lucro_verba),C.accent)}
+     ${kpi('Margem',T.margem==null?'—':dec(T.margem,1)+'%','lucro ÷ venda'+(T.margem_verba==null?'':' · c/ verba '+dec(T.margem_verba,1)+'%'),C.accent2)}
+   </div>`;
   $('#v-fornecedores').innerHTML=head('Desempenho por fornecedor — giro × estoque','fornecedores')+
     `<div class="fb-group" style="margin:0 0 6px"><label>Filtrar classe</label>
        <select id="forn-cl" class="fb-control" style="width:auto">
          <option value="">Todas</option>
          ${Object.keys(CLS).map(k=>`<option value="${k}" ${S.cli.fornClasse===k?'selected':''}>${CLS[k]}</option>`).join('')}
        </select></div>
+     ${cards}
+     <div class="count-line">Os cards somam os <b>fornecedores listados</b> (filtros do topo + Curva + Classe), na mesma régua da tabela.${curvaAtiva?' <b>⚠ Filtro Curva ativo:</b> aqui ele é a ABC do <b>fornecedor</b>; o Cockpit filtra pela curva do <b>produto</b> — os totais não têm de bater.':''}</div>
      <div class="count-line">💡 <b>Clique numa linha</b> para ver o 360° do fornecedor (venda mês a mês vs ano anterior, ciclo × lead, pedidos em aberto). Índice = % na <b>venda (R$)</b> ÷ % no <b>estoque (R$)</b> (&gt;1 = vende mais do que pesa em estoque). <b>Ruptura</b> = vende mas cobertura &lt; ${lead}d (quase sem estoque) — não é performance.</div>
      <div class="count-line">${exLoading?'<b>Carregando ciclo de compras, verba e crescimento…</b> essas colunas aparecem em instantes. ':(_fx.erro?'<b style="color:'+C.red+'">⚠ Não foi possível carregar ciclo de compras, verba e crescimento</b> — as colunas ficam vazias em vez de mostrar número desatualizado. Recarregue a página. ':'')}<b>Compras</b>, <b>Venda</b>, <b>Lucro</b> e <b>Verba</b> seguem o período do seletor <b>Venda</b> do topo (hoje: ${({mes:'mês atual',['90d']:'últimos 90d',['6m']:'6 meses',['12m']:'12 meses'})[S.vperiodo]||'período'}) — por isso lucro e verba somam na mesma régua. O <b>Ciclo</b> é sempre apurado em <b>12 meses</b>: é comportamento do fornecedor, não recorte de tela. O <b>Cresc. AA</b> compara as duas janelas <b>completas</b> do fornecedor (todo produto vendido, inclusive o que saiu de linha) — sem isso o ano anterior sairia truncado e o crescimento inflado.${crIgnora.length?` <b>⚠ Filtro ativo (${esc(crIgnora.join(', '))}): o Cresc. AA continua sendo o do fornecedor inteiro</b>, não do recorte.`:''}${vbCamp>0?` ⚠ ${money(vbCamp)} da verba do período é <b>“Premiações e campanhas”</b> (não é redução de custo) e <b>está incluída</b> no “Lucro c/ verba” — refinamento pendente.`:''}</div>
      <!-- freeze2: Cód + Fornecedor ficam presos ao rolar lateralmente. Virou necessário quando a
