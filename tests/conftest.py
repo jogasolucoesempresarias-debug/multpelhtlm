@@ -24,6 +24,9 @@ def _setup_fake_redis():
     """Substitui Redis global de server.py por fakeredis antes de qualquer teste."""
     import server
     server._R = fakeredis.FakeRedis(decode_responses=True)
+    # O login usa um handle próprio (_R_LOGIN, timeout curto). Sem trocá-lo também, numa máquina
+    # sem Redis cada login espera o timeout e a suíte leva horas em vez de ~6 min (medido 09/2026).
+    server._R_LOGIN = fakeredis.FakeRedis(decode_responses=True)
     yield
 
 
