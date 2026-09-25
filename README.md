@@ -353,7 +353,9 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
 > mix abandonado · tendências/cohort · cobertura de carteira · **(09/2026)** curva ABC de clientes ·
 > carteira em risco × recuperada + dinheiro na mesa · Performance Comercial.
 > 📌 **Handoff completo — fonte de cada pilar, glossário e como testar:
-> [docs/comercial/PLANO_MELHORIAS_COMERCIAL.md §10](docs/comercial/PLANO_MELHORIAS_COMERCIAL.md).**
+> [docs/comercial/PLANO_MELHORIAS_COMERCIAL.md §10](docs/comercial/PLANO_MELHORIAS_COMERCIAL.md);
+> conteúdo aba por aba + desenho (1 agente, 3 camadas):
+> [docs/comercial/IA_COMERCIAL_CONTEUDO.md](docs/comercial/IA_COMERCIAL_CONTEUDO.md).**
 >
 > ⚠️ **O glossário é onde mora o trabalho**, como foi no Compras. As réguas do Comercial que o
 > modelo vai confundir se ninguém disser:

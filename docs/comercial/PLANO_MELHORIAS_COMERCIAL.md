@@ -416,6 +416,10 @@ frequência = 35% do peso). LARISSA e e-commerce fora do ranking.
 
 ## 10. Handoff para o próximo chat — Agente de IA no COMERCIAL
 
+> 📌 **Conteúdo aba por aba (endpoints e campos reais, perguntas por perfil, armadilhas, contrato
+> das consultas, sugestões, bateria de perguntas reais e 5 defeitos a corrigir antes):
+> [IA_COMERCIAL_CONTEUDO.md](IA_COMERCIAL_CONTEUDO.md).** O desenho (1 agente, 3 camadas) está lá no §0.
+
 > Pedido do Gabriel (25/09/2026): o próximo chat trabalha na IA. Leia também a memória
 > `multpel_chat_ia_analista` e, no README, as seções **🤖 Agente de IA** e **🔜 Próximo passo**.
 > O modelo é **gpt-4.1-mini** (OpenAI) — decisão de custo já tomada, **não re-sugerir Claude**.
