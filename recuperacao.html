@@ -54,14 +54,17 @@
   .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:18px; }
   .card h3 { font-size:.72rem; font-weight:600; color:var(--text-dim); text-transform:uppercase; letter-spacing:.05em; margin-bottom:14px; }
   .grid2 { display:grid; grid-template-columns: 1fr 1.4fr; gap:18px; }
-  @media (max-width:1100px){ .grid2 { grid-template-columns:1fr; } }
+  @media (max-width:1280px){ .grid2 { grid-template-columns:1fr; } }  /* abaixo disso a ponte (5 caixas) não cabe em meia tela */
 
-  .ponte { display:flex; gap:6px; align-items:stretch; flex-wrap:wrap; }
-  .pt { flex:1; min-width:118px; background:var(--surface2); border:1px solid var(--border); border-radius:9px; padding:10px 12px; overflow:hidden; }
+  /* 5 colunas SEMPRE na mesma linha (a 5ª caía sozinha embaixo com flex-wrap); em tela de
+     celular vira 2 colunas. minmax(0,1fr) deixa a coluna encolher abaixo do conteúdo. */
+  .ponte { display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:6px; }
+  @media (max-width:560px){ .ponte { grid-template-columns:repeat(2, minmax(0, 1fr)); } }
+  .pt { background:var(--surface2); border:1px solid var(--border); border-radius:9px; padding:9px 10px; overflow:hidden; min-width:0; }
   .pt .op { font-family:'JetBrains Mono',monospace; font-size:.9rem; color:var(--text-dim); }
-  .pt .n { font-size:1.25rem; font-weight:700; font-family:'JetBrains Mono',monospace; }
-  .pt .v { font-size:.72rem; color:var(--text-dim); font-family:'JetBrains Mono',monospace; overflow-wrap:anywhere; }
-  .pt .l { font-size:.66rem; text-transform:uppercase; color:var(--text-dim); letter-spacing:.04em; margin-bottom:4px; }
+  .pt .n { font-size:1.15rem; font-weight:700; font-family:'JetBrains Mono',monospace; white-space:nowrap; }
+  .pt .v { font-size:.72rem; color:var(--text-dim); font-family:'JetBrains Mono',monospace; white-space:nowrap; }
+  .pt .l { font-size:.62rem; text-transform:uppercase; color:var(--text-dim); letter-spacing:.03em; margin-bottom:4px; min-height:2.4em; line-height:1.2; }
   .pt.mais .n { color:var(--red);} .pt.menos .n { color:var(--green);} .pt.perd .n { color:var(--text-dim);}
 
   table { width:100%; border-collapse:collapse; font-size:.8rem; }
@@ -166,12 +169,13 @@
 const BRL = new Intl.NumberFormat('pt-BR', { style:'currency', currency:'BRL', maximumFractionDigits:0 });
 const NUM = new Intl.NumberFormat('pt-BR');
 const PCT = v => (v==null ? '—' : (v*100).toFixed(1).replace('.', ',') + '%');
-// Valor compacto para caixas estreitas (R$ 1,16 mi · R$ 339 mil); o exato vai no tooltip.
+// Valor compacto para as caixas estreitas da ponte (1,16 mi · 339 mil). Sem "R$": a legenda da
+// ponte declara "R$ por mês" uma vez; o valor exato vai no tooltip.
 const BRLC = v => {
   const a = Math.abs(v || 0);
-  if (a >= 1e6) return 'R$ ' + (v / 1e6).toFixed(2).replace('.', ',') + ' mi';
-  if (a >= 1e3) return 'R$ ' + Math.round(v / 1e3) + ' mil';
-  return BRL.format(v || 0);
+  if (a >= 1e6) return (v / 1e6).toFixed(2).replace('.', ',') + ' mi';
+  if (a >= 1e3) return Math.round(v / 1e3) + ' mil';
+  return NUM.format(Math.round(v || 0));
 };
 const MES = am => { const s = String(am); return `${s.slice(4)}/${s.slice(0,4)}`; };
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -268,7 +272,7 @@ function renderKpis() {
 
 function renderPonte() {
   const p = _data.ponte.clientes, v = _data.ponte.valor_mensal;
-  const box = (cls, op, l, n, val) => `<div class="pt ${cls}"><div class="l">${l}</div><div class="n"><span class="op">${op}</span> ${NUM.format(n)}</div><div class="v" title="${val != null ? BRL.format(val) + ' por mês' : ''}">${val != null ? BRLC(val) + '/mês' : ''}</div></div>`;
+  const box = (cls, op, l, n, val) => `<div class="pt ${cls}"><div class="l">${l}</div><div class="n"><span class="op">${op}</span> ${NUM.format(n)}</div><div class="v" title="${val != null ? BRL.format(val) + ' por mês' : ''}">${val != null ? BRLC(val) : ''}</div></div>`;
   document.getElementById('ponte').innerHTML =
     box('', '', 'Em risco no início', p.risco_ini, v.risco_ini) +
     box('mais', '+', 'Entraram em risco', p.entraram, v.entraram) +
@@ -277,7 +281,7 @@ function renderPonte() {
     box('', '=', 'Em risco no fim', p.risco_fim, v.risco_fim);
   const recortado = _sup || _vend;
   document.getElementById('ponteNota').innerHTML =
-    `Também voltaram <b>${NUM.format(p.resgatados_perdidos)}</b> clientes da base perdida (mais de ${_data.regua.perdido_dias} dias), que não passam pelo estoque em risco. ` +
+    `Clientes e, embaixo, o <b>valor mensal</b> deles (R$ por mês; passe o mouse para o valor exato). Também voltaram <b>${NUM.format(p.resgatados_perdidos)}</b> clientes da base perdida (mais de ${_data.regua.perdido_dias} dias), que não passam pelo estoque em risco. ` +
     (recortado ? 'No recorte de time/vendedor, a ponte é da <b>base</b> (dono do cadastro); o crédito de quem recuperou está no placar.' : '');
 }
 
