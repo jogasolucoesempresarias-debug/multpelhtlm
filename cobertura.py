@@ -166,12 +166,19 @@ def agregar_niveis(clientes, coberto_dias=COBERTO_DIAS_PADRAO):
     }
 
 
-def times_rcas_abaixo(niveis, limiar_pct):
+def times_rcas_abaixo(niveis, limiar_pct, ignorar=()):
     """Filtra times e vendedores com cobertura_clientes < limiar (0..1) — base do alerta.
     limiar_pct em % (ex.: 60). Retorna {'times': [...], 'vendedores': [...]} pior→melhor
-    (as listas já vêm ordenadas de agregar_niveis)."""
+    (as listas já vêm ordenadas de agregar_niveis).
+    Só PESSOAS entram: amostra pequena (< MIN_AMOSTRA clientes) e os ids em `ignorar`
+    (códigos fictícios, canais) ficam de fora — senão o alerta acusa quem não é gente.
+    Marca `alerta` (bool) em cada grupo para a tela usar a MESMA regra do e-mail."""
     lim = (limiar_pct or 0) / 100.0
+    ignorar = set(ignorar or ())
+    for g in list(niveis['times']) + list(niveis['vendedores']):
+        g['alerta'] = (g['cobertura_clientes'] < lim and not g.get('amostra_pequena')
+                       and g.get('id') not in ignorar)
     return {
-        'times':      [t for t in niveis['times'] if t['cobertura_clientes'] < lim],
-        'vendedores': [v for v in niveis['vendedores'] if v['cobertura_clientes'] < lim],
+        'times':      [t for t in niveis['times'] if t['alerta']],
+        'vendedores': [v for v in niveis['vendedores'] if v['alerta']],
     }

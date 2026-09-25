@@ -174,12 +174,11 @@ def test_clientes_sem_time_viram_grupo_sem_time():
 
 
 def test_times_rcas_abaixo_do_limiar():
-    clientes = [
-        _cli(10, codusur=1, codsupervisor=10, time='Bom'),
-        _cli(12, codusur=1, codsupervisor=10, time='Bom'),
-        _cli(80, codusur=2, codsupervisor=20, time='Ruim'),
-        _cli(90, codusur=2, codsupervisor=20, time='Ruim'),
-    ]
+    # 5 clientes por time: com menos, o grupo é amostra pequena e fica fora do alerta (09/2026)
+    clientes = (
+        [_cli(10 + i, codusur=1, codsupervisor=10, time='Bom') for i in range(5)]
+        + [_cli(80 + i, codusur=2, codsupervisor=20, time='Ruim') for i in range(5)]
+    )
     n = cob.agregar_niveis(clientes, coberto_dias=30)
     baixos = cob.times_rcas_abaixo(n, limiar_pct=60)
     nomes = [t['nome'] for t in baixos['times']]

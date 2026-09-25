@@ -59,17 +59,18 @@ cliente X" · (3) "Explique este número" · (4) "Onde meu time perde dinheiro".
 
 ---
 
-## 1. ⚠️ Corrigir ANTES de o agente citar (ele repetiria o número errado com convicção)
+## 1. Defeitos que o agente repetiria — validados e CORRIGIDOS (25/09/2026)
 
-| # | Onde | O problema (medido 25/09/2026) | Tratamento |
+Validados no BI real e corrigidos na working tree (testes em `tests/test_defeitos_comercial_ia.py`;
+suíte 1.086 passam, 3 falhas pré-existentes). **Pendente: commit/deploy.**
+
+| # | Onde | Validação | Correção |
 |---|---|---|---|
-| 1 | Dashboard, card **"Clientes Novos"** | Usa a medida do BI `[TOTAL CLIENTES NOVO]`, que é **igual ao total de clientes distintos** (decodificada em 24/09: RCA 2 → 128 = 128 no mês; empresa → 6.889 = 6.889 em 12m). Hoje o card mostra 2.745 "novos" com 2.748 positivados. | Não levar para o contexto até corrigir (cliente novo = 1ª compra da vida no período; dá para calcular do `cohort`). Mesmo defeito da `[TAXA POSITIVACAO CLIENTE]`. |
-| 2 | Cockpit do vendedor, alerta **"At Risk"** | Texto diz "R$ 482/**ano** de lucro em risco", mas o valor é `lucro_perdido_proj`, que é ACUMULADO (lucro mensal × meses de atraso), não anual. | Corrigir o rótulo ("acumulado"); o agente usa o valor mensal da Recuperação. |
-| 3 | Gerencial, **"abaixo do limiar"** | 105 de 118 vendedores e 15 de 16 times abaixo de 60% (cobertura ≤ 30 d da empresa = 35,5%). Alerta que marca quase todo mundo não diferencia ninguém. E inclui canal (E-COMMERCE MARTINS, 0%). | Agente não deve anunciar "105 vendedores críticos"; recalibrar limiar com o João ou comparar com a mediana do universo. |
-| 4 | Carteira › **Próximo Pedido**, ordenação | Ordena por `rfm.prioridade_contato` (valor × dias ÷ ciclo), que explode com ciclo curto: 1º da lista tem ciclo 7 e 142 dias de atraso (prioridade 164 mil). É o mesmo defeito corrigido na Recuperação. E a janela "vencidos" traz atrasos de 142 dias — cliente que já é "em risco" (> 60 d) aparece nas duas listas. | Para a "lista do dia" do agente: até 60 d de atraso → Próximo Pedido; > 60 d → Recuperação (ordem valor × chance de voltar). Nunca juntar as duas contagens. |
-| 5 | Radar | "CONSUMIDOR FINAL" (codcli 1, vendido pelo caixa RCA 4) entra como cliente — é venda de balcão sem identificação. | Excluir codcli 1 (e equivalentes) de qualquer "cliente que parou". |
-
----
+| 1 | Dashboard, card **"Clientes Novos"** | ✅ Confirmado. A medida do BI `[TOTAL CLIENTES NOVO]` = total de clientes distintos (set/26: 2.745 × 2.748 positivados). Novos de verdade: **66** em set, **84** em ago. O modo postgres (demo) copiava o erro (`clientes_novos = cli`). | Novo = comprou no mês (escopo/RBAC) e nunca antes na empresa (histórico do fato desde jan/2024) e, se o cadastro tiver `DTPRIMCOMPRA`, ela não é anterior ao mês. `_expr_clientes_novos_mes` (DAX) + `provider_sql.dashboard_kpis`. |
+| 2 | Cockpit, alerta **"At Risk"** | ✅ Confirmado: somava `lucro_perdido_proj` (ACUMULADO) e escrevia "/ano". | "3 clientes At Risk valem R$ 175/mês de lucro médio (R$ 482 já deixaram de entrar desde o atraso)". Novo campo `lucro_mensal_total`. |
+| 3 | Gerencial, **"abaixo do limiar"** | ✅ Duas causas. (a) Ruído: 30 dos 105 não eram pessoa (25 base < 5, 4 fictícios — o 999 tem 1.285 clientes a 8% —, 1 canal). (b) Limiar descalibrado: entre as 87 pessoas a cobertura ≤ 30 d tem **mediana 37% e p90 62%** — 60% pega quase todos (com carteira ativa 12m: 60 de 81). | (a) Corrigido: só pessoa entra no alerta (tela e e-mail com a mesma regra, flag `alerta`) → **75 vendedores / 9 times**. (b) **Decisão do João** (limiar no Admin): sugerir ~35–40% (a mediana) ou comparar com a mediana do time. |
+| 4 | Carteira › **Próximo Pedido** | ❌ **Não confirmado na tela.** A tela e o e-mail "Lista do Dia" cortam em 15 dias de atraso (a prioridade não explode: pior caso ×3). O cliente com 142 dias só apareceu chamando a API sem parâmetro. | API sem `janela` passa a usar `vencido15` (a da tela) e o rótulo "Vencido há +15 dias" (lia-se "mais de 15") virou "Vencidos (até 15 dias)". Para o agente: até 15 d → Próximo Pedido; > 60 d e além do ciclo → Recuperação. |
+| 5 | **CONSUMIDOR FINAL** (codcli 1, caixa RCA 4) | ✅ Confirmado e maior que parecia: R$ 2,2 mi/12m (2,4% da empresa), 26 mil notas, 29 vendedores; aparecia como CHAMPION classe A na Carteira e como cliente no Radar. Não aparece em Mix, Próximo Pedido nem Top clientes. | Fora da análise POR CLIENTE (Carteira, classe ABC, positivação, Recuperação, drill do Radar); a VENDA segue nos totais. Regra por nome (`^CONSUMIDOR FINAL`). Efeito: carteira 8.641 → 8.640; classe A 1.403 → 1.433 clientes (sem ele puxando o Pareto); positivação A 80,9% → 80,5%. |
 
 ## 2. Glossário (resumo — completo no §10 do plano)
 
@@ -81,7 +82,7 @@ cliente X" · (3) "Explique este número" · (4) "Onde meu time perde dinheiro".
 - **Três "receitas em risco"**: valor mensal em risco (Recuperação) · receita perdida acumulada (Gerencial/Próximo Pedido) · "receita em risco" do Radar (venda 12m dos produtos que o cliente parou). Nunca somar nem comparar entre si.
 - **Duas "coberturas"**: Gerencial = cliente em dia (≤ 30 d, configurável) sobre a carteira 24m; Vendedores = cobertura da base no mês. Performance usa a da base AJUSTADA pela classe ABC (índice; 1,00 = média).
 - **Duas "curvas ABC"**: de CLIENTES (Carteira; classe do início do mês) × de PRODUTOS (aba Curva ABC; Pareto da janela escolhida, régua de venda).
-- **Dois "ticket médio"**: Dashboard/Vendedores usam a medida do BI (R$ 725 no mês corrente; R$ 156 em ago por item) — não é ticket por cliente (R$ 2.122/mês em ago) nem por pedido (R$ 720).
+- **Ticket médio muda de tela para tela**: Dashboard = venda líquida ÷ nº de NOTAS (R$ 725 no mês corrente); Vendedores = a medida `[TICKET MEDIO]` do BI (R$ 156 em ago — não é por cliente nem por pedido); por cliente/mês = R$ 2.122 (ago). Sempre dizer qual.
 - **Réguas de acesso**: VENDA (quem faturou) × CADASTRO (de quem o cliente é). Lojas/Diretoria divergem 40–66%.
 - Inativo > 60 d **e** além do ciclo · perdido > 365 d · ERP marca inativo aos 91 d.
 - Margem das Metas pelo BRUTO; do Dashboard/Categorias/ABC pela LÍQUIDA.

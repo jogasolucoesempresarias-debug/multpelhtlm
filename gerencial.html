@@ -357,7 +357,9 @@ function renderRanking() {
   const drillFn = tipo === 'Time' ? 'irTime' : 'irVendedor';
   document.getElementById('rankBody').innerHTML = itens.map(g => {
     const cls = limiarClasse(g.cobertura_clientes);
-    const abaixo = g.cobertura_clientes * 100 < _limiar;
+    // Mesma regra do alerta por e-mail (backend): só PESSOAS — sem amostra pequena, códigos
+    // fictícios e canais. Fallback para o cálculo local se o payload for antigo.
+    const abaixo = (g.alerta != null) ? g.alerta : (g.cobertura_clientes * 100 < _limiar);
     const w = Math.max(2, g.cobertura_clientes*100);
     return `
     <tr class="click" onclick="${drillFn}(${g.id})">

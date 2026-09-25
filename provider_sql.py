@@ -218,6 +218,12 @@ def dashboard_kpis(rbac):
                             "GROUP BY dtsaida) t", (d0, d1))
         cli = _scalar(cur, "SELECT count(DISTINCT codcli) FILTER (WHERE codoper='S') "
                       f"FROM faturamento_vendas WHERE dtsaida BETWEEN %s AND %s{wv}", (d0, d1))
+        # Clientes NOVOS = compraram no mês (no escopo) e nunca antes (empresa inteira). Antes
+        # este campo repetia `cli` — espelhava o defeito da medida [TOTAL CLIENTES NOVO] do BI.
+        novos = _scalar(cur, "SELECT count(*) FROM (SELECT codcli, min(dtsaida) p FROM faturamento_vendas "
+                        "WHERE codoper='S' AND codcli IN (SELECT DISTINCT codcli FROM faturamento_vendas "
+                        f"WHERE dtsaida BETWEEN %s AND %s AND codoper='S'{wv}) GROUP BY codcli) t "
+                        "WHERE p >= %s", (d0, d1, d0))
         peso = _scalar(cur, "SELECT coalesce(sum(fv.qt*pr.pesobruto),0) FROM faturamento_vendas fv "
                        "JOIN pcprodut pr ON pr.codprod=fv.codprod "
                        f"WHERE fv.dtsaida BETWEEN %s AND %s AND fv.codoper='S'"
@@ -240,7 +246,7 @@ def dashboard_kpis(rbac):
         "ok": True,
         "primarios": {"venda_liquida": r["liquida"], "lucro_total": r["lucro"],
                       "margem": r["margem"], "ticket_medio": ticket},
-        "secundarios": {"total_mix": total_mix, "clientes_novos": cli,
+        "secundarios": {"total_mix": total_mix, "clientes_novos": novos,
                         "valor_medio_peso": vmp, "clientes_positivados": cli},
         "yoy": yoy,
         "yoy_mes": yoy_mes,

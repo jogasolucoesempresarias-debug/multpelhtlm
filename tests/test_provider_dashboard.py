@@ -29,6 +29,10 @@ def test_dashboard_kpis_modo_postgres(client, usuario_admin, monkeypatch):
         assert set(data['yoy_mes_info']) == {'rotulo', 'periodo', 'dias_uteis', 'dias_uteis_anterior'}
     # números coerentes (base cheia da demo)
     assert p['venda_liquida'] > 1_000_000
+    # clientes novos (1ª compra da história no mês) ≤ positivados — antes o provider repetia o
+    # mesmo número nos dois campos, espelhando o defeito da medida [TOTAL CLIENTES NOVO] do BI.
+    s = data['secundarios']
+    assert 0 <= s['clientes_novos'] <= s['clientes_positivados']
 
     # bate com o provider chamado direto (admin = sem RBAC)
     ref = provider_sql.dashboard_kpis({'role': 'admin', 'codusur': None, 'supervisores': []})

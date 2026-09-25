@@ -1439,7 +1439,7 @@ def enviar_alerta_cobertura_email(usuario_id):
         try:
             clientes = _carteira_no_escopo()
             niveis = cob.agregar_niveis(clientes, coberto_dias=coberto_dias)
-            baixos = cob.times_rcas_abaixo(niveis, limiar_pct)
+            baixos = cob.times_rcas_abaixo(niveis, limiar_pct, ignorar=_gerencial_nao_pessoas(niveis))
         except Exception as e:
             return {'ok': False, 'error': f'Falha ao calcular cobertura: {e}'}
 
@@ -2021,6 +2021,24 @@ def _corte_dados():
     return corte
 
 
+def _expr_clientes_novos_mes(f_atual):
+    """Clientes NOVOS no mês corrente: compraram no mês (no escopo do filtro/RBAC) e NUNCA antes.
+    ⚠️ Não usar a medida [TOTAL CLIENTES NOVO] do BI: decodificada em 24/09/2026, ela é igual ao
+    total de clientes distintos (set/26: 2.745 "novos" × 2.748 positivados). "Nunca antes" =
+    sem compra no histórico do fato (desde jan/2024, a empresa inteira — novo para a EMPRESA) E,
+    quando o cadastro tem a data da 1ª compra (PCCLIENT[DTPRIMCOMPRA], vazia em ~14 mil), ela não
+    é anterior ao mês (pega quem comprou antes de 2024 e voltou). Medido: ago/26 84 · set/26 66."""
+    ini = "EOMONTH(TODAY(), -1) + 1"
+    return (
+        "COUNTROWS(EXCEPT(EXCEPT("
+        f"CALCULATETABLE(DISTINCT(FATURAMENTO_VENDAS[CODCLI]), {f_atual}), "
+        "CALCULATETABLE(DISTINCT(FATURAMENTO_VENDAS[CODCLI]), "
+        f"FILTER(ALL(FATURAMENTO_VENDAS), FATURAMENTO_VENDAS[DTSAIDA] < {ini}))), "
+        "CALCULATETABLE(DISTINCT(PCCLIENT[CODCLI]), FILTER(ALL(PCCLIENT), "
+        f"NOT ISBLANK(PCCLIENT[DTPRIMCOMPRA]) && PCCLIENT[DTPRIMCOMPRA] < {ini})))) + 0"
+    )
+
+
 def _janelas_yoy_mes():
     """Janelas do YoY mensal: (mês corrente 1→corte) vs (mesmo mês do ano anterior, 1→corte).
 
@@ -2110,7 +2128,7 @@ def api_dashboard_kpis():
         )}}""",
         'secundarios': f"""EVALUATE {{(
             CALCULATE([TOTAL MIX], {f_atual}),
-            CALCULATE([TOTAL CLIENTES NOVO], {f_atual}),
+            {_expr_clientes_novos_mes(f_atual)},
             CALCULATE([VALOR MEDIO PESO], {f_atual}),
             CALCULATE(DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI]), {f_atual})
         )}}""",
@@ -2886,9 +2904,35 @@ def _normalizar_cidades(clientes):
     return mapping
 
 
+_RE_CLIENTE_GENERICO = re.compile(r'^\s*CONSUMIDOR\s+FINAL', re.I)
+
+
+def _eh_cliente_generico(nome):
+    """Cadastro genérico de balcão ("CONSUMIDOR FINAL"): não é cliente que se liga, visita ou
+    recupera. Medido 25/09/2026: o codcli 1 fatura R$ 2,2 mi/12m (2,4% da empresa) em 26 mil
+    notas por 29 vendedores e aparecia como CHAMPION classe A na Carteira."""
+    return bool(nome) and bool(_RE_CLIENTE_GENERICO.match(str(nome)))
+
+
+def _clientes_genericos():
+    """{codcli} dos cadastros genéricos — gravado pelo _finalizar_carteira."""
+    cached = _cache_get('multpel:clientes_genericos:v1')
+    if cached is None:
+        _carregar_carteira_full()
+        cached = _cache_get('multpel:clientes_genericos:v1') or []
+    return {int(c) for c in cached}
+
+
 def _finalizar_carteira(clientes, key):
     """Enriquece a carteira (vendedor/time), normaliza cidades, cacheia e devolve.
-    Compartilhado pelos caminhos DAX e postgres."""
+    Compartilhado pelos caminhos DAX e postgres.
+    ⚠️ Tira os cadastros genéricos (CONSUMIDOR FINAL): a carteira é análise POR CLIENTE. A
+    VENDA deles segue nos totais (Dashboard, Categorias, Curva ABC de produtos)."""
+    genericos = [c.get('codcli') for c in clientes if _eh_cliente_generico(c.get('cliente'))]
+    _cache_set('multpel:clientes_genericos:v1', [g for g in genericos if g is not None], 'metadata')  # TTL > carteira: a lista nunca some antes dela
+    if genericos:
+        fora = set(genericos)
+        clientes = [c for c in clientes if c.get('codcli') not in fora]
     vendedores = _carregar_vendedores_map()
     supervisores = _carregar_supervisores_map()
     for c in clientes:
@@ -2925,7 +2969,7 @@ def _carregar_carteira_full():
     O recorte por usuário NÃO é feito aqui: use sempre _carteira_no_escopo(), que filtra
     pelo CADASTRO (CODUSUR1 → vendedor → supervisor). Cache compartilhado entre todos os
     usuários (1 entrada global). NÃO expor esta função direto nos endpoints."""
-    key = 'multpel:carteira:full:global:v2'
+    key = 'multpel:carteira:full:global:v3'  # v3: sem cadastros genéricos (CONSUMIDOR FINAL)
     cached = _cache_get(key)
     if cached:
         return cached
@@ -3055,10 +3099,11 @@ def _classes_abc_clientes():
     'fechado': {codcli: classe no início do mês fechado}}. Zero query nova: caches de venda e
     devolução mensal por cliente."""
     ref = positivacao.mes_fechado(_hoje_ref())
-    key = f'multpel:classes_abc_clientes:{ref}:v1'
+    key = f'multpel:classes_abc_clientes:{ref}:v2'  # v2: sem cadastros genéricos
     cached = _cache_get(key)
     if cached is None:
-        vm = _carregar_venda_mensal_por_cliente()
+        gen = _clientes_genericos()
+        vm = {c: v for c, v in _carregar_venda_mensal_por_cliente().items() if c not in gen}
         dm = _carregar_devolucao_mensal_por_cliente()
         cached = {
             'ref': ref,
@@ -4142,7 +4187,7 @@ def api_carteira_proximo_pedido():
     ciclo de compra). Reusa a carteira cacheada + RBAC; sem DAX novo. Produtos vêm no
     endpoint lazy /api/carteira/cliente/<id>/produtos ao expandir."""
     clientes = _carteira_no_escopo()
-    janela = request.args.get('janela', 'vencidos')
+    janela = request.args.get('janela', 'vencido15')
     try:
         dias_janela = int(request.args.get('dias', 3))
     except (TypeError, ValueError):
@@ -4698,7 +4743,7 @@ def api_carteira_proximo_pedido_pdf():
     previsão crescente (agenda cronológica de ligação), ignorando o sort da tela."""
     from datetime import date as _date
     clientes = _carteira_no_escopo()
-    janela = request.args.get('janela', 'vencidos')
+    janela = request.args.get('janela', 'vencido15')
     try:
         dias_janela = int(request.args.get('dias', 3))
     except (TypeError, ValueError):
@@ -4724,7 +4769,7 @@ def _nome_arquivo_proximo(ext):
     """Nome do arquivo da Lista do Dia conforme filtros aplicados (códigos → nomes).
     Ex: proximo_hoje_AFONSO_ES_SUL_MANOEL_DE_SOUZA_2026-06-30.csv"""
     from datetime import date as _date
-    partes = [_slug_export(request.args.get('janela') or 'vencidos')]
+    partes = [_slug_export(request.args.get('janela') or 'vencido15')]
     time_filt = request.args.get('time')
     vendedor = request.args.get('vendedor')
     uf = request.args.get('uf')
@@ -4749,7 +4794,7 @@ def _nome_arquivo_proximo(ext):
 def api_carteira_proximo_pedido_csv():
     """CSV da Lista do Dia — mesma janela/filtros da tabela, nome conforme filtros."""
     clientes = _carteira_no_escopo()
-    janela = request.args.get('janela', 'vencidos')
+    janela = request.args.get('janela', 'vencido15')
     try:
         dias_janela = int(request.args.get('dias', 3))
     except (TypeError, ValueError):
@@ -4884,7 +4929,7 @@ def api_gerencial_cobertura():
 
     clientes = _carteira_no_escopo()
     niveis = cob.agregar_niveis(clientes, coberto_dias=coberto_dias)
-    baixos = cob.times_rcas_abaixo(niveis, limiar_pct)
+    baixos = cob.times_rcas_abaixo(niveis, limiar_pct, ignorar=_gerencial_nao_pessoas(niveis))
     resp = {
         'ok': True,
         'limiar_pct': limiar_pct,
@@ -4896,6 +4941,17 @@ def api_gerencial_cobertura():
     }
     _cache_set(key, resp, 'dax_lista')  # TTL curto (5min): reflete ajuste de limiar rápido
     return jsonify(resp)
+
+
+def _gerencial_nao_pessoas(niveis):
+    """Ids de RCA/time que NÃO são pessoa: códigos fictícios (999 transferência, 34 prospecção…)
+    e canais (nome com "COMMERCE"). Ficam na tela, mas fora do "abaixo do limiar" e do alerta —
+    medido 25/09/2026: 30 dos 105 "abaixo" eram base < 5 (25), fictício (4) ou canal (1)."""
+    ids = set(CODIGOS_FICTICIOS)
+    for g in list(niveis.get('vendedores', [])) + list(niveis.get('times', [])):
+        if 'COMMERCE' in (g.get('nome') or '').upper().replace('-', '').replace(' ', ''):
+            ids.add(g.get('id'))
+    return ids
 
 
 def _cobertura_csv_linhas(niveis):
@@ -5163,7 +5219,8 @@ def _recup_base():
     with lock:
         if memo['chave'] == chave and time.time() - memo['em'] < 3600:
             return memo['base']
-        hist = recup.indexar(compras)
+        gen = _clientes_genericos()
+        hist = recup.indexar([x for x in compras if x[0] not in gen])
         meses = [positivacao.mes_add(ref, -i) for i in range(12, -1, -1)] + [atual]
         movs = {am: recup.movimentos(hist, am, ina, per) for am in meses}
         base = {'hist': hist, 'movs': movs, 'ref': ref, 'atual': atual, 'meses': meses,
@@ -6215,15 +6272,25 @@ def api_vendedor_alertas(codusur):
         reverse=True
     )[:3]
 
+    # ⚠️ `lucro_perdido_proj` é ACUMULADO (lucro mensal × meses de atraso além do ciclo), não anual.
+    # O texto antigo dizia "/ano" (medido 25/09/2026). O número que orienta a ação é o lucro
+    # MENSAL médio desses clientes (lucro 12m ÷ 12); o acumulado vai junto, rotulado como tal.
     lucro_perdido_total = round(sum((c.get('lucro_perdido_proj') or 0) for c in at_risk), 2)
+    lucro_mensal_total = round(sum((c.get('lucro_12m') or 0) for c in at_risk) / 12, 2)
+
+    def _br(v):
+        return f"{v:,.0f}".replace(',', '.')
 
     alertas = []
     if at_risk:
+        acum = (f" (R$ {_br(lucro_perdido_total)} já deixaram de entrar desde o atraso)"
+                if lucro_perdido_total > 0 else "")
         alertas.append({
             'tipo': 'at_risk',
             'count': len(at_risk),
             'lucro_perdido_total': lucro_perdido_total,
-            'msg': f"{len(at_risk)} clientes At Risk somam R$ {lucro_perdido_total:,.0f}/ano de lucro em risco — ligue.".replace(',', '.'),
+            'lucro_mensal_total': lucro_mensal_total,
+            'msg': f"{len(at_risk)} clientes At Risk valem R$ {_br(lucro_mensal_total)}/mês de lucro médio{acum} — ligue.",
         })
     if champions:
         alertas.append({
@@ -7458,6 +7525,8 @@ SUMMARIZECOLUMNS(
             # parou DESTE produto mas comprou OUTRO do mesmo depto → trocou (não é churn puro)
             'trocou':        bool(parou and cc in canib),
         })
+    gen = _clientes_genericos()
+    linhas = [l for l in linhas if l.get('codcli') not in gen]   # CONSUMIDOR FINAL não "para"
     linhas.sort(key=lambda x: x['venda_12m'], reverse=True)   # potencial de recuperação
     return info, linhas
 
