@@ -28,8 +28,34 @@ Gerencial e só se responde explicando QUAL RÉGUA cada tela usa.
 **4 usos que viram botão/sugestão:** (1) "Minha lista de hoje" · (2) "Preparar visita ao
 cliente X" · (3) "Explique este número" · (4) "Onde meu time perde dinheiro".
 
-**Pendente do Gabriel/João:** vendedores entram no painel (define se a Fase 3 — lista do dia /
-preparar visita — é prioridade) · o módulo `ia` vai ligado na Multpel ou primeiro só na demo.
+**Decidido pelo Gabriel (25/09/2026):**
+- **O VENDEDOR vai usar a IA** → o perfil vendedor é o público principal. "Minha lista de hoje" e
+  "Preparar visita ao cliente X" deixam de ser a última fase e viram o NÚCLEO da 1ª entrega.
+- **Só na DEMO por enquanto** (`demo.jogasolucoes.com.br`, `DATA_SOURCE=postgres`, base sintética).
+  A Multpel segue no estado `off` (sem `ia` no `MODULOS` — nem o botão aparece). Consequências:
+  - tudo que o agente consulta tem de funcionar no **modo postgres** (os endpoints do §3 já têm
+    branch; qualquer função nova precisa do espelho no `provider_sql.py` e entrar no
+    `test_comercial_endpoints_sweep_modo_postgres`). A rede de segurança (`execute_dax` levanta em
+    postgres) protege contra vazar dado real na demo — NÃO remover;
+  - o `docker-compose.demo.yml` hoje tem `MODULOS: "comercial,compras"` → acrescentar `ia` e a
+    `OPENAI_API_KEY` na stack da demo (conferir se já está no Portainer; lembrar que reaplicar a
+    stack pode voltar a imagem — rodar o `docker service update --image …:latest --force` depois);
+  - a demo só tem o usuário ADMIN → para mostrar o agente como vendedor e supervisor, o seed da
+    demo precisa criar **usuários de demonstração por perfil** (1 vendedor com carteira boa, 1
+    supervisor) — pelo mesmo caminho do `bootstrap_demo.sh` (trava `DEMO_SEED=1`, recusa `multpel_db`);
+  - nomes e números da demo são sintéticos: a bateria de perguntas (§6) precisa de uma versão
+    com clientes/vendedores da demo; as respostas esperadas do §6 com dado real servem para o
+    dia em que ligar na Multpel.
+
+### Fases (reordenadas pelo público vendedor)
+1. **Vendedor, na demo:** panorama do vendedor (carteira dele: em risco com chance de voltar,
+   Próximo Pedido até 60 d, recuperados, nota e metas) + consulta `cliente` + os dois botões
+   ("Minha lista de hoje", "Preparar visita ao cliente X") + glossário + usuários de demo.
+2. **Supervisor e diretor:** panoramas por time/empresa + consultas `vendedor` e `time` +
+   "Explique este número" e "Onde meu time perde dinheiro".
+3. **Consultas `produto` e `departamento`** + sugestões de todas as telas (§5).
+4. **Ligar na Multpel** (quando decidirem): antes, corrigir os defeitos do §1 e rodar a bateria
+   do §6 com dado real.
 
 ---
 

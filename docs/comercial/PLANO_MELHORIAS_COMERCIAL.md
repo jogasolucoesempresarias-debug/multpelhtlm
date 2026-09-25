@@ -419,6 +419,8 @@ frequência = 35% do peso). LARISSA e e-commerce fora do ranking.
 > 📌 **Conteúdo aba por aba (endpoints e campos reais, perguntas por perfil, armadilhas, contrato
 > das consultas, sugestões, bateria de perguntas reais e 5 defeitos a corrigir antes):
 > [IA_COMERCIAL_CONTEUDO.md](IA_COMERCIAL_CONTEUDO.md).** O desenho (1 agente, 3 camadas) está lá no §0.
+> **Decidido 25/09:** o VENDEDOR vai usar (lista do dia + preparar visita são o núcleo da 1ª fase)
+> e o agente roda **só na demo** por enquanto (Multpel segue `off`).
 
 > Pedido do Gabriel (25/09/2026): o próximo chat trabalha na IA. Leia também a memória
 > `multpel_chat_ia_analista` e, no README, as seções **🤖 Agente de IA** e **🔜 Próximo passo**.
