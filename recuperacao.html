@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>JOGA Analytics — Carteira em risco × recuperada</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/static/joga-mark.svg" type="image/svg+xml">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+<script src="/static/fetch-resiliente.js"></script>
+<link rel="stylesheet" href="/static/tooltips.css">
+<script defer src="/static/tooltips.js"></script>
+<link rel="stylesheet" href="/static/tema.css">
+<script>try{var t=localStorage.getItem("joga:tema");if(t==="claro")document.documentElement.dataset.tema=t;}catch(e){}</script>
+<script src="/static/chart-tema.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+  @keyframes fadeUp { from { opacity:0; transform:translateY(16px);} to { opacity:1; transform:translateY(0);} }
+  .dashboard { padding:24px; max-width:1600px; margin:0 auto; animation:fadeUp .4s ease; }
+  .top-bar { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; flex-wrap:wrap; gap:14px; }
+  /* Cabeçalho (joga-header.js monta o markup; o estilo é da página — sem isto o logo estoura) */
+  .brand { display:flex; align-items:center; gap:12px; }
+  .brand .mark { width:36px; height:36px; border-radius:8px; background:linear-gradient(135deg,var(--accent),var(--accent2)); display:flex; align-items:center; justify-content:center; font-weight:700; color: var(--sobre-accent); flex:0 0 36px; }
+  .top-bar h1 { font-size:1.3rem; font-weight:700; background:linear-gradient(135deg,var(--accent),var(--accent2)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+  .meta { font-size:.74rem; color:var(--text-dim); font-family:'JetBrains Mono',monospace; }
+  .nav { display:flex; gap:8px; flex-wrap:wrap; }
+  .nav .btn-sm, .nav a { text-decoration:none; }
+  .btn-sm { padding:7px 14px; background:var(--surface2); border:1px solid var(--border); color:var(--text); font-weight:500; font-size:.78rem; border-radius:7px; cursor:pointer; text-decoration:none; display:inline-block; font-family:inherit; }
+  .btn-sm:hover, .btn-sm.on { border-color:var(--accent); color:var(--accent); }
+  .btn-export { padding:8px 14px; background:linear-gradient(135deg,var(--accent),var(--accent2)); color: var(--sobre-accent); border:none; border-radius:7px; cursor:pointer; font-weight:700; font-size:.8rem; font-family:inherit; }
+
+  .controls { display:flex; gap:12px; flex-wrap:wrap; align-items:center; background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:12px 16px; margin-bottom:10px; }
+  .ctrl-label { font-size:.66rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.04em; font-weight:600; }
+  select { background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 10px; font-family:inherit; font-size:.8rem; }
+  .regua { font-size:.74rem; color:var(--text-dim); margin:0 2px 14px; line-height:1.5; }
+  .regua b { color:var(--text); }
+
+  .breadcrumb { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px; font-size:.9rem; }
+  .breadcrumb .crumb { color:var(--accent); cursor:pointer; font-weight:600; }
+  .breadcrumb .crumb.current { color:var(--text); cursor:default; }
+  .breadcrumb .sep { color:var(--text-dim); }
+
+  .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:18px; }
+  @media (max-width:900px){ .kpis { grid-template-columns:repeat(2,1fr);} }
+  @media (max-width:520px){ .kpis { grid-template-columns:1fr;} .dashboard { padding:16px; } }
+  .kpi { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px 18px; position:relative; overflow:hidden; }
+  .kpi::before { content:''; position:absolute; top:0; left:0; right:0; height:4px; background:var(--border); }
+  .kpi.g::before { background:var(--green);} .kpi.y::before { background:var(--yellow);} .kpi.r::before { background:var(--red);} .kpi.b::before{ background:var(--accent);} .kpi.o::before{ background:var(--orange);}
+  .kpi .label { font-size:.68rem; font-weight:600; color:var(--text-dim); text-transform:uppercase; letter-spacing:.05em; margin-bottom:8px; }
+  .kpi .value { font-size:1.7rem; font-weight:700; font-family:'JetBrains Mono',monospace; line-height:1.1; }
+  .kpi .sub { font-size:.72rem; color:var(--text-dim); margin-top:6px; line-height:1.45; }
+
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:18px; }
+  .card h3 { font-size:.72rem; font-weight:600; color:var(--text-dim); text-transform:uppercase; letter-spacing:.05em; margin-bottom:14px; }
+  .grid2 { display:grid; grid-template-columns: 1fr 1.4fr; gap:18px; }
+  @media (max-width:1100px){ .grid2 { grid-template-columns:1fr; } }
+
+  .ponte { display:flex; gap:6px; align-items:stretch; flex-wrap:wrap; }
+  .pt { flex:1; min-width:110px; background:var(--surface2); border:1px solid var(--border); border-radius:9px; padding:10px 12px; }
+  .pt .op { font-family:'JetBrains Mono',monospace; font-size:.9rem; color:var(--text-dim); }
+  .pt .n { font-size:1.25rem; font-weight:700; font-family:'JetBrains Mono',monospace; }
+  .pt .v { font-size:.72rem; color:var(--text-dim); font-family:'JetBrains Mono',monospace; }
+  .pt .l { font-size:.66rem; text-transform:uppercase; color:var(--text-dim); letter-spacing:.04em; margin-bottom:4px; }
+  .pt.mais .n { color:var(--red);} .pt.menos .n { color:var(--green);} .pt.perd .n { color:var(--text-dim);}
+
+  table { width:100%; border-collapse:collapse; font-size:.8rem; }
+  thead th { text-align:left; font-weight:600; font-size:.66rem; text-transform:uppercase; letter-spacing:.04em; color:var(--text-dim); border-bottom:1px solid var(--border); padding:9px 8px; white-space:nowrap; }
+  thead th.num, td.num { text-align:right; }
+  td { padding:8px; border-bottom:1px solid var(--border); }
+  td.num { font-family:'JetBrains Mono',monospace; white-space:nowrap; }
+  tbody tr.click { cursor:pointer; }
+  tbody tr.click:hover { background:rgba(var(--accent-rgb), .05); }
+  .small { font-size:.68rem; color:var(--text-dim); }
+  .tag { padding:1px 7px; border-radius:9px; font-size:.64rem; font-weight:700; background:rgba(var(--yellow-rgb), .15); color:var(--yellow); white-space:nowrap; }
+  .tag.r { background:rgba(var(--red-rgb), .15); color:var(--red); }
+  .tabs { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; align-items:center; }
+  .table-scroll { overflow-x:auto; }
+  .chart-wrap { position:relative; height:260px; }
+
+  .loading-screen { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:60vh; gap:14px; }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body data-page="recuperacao">
+
+<div id="loading" class="loading-screen">
+  <img src="/static/joga-loader.svg" alt="JOGA" width="78" height="78" style="object-fit: contain;">
+  <div style="color:var(--text-dim); font-size:.85rem;">Montando a carteira em risco e a recuperada…</div>
+</div>
+
+<div id="app" class="dashboard hidden">
+  <div class="top-bar" data-joga-header data-titulo="Carteira em risco × recuperada"></div>
+  <script src="/static/joga-header.js"></script>
+
+  <div class="controls">
+    <span class="ctrl-label">Mês</span>
+    <select id="selMes" onchange="setMes(this.value)"></select>
+    <span class="small" id="mesInfo"></span>
+  </div>
+  <p class="regua" id="regua"></p>
+
+  <div class="breadcrumb" id="breadcrumb"></div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>Ponte do mês — estoque em risco</h3>
+      <div class="ponte" id="ponte"></div>
+      <p class="small" id="ponteNota" style="margin-top:10px; line-height:1.5;"></p>
+    </div>
+    <div class="card">
+      <h3>12 meses — valor mensal em risco × venda recuperada</h3>
+      <div class="chart-wrap"><canvas id="chartSerie"></canvas></div>
+    </div>
+  </div>
+
+  <div class="card" id="cardTimes">
+    <h3>Times</h3>
+    <div class="table-scroll"><table>
+      <thead><tr>
+        <th>Time</th>
+        <th class="num" title="Clientes da BASE do time (cadastro) em risco no fim do mês">Em risco</th>
+        <th class="num" title="Valor mensal desses clientes (venda 12m até a última compra ÷ 12)">Valor mensal em risco</th>
+        <th class="num" title="Positivação abaixo da referência (p75 dos vendedores do mesmo universo, por classe ABC), só dos clientes que NÃO estão em risco">Potencial de positivação</th>
+        <th class="num" title="Clientes da base do time recuperados no mês, por QUALQUER vendedor">Recuperado da base</th>
+        <th class="num" title="O que os vendedores do time recuperaram, de QUALQUER base — é quem leva o crédito">Recuperado pelo time</th>
+        <th class="num" title="Recuperações do time em clientes de outro time">De outra base</th>
+      </tr></thead>
+      <tbody id="timesBody"></tbody>
+    </table></div>
+  </div>
+
+  <div class="card" id="cardRcas">
+    <h3 id="rcasTitulo">Vendedores</h3>
+    <div class="table-scroll"><table>
+      <thead><tr>
+        <th>Vendedor</th>
+        <th class="num">Em risco</th>
+        <th class="num">Valor mensal em risco</th>
+        <th class="num">Potencial de positivação</th>
+        <th class="num">Recuperado da base</th>
+        <th class="num">Recuperado por ele</th>
+        <th class="num">De outra base</th>
+      </tr></thead>
+      <tbody id="rcasBody"></tbody>
+    </table></div>
+  </div>
+
+  <div class="card">
+    <div class="tabs">
+      <button class="btn-sm on" id="tabRisco" onclick="setLista('risco')">Em risco hoje</button>
+      <button class="btn-sm" id="tabRec" onclick="setLista('recuperados')">Recuperados no mês</button>
+      <span class="small" id="listaInfo" style="margin-left:8px;"></span>
+      <button class="btn-export" style="margin-left:auto;" onclick="exportarLista()">⬇ CSV</button>
+    </div>
+    <div class="table-scroll"><table>
+      <thead id="listaHead"></thead>
+      <tbody id="listaBody"></tbody>
+    </table></div>
+  </div>
+</div>
+
+<script>
+const BRL = new Intl.NumberFormat('pt-BR', { style:'currency', currency:'BRL', maximumFractionDigits:0 });
+const NUM = new Intl.NumberFormat('pt-BR');
+const PCT = v => (v==null ? '—' : (v*100).toFixed(1).replace('.', ',') + '%');
+const MES = am => { const s = String(am); return `${s.slice(4)}/${s.slice(0,4)}`; };
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+const params = new URLSearchParams(location.search);
+let _mes = params.get('mes') || '';
+let _sup = params.get('supervisor') || '';
+let _vend = params.get('vendedor') || '';
+let _lista = 'risco';
+let _data = null;
+let _chart = null;
+
+function qs(extra) {
+  const p = new URLSearchParams();
+  if (_mes) p.set('mes', _mes);
+  if (_sup) p.set('supervisor', _sup);
+  if (_vend) p.set('vendedor', _vend);
+  Object.entries(extra || {}).forEach(([k, v]) => p.set(k, v));
+  return p.toString();
+}
+
+function navegar() {
+  const p = new URLSearchParams();
+  if (_mes) p.set('mes', _mes);
+  if (_sup) p.set('supervisor', _sup);
+  if (_vend) p.set('vendedor', _vend);
+  history.replaceState(null, '', '/recuperacao' + (p.toString() ? '?' + p : ''));
+  carregar();
+}
+
+function setMes(m) { _mes = m; navegar(); }
+function irEmpresa() { _sup = ''; _vend = ''; navegar(); }
+function irTime(id) { _sup = String(id); _vend = ''; navegar(); }
+function irVendedor(id) { _vend = String(id); navegar(); }
+
+async function carregar() {
+  try {
+    _data = await fetchJSON('/api/recuperacao?' + qs());
+    _mes = String(_data.mes);
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+    render();
+    carregarLista();
+  } catch (e) {
+    document.getElementById('loading').innerHTML = '<div style="color:var(--red)">Erro ao carregar: ' + esc(e) + '</div>';
+  }
+}
+
+function render() {
+  const d = _data, r = d.regua;
+  document.getElementById('selMes').innerHTML = d.meses.slice().reverse().map(m =>
+    `<option value="${m}" ${String(m) === String(d.mes) ? 'selected' : ''}>${MES(m)}${m === d.mes_atual ? ' (parcial)' : ''}</option>`).join('');
+  document.getElementById('mesInfo').textContent = d.parcial ? 'Mês em curso: os números ainda vão mudar.' : '';
+  document.getElementById('regua').innerHTML =
+    `<b>Em risco</b> = mais de ${r.inativo_dias} dias sem comprar <b>e</b> além do próprio ciclo de compra do cliente · ` +
+    `<b>perdido</b> = mais de ${r.perdido_dias} dias · <b>recuperado</b> = voltou a comprar estando em risco ou perdido; ` +
+    `o crédito é de <b>quem vendeu</b>, e o dono do cadastro aparece ao lado · <b>valor mensal</b> = venda dos 12 meses até a última compra ÷ 12 · ` +
+    `a partir de ${r.erp_inativo_dias} dias o ERP marca o cliente como inativo.`;
+  renderBreadcrumb();
+  renderKpis();
+  renderPonte();
+  renderSerie();
+  renderPlacar();
+}
+
+function renderBreadcrumb() {
+  const parts = [`<span class="crumb ${!_sup && !_vend ? 'current' : ''}" onclick="irEmpresa()">🏢 Empresa</span>`];
+  if (_sup) {
+    const t = (_data.times.find(x => String(x.codsupervisor) === _sup) || {}).nome || ('Time ' + _sup);
+    parts.push('<span class="sep">▸</span>', `<span class="crumb ${_vend ? '' : 'current'}" onclick="irTime(${_sup})">👥 ${esc(t)}</span>`);
+  }
+  if (_vend) {
+    const v = (_data.rcas.find(x => String(x.codusur) === _vend) || {}).nome || ('RCA ' + _vend);
+    parts.push('<span class="sep">▸</span>', `<span class="crumb current">🧑‍💼 ${esc(v)}</span>`);
+  }
+  document.getElementById('breadcrumb').innerHTML = parts.join(' ');
+}
+
+function renderKpis() {
+  const c = _data.cards, f = c.ficou;
+  const k = [
+    { cls:'r', label:'Carteira em risco', value:BRL.format(c.em_risco_valor_mensal),
+      sub:`${NUM.format(c.em_risco_clientes)} clientes no fim do mês · valor mensal que deixou de entrar` },
+    { cls:'o', label:'Dinheiro na mesa', value:BRL.format(c.dinheiro_na_mesa),
+      sub:`em risco ${BRL.format(c.camada_a_risco)} + positivação abaixo da referência ${BRL.format(c.camada_b_positivacao)} (clientes ativos, sem contar duas vezes)` },
+    { cls:'g', label:'Venda recuperada', value:BRL.format(c.venda_recuperada),
+      sub:`${NUM.format(c.recuperados)} clientes voltaram a comprar no mês` },
+    { cls:'b', label:'Recuperação que ficou', value:f && f.taxa != null ? PCT(f.taxa) : '—',
+      sub:f ? `dos ${NUM.format(f.recuperados)} recuperados em ${MES(f.anomes)}, ${NUM.format(f.ficaram)} voltaram a comprar nos 2 meses seguintes` : 'sem mês de comparação' },
+  ];
+  document.getElementById('kpis').innerHTML = k.map(x =>
+    `<div class="kpi ${x.cls}"><div class="label">${x.label}</div><div class="value">${x.value}</div><div class="sub">${x.sub}</div></div>`).join('');
+}
+
+function renderPonte() {
+  const p = _data.ponte.clientes, v = _data.ponte.valor_mensal;
+  const box = (cls, op, l, n, val) => `<div class="pt ${cls}"><div class="l">${l}</div><div class="n"><span class="op">${op}</span> ${NUM.format(n)}</div><div class="v">${val != null ? BRL.format(val) + '/mês' : ''}</div></div>`;
+  document.getElementById('ponte').innerHTML =
+    box('', '', 'Em risco no início', p.risco_ini, v.risco_ini) +
+    box('mais', '+', 'Entraram em risco', p.entraram, v.entraram) +
+    box('menos', '−', 'Recuperados', p.recuperados, v.recuperados) +
+    box('perd', '−', 'Viraram perdidos', p.viraram_perdidos, v.viraram_perdidos) +
+    box('', '=', 'Em risco no fim', p.risco_fim, v.risco_fim);
+  const recortado = _sup || _vend;
+  document.getElementById('ponteNota').innerHTML =
+    `Também voltaram <b>${NUM.format(p.resgatados_perdidos)}</b> clientes da base perdida (mais de ${_data.regua.perdido_dias} dias), que não passam pelo estoque em risco. ` +
+    (recortado ? 'No recorte de time/vendedor, a ponte é da <b>base</b> (dono do cadastro); o crédito de quem recuperou está no placar.' : '');
+}
+
+function renderSerie() {
+  const s = _data.serie;
+  const css = getComputedStyle(document.documentElement);
+  const red = css.getPropertyValue('--red').trim() || '#f87171';
+  const green = css.getPropertyValue('--green').trim() || '#34d399';
+  if (_chart) _chart.destroy();
+  _chart = new Chart(document.getElementById('chartSerie'), {
+    data: {
+      labels: s.map(x => MES(x.anomes)),
+      datasets: [
+        { type:'line', label:'Valor mensal em risco (fim do mês)', data:s.map(x => x.valor_mensal.risco_fim), borderColor:red, backgroundColor:red, yAxisID:'y', tension:.25 },
+        { type:'bar', label:'Venda recuperada no mês', data:s.map(x => x.venda_recuperada), backgroundColor:green + '99', yAxisID:'y' },
+      ],
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false, interaction:{ mode:'index', intersect:false },
+      plugins:{ tooltip:{ callbacks:{ label:c => `${c.dataset.label}: ${BRL.format(c.parsed.y)}` } } },
+      scales:{ y:{ ticks:{ callback:v => BRL.format(v) } } },
+    },
+  });
+}
+
+function linhaPlacar(r, id, nome, drill) {
+  return `<tr class="${drill ? 'click' : ''}" ${drill ? `onclick="${drill}(${id})"` : ''}>
+    <td>${esc(nome)}</td>
+    <td class="num">${NUM.format(r.em_risco)}</td>
+    <td class="num">${BRL.format(r.valor_em_risco)}</td>
+    <td class="num">${BRL.format(r.potencial_positivacao || 0)}</td>
+    <td class="num">${NUM.format(r.rec_da_base)} <span class="small">· ${BRL.format(r.venda_rec_da_base)}</span></td>
+    <td class="num">${NUM.format(r.rec_por_ele)} <span class="small">· ${BRL.format(r.venda_rec_por_ele)}</span></td>
+    <td class="num">${NUM.format(r.rec_de_outra_base)}</td>
+  </tr>`;
+}
+
+function renderPlacar() {
+  const times = _data.times;
+  document.getElementById('cardTimes').classList.toggle('hidden', !times.length || !!_sup || !!_vend);
+  document.getElementById('timesBody').innerHTML = times.map(t => linhaPlacar(t, t.codsupervisor, t.nome, 'irTime')).join('');
+  let rcas = _data.rcas;
+  if (_sup) rcas = rcas.filter(r => String(r.codsupervisor) === _sup);
+  const mostrarRcas = !!_sup || !times.length;
+  document.getElementById('cardRcas').classList.toggle('hidden', !mostrarRcas || !rcas.length);
+  document.getElementById('rcasTitulo').textContent = 'Vendedores' + (_sup ? ' do time' : '');
+  document.getElementById('rcasBody').innerHTML = rcas.map(r => linhaPlacar(r, r.codusur, r.nome, _vend ? null : 'irVendedor')).join('');
+}
+
+function setLista(t) {
+  _lista = t;
+  document.getElementById('tabRisco').classList.toggle('on', t === 'risco');
+  document.getElementById('tabRec').classList.toggle('on', t === 'recuperados');
+  carregarLista();
+}
+
+async function carregarLista() {
+  const j = await fetchJSON('/api/recuperacao/listas?' + qs({ tipo:_lista }));
+  const head = document.getElementById('listaHead'), body = document.getElementById('listaBody');
+  if (_lista === 'risco') {
+    document.getElementById('listaInfo').textContent =
+      `${NUM.format(j.total)} clientes em risco hoje — ordem: valor mensal × chance de voltar no mês (61–90 d: 32,5% · 91–180 d: 15,2% · 181–365 d: 4,6%)` +
+      (j.total > j.rows.length ? ` · mostrando ${j.rows.length}; o CSV traz todos` : '');
+    head.innerHTML = `<tr><th>Cliente</th><th>Cidade</th><th>Dono (cadastro)</th><th class="num">Última compra</th><th class="num">Dias</th><th class="num">Ciclo</th><th class="num">Valor mensal</th><th class="num">Chance</th><th>Telefone</th></tr>`;
+    body.innerHTML = j.rows.map(r => `<tr>
+      <td>${esc(r.cliente)} <span class="small">#${r.codcli}</span></td>
+      <td>${esc(r.cidade || '')}${r.uf ? '/' + esc(r.uf) : ''}</td>
+      <td>${esc(r.dono_nome)}</td>
+      <td class="num">${r.ultima_compra.split('-').reverse().join('/')}</td>
+      <td class="num">${NUM.format(r.dias)} ${r.inativo_erp ? '<span class="tag r" title="O ERP já marcou como inativo (91+ dias)">ERP</span>' : ''}</td>
+      <td class="num">${r.ciclo ?? '—'}</td>
+      <td class="num">${BRL.format(r.valor_mensal)}</td>
+      <td class="num">${PCT(r.chance_volta)}</td>
+      <td>${esc(r.telefone || '')}</td></tr>`).join('');
+  } else {
+    document.getElementById('listaInfo').textContent =
+      `${NUM.format(j.total)} clientes recuperados em ${MES(j.mes)}` + (j.total > j.rows.length ? ` · mostrando ${j.rows.length}; o CSV traz todos` : '');
+    head.innerHTML = `<tr><th>Cliente</th><th>Cidade</th><th>Dono (cadastro)</th><th>Quem vendeu</th><th class="num">Voltou de</th><th class="num">Dias parado</th><th class="num">Valor mensal</th><th class="num">Venda no mês</th></tr>`;
+    body.innerHTML = j.rows.map(r => `<tr>
+      <td>${esc(r.cliente)} <span class="small">#${r.codcli}</span></td>
+      <td>${esc(r.cidade || '')}${r.uf ? '/' + esc(r.uf) : ''}</td>
+      <td>${esc(r.dono_nome)}</td>
+      <td>${esc(r.vendedores_nomes.join(', '))} ${r.de_outra_base ? '<span class="tag" title="Quem vendeu não é o dono do cadastro">outra base</span>' : ''}</td>
+      <td class="num">${r.recuperado_de === 'perdido' ? 'perdido' : 'risco'}</td>
+      <td class="num">${NUM.format(r.dias_parado)}</td>
+      <td class="num">${BRL.format(r.valor_mensal)}</td>
+      <td class="num">${BRL.format(r.venda_mes)}</td></tr>`).join('');
+  }
+}
+
+function exportarLista() {
+  window.location.href = '/api/recuperacao/listas/csv?' + qs({ tipo:_lista });
+}
+
+carregar();
+</script>
+</body>
+</html>

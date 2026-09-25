@@ -544,7 +544,8 @@ def vendedores_map(tecnicos=()):
 
 # ───────────────────────── Ranking de vendedores ─────────────────────────
 def ranking_vendedores_dados(rbac):
-    """(atual, anterior_idx, metricas_idx, carteira_idx) por CODUSUR, como o caminho DAX."""
+    """(atual, anterior_idx, metricas_idx) por CODUSUR, como o caminho DAX. A positivação NÃO sai
+    daqui: é calculada no server pelo `positivacao.py`, sobre a carteira de cadastro."""
     hoje = hoje_analitico()
     d12, d24 = hoje - timedelta(days=365), hoje - timedelta(days=730)
     w = escopo_where(rbac, "faturamento_vendas")
@@ -563,9 +564,52 @@ def ranking_vendedores_dados(rbac):
         cur.execute(f"SELECT codusur, {VB} FROM faturamento_vendas "
                     f"WHERE dtsaida BETWEEN %s AND %s{w} GROUP BY codusur", (d24, d12))
         anterior_idx = {cu: {"VendaLiqAnt": float(v)} for cu, v in cur.fetchall() if cu is not None}
-        cur.execute("SELECT codusur1, count(DISTINCT codcli) FROM pcclient GROUP BY codusur1")
-        carteira_idx = {cu: {"CarteiraOficial": n} for cu, n in cur.fetchall() if cu is not None}
-    return atual, anterior_idx, metricas_idx, carteira_idx
+    return atual, anterior_idx, metricas_idx
+
+
+def atendimentos_rca(anomes_ini, anomes_fim):
+    """[(codusur, codcli, anomes, 1ª data no mês, skus, deptos, marcas, pedidos)] com VENDA BRUTA
+    > 0 entre os dois meses (inclusive) — GLOBAL. Espelha _carregar_atendimentos_rca."""
+    d0 = date(anomes_ini // 100, anomes_ini % 100, 1)
+    a1 = anomes_fim + 1 if anomes_fim % 100 < 12 else (anomes_fim // 100 + 1) * 100 + 1
+    d1 = date(a1 // 100, a1 % 100, 1)
+    with analytics_conn() as c:
+        cur = c.cursor()
+        # Pedidos: a demo não tem NUMPED no fato; a NOTA é o proxy (no BI real, ago/26: 9.199
+        # pedidos × 9.114 notas).
+        cur.execute(f"SELECT codusur, codcli, {_AM_FAT} am, min(dtsaida), count(DISTINCT codprod), "
+                    f"count(DISTINCT codepto), count(DISTINCT codmarca), count(DISTINCT numnota) "
+                    f"FROM faturamento_vendas WHERE dtsaida >= %s AND dtsaida < %s AND codoper = 'S' "
+                    f"GROUP BY codusur, codcli, am HAVING {VB} > 0", (d0, d1))
+        return [(u, cc, int(am), d, sk, de, ma, pe) for u, cc, am, d, sk, de, ma, pe in cur.fetchall()
+                if u is not None and cc is not None]
+
+
+def compras_dia(anomes_ini, anomes_fim):
+    """[(codcli, data, codusur, venda_bruta)] do 1º dia de `anomes_ini` até o fim de `anomes_fim`
+    — GLOBAL. Espelha _carregar_compras_dia (página Carteira em risco × recuperada)."""
+    d0 = date(anomes_ini // 100, anomes_ini % 100, 1)
+    a1 = anomes_fim + 1 if anomes_fim % 100 < 12 else (anomes_fim // 100 + 1) * 100 + 1
+    d1 = date(a1 // 100, a1 % 100, 1)
+    with analytics_conn() as c:
+        cur = c.cursor()
+        cur.execute(f"SELECT codcli, dtsaida, codusur, {VB} FROM faturamento_vendas "
+                    f"WHERE dtsaida >= %s AND dtsaida < %s "
+                    f"GROUP BY codcli, dtsaida, codusur HAVING {VB} > 0", (d0, d1))
+        return [(cc, d, u, float(v)) for cc, d, u, v in cur.fetchall()
+                if cc is not None and u is not None]
+
+
+def ultima_compra_antes(anomes):
+    """[(codcli, data)] — última compra antes do mês (janela 24m). Espelha
+    _carregar_ultima_compra_antes (regra comercial dos 60 dias)."""
+    d1 = date(anomes // 100, anomes % 100, 1)
+    d0 = date(anomes // 100 - 2, anomes % 100, 1)
+    with analytics_conn() as c:
+        cur = c.cursor()
+        cur.execute("SELECT codcli, max(dtsaida) FROM faturamento_vendas "
+                    "WHERE dtsaida >= %s AND dtsaida < %s AND codoper = 'S' GROUP BY codcli", (d0, d1))
+        return [(cc, d) for cc, d in cur.fetchall() if cc is not None]
 
 
 # ───────────────────────── Cohort (alimenta o cohort.py do app) ─────────────────────────

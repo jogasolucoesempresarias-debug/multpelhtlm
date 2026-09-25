@@ -1476,7 +1476,7 @@ def enviar_alerta_cobertura_email(usuario_id):
             "<th style='padding:5px 8px;'>Cobertura</th>"
             "<th style='padding:5px 8px;'>Positivados (&le;" + str(coberto_dias) + "d)</th>"
             "<th style='padding:5px 8px;'>Carteira (total)</th>"
-            "<th style='padding:5px 8px;text-align:right;'>Receita em risco</th></tr>"
+            "<th style='padding:5px 8px;text-align:right;'>Receita perdida acumulada</th></tr>"
             f"{li}</table>"
         )
 
@@ -1487,7 +1487,7 @@ def enviar_alerta_cobertura_email(usuario_id):
 abaixo do limiar de <strong>{limiar_pct:.0f}%</strong> de cobertura (compra ≤ {coberto_dias} dias).</p>
 <p style="background:#f1f5f9;padding:10px;border-radius:6px;">
   <strong>Empresa (seu escopo):</strong> cobertura {_pct(emp['cobertura_clientes'])} por clientes ·
-  {_pct(emp['cobertura_valor'])} por valor · receita em risco <strong>{_brl(emp['receita_em_risco'])}</strong>.
+  {_pct(emp['cobertura_valor'])} por valor · receita perdida acumulada <strong>{_brl(emp['receita_em_risco'])}</strong>.
 </p>
 <p style="color:#475569;font-size:12px;">
   <strong>Como ler:</strong> <em>Cobertura</em> = % da carteira que <strong>comprou</strong> nos últimos
@@ -2568,6 +2568,10 @@ SUMMARIZECOLUMNS(
 
 import rfm  # módulo puro de RFM
 import cobertura as cob  # módulo puro de Cobertura de Carteira (página Gerencial)
+import positivacao  # módulo puro de positivação por RCA (tela Vendedores + cockpit)
+import recuperacao as recup  # módulo puro: carteira em risco × recuperada (página /recuperacao)
+import potencial  # módulo puro: potencial de positivação (dinheiro na mesa, camada b)
+import performance_comercial  # módulo puro: nota 0–10 por vendedor (página /performance)
 
 VENDEDORES_TECNICOS = {999, 900, 4, 272}  # excluir das listas de vendedor (técnicos)
 
@@ -3044,6 +3048,43 @@ SELECTCOLUMNS(
     return _finalizar_carteira(clientes, key)
 
 
+def _classes_abc_clientes():
+    """Curva ABC de CLIENTES (item 1 do pedido de 09/2026) — regra única: a classe do INÍCIO do
+    mês (Pareto da venda líquida dos 12 meses fechados anteriores; ver positivacao.py).
+    Devolve {'ref': mês fechado, 'atual': {codcli: classe no início do mês corrente},
+    'fechado': {codcli: classe no início do mês fechado}}. Zero query nova: caches de venda e
+    devolução mensal por cliente."""
+    ref = positivacao.mes_fechado(_hoje_ref())
+    key = f'multpel:classes_abc_clientes:{ref}:v1'
+    cached = _cache_get(key)
+    if cached is None:
+        vm = _carregar_venda_mensal_por_cliente()
+        dm = _carregar_devolucao_mensal_por_cliente()
+        cached = {
+            'ref': ref,
+            'atual': positivacao.classes_abc(positivacao.venda_12m_ate(vm, dm, ref)),
+            'fechado': positivacao.classes_abc(
+                positivacao.venda_12m_ate(vm, dm, positivacao.mes_add(ref, -1))),
+        }
+        _cache_set(key, cached, 'dax_agregado')
+    return {'ref': cached['ref'],
+            'atual': {int(c): k for c, k in cached['atual'].items()},
+            'fechado': {int(c): k for c, k in cached['fechado'].items()}}
+
+
+def _com_classe_abc(clientes):
+    """Grava `classe_abc` (início do mês corrente) em cada cliente. Falha no cálculo não derruba a
+    Carteira: o cliente fica sem classe (None) e o filtro por classe simplesmente não casa."""
+    try:
+        mapa = _classes_abc_clientes()['atual']
+    except Exception as e:
+        print(f'[CARTEIRA] classe ABC indisponível: {e}')
+        mapa = {}
+    for c in clientes:
+        c['classe_abc'] = mapa.get(c.get('codcli'))
+    return clientes
+
+
 def _carteira_no_escopo():
     """Carteira GLOBAL recortada pelo escopo de CADASTRO do usuário logado (CODUSUR1).
     É a ÚNICA porta que os endpoints devem usar — garante o isolamento em Python:
@@ -3052,7 +3093,7 @@ def _carteira_no_escopo():
     - supervisor    → clientes cujo CODUSUR1 pertence a uma de suas áreas
     - supervisor sem área / role desconhecido → []
     Métricas são as TOTAIS do cliente (a carteira full é global, sem filtro de venda)."""
-    clientes = _carregar_carteira_full()
+    clientes = _com_classe_abc(_carregar_carteira_full())
     role = session.get('role')
     if role in ('admin', 'viewer'):
         return clientes
@@ -3913,6 +3954,10 @@ def _filtrar_carteira(clientes, args, vendedor_forcado=None):
     if segmento:
         segs = {s.strip() for s in segmento.split(',') if s.strip()}
         filtrados = [c for c in filtrados if c['segmento'] in segs]
+    classe = args.get('classe')
+    if classe:
+        cls = {s.strip().upper() for s in classe.split(',') if s.strip()}
+        filtrados = [c for c in filtrados if c.get('classe_abc') in cls]
     if status_filtro:
         sts = {s.strip() for s in status_filtro.split(',') if s.strip()}
         filtrados = [c for c in filtrados if c[status_key] in sts]
@@ -4047,6 +4092,47 @@ def _clientes_proximo_pedido(clientes, janela='vencidos', dias_janela=3):
             continue
         out.append(c)
     return out
+
+
+@app.route('/api/carteira/positivacao-abc')
+@login_required
+def api_carteira_positivacao_abc():
+    """Card "Positivação por curva ABC" da Carteira: mês fechado + mês corrente até o dia de hoje
+    comparado com o mesmo dia do mês anterior. Obedece aos MESMOS filtros da tabela (escopo =
+    _filtrar_carteira), mas sem o filtro de classe (o card mostra as três)."""
+    args = {k: v for k, v in request.args.items() if k != 'classe'}
+    args.update({'limit': 100000, 'offset': 0, '_interno': True})
+    escopo = {c['codcli'] for c in _filtrar_carteira(_carteira_no_escopo(), args)['rows']
+              if c.get('codcli') is not None}
+    cls = _classes_abc_clientes()
+    ref = cls['ref']
+    hoje = _hoje_ref()
+    atual = positivacao.anomes_de(hoje)
+    vm = _carregar_venda_mensal_por_cliente()
+    compraram_ref = {c for c, pm in vm.items() if (pm.get(ref) or 0) > 0}
+    resp = {'ok': True, 'mes_fechado': ref,
+            'fechado': positivacao.positivacao_por_classe(cls['fechado'], escopo, compraram_ref),
+            'regra': 'classe do início do mês = Pareto 80/95 da venda líquida dos 12 meses fechados anteriores'}
+    # Mês corrente até o dia N × mesmo dia do mês anterior (precisa do dado diário). Opcional:
+    # se o carregamento diário falhar, o card mostra só o mês fechado.
+    try:
+        dia = hoje.day
+        ini_at, ini_ref = f'{atual // 100:04d}-{atual % 100:02d}-', f'{ref // 100:04d}-{ref % 100:02d}-'
+        ate_at, ate_ref = set(), set()
+        for c, d, _u, _v in _carregar_compras_dia():
+            if d.startswith(ini_at) and int(d[8:10]) <= dia:
+                ate_at.add(c)
+            elif d.startswith(ini_ref) and int(d[8:10]) <= dia:
+                ate_ref.add(c)
+        resp['parcial'] = {
+            'dia': dia, 'mes': atual,
+            'atual': positivacao.positivacao_por_classe(cls['atual'], escopo, ate_at),
+            'anterior_mesmo_dia': positivacao.positivacao_por_classe(cls['fechado'], escopo, ate_ref),
+        }
+    except Exception as e:
+        print(f'[CARTEIRA] positivação parcial indisponível: {e}')
+        resp['parcial'] = None
+    return jsonify(resp)
 
 
 @app.route('/api/carteira/proximo-pedido')
@@ -4533,7 +4619,7 @@ def _gerar_pdf_carteira(filtrados, filtros_resumo=''):
 
 def _gerar_pdf_proximo_pedido(filtrados, filtros_resumo=''):
     """PDF da Lista do Dia (Próximo Pedido). Colunas: Cliente · Cidade/UF · Telefone ·
-    Últ.compra · Ciclo · Previsão · Atraso · Status · Venda 12m · Receita em risco."""
+    Últ.compra · Ciclo · Previsão · Atraso · Status · Venda 12m · Receita perdida acumulada."""
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib import colors
     from reportlab.lib.units import cm
@@ -4559,7 +4645,7 @@ def _gerar_pdf_proximo_pedido(filtrados, filtros_resumo=''):
     story.append(Spacer(1, 0.3*cm))
 
     STATUS_PT = {'ok': 'No prazo', 'normal': 'Normal', 'atencao': 'Atenção', 'urgente': 'Urgente'}
-    header = ['Cliente', 'Cidade/UF', 'Telefone', 'Últ.compra', 'Ciclo', 'Previsão', 'Atraso', 'Status', 'Venda 12m', 'Rec. risco']
+    header = ['Cliente', 'Cidade/UF', 'Telefone', 'Últ.compra', 'Ciclo', 'Previsão', 'Atraso', 'Status', 'Venda 12m', 'Rec. perdida acum.']
     data = [header]
     for c in filtrados:
         venda = c.get('venda_12m') or 0
@@ -4897,12 +4983,12 @@ def _gerar_pdf_cobertura(niveis, coberto_dias, limiar_pct):
     story.append(Paragraph(
         f"Gerado em {_date.today().strftime('%d/%m/%Y')} · Coberto = ≤{coberto_dias} dias · "
         f"Limiar baixa performance = {limiar_pct:.0f}% · Empresa: {_pct(emp['cobertura_clientes'])} clientes / "
-        f"{_pct(emp['cobertura_valor'])} valor · Receita em risco {_brl(emp['receita_em_risco'])}", sub_style))
+        f"{_pct(emp['cobertura_valor'])} valor · Receita perdida acumulada {_brl(emp['receita_em_risco'])}", sub_style))
     story.append(Spacer(1, 0.3 * cm))
 
     def _tabela_ranking(titulo, itens):
         story.append(Paragraph(f"<b>{titulo}</b>", sub_style))
-        header = ['Nome', 'Clientes', 'Cob.% clientes', 'Cob.% valor', 'Dentro do ciclo', 'Receita em risco', 'Base morta', '⚑']
+        header = ['Nome', 'Clientes', 'Cob.% clientes', 'Cob.% valor', 'Dentro do ciclo', 'Rec. perdida acum.', 'Base morta', '⚑']
         data = [header]
         for g in itens:
             abaixo = g['cobertura_clientes'] < limiar_frac
@@ -4986,6 +5072,529 @@ def api_admin_config_cobertura_set():
             return jsonify({'ok': False, 'error': 'coberto_dias deve ser 30, 45 ou 60'}), 400
         _config_set('cobertura_coberto_dias', dias)
     return jsonify({'ok': True, 'limiar_pct': _cobertura_limiar_pct(), 'coberto_dias': _cobertura_coberto_dias()})
+
+
+# ── Carteira em risco × carteira recuperada (+ dinheiro na mesa) ──
+# Plano: docs/comercial/PLANO_MELHORIAS_COMERCIAL.md §4. Réguas acordadas com o João Victor em
+# 24/09/2026: inativo a partir do 61º dia (regra comercial) E além do ciclo do cliente; crédito da
+# recuperação para QUEM VENDEU, com o dono do cadastro ao lado; venda perdida pelo VALOR MENSAL.
+# Motores puros: recuperacao.py (camada a + ponte + placar) e potencial.py (camada b).
+
+def _recup_params():
+    """(inativo_dias, perdido_dias) — configuráveis no Admin (defaults 60 e 365)."""
+    try:
+        ina = int(float(_config_get('recuperacao_inativo_dias', str(recup.INATIVO_DIAS))))
+    except (TypeError, ValueError):
+        ina = recup.INATIVO_DIAS
+    try:
+        per = int(float(_config_get('recuperacao_perdido_dias', str(recup.PERDIDO_DIAS))))
+    except (TypeError, ValueError):
+        per = recup.PERDIDO_DIAS
+    return ina, per
+
+
+def _hoje_ref():
+    from datetime import date as _date
+    return provider_sql.hoje_analitico() if CONFIG['data_source'] == 'postgres' else _date.today()
+
+
+def _carregar_compras_dia():
+    """[[codcli, 'AAAA-MM-DD', codusur, venda_bruta]] — cliente × vendedor × dia, dos 25 meses
+    anteriores até hoje. GLOBAL (o recorte por usuário é feito no endpoint).
+    ⚠️ Em blocos de 4 meses: o executeQueries corta em 100 mil linhas EM SILÊNCIO e 24 meses dão
+    ~170 mil. Bloco que volta no teto levanta erro em vez de devolver meia base."""
+    atual = positivacao.anomes_de(_hoje_ref())
+    ini = positivacao.mes_add(atual, -25)
+    key = f'multpel:compras_dia:{ini}:{atual}:v1'
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+    if CONFIG['data_source'] == 'postgres':
+        linhas = provider_sql.compras_dia(ini, atual)
+    else:
+        blocos, a = [], ini
+        while a <= atual:
+            b = min(positivacao.mes_add(a, 3), atual)
+            blocos.append((a, b))
+            a = positivacao.mes_add(b, 1)
+        queries = {}
+        for i, (a, b) in enumerate(blocos):
+            f = positivacao.mes_add(b, 1)
+            queries[f'b{i}'] = f"""EVALUATE
+SUMMARIZECOLUMNS(
+    FATURAMENTO_VENDAS[CODCLI], FATURAMENTO_VENDAS[CODUSUR], FATURAMENTO_VENDAS[DTSAIDA],
+    FILTER(FATURAMENTO_VENDAS,
+        FATURAMENTO_VENDAS[DTSAIDA] >= DATE({a // 100}, {a % 100}, 1)
+        && FATURAMENTO_VENDAS[DTSAIDA] < DATE({f // 100}, {f % 100}, 1)),
+    "B", [VENDA BRUTA]
+)"""
+        res = _executar_dax_paralelo_n(queries, max_workers=3)
+        linhas = []
+        for k in queries:
+            rows = clean_rows(_todas_linhas(res[k]))
+            if len(rows) >= 99_999:
+                raise RuntimeError(f'compras_dia: bloco {k} voltou no teto de linhas do Power BI')
+            linhas += [(r['CODCLI'], str(r['DTSAIDA'])[:10], r['CODUSUR'], r.get('B'))
+                       for r in rows if r.get('CODCLI') is not None and r.get('DTSAIDA')
+                       and r.get('CODUSUR') is not None and (r.get('B') or 0) > 0]
+    cached = [[int(c), str(d)[:10], int(u), round(float(v), 2)] for c, d, u, v in linhas]
+    _cache_set(key, cached, 'dax_agregado')
+    return cached
+
+
+_RECUP_MEMO = {'chave': None, 'base': None, 'em': 0.0}
+
+
+def _recup_base():
+    """Histórico indexado + movimentos de cada mês (13 fechados + o corrente), calculados UMA vez
+    por hora e por processo — é a parte cara (~9 mil clientes × 14 meses). Os endpoints só agregam
+    por escopo em cima disto."""
+    import threading
+    ina, per = _recup_params()
+    compras = _carregar_compras_dia()
+    hoje = _hoje_ref()
+    atual = positivacao.anomes_de(hoje)
+    ref = positivacao.mes_fechado(hoje)
+    chave = (len(compras), tuple(compras[-1]) if compras else None, ina, per, atual)
+    memo = _RECUP_MEMO
+    if memo['chave'] == chave and time.time() - memo['em'] < 3600:
+        return memo['base']
+    lock = memo.setdefault('lock', threading.Lock())
+    with lock:
+        if memo['chave'] == chave and time.time() - memo['em'] < 3600:
+            return memo['base']
+        hist = recup.indexar(compras)
+        meses = [positivacao.mes_add(ref, -i) for i in range(12, -1, -1)] + [atual]
+        movs = {am: recup.movimentos(hist, am, ina, per) for am in meses}
+        base = {'hist': hist, 'movs': movs, 'ref': ref, 'atual': atual, 'meses': meses,
+                'ina': ina, 'per': per, 'hoje': hoje, 'potencial': {}}
+        memo.update(chave=chave, base=base, em=time.time())
+        return base
+
+
+def _recup_potencial(base, am, dono_de, vmap):
+    """Camada b (potencial.py) do mês `am`, global — o endpoint soma só os donos do escopo.
+    Classe ABC do cliente = Pareto da venda dos 12 meses ANTERIORES ao mês (sem olhar o futuro)."""
+    if am in base['potencial']:
+        return base['potencial'][am]
+    vm = _carregar_venda_mensal_por_cliente()
+    ant = {positivacao.mes_add(am, -i) for i in range(1, 13)}
+    venda12, meses_compra = {}, {}
+    for c, por_mes in vm.items():
+        v = sum(x for m, x in por_mes.items() if m in ant and x > 0)
+        n = sum(1 for m, x in por_mes.items() if m in ant and x > 0)
+        if v > 0 or (por_mes.get(am) or 0) > 0:
+            venda12[c], meses_compra[c] = v, n
+    classes = {i['codcli']: i['classe'] for i in
+               curva_abc.classificar([{'codcli': c, 'venda': v} for c, v in venda12.items()])}
+    linhas = []
+    for c, v in venda12.items():
+        dono = dono_de.get(c)
+        if dono is None:
+            continue
+        comprou_mes = (vm.get(c, {}).get(am) or 0) > 0
+        ticket = (v / meses_compra[c]) if meses_compra[c] else (vm.get(c, {}).get(am) or 0)
+        linhas.append({'codcli': c, 'dono': dono, 'classe': classes.get(c, 'C'),
+                       'universo': (vmap.get(str(dono)) or {}).get('tipo'),
+                       'comprou': comprou_mes, 'ticket': ticket})
+    excluir = {c for c, m in base['movs'].get(am, {}).items() if m['fim'] in (recup.RISCO, recup.PERDIDO)}
+    out = potencial.gap_positivacao(linhas, excluir)
+    base['potencial'][am] = out
+    return out
+
+
+def _recup_escopo():
+    """(clientes_da_base|None, vendedores|None, times|None) — RBAC de CADASTRO para a base e o
+    conjunto de vendedores/times que o usuário pode ver no placar. None = sem restrição.
+    Filtros ?supervisor=/?vendedor= só ESTREITAM (mesmos helpers da Curva ABC)."""
+    role = session.get('role')
+    vmap = _carregar_vendedores_map()
+    sup_f = _abc_supervisores_filtro()
+    vend_f = _abc_vendedor_filtro()
+    carteira = _carteira_no_escopo()
+    if role in ('admin', 'viewer') and not sup_f and not vend_f:
+        return None, None, None
+    if sup_f:
+        carteira = [c for c in carteira if c.get('codsupervisor') in set(sup_f)]
+    if vend_f:
+        carteira = [c for c in carteira if c.get('codusur') == vend_f]
+    base_cli = {c['codcli'] for c in carteira if c.get('codcli') is not None}
+    if role == 'vendedor' and session.get('codusur') is not None:
+        return base_cli, {int(session['codusur'])}, set()
+    if vend_f:
+        return base_cli, {vend_f}, set()
+    times = set(sup_f) if sup_f else set(_session_supervisores())
+    vends = set()
+    for k, v in vmap.items():
+        try:
+            if int(v.get('codsupervisor')) in times:
+                vends.add(int(k))
+        except (TypeError, ValueError):
+            continue
+    return base_cli, vends, times
+
+
+def _recup_mes_arg(base):
+    try:
+        m = int(request.args.get('mes', base['ref']))
+    except (TypeError, ValueError):
+        m = base['ref']
+    return m if m in base['movs'] else base['ref']
+
+
+def _recup_mapas():
+    """dono_de {codcli: codusur do cadastro}, time_de {codusur: codsupervisor}, nomes."""
+    carteira = _carregar_carteira_full()
+    vmap = _carregar_vendedores_map()
+    smap = _carregar_supervisores_map()
+    dono_de = {c['codcli']: c.get('codusur') for c in carteira if c.get('codcli') is not None}
+    time_de = {}
+    for k, v in vmap.items():
+        try:
+            time_de[int(k)] = int(v.get('codsupervisor')) if v.get('codsupervisor') is not None else None
+        except (TypeError, ValueError):
+            continue
+    return carteira, vmap, smap, dono_de, time_de
+
+
+@app.route('/recuperacao')
+@login_required
+def recuperacao_page():
+    return send_from_directory('.', 'recuperacao.html')
+
+
+@app.route('/api/recuperacao')
+@login_required
+def api_recuperacao():
+    """Ponte do mês + cards + placar Time/RCA + série 12m, no escopo do usuário."""
+    base = _recup_base()
+    am = _recup_mes_arg(base)
+    key = cache_key_for_user('recuperacao:resumo:v1', {
+        'mes': am, 'sup': request.args.get('supervisor', ''), 'vend': request.args.get('vendedor', ''),
+        'p': f"{base['ina']}:{base['per']}:{base['atual']}"})
+    cached = _cache_get(key)
+    if cached:
+        return jsonify(cached)
+
+    carteira, vmap, smap, dono_de, time_de = _recup_mapas()
+    base_cli, vends, times = _recup_escopo()
+    movs = base['movs'][am]
+    ponte = recup.ponte_de(movs, am, base_cli)
+    serie = [recup.ponte_de(base['movs'][m], m, base_cli)
+             for m in base['meses'] if m != base['atual']][-12:]
+    m2 = positivacao.mes_add(am, -2)
+    ficou = recup.ficou_de(base['hist'], base['movs'][m2], m2, base_cli) if m2 in base['movs'] else None
+
+    pl = recup.placar_de(movs, dono_de, time_de)
+    pot = _recup_potencial(base, am, dono_de, vmap)
+
+    def _ok_rca(u):
+        return vends is None or u in vends
+
+    def _ok_time(t):
+        return times is None or t in times
+
+    rcas = []
+    for u, s in pl['rcas'].items():
+        if u is None or not _ok_rca(u):
+            continue
+        v = vmap.get(str(u)) or {}
+        rcas.append({'codusur': u, 'nome': v.get('nome') or f'RCA {u}', 'codsupervisor': time_de.get(u),
+                     'potencial_positivacao': (pot['por_rca'].get(u) or {}).get('gap', 0.0), **s})
+    rcas.sort(key=lambda r: -r['valor_em_risco'])
+    times_out = []
+    for t, s in pl['times'].items():
+        if t is None or not _ok_time(t):
+            continue
+        gap_t = sum((pot['por_rca'].get(u) or {}).get('gap', 0.0) for u, tt in time_de.items() if tt == t)
+        times_out.append({'codsupervisor': t, 'nome': (smap.get(str(t)) or {}).get('nome') or f'Time {t}',
+                          'potencial_positivacao': round(gap_t, 2), **s})
+    times_out.sort(key=lambda r: -r['valor_em_risco'])
+
+    if base_cli is None and vends is None:
+        camada_b = pot['total']
+    else:
+        donos = {dono_de.get(c) for c in (base_cli or ())}
+        camada_b = round(sum(r['gap'] for u, r in pot['por_rca'].items() if u in donos), 2)
+
+    resp = {
+        'ok': True, 'mes': am, 'mes_fechado': base['ref'], 'mes_atual': base['atual'],
+        'parcial': am == base['atual'], 'meses': base['meses'],
+        'regua': {'inativo_dias': base['ina'], 'perdido_dias': base['per'],
+                  'erp_inativo_dias': recup.ERP_INATIVO_DIAS,
+                  'potencial_percentil': potencial.PERCENTIL_REF},
+        'ponte': ponte,
+        'cards': {
+            'em_risco_clientes': ponte['clientes']['risco_fim'],
+            'em_risco_valor_mensal': ponte['valor_mensal']['risco_fim'],
+            'venda_recuperada': ponte['venda_recuperada'],
+            'recuperados': ponte['clientes']['recuperados'] + ponte['clientes']['resgatados_perdidos'],
+            'dinheiro_na_mesa': round(ponte['valor_mensal']['risco_fim'] + camada_b, 2),
+            'camada_a_risco': ponte['valor_mensal']['risco_fim'],
+            'camada_b_positivacao': camada_b,
+            'ficou': ficou,
+        },
+        'times': times_out, 'rcas': rcas, 'serie': serie,
+    }
+    _cache_set(key, resp, 'dax_agregado')
+    return jsonify(resp)
+
+
+def _recup_linhas(tipo):
+    """Linhas das listas (em risco HOJE / recuperados no mês), no escopo, com cadastro."""
+    base = _recup_base()
+    carteira, vmap, smap, dono_de, time_de = _recup_mapas()
+    base_cli, vends, _times = _recup_escopo()
+    cad = {c['codcli']: c for c in carteira if c.get('codcli') is not None}
+
+    def _nome(u):
+        if u in CODIGOS_FICTICIOS:
+            return f'código fictício {u}'          # 999 transferência, 34 prospecção… (fora do vmap)
+        return (vmap.get(str(u)) or {}).get('nome') or (f'RCA {u}' if u is not None else '—')
+
+    def _cadastro(c):
+        k = cad.get(c) or {}
+        return {'cliente': k.get('cliente') or f'Cliente #{c}', 'cidade': k.get('cidade'),
+                'uf': k.get('uf'), 'telefone': k.get('telefone'), 'dono': dono_de.get(c),
+                'dono_nome': _nome(dono_de.get(c)), 'time': k.get('time')}
+
+    if tipo == 'risco':
+        hist = base['hist'] if base_cli is None else {c: h for c, h in base['hist'].items() if c in base_cli}
+        from datetime import timedelta as _td
+        rows = recup.em_risco_em(hist, base['hoje'] + _td(days=1), base['ina'], base['per'])
+        return base, [{**r, **_cadastro(r['codcli'])} for r in rows]
+    am = _recup_mes_arg(base)
+    movs = base['movs'][am]
+    rows = []
+    for r in recup.recuperados_de(movs, dono_de):
+        c = r['codcli']
+        if base_cli is not None and c not in base_cli and not (set(r['vendedores']) & (vends or set())):
+            continue
+        rows.append({**r, **_cadastro(c), 'vendedores_nomes': [_nome(u) for u in r['vendedores']]})
+    return base, rows
+
+
+@app.route('/api/recuperacao/listas')
+@login_required
+def api_recuperacao_listas():
+    tipo = 'recuperados' if request.args.get('tipo') == 'recuperados' else 'risco'
+    base, rows = _recup_linhas(tipo)
+    try:
+        limit = max(1, min(int(request.args.get('limit', 300)), 2000))
+    except (TypeError, ValueError):
+        limit = 300
+    return jsonify({'ok': True, 'tipo': tipo, 'total': len(rows), 'rows': rows[:limit],
+                    'mes': _recup_mes_arg(base), 'hoje': base['hoje'].isoformat()})
+
+
+@app.route('/api/recuperacao/listas/csv')
+@login_required
+def api_recuperacao_listas_csv():
+    tipo = 'recuperados' if request.args.get('tipo') == 'recuperados' else 'risco'
+    base, rows = _recup_linhas(tipo)
+    if tipo == 'risco':
+        cab = ['CodCli', 'Cliente', 'Cidade', 'UF', 'Telefone', 'Dono (cadastro)', 'Time', 'Última compra',
+               'Dias sem comprar', 'Ciclo (dias)', 'Valor mensal', 'Inativo no ERP (91+)',
+               'Chance de voltar no mês', 'Prioridade (valor × chance)']
+        campos = lambda r: [r['codcli'], r['cliente'], r.get('cidade'), r.get('uf'), r.get('telefone'),
+                            r['dono_nome'], r.get('time'), r['ultima_compra'], r['dias'], r.get('ciclo'),
+                            r['valor_mensal'], 'sim' if r['inativo_erp'] else 'não',
+                            f"{r['chance_volta'] * 100:.1f}%".replace('.', ','), r['prioridade']]
+        nome = f"carteira_em_risco_{base['hoje'].isoformat()}.csv"
+    else:
+        cab = ['CodCli', 'Cliente', 'Cidade', 'UF', 'Dono (cadastro)', 'Quem vendeu', 'De outra base',
+               'Voltou de', 'Dias parado', 'Valor mensal', 'Venda no mês']
+        campos = lambda r: [r['codcli'], r['cliente'], r.get('cidade'), r.get('uf'), r['dono_nome'],
+                            ', '.join(r['vendedores_nomes']), 'sim' if r['de_outra_base'] else 'não',
+                            r['recuperado_de'], r['dias_parado'], r['valor_mensal'], r['venda_mes']]
+        nome = f"recuperados_{_recup_mes_arg(base)}.csv"
+
+    def gerar():
+        yield CSV_PREAMBULO + _csv_linha(cab)
+        for r in rows:
+            yield _csv_linha(campos(r))
+    return Response(stream_with_context(gerar()), mimetype='text/csv; charset=utf-8',
+                    headers={'Content-Disposition': _content_disposition(nome)})
+
+
+@app.route('/api/admin/config/recuperacao', methods=['GET'])
+@admin_required
+def api_admin_config_recuperacao_get():
+    ina, per = _recup_params()
+    return jsonify({'ok': True, 'inativo_dias': ina, 'perdido_dias': per})
+
+
+@app.route('/api/admin/config/recuperacao', methods=['PUT'])
+@admin_required
+def api_admin_config_recuperacao_set():
+    data = request.get_json() or {}
+    ina, per = _recup_params()
+    try:
+        ina = int(data.get('inativo_dias', ina))
+        per = int(data.get('perdido_dias', per))
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'valores inválidos'}), 400
+    if not (30 <= ina <= 180) or not (ina < per <= 730):
+        return jsonify({'ok': False, 'error': 'inativo entre 30 e 180 dias; perdido acima do inativo e até 730'}), 400
+    _config_set('recuperacao_inativo_dias', ina)
+    _config_set('recuperacao_perdido_dias', per)
+    _RECUP_MEMO.update(chave=None, base=None, em=0.0)
+    return jsonify({'ok': True, 'inativo_dias': ina, 'perdido_dias': per})
+
+
+# ── Performance Comercial (item 6) ──
+# Motor puro: performance_comercial.py. Plano §3.4. Nota do MÊS FECHADO, recalculada do
+# ingrediente (nunca gravada); pesos por competência no Admin; ranking POR UNIVERSO.
+
+_PERF_MIN_CLIENTES_FREQ = 10   # frequência com menos clientes atendidos que isso é ruído
+
+
+def _perf_pesos_historico():
+    import json as _json
+    try:
+        return _json.loads(_config_get('performance_pesos', '{}') or '{}')
+    except (TypeError, ValueError):
+        return {}
+
+
+def _performance_dados():
+    """Linhas de TODOS os vendedores elegíveis (o recorte por RBAC é feito no endpoint:
+    o ranking é do universo inteiro, a pessoa vê a própria posição nele)."""
+    ins = _positivacao_insumos()
+    ref = ins['ref']
+    key = f'multpel:performance:{ref}:v{performance_comercial.NOTA_VERSAO}'
+    cached = _cache_get(key)
+    hist_pesos = _perf_pesos_historico()
+    pesos, comp_pesos = performance_comercial.pesos_vigentes(hist_pesos, ref)
+    if cached is None:
+        vmap = _carregar_vendedores_map()
+        smap = _carregar_supervisores_map()
+        universo_rca = {int(k): performance_comercial.universo_de(v.get('tipo')) for k, v in vmap.items()}
+        classes = _classes_abc_clientes()['fechado']
+        cob = performance_comercial.cobertura_ajustada(ins['bases'], ins['atendidos'], classes, universo_rca)
+        taxas = positivacao.taxas_atendimento(ins['mes'])
+        try:
+            realizado = _carregar_metas_realizado(ref // 100, ref % 100, None)['por_vendedor']
+            metas_db = _metas_buscar(ref // 100, ref % 100)
+        except Exception as e:
+            print(f'[PERFORMANCE] metas indisponíveis ({e}) — nota parcial sem rentab/receita/mix')
+            realizado, metas_db = {}, {}
+        linhas = []
+        for k, v in vmap.items():
+            u = int(k)
+            if u in CODIGOS_FICTICIOS or v.get('bloqueio') == 'S':
+                continue
+            if 'COMMERCE' in (v.get('nome') or '').upper().replace('-', ''):
+                continue                       # canal (e-commerce), não pessoa
+            t = taxas.get(u) or {}
+            c = cob.get(u) or {}
+            base_n = len(ins['bases'].get(u, ()))
+            if base_n < positivacao.MIN_AMOSTRA:
+                continue                       # caixa/balcão sem base própria: não é parâmetro (João, 24/09)
+            if not t and not c.get('indice'):
+                continue                       # não vendeu no mês: fora do ranking
+            rz = realizado.get(k, {}) or {}
+            m = metas_db.get(k, {}) or {}
+            valores = {
+                'cobertura':     c.get('indice') if base_n >= positivacao.MIN_AMOSTRA else None,
+                'rentabilidade': performance_comercial.atingimento(rz.get('rentabilidade'), m.get('rentabilidade_meta')),
+                'receita':       performance_comercial.atingimento(rz.get('venda'), m.get('valor_meta')),
+                'mix':           performance_comercial.atingimento(rz.get('mix'), m.get('mix_meta')),
+                'frequencia':    t.get('frequencia') if (t.get('clientes') or 0) >= _PERF_MIN_CLIENTES_FREQ else None,
+            }
+            cs = v.get('codsupervisor')
+            linhas.append({
+                'codusur': u, 'nome': v.get('nome') or f'RCA {u}', 'codsupervisor': cs,
+                'time': (smap.get(str(cs)) or {}).get('nome') if cs is not None else None,
+                'universo': universo_rca.get(u, performance_comercial.CAMPO),
+                'valores': valores,
+                'detalhe': {
+                    'base_ativa': base_n, 'cobertos': c.get('obs'), 'esperado': c.get('esperado'),
+                    'clientes_atendidos': t.get('clientes'), 'mix_medio': t.get('mix'),
+                    'realizado': {x: rz.get(x) for x in ('venda', 'rentabilidade', 'mix')},
+                    'meta': {'venda': m.get('valor_meta'), 'rentabilidade': m.get('rentabilidade_meta'),
+                             'mix': m.get('mix_meta')},
+                },
+            })
+        cached = {'ref': ref, 'linhas': linhas}
+        _cache_set(key, cached, 'dax_agregado')
+    linhas = []
+    for l in cached['linhas']:
+        n = performance_comercial.nota(l['valores'], l['universo'], pesos)
+        linhas.append({**l, **n})
+    return {'ref': ref, 'pesos': pesos, 'competencia_pesos': comp_pesos,
+            'linhas': performance_comercial.ranquear(linhas)}
+
+
+@app.route('/performance')
+@login_required
+def performance_page():
+    return send_from_directory('.', 'performance.html')
+
+
+@app.route('/api/performance')
+@login_required
+def api_performance():
+    d = _performance_dados()
+    role = session.get('role')
+    linhas = d['linhas']
+    total_universo = {}
+    for l in linhas:
+        if l['nota'] is not None:
+            total_universo[l['universo']] = total_universo.get(l['universo'], 0) + 1
+    if role == 'vendedor':
+        cu = session.get('codusur')
+        linhas = [l for l in linhas if cu is not None and l['codusur'] == int(cu)]
+    elif role == 'supervisor':
+        sups = set(_abc_supervisores_filtro() or _session_supervisores())
+        linhas = [l for l in linhas if l['codsupervisor'] in sups]
+    else:
+        sup_f = _abc_supervisores_filtro()
+        if sup_f:
+            linhas = [l for l in linhas if l['codsupervisor'] in set(sup_f)]
+    esc = {u: {k: list(v) for k, v in performance_comercial.ESCALAS[u].items()}
+           for u in performance_comercial.UNIVERSOS}
+    return jsonify({
+        'ok': True, 'mes': d['ref'], 'pesos': d['pesos'], 'competencia_pesos': d['competencia_pesos'],
+        'escalas': esc,
+        'provisorias': sorted(f'{u}:{k}' for u, k in performance_comercial.ESCALAS_PROVISORIAS),
+        'total_universo': total_universo, 'nota_versao': performance_comercial.NOTA_VERSAO,
+        'linhas': linhas,
+    })
+
+
+@app.route('/api/admin/performance/pesos', methods=['GET'])
+@admin_required
+def api_admin_performance_pesos_get():
+    hist = _perf_pesos_historico()
+    ref = positivacao.mes_fechado(_hoje_ref())
+    pesos, comp = performance_comercial.pesos_vigentes(hist, ref)
+    return jsonify({'ok': True, 'padrao': performance_comercial.PESOS_PADRAO, 'historico': hist,
+                    'vigente': pesos, 'competencia': comp, 'mes_nota': ref})
+
+
+@app.route('/api/admin/performance/pesos', methods=['PUT'])
+@admin_required
+def api_admin_performance_pesos_set():
+    """Grava os pesos a partir de uma COMPETÊNCIA (default: mês corrente). Meses anteriores
+    seguem com os pesos que valiam neles — mudar o foco não reescreve a nota passada."""
+    import json as _json
+    data = request.get_json() or {}
+    pesos = data.get('pesos') or {}
+    erro = performance_comercial.validar_pesos(pesos)
+    if erro:
+        return jsonify({'ok': False, 'error': erro}), 400
+    try:
+        comp = int(data.get('competencia') or positivacao.anomes_de(_hoje_ref()))
+        if not (200001 <= comp <= 209912) or not (1 <= comp % 100 <= 12):
+            raise ValueError
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'competência inválida (AAAAMM)'}), 400
+    hist = _perf_pesos_historico()
+    hist[str(comp)] = {k: float(pesos.get(k, 0)) for k in performance_comercial.INDICADORES}
+    _config_set('performance_pesos', _json.dumps(hist))
+    print(f"[PERFORMANCE] pesos {comp} = {hist[str(comp)]} por usuario {session.get('user_id')}")
+    return jsonify({'ok': True, 'competencia': comp, 'pesos': hist[str(comp)]})
 
 
 # ── Metas de margem por comprador (Nota do comprador — módulo Compras) ──
@@ -5089,10 +5698,121 @@ def vendedor_page(codusur):
     return send_from_directory('.', 'vendedor.html')
 
 
-def _montar_ranking_vendedores(atual, anterior_idx, metricas_idx, carteira_idx, key):
-    """Monta a lista de vendedores (KPIs+YoY+rank) a partir dos 4 conjuntos.
-    Compartilhado pelos caminhos DAX e postgres."""
+# Códigos que não são pessoa: cliente cadastrado neles e atendido por um RCA é cadastro a
+# transferir, não "cliente de colega". 34 = PROSPECÇÃO (fora de VENDEDORES_TECNICOS porque
+# aparece nas listas de vendedor).
+CODIGOS_FICTICIOS = set(VENDEDORES_TECNICOS) | {34}
+
+
+def _carregar_atendimentos_rca(anomes_ini, anomes_fim):
+    """{anomes: {codusur: {codcli: {'d1', 'skus', 'deptos', 'marcas', 'peds'}}}} — quem vendeu
+    para quem (régua de VENDA). GLOBAL (sem RBAC): alimenta o placar de positivação e as taxas de
+    mix/cross/marca/frequência de todos os RCAs. ~4 mil linhas/mês. `d1` (1ª venda do mês) serve
+    à regra comercial dos 60 dias (cliente liberado)."""
+    key = f'multpel:atendimentos_rca:{anomes_ini}:{anomes_fim}:v3'
+    cached = _cache_get(key)
+    if cached is None:
+        if CONFIG['data_source'] == 'postgres':
+            linhas = provider_sql.atendimentos_rca(anomes_ini, anomes_fim)
+        else:
+            a0, a1 = anomes_ini, positivacao.mes_add(anomes_fim, 1)
+            q = f"""EVALUATE
+SUMMARIZECOLUMNS(
+    FATURAMENTO_VENDAS[CODUSUR], FATURAMENTO_VENDAS[CODCLI], CALENDARIO[AnoMes],
+    FILTER(FATURAMENTO_VENDAS,
+        FATURAMENTO_VENDAS[DTSAIDA] >= DATE({a0 // 100}, {a0 % 100}, 1)
+        && FATURAMENTO_VENDAS[DTSAIDA] < DATE({a1 // 100}, {a1 % 100}, 1)),
+    "Bruta", [VENDA BRUTA],
+    "D1", MIN(FATURAMENTO_VENDAS[DTSAIDA]),
+    "SKUs", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODPROD]),
+    "Deptos", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODEPTO]),
+    "Marcas", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODMARCA]),
+    "Peds", DISTINCTCOUNT(FATURAMENTO_VENDAS[NUMPED])
+)"""
+            rows = clean_rows(_todas_linhas(retry_dax(execute_dax)(get_token_cached(), q)))
+            linhas = [(r['CODUSUR'], r['CODCLI'], r['AnoMes'], r.get('D1'), r.get('SKUs'),
+                       r.get('Deptos'), r.get('Marcas'), r.get('Peds')) for r in rows
+                      if r.get('CODUSUR') is not None and r.get('CODCLI') is not None
+                      and r.get('AnoMes') is not None and (r.get('Bruta') or 0) > 0]
+        cached = [[int(u), int(c), int(am), str(d1)[:10] if d1 else None,
+                   int(sk or 0), int(de or 0), int(ma or 0), int(pe or 0)]
+                  for u, c, am, d1, sk, de, ma, pe in linhas]
+        _cache_set(key, cached, 'dax_agregado')
+    from datetime import date as _date
+    out = {}
+    for u, c, am, d1, sk, de, ma, pe in cached:
+        out.setdefault(am, {}).setdefault(u, {})[c] = {
+            'd1': _date.fromisoformat(d1) if d1 else None,
+            'skus': sk, 'deptos': de, 'marcas': ma, 'peds': pe}
+    return out
+
+
+def _carregar_ultima_compra_antes(anomes):
+    """{codcli: date} — última compra de cada cliente ANTES do mês `anomes` (janela de 24m).
+    Serve à regra comercial dos 60 dias (positivacao.liberados_no_mes). ~8 mil linhas."""
+    key = f'multpel:ultima_compra_antes:{anomes}:v1'
+    cached = _cache_get(key)
+    if cached is None:
+        if CONFIG['data_source'] == 'postgres':
+            pares = provider_sql.ultima_compra_antes(anomes)
+        else:
+            a0 = positivacao.mes_add(anomes, -24)
+            q = f"""EVALUATE
+SUMMARIZECOLUMNS(
+    FATURAMENTO_VENDAS[CODCLI],
+    FILTER(FATURAMENTO_VENDAS,
+        FATURAMENTO_VENDAS[DTSAIDA] >= DATE({a0 // 100}, {a0 % 100}, 1)
+        && FATURAMENTO_VENDAS[DTSAIDA] < DATE({anomes // 100}, {anomes % 100}, 1)),
+    "Ult", MAX(FATURAMENTO_VENDAS[DTSAIDA])
+)"""
+            rows = clean_rows(_todas_linhas(retry_dax(execute_dax)(get_token_cached(), q)))
+            pares = [(r['CODCLI'], r.get('Ult')) for r in rows if r.get('CODCLI') is not None]
+        cached = [[int(c), str(d)[:10]] for c, d in pares if d]
+        _cache_set(key, cached, 'dax_agregado')
+    from datetime import date as _date
+    return {c: _date.fromisoformat(d) for c, d in cached}
+
+
+def _positivacao_insumos():
+    """Base ativa, atendidos e dono de cada cliente no último mês FECHADO — insumo comum da
+    positivação (Vendedores) e da Performance Comercial."""
+    from datetime import date as _date
+    hoje = provider_sql.hoje_analitico() if CONFIG['data_source'] == 'postgres' else _date.today()
+    ref = positivacao.mes_fechado(hoje)
+    codusur_de = {c['codcli']: c.get('codusur') for c in _carregar_carteira_full()
+                  if c.get('codcli') is not None}
+    bases = positivacao.base_ativa(_carregar_venda_mensal_por_cliente(), codusur_de, ref)
+    atend = _carregar_atendimentos_rca(positivacao.mes_add(ref, -2), ref)
+    mes = atend.get(ref, {})
+    return {'ref': ref, 'codusur_de': codusur_de, 'bases': bases, 'atend': atend, 'mes': mes,
+            'atendidos': {u: set(cs) for u, cs in mes.items()}}
+
+
+def _positivacao_rcas():
+    """Placar de positivação por RCA no último mês FECHADO (ver positivacao.py).
+    Base = carteira de CADASTRO (a carteira global já traz o CODUSUR1) com compra em 12m, pelo
+    cache de venda mensal por cliente; atendidos = 1 query leve (RCA × cliente × mês, 3 meses —
+    os 2 anteriores só servem pra saber quais RCAs estão ATIVOS). Devolve (anomes_ref, placar)."""
+    ins = _positivacao_insumos()
+    ref, codusur_de, bases, atend, mes = ins['ref'], ins['codusur_de'], ins['bases'], ins['atend'], ins['mes']
     vmap = _carregar_vendedores_map()
+    ativos = {u for por_rca in atend.values() for u in por_rca
+              if str(u) in vmap and (vmap.get(str(u)) or {}).get('bloqueio') != 'S'}
+    primeira = {u: {c: m['d1'] for c, m in cs.items() if m['d1']} for u, cs in mes.items()}
+    liberados = positivacao.liberados_no_mes(primeira, _carregar_ultima_compra_antes(ref))
+    atendidos = {u: set(cs) for u, cs in mes.items()}
+    placar = positivacao.positivacao_por_rca(bases, atendidos, codusur_de,
+                                             CODIGOS_FICTICIOS, ativos, liberados)
+    for u, t in positivacao.taxas_atendimento(mes).items():   # item 4: mix/cross/marca/frequência
+        placar.setdefault(u, {}).update(t)
+    return ref, placar
+
+
+def _montar_ranking_vendedores(atual, anterior_idx, metricas_idx, key):
+    """Monta a lista de vendedores (KPIs+YoY+rank) a partir dos 3 conjuntos + a positivação
+    de cadastro. Compartilhado pelos caminhos DAX e postgres."""
+    vmap = _carregar_vendedores_map()
+    ref_pos, pos_idx = _positivacao_rcas()
 
     out = []
     for r in atual:
@@ -5111,10 +5831,11 @@ def _montar_ranking_vendedores(atual, anterior_idx, metricas_idx, carteira_idx, 
             yoy = (venda_atual - venda_ant) / venda_ant
         m = metricas_idx.get(cu, {})
         clientes_12m = m.get('ClientesUnicos') or 0
-        carteira_oficial = (carteira_idx.get(cu, {}).get('CarteiraOficial')) or 0
-        # Patch L: taxa de positivação = clientes que compraram 12m / carteira oficial (PCCLIENT.CODUSUR1)
-        # Substitui a medida [TAXA POSITIVACAO CLIENTE] do PBI (que estava bugada retornando 0-3%)
-        taxa_positivacao = (clientes_12m / carteira_oficial) if carteira_oficial else 0
+        # Positivação = COBERTURA DA BASE: base ativa de cadastro atendida por ele no mês
+        # fechado (positivacao.py). ⚠️ A medida [TAXA POSITIVACAO CLIENTE] do BI NÃO serve
+        # (denominador ~43 mil num mês) e a conta do Patch L (clientes de VENDA 12m ÷ cadastro
+        # INTEIRO) misturava universos: 37 de 97 RCAs passavam de 100%. None = base < 5.
+        pos = pos_idx.get(cu) or {}
         out.append({
             'codusur':          cu,
             'nome':             v_meta.get('nome'),
@@ -5126,9 +5847,19 @@ def _montar_ranking_vendedores(atual, anterior_idx, metricas_idx, carteira_idx, 
             'lucro':            r.get('LucroTotal') or 0,
             'venda_anterior':   venda_ant,
             'ticket_medio':     m.get('TicketMedio') or 0,
-            'taxa_positivacao': taxa_positivacao,
+            'taxa_positivacao': pos.get('cobertura'),
+            'base_ativa':       pos.get('base_ativa', 0),
+            'base_coberta':     pos.get('cobertos', 0),
+            'fora_base':        pos.get('fora_base', 0),
+            'fora_base_tipo':   pos.get('fora_por_tipo') or {t: 0 for t in positivacao.TIPOS_DONO},
+            'alcance':          pos.get('alcance'),
+            'mix_medio':        pos.get('mix'),
+            'cross_medio':      pos.get('cross'),
+            'marca_medio':      pos.get('marca'),
+            'freq_media':       pos.get('frequencia'),
+            'positivacao_amostra_pequena': pos.get('amostra_pequena', True),
+            'positivacao_mes':  ref_pos,
             'clientes_unicos':  clientes_12m,
-            'carteira_oficial': carteira_oficial,
             'yoy_receita':      yoy,
         })
 
@@ -5155,7 +5886,7 @@ def _carregar_ranking_vendedores(role=None, codusur=None, codsupervisor=None):
         rbac_sups = _como_lista_supervisores(codsupervisor)
 
     key = ':'.join([
-        'multpel', 'vendedores:ranking:v1',
+        'multpel', 'vendedores:ranking:v2',  # v2: positivação pela régua de cadastro (positivacao.py)
         f"role={role or 'anon'}",
         f"usur={codusur if codusur is not None else '-'}",
         f"supv={','.join(str(s) for s in rbac_sups) if rbac_sups else '-'}",
@@ -5204,22 +5935,13 @@ SUMMARIZECOLUMNS(
     "TicketMedio",     [TICKET MEDIO],
     "ClientesUnicos",  DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI])
 )""",
-        # Patch L: carteira OFICIAL via PCCLIENT[CODUSUR1] — denominador da taxa de positivação.
-        # A medida nativa [TAXA POSITIVACAO CLIENTE] do PBI está bugada (sempre retorna 0-3%).
-        # Esta query agrupa por CODUSUR1 da PCCLIENT pra contar quantos clientes cada vendedor tem oficialmente atribuídos.
-        'carteira_oficial': """EVALUATE
-SUMMARIZECOLUMNS(
-    PCCLIENT[CODUSUR1],
-    "CarteiraOficial", DISTINCTCOUNT(PCCLIENT[CODCLI])
-)""",
     }
-    resultados = _executar_dax_paralelo_n(queries, max_workers=4)
+    resultados = _executar_dax_paralelo_n(queries, max_workers=3)
 
     atual = clean_rows(_todas_linhas(resultados['vendas_atual']))
     anterior_idx = {r['CODUSUR']: r for r in clean_rows(_todas_linhas(resultados['vendas_anterior'])) if r.get('CODUSUR') is not None}
     metricas_idx = {r['CODUSUR']: r for r in clean_rows(_todas_linhas(resultados['metricas'])) if r.get('CODUSUR') is not None}
-    carteira_idx = {r['CODUSUR1']: r for r in clean_rows(_todas_linhas(resultados['carteira_oficial'])) if r.get('CODUSUR1') is not None}
-    return _montar_ranking_vendedores(atual, anterior_idx, metricas_idx, carteira_idx, key)
+    return _montar_ranking_vendedores(atual, anterior_idx, metricas_idx, key)
 
 
 @app.route('/api/vendedores')
@@ -5306,6 +6028,12 @@ FILTER(PCUSUARI, PCUSUARI[CODUSUR] = {int(codusur)})"""
     return perfil
 
 
+def _taxa_comparavel(r):
+    """Entra na média da equipe só quem tem carteira própria de tamanho mínimo — senão um RCA
+    de balcão com 1 cliente (0% ou 100%) puxa a média do time."""
+    return r.get('taxa_positivacao') is not None and not r.get('positivacao_amostra_pequena')
+
+
 def _comparativo_equipe(codusur, sua_taxa):
     """Calcula média de TAXA POSITIVACAO da equipe (mesmo CODSUPERVISOR).
     Retorna dict com sua_taxa, media_equipe, time_size, label.
@@ -5327,7 +6055,7 @@ def _comparativo_equipe(codusur, sua_taxa):
     colegas = [r for r in ranking if r.get('codsupervisor') == meu_sup and r.get('codusur') != codusur]
 
     if len(colegas) >= 1:  # time_size >= 2 considerando o vendedor + pelo menos 1 colega
-        taxas = [r.get('taxa_positivacao') for r in colegas if r.get('taxa_positivacao') is not None]
+        taxas = [r.get('taxa_positivacao') for r in colegas if _taxa_comparavel(r)]
         if not taxas:
             return None
         media = sum(taxas) / len(taxas)
@@ -5340,7 +6068,7 @@ def _comparativo_equipe(codusur, sua_taxa):
         }
     else:
         # time_size == 1: só ele no supervisor — fallback geral TIPOVEND='R'
-        gerais = [r for r in ranking if r.get('tipo') == 'R' and r.get('codusur') != codusur and r.get('taxa_positivacao') is not None]
+        gerais = [r for r in ranking if r.get('tipo') == 'R' and r.get('codusur') != codusur and _taxa_comparavel(r)]
         if not gerais:
             return None
         media = sum(r['taxa_positivacao'] for r in gerais) / len(gerais)
@@ -5359,7 +6087,7 @@ def api_vendedor(codusur):
     if not pode_acessar_vendedor(codusur):
         return jsonify({'ok': False, 'error': 'Sem permissão'}), 403
 
-    key = cache_key_for_user(f'vendedor:full:{codusur}')
+    key = cache_key_for_user(f'vendedor:full:v2:{codusur}')  # v2: positivação de cadastro
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)
@@ -5372,7 +6100,7 @@ def api_vendedor(codusur):
     ranking = _carregar_ranking_vendedores()
     eu = next((v for v in ranking if v.get('codusur') == codusur), None)
     if not eu:
-        eu = {'venda_liq': 0, 'lucro': 0, 'ticket_medio': 0, 'taxa_positivacao': 0,
+        eu = {'venda_liq': 0, 'lucro': 0, 'ticket_medio': 0, 'taxa_positivacao': None,
               'clientes_unicos': 0, 'yoy_receita': None}
 
     # Nome do supervisor (via vendedores_map)
@@ -5391,7 +6119,8 @@ def api_vendedor(codusur):
     champions = sum(1 for c in minha_carteira if c['segmento'] == 'champions')
     at_risk = sum(1 for c in minha_carteira if c['segmento'] == 'at_risk')
 
-    comparativo = _comparativo_equipe(codusur, eu.get('taxa_positivacao'))
+    comparativo = (_comparativo_equipe(codusur, eu.get('taxa_positivacao'))
+                   if eu.get('taxa_positivacao') is not None else None)
 
     resp = {
         'ok': True,
@@ -5400,7 +6129,13 @@ def api_vendedor(codusur):
             'venda_liq':        eu.get('venda_liq', 0),
             'lucro':            eu.get('lucro', 0),
             'ticket_medio':     eu.get('ticket_medio', 0),
-            'taxa_positivacao': eu.get('taxa_positivacao', 0),
+            'taxa_positivacao': eu.get('taxa_positivacao'),
+            'base_ativa':       eu.get('base_ativa', 0),
+            'base_coberta':     eu.get('base_coberta', 0),
+            'fora_base':        eu.get('fora_base', 0),
+            'fora_base_tipo':   eu.get('fora_base_tipo'),
+            'alcance':          eu.get('alcance'),
+            'positivacao_mes':  eu.get('positivacao_mes'),
             'yoy_receita':      eu.get('yoy_receita'),
             'rank':             eu.get('rank'),
         },

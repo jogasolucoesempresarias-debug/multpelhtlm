@@ -147,7 +147,6 @@ def test_vendedores_multi_supervisor(client, usuario_admin, mock_dax_capture, cl
         ('PCUSUARI[CODUSUR]', _load('dax_vendedores_map')),
         ('VendaLiqAnt',       _load('dax_vendedores_anterior')),
         ('TicketMedio',       _load('dax_vendedores_metricas')),
-        ('CarteiraOficial',   _load('dax_vendedores_carteira24m')),
         ('VendaLiq',          _load('dax_vendedores_ranking')),
     ])
     login_as(client, usuario_admin['email'], usuario_admin['senha'])

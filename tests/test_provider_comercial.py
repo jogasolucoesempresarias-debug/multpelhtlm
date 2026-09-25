@@ -41,7 +41,8 @@ def test_vendedores_modo_postgres(client, usuario_admin, monkeypatch):
     assert data['total'] > 0
     v = data['vendedores'][0]
     assert set(v) >= {'codusur', 'nome', 'venda_liq', 'lucro', 'ticket_medio',
-                      'taxa_positivacao', 'rank', 'yoy_receita', 'carteira_oficial'}
+                      'taxa_positivacao', 'rank', 'yoy_receita', 'base_ativa',
+                      'fora_base', 'alcance', 'positivacao_mes'}
     assert v['nome'] and v['rank'] == 1
     # ranking ordenado por lucro desc
     lucros = [x['lucro'] for x in data['vendedores']]
@@ -87,6 +88,8 @@ def test_comercial_endpoints_sweep_modo_postgres(client, usuario_admin, monkeypa
         f'/api/carteira/cliente/{cc}/produtos?limit=10', '/api/vendedor/213', '/api/vendedor/213/serie',
         '/api/categorias/2/clientes', '/api/marcas', '/api/fornecedores',
         f'/api/radar/produto/{cp}/cliente/{cc}/serie',
+        '/api/recuperacao', '/api/recuperacao/listas?tipo=risco',
+        '/api/recuperacao/listas?tipo=recuperados',
     ]
     for u in urls:
         r = client.get(u)

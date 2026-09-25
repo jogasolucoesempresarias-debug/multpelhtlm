@@ -154,7 +154,7 @@
       <div class="sub" id="k_carteira_seg">&nbsp;</div>
     </div>
     <div class="kpi-card">
-      <div class="label" id="l_pos">Positivação</div>
+      <div class="label" id="l_pos" title="Cobertura da base: clientes da base ativa (cadastrados no vendedor, com compra em 12m) que ele atendeu no mês fechado ÷ base ativa.">Cobertura da base</div>
       <div class="value" id="k_pos">—</div>
       <div class="sub" id="k_pos_eq">&nbsp;</div>
     </div>
@@ -305,11 +305,18 @@ async function loadCockpit() {
   document.getElementById('k_carteira').textContent = `${NUM.format(c.cadastrados)} cad`;
   document.getElementById('k_carteira_seg').textContent = `${NUM.format(c.positivados)} positivados · ${c.champions} Champions · ${c.at_risk} At Risk`;
   document.getElementById('k_pos').textContent = PCT(k.taxa_positivacao);
-  if (ce) {
+  if (k.positivacao_mes) {
+    const m = String(k.positivacao_mes);
+    document.getElementById('l_pos').textContent = `Cobertura da base (${m.slice(4)}/${m.slice(0, 4)})`;
+  }
+  if (k.taxa_positivacao == null) {
+    document.getElementById('k_pos_eq').textContent = `base ativa de ${k.base_ativa || 0} cliente(s) — abaixo de 5, sem comparativo`;
+  } else if (ce) {
     const diff = (k.taxa_positivacao || 0) - ce.media_equipe;
     const sign = diff >= 0 ? '▲' : '▼';
     const cor = diff >= 0 ? 'var(--green)' : 'var(--red)';
-    document.getElementById('k_pos_eq').innerHTML = `<span style="color:${cor};">${sign} ${PCT(Math.abs(diff))}</span> · ${ce.label} (média ${PCT(ce.media_equipe)})`;
+    document.getElementById('k_pos_eq').innerHTML = `${NUM.format(k.base_coberta || 0)} de ${NUM.format(k.base_ativa || 0)} · <span style="color:${cor};">${sign} ${PCT(Math.abs(diff))}</span> · ${ce.label} (média ${PCT(ce.media_equipe)})`
+      + ((k.fora_base || 0) > 0 ? `<br>+${NUM.format(k.fora_base)} clientes de outras bases · alcance ${PCT(k.alcance)}` : '');
   } else {
     document.getElementById('k_pos_eq').textContent = '(sem comparativo)';
   }

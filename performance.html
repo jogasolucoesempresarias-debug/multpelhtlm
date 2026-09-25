@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>JOGA Analytics — Performance Comercial</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/static/joga-mark.svg" type="image/svg+xml">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="/static/fetch-resiliente.js"></script>
+<link rel="stylesheet" href="/static/tooltips.css">
+<script defer src="/static/tooltips.js"></script>
+<link rel="stylesheet" href="/static/tema.css">
+<script>try{var t=localStorage.getItem("joga:tema");if(t==="claro")document.documentElement.dataset.tema=t;}catch(e){}</script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+  .dashboard { padding:24px; max-width:1600px; margin:0 auto; }
+  @media (max-width:520px){ .dashboard { padding:16px; } }
+  .top-bar { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; flex-wrap:wrap; gap:14px; }
+  /* Cabeçalho (joga-header.js monta o markup; o estilo é da página — sem isto o logo estoura) */
+  .brand { display:flex; align-items:center; gap:12px; }
+  .brand .mark { width:36px; height:36px; border-radius:8px; background:linear-gradient(135deg,var(--accent),var(--accent2)); display:flex; align-items:center; justify-content:center; font-weight:700; color: var(--sobre-accent); flex:0 0 36px; }
+  .top-bar h1 { font-size:1.3rem; font-weight:700; background:linear-gradient(135deg,var(--accent),var(--accent2)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+  .meta { font-size:.74rem; color:var(--text-dim); font-family:'JetBrains Mono',monospace; }
+  .nav { display:flex; gap:8px; flex-wrap:wrap; }
+  .nav .btn-sm, .nav a { text-decoration:none; }
+  .btn-sm { padding:7px 14px; background:var(--surface2); border:1px solid var(--border); color:var(--text); font-weight:500; font-size:.78rem; border-radius:7px; cursor:pointer; font-family:inherit; }
+  .btn-sm:hover, .btn-sm.on { border-color:var(--accent); color:var(--accent); }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:18px; }
+  .card h3 { font-size:.72rem; font-weight:600; color:var(--text-dim); text-transform:uppercase; letter-spacing:.05em; margin-bottom:12px; }
+  .regua { font-size:.76rem; color:var(--text-dim); line-height:1.55; margin-bottom:14px; }
+  .regua b { color:var(--text); }
+  .tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+  table { width:100%; border-collapse:collapse; font-size:.8rem; }
+  thead th { text-align:left; font-weight:600; font-size:.66rem; text-transform:uppercase; letter-spacing:.04em; color:var(--text-dim); border-bottom:1px solid var(--border); padding:9px 8px; white-space:nowrap; }
+  thead th.num, td.num { text-align:right; }
+  td { padding:8px; border-bottom:1px solid var(--border); vertical-align:top; }
+  td.num { font-family:'JetBrains Mono',monospace; white-space:nowrap; }
+  .nota { display:inline-block; min-width:48px; text-align:center; padding:3px 8px; border-radius:8px; font-weight:700; font-family:'JetBrains Mono',monospace; }
+  .nota.g { background:rgba(var(--green-rgb), .16); color:var(--green); }
+  .nota.y { background:rgba(var(--yellow-rgb), .16); color:var(--yellow); }
+  .nota.r { background:rgba(var(--red-rgb), .16); color:var(--red); }
+  .small { font-size:.68rem; color:var(--text-dim); }
+  .selo { display:inline-block; margin-top:3px; font-size:.64rem; padding:1px 6px; border-radius:8px; background:rgba(var(--yellow-rgb), .14); color:var(--yellow); white-space:nowrap; }
+  .table-scroll { overflow-x:auto; }
+  .pesos { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  .pesos label { display:flex; flex-direction:column; font-size:.68rem; color:var(--text-dim); gap:4px; }
+  .pesos input { width:84px; background:var(--surface2); border:1px solid var(--border); color:var(--text); border-radius:6px; padding:6px 8px; font-family:'JetBrains Mono',monospace; }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body data-page="performance">
+<div class="dashboard">
+  <div class="top-bar" data-joga-header data-titulo="Performance Comercial"></div>
+  <script src="/static/joga-header.js"></script>
+
+  <div class="card">
+    <p class="regua" id="regua">Carregando…</p>
+    <div class="tabs" id="tabs"></div>
+    <div class="table-scroll"><table>
+      <thead><tr>
+        <th>#</th><th>Vendedor</th><th>Time</th><th class="num">Nota</th>
+        <th class="num" title="% de atingimento da meta de rentabilidade (lucro) do Metas">Rentabilidade</th>
+        <th class="num" title="Cobertura da base ajustada pela curva ABC: positivados ÷ esperados (1,00 = média do universo)">Cobertura</th>
+        <th class="num" title="% de atingimento da meta de mix do Metas">Mix</th>
+        <th class="num" title="% de atingimento da meta de venda do Metas">Receita</th>
+        <th class="num" title="Pedidos por cliente atendido no mês">Frequência</th>
+      </tr></thead>
+      <tbody id="body"></tbody>
+    </table></div>
+  </div>
+
+  <div class="card hidden" id="cardPesos">
+    <h3>Pesos da nota (admin) — valem a partir da competência escolhida</h3>
+    <div class="pesos" id="pesosForm"></div>
+    <p class="small" id="pesosMsg" style="margin-top:10px;"></p>
+  </div>
+</div>
+
+<script>
+const IND = [['rentabilidade','Rentabilidade'],['cobertura','Cobertura'],['mix','Mix'],['receita','Receita'],['frequencia','Frequência']];
+const UNIV = { campo:'Campo', lojas:'Lojas', telemarketing:'Telemarketing' };
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const MES = am => { const s = String(am); return `${s.slice(4)}/${s.slice(0,4)}`; };
+const dec = (v, n=2) => v == null ? '—' : v.toFixed(n).replace('.', ',');
+const pct = v => v == null ? '—' : (v*100).toFixed(0) + '%';
+let _d = null, _univ = 'campo';
+
+function cor(n) { return n == null ? '' : n >= 8 ? 'g' : n >= 6 ? 'y' : 'r'; }
+
+function celula(l, k) {
+  const v = l.valores[k], n = l.notas[k];
+  if (v == null) return `<td class="num"><span class="small">—</span></td>`;
+  const txt = (k === 'cobertura' || k === 'frequencia') ? dec(v) : pct(v);
+  return `<td class="num">${txt}<div class="small">nota ${dec(n, 1)}</div></td>`;
+}
+
+function render() {
+  const d = _d;
+  const prov = new Set(d.provisorias);
+  const p = d.pesos;
+  document.getElementById('regua').innerHTML =
+    `Nota de 0 a 10 do mês fechado <b>${MES(d.mes)}</b>, recalculada do dado (nunca gravada). Pesos: ` +
+    IND.map(([k, n]) => `${n} <b>${p[k]}</b>`).join(' · ') +
+    (d.competencia_pesos ? ` (vigentes desde ${MES(d.competencia_pesos)})` : ' (padrão)') +
+    `. Cada universo tem ranking e escala próprios: campo, lojas e telemarketing não se comparam. ` +
+    `Rentabilidade, receita e mix são % de atingimento da meta do Metas; <b>sem meta cadastrada o indicador fica de fora</b> e a nota sai parcial, renormalizada sobre o peso medido (mínimo 35%). ` +
+    `Escalas de atingimento são provisórias (70% → 0, 110% → 10) até medirmos a distribuição real. ` +
+    `Fora do ranking: base ativa menor que 5 (caixa/balcão) e canais de e-commerce.`;
+  const unis = ['campo','lojas','telemarketing'].filter(u => d.linhas.some(l => l.universo === u));
+  if (!unis.includes(_univ) && unis.length) _univ = unis[0];
+  document.getElementById('tabs').innerHTML = unis.map(u =>
+    `<button class="btn-sm ${u === _univ ? 'on' : ''}" onclick="setUniv('${u}')">${UNIV[u]} <span class="small">(${d.total_universo[u] || 0})</span></button>`).join('');
+  const linhas = d.linhas.filter(l => l.universo === _univ);
+  document.getElementById('body').innerHTML = linhas.map(l => `<tr>
+    <td class="num">${l.posicao ?? '—'}<div class="small">${l.posicao ? 'de ' + (d.total_universo[l.universo] || '') : ''}</div></td>
+    <td>${esc(l.nome)} <span class="small">#${l.codusur}</span></td>
+    <td><span class="small">${esc(l.time || '—')}</span></td>
+    <td class="num"><span class="nota ${cor(l.nota)}">${l.nota == null ? '—' : dec(l.nota, 1)}</span>
+      ${l.parcial ? `<div><span class="selo" title="Falta: ${esc(l.faltando.join(', '))}">parcial · ${pct(l.peso_medido)} do peso</span></div>` : ''}</td>
+    ${IND.map(([k]) => celula(l, k)).join('')}
+  </tr>`).join('') || `<tr><td colspan="9" class="small" style="text-align:center;padding:18px;">Nenhum vendedor com nota neste universo.</td></tr>`;
+}
+
+function setUniv(u) { _univ = u; render(); }
+
+async function carregarPesos() {
+  let me = {};
+  try { me = await fetchJSON('/api/me'); } catch (e) {}
+  if ((me.role || (me.user || {}).role) !== 'admin') return;
+  const j = await fetchJSON('/api/admin/performance/pesos');
+  document.getElementById('cardPesos').classList.remove('hidden');
+  const hoje = new Date(); const comp = hoje.getFullYear() * 100 + hoje.getMonth() + 1;
+  document.getElementById('pesosForm').innerHTML =
+    IND.map(([k, n]) => `<label>${n}<input type="number" min="0" max="100" step="1" id="p_${k}" value="${j.vigente[k]}"></label>`).join('') +
+    `<label>A partir de (AAAAMM)<input type="number" id="p_comp" value="${comp}"></label>` +
+    `<button class="btn-sm" onclick="salvarPesos()">Salvar</button>`;
+  document.getElementById('pesosMsg').textContent =
+    'A soma precisa dar 100. Meses anteriores à competência seguem com os pesos que valiam neles — mudar o foco não reescreve a nota passada.';
+}
+
+async function salvarPesos() {
+  const pesos = {}; IND.forEach(([k]) => pesos[k] = Number(document.getElementById('p_' + k).value));
+  const competencia = Number(document.getElementById('p_comp').value);
+  const r = await fetch('/api/admin/performance/pesos', { method:'PUT', headers:{ 'Content-Type':'application/json' },
+    body: JSON.stringify({ pesos, competencia }) });
+  const j = await r.json();
+  document.getElementById('pesosMsg').textContent = j.ok ? `Salvo: vale a partir de ${MES(j.competencia)}.` : ('Erro: ' + j.error);
+  if (j.ok) carregar();
+}
+
+async function carregar() {
+  try {
+    _d = await fetchJSON('/api/performance');
+    render();
+  } catch (e) {
+    document.getElementById('regua').innerHTML = `<span style="color:var(--red)">Erro ao carregar: ${esc(e)}</span>`;
+  }
+}
+
+carregar();
+carregarPesos();
+</script>
+</body>
+</html>

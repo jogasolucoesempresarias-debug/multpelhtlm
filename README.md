@@ -231,6 +231,51 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
   - ⚠️ **Mock de metas sem `[venda_sb]` não testa nada de margem** — o `or` do fallback usa o bruto
     e o teste passa mesmo com a fórmula errada. Foi assim que o gate ficou cego. Todo fixture de
     metas leva `[venda_sb]` **diferente** de `[venda]`.
+- 🧭 **Melhorias do Comercial (09/2026)** — pedido de 7 itens do cliente + alinhamentos com o João
+  Victor. **Plano, decisões e todas as medições em [docs/comercial/PLANO_MELHORIAS_COMERCIAL.md](docs/comercial/PLANO_MELHORIAS_COMERCIAL.md)**
+  (leia antes de mexer). Resumo do que existe:
+  - 🩹 **Positivação dos vendedores (tela Vendedores + cockpit) estava errada desde o Patch L**
+    (06/2026): clientes que compraram DO RCA em 12m (régua de VENDA) ÷ cadastro INTEIRO dele
+    (42 mil, com 33,9 mil bloqueados) → **37 de 97 RCAs acima de 100%** (máx. 8.600%), top 1 em 22%.
+    O Patch L acertou ao descartar a medida do BI (`[TAXA POSITIVACAO CLIENTE]` = clientes ÷ um
+    denominador de 43 mil num mês), mas a conta nova nunca foi conferida com dado real (a fixture
+    tinha 124/200, universos coincidindo). Hoje (`positivacao.py`, mês FECHADO):
+    **cobertura da base** = clientes da base ativa (cadastro `CODUSUR1` + compra em 12m, SEM filtro
+    de bloqueio — 965 bloqueados compraram) atendidos POR ELE ÷ base; **fora da base** em 4 tipos
+    (colega · liberado pela regra comercial dos 60 dias · código fictício · RCA inativo — os dois
+    últimos são cadastro a transferir); **alcance** (pode passar de 100%, informativo). Base < 5 →
+    `—` (caixa/balcão). ⚠️ O número muda sem ninguém mexer na operação (JOSE JUNIOR 22% → 64%).
+    Gate: `tests/test_positivacao.py`.
+  - **Mix · Deptos · Marcas por cliente** (Vendedores): SKUs, departamentos e marcas distintos por
+    cliente atendido no mês fechado. Correlacionam 0,87–0,94 entre si. Mesma query dos atendimentos
+    (`_carregar_atendimentos_rca`, RCA × cliente × mês) — zero query extra.
+  - **Curva ABC de CLIENTES na Carteira** (coluna, chips A/B/C, card de positivação por classe).
+    ⚠️ Regra única: classe do **início do mês** (Pareto 80/95 dos 12 meses FECHADOS anteriores).
+    Incluir o próprio mês infla a positivação ~2,5–3 p.p. (medido). Card: mês fechado + mês corrente
+    até o dia N × mesmo dia do mês anterior. Medido ago/26: A 80,9% · B 56,1% · C 22,3%.
+  - **Página Recuperação** (`/recuperacao`, `recuperacao.py` + `potencial.py`): carteira em risco ×
+    recuperada + dinheiro na mesa. Em risco = **mais de 60 dias** sem comprar (regra comercial,
+    decisão do João) **e** além do ciclo do cliente; perdido > 365 (parâmetro); 91+ = inativo no ERP
+    (marca). Crédito da recuperação para **quem vendeu**, dono do cadastro ao lado. **Ponte do mês
+    fecha no zero** (só a da empresa; por time são duas colunas: da sua base × por você). Venda
+    perdida = **valor mensal** (venda 12m até a última compra ÷ 12). Lista de risco ordenada por
+    valor × **chance de voltar** medida (61–90 d 32,5% · 91–180 d 15,2% · 181–365 d 4,6%) — NÃO
+    pela `prioridade_contato` do Próximo Pedido, que explode com ciclo curto. Dinheiro na mesa =
+    camada a (em risco) + camada b (positivação abaixo do p75 do universo por classe, SEM os clientes
+    em risco — nada conta duas vezes). ⚠️ A antiga "Receita em risco" do Gerencial/Próximo Pedido
+    (acumula meses de atraso) foi renomeada para **"Receita perdida acumulada"**. O Radar usa
+    "Receita em risco" com um 3º sentido (queda de receita) e não foi mexido.
+    Dado: cliente × vendedor × dia, 26 meses, em **blocos de 4 meses** (o `executeQueries` corta em
+    100 mil linhas em silêncio; bloco no teto levanta erro). Base calculada 1×/h por processo.
+    Gates: `test_recuperacao.py`, `test_potencial.py`, `test_recuperacao_endpoint.py`.
+  - **Performance Comercial** (`/performance`, `performance_comercial.py`): nota 0–10 do mês fechado,
+    pesos do cliente (Rentab 35 · Cobertura 25 · Mix 20 · Receita 10 · Frequência 10) editáveis no
+    Admin **por competência**. Rentab/receita/mix = % de atingimento da meta do Metas (absoluto mede
+    território: BA ~+4 p.p. de margem); cobertura = da base **ajustada pela classe ABC**; frequência =
+    pedidos/cliente. Ranking **por universo** (campo · lojas · telemarketing, via TIPOVEND), escalas
+    p10→0/p90→10 congeladas (`NOTA_VERSAO`). Sem meta → nota PARCIAL renormalizada (mín. 35% do
+    peso). ⚠️ Escalas de atingimento PROVISÓRIAS (70%→0, 110%→10) até medir no banco de produção.
+    Fora: base < 5 e canais e-commerce. Gate: `test_performance_comercial.py`.
 - **Admin** — CRUD usuários, cron de email, multi-CC, segmento RFM, editor de metas. **+ acesso por área, comprador vinculado e relatórios de Compras** (ver abaixo).
 
 ## 🤖 Agente de IA (chat do Compras) — **módulo opcional, venda adicional**
@@ -1426,6 +1471,7 @@ Ancorado o `_hoje()` no dado, passaram — ver a armadilha nº 17.
 Multpel HTML/                       ← repo multpelhtlm (branch feat/fusao-estoque)
 ├── server.py                       # Backend Comercial + registro do blueprint + auth/acesso/tema/segurança (~7,8k linhas)
 ├── rfm.py · cohort.py · metas.py   # Módulos puros do Comercial (matemática)
+├── positivacao.py · recuperacao.py · potencial.py · performance_comercial.py  # 🆕 09/2026 (ver docs/comercial/)
 ├── curva_abc.py                    # 🆕 Curva ABC por time (Pareto 80/95, filtros, amostra) — puro
 ├── cobertura.py                    # Motor de cobertura (Gerencial)
 ├── init_db.py                      # Migrations Postgres (idempotente) — inclui as tabelas estoque_* 🆕
@@ -1724,6 +1770,11 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
 - **Compras (blueprint):** tudo sob `/estoque/...` — `/estoque/`, `/estoque/api/snapshot`,
   `/estoque/api/filtros`, `/estoque/api/orcamento`, `/estoque/api/export/<view>.{csv,xlsx,pdf}`,
   `/estoque/api/pedidos`, `/estoque/api/fornecedores_extra` (ciclo + verba, lazy), etc.
+- **Melhorias do Comercial (09/2026):** `GET /api/carteira/positivacao-abc` (card por classe; mesmos
+  filtros da tabela; `?classe=` também filtra `/api/carteira/clientes`) · `GET /recuperacao` ·
+  `GET /api/recuperacao?mes=&supervisor=&vendedor=` · `GET /api/recuperacao/listas[?tipo=risco|recuperados]`
+  · `GET /api/recuperacao/listas/csv` · `GET|PUT /api/admin/config/recuperacao` (inativo/perdido) ·
+  `GET /performance` · `GET /api/performance` · `GET|PUT /api/admin/performance/pesos`.
 - **Curva ABC (Comercial):** `GET /abc` · `GET /api/abc` (curva do escopo + resumo + régua +
   `periodo` + `amostra_ok`) · `GET /api/abc/{csv,pdf}` (honra `classe`/`codepto`/`codfornec`/`busca`
   da tela) · `GET /api/abc/produto/<codprod>` (série mensal 12m + vendedores na janela). Todos

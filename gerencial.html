@@ -148,7 +148,7 @@
           <th class="num">Cobertura clientes</th>
           <th class="num">Cobertura valor</th>
           <th class="num">Dentro do ciclo</th>
-          <th class="num">Receita em risco</th>
+          <th class="num">Receita perdida acumulada</th>
           <th class="ctr">Base morta</th>
           <th class="ctr">⚑</th>
         </tr></thead>
@@ -282,7 +282,7 @@ function renderKpis() {
   const kpis = [
     { cls:cc, label:'Cobertura por clientes', value:PCT(g.cobertura_clientes), sub:`${NUM.format(g.clientes_cobertos)} de ${NUM.format(g.total_clientes)} clientes ≤${_coberto}d` },
     { cls:cv, label:'Cobertura por valor', value:PCT(g.cobertura_valor), sub:`${BRL.format(g.valor_coberto)} de ${BRL.format(g.valor_total)}` },
-    { cls:'r', label:'Receita em risco', value:BRL.format(g.receita_em_risco), sub:'projeção do que está vencendo além do ciclo' },
+    { cls:'r', label:'Receita perdida acumulada', value:BRL.format(g.receita_em_risco), sub:'venda mensal × meses de atraso além do ciclo (cresce enquanto o cliente não volta) — o valor MENSAL em risco está na página Recuperação' },
     { cls:'b', label:'Dentro do ciclo (justo)', value:PCT(g.cobertura_ciclo), sub:`base morta (91+): ${NUM.format(g.base_morta)} clientes` },
   ];
   document.getElementById('kpis').innerHTML = kpis.map(k =>

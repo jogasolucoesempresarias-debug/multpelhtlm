@@ -58,7 +58,7 @@
       'Cobertura clientes': 'Clientes em dia (última compra dentro da janela) ÷ total de clientes.',
       'Cobertura valor': 'Valor dos clientes em dia ÷ valor total da carteira.',
       'Dentro do ciclo': 'Clientes dentro do próprio ciclo de compra — régua justa que não pune quem compra espaçado.',
-      'Receita em risco': 'Soma da receita projetada perdida dos clientes atrasados (venda mensal × meses de atraso além do ciclo).',
+      'Receita perdida acumulada': 'Soma da receita projetada perdida dos clientes atrasados (venda mensal × meses de atraso além do ciclo). ACUMULA: cresce a cada mês que o cliente não volta. O valor MENSAL em risco está na página Recuperação.',
       'Base morta': 'Clientes sem comprar há 91 dias ou mais.',
       '⚑': 'Marca times/vendedores com cobertura abaixo do limiar (alerta).'
     },
@@ -78,11 +78,11 @@
       'Ciclo': 'Ciclo pessoal de compra: mediana dos intervalos entre as compras do cliente (mínimo 7 dias).',
       'Previsão': 'Previsão do próximo pedido = última compra + ciclo pessoal.',
       'Atraso': 'Dias de atraso em relação ao ciclo (negativo = ainda dentro do ciclo).',
-      'Receita em risco': 'Receita projetada perdida por atraso: venda mensal × meses de atraso além do ciclo.'
+      'Receita perdida acumulada': 'Receita projetada perdida por atraso: venda mensal × meses de atraso além do ciclo. Acumula enquanto o cliente não volta.'
     },
     vendedores: {
       'Top 10 por Lucro 12m': 'Os 10 vendedores com maior lucro nos últimos 12 meses.',
-      'Distribuição: Taxa de Positivação': 'Quantos vendedores caem em cada faixa de positivação (0-2%, 2-5%, 5-10%, 10-20%, 20%+).',
+      'Distribuição: Cobertura da base': 'Quantos vendedores caem em cada faixa de cobertura da base (clientes da base ativa atendidos por ele no mês fechado ÷ base ativa).',
       'Ticket': 'Ticket médio de venda do vendedor (valor médio por cliente atendido).',
       'Time (Supervisor)': 'Supervisor/equipe do vendedor.',
       'Tipo': 'Tipo do RCA (ex.: vendedor externo, interno).',

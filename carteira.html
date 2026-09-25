@@ -325,6 +325,14 @@
               <span class="chip g-lost"               data-val="lost"               onclick="toggleChip('segmento', this)">Perdidos</span>
             </div>
           </div>
+          <div class="ff">
+            <label title="Curva ABC de CLIENTES: Pareto 80/95 da venda líquida dos 12 meses fechados (classe do início do mês)">Curva ABC</label>
+            <div class="chips" id="chips_classe">
+              <span class="chip" data-val="A" onclick="toggleChip('classe', this)">A</span>
+              <span class="chip" data-val="B" onclick="toggleChip('classe', this)">B</span>
+              <span class="chip" data-val="C" onclick="toggleChip('classe', this)">C</span>
+            </div>
+          </div>
           <!-- CSV e PDF são um PAR à direita da linha do Segmento: a 1ª linha de filtros já não os
                comportava em 1540px e o PDF caía sozinho na linha de baixo. -->
           <div class="ff" style="margin-left:auto;display:flex;gap:6px;align-self:flex-end;">
@@ -344,7 +352,7 @@
           <div class="praca-toggle" id="praca_toggle">
             <span class="chip active" data-m="clientes" onclick="setPracaMedida('clientes')">Clientes</span>
             <span class="chip" data-m="venda_12m" onclick="setPracaMedida('venda_12m')">Venda 12m</span>
-            <span class="chip" data-m="receita_perdida" onclick="setPracaMedida('receita_perdida')">Receita em risco</span>
+            <span class="chip" data-m="receita_perdida" onclick="setPracaMedida('receita_perdida')">Receita perdida acumulada</span>
           </div>
           <div class="chart-wrap" style="height:210px;"><canvas id="chartPraca"></canvas></div>
         </div>
@@ -402,6 +410,11 @@
       </div>
     </div>
 
+    <div class="chart-card" id="card_pos_abc">
+      <h3 title="Positivação = clientes da classe que compraram no mês (de qualquer vendedor) ÷ clientes da classe. Classe = a do INÍCIO do mês (12 meses fechados anteriores), para não inflar o número com quem comprou forte no próprio mês.">Positivação por curva ABC de clientes <span id="pos_abc_sub" style="font-weight:400;text-transform:none;letter-spacing:0;"></span></h3>
+      <div id="pos_abc" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;"></div>
+    </div>
+
     <div class="chart-card">
       <h3>Receita líquida × Clientes positivados — últimos 12 meses</h3>
       <div class="chart-wrap"><canvas id="chartReceitaPos"></canvas></div>
@@ -433,6 +446,7 @@
               <th class="num sortable" data-sort="media_venda"     onclick="ordenarPor('media_venda')" title="Venda 12m ÷ 12 meses">Média Venda<span class="sort-ind">↕</span></th>
               <th class="num sortable" data-sort="receita_perdida" onclick="ordenarPor('receita_perdida')">⚠ Receita Perdida proj.<span class="sort-ind">↓</span></th>
               <th class="sortable"     data-sort="segmento"        onclick="ordenarPor('segmento')">Segmento<span class="sort-ind">↕</span></th>
+              <th title="Curva ABC de clientes (classe do início do mês)">ABC</th>
               <th>Tel</th>
             </tr>
           </thead>
@@ -490,7 +504,7 @@
               <th class="sortable" data-sort="proximo_pedido" onclick="ordenarProximo('proximo_pedido')">Previsão<span class="sort-ind">↕</span></th>
               <th class="sortable" data-sort="atraso"         onclick="ordenarProximo('atraso')">Atraso<span class="sort-ind">↕</span></th>
               <th class="sortable" data-sort="venda_12m"      onclick="ordenarProximo('venda_12m')">Venda 12m<span class="sort-ind">↕</span></th>
-              <th class="sortable" data-sort="receita_perdida" onclick="ordenarProximo('receita_perdida')">Receita em risco<span class="sort-ind">↕</span></th>
+              <th class="sortable" data-sort="receita_perdida" onclick="ordenarProximo('receita_perdida')">Receita perdida acumulada<span class="sort-ind">↕</span></th>
             </tr></thead>
             <tbody id="ppBody"></tbody>
           </table>
@@ -547,7 +561,7 @@ const _modo = 'personalizada';  // régua FIXA removida — sempre personalizada
 let _vendedoresMap = {};
 let _ultimoRfm = null;  // resposta do /rfm
 // Filtros como ARRAYS pra suportar multi-seleção (chips)
-let _filtros = { segmento: [], vendedor: '', time: '', uf: '', cidade: '', busca: '', dias_min: '', dias_max: '', sort: 'receita_perdida', dir: 'desc' };
+let _filtros = { segmento: [], classe: [], vendedor: '', time: '', uf: '', cidade: '', busca: '', dias_min: '', dias_max: '', sort: 'receita_perdida', dir: 'desc' };
 const _SORT_DEFAULT = { sort: 'receita_perdida', dir: 'desc' };
 let _cidadesAtivas = [];  // [{cidade, uf}] — populado por loadRfm
 let _offset = 0;
@@ -751,7 +765,7 @@ let _pracas = null;
 let _pracaMedida = 'clientes';
 const PRACA_TOP = 8;
 const PRACA_CORES = ['#38bdf8', '#34d399', '#fbbf24', '#f87171', '#a78bfa', '#fb923c', '#2dd4bf', '#f472b6'];
-const PRACA_LABEL = { clientes: 'Clientes', venda_12m: 'Venda 12m', receita_perdida: 'Receita em risco' };
+const PRACA_LABEL = { clientes: 'Clientes', venda_12m: 'Venda 12m', receita_perdida: 'Receita perdida acumulada' };
 
 function setPracaMedida(m) {
   _pracaMedida = m;
@@ -896,6 +910,7 @@ async function loadClientes() {
   });
   // Arrays viram comma-separated (backend faz split)
   if (_filtros.segmento && _filtros.segmento.length) params.set('segmento', _filtros.segmento.join(','));
+  if (_filtros.classe && _filtros.classe.length) params.set('classe', _filtros.classe.join(','));
   if (_filtros.vendedor) params.set('vendedor', _filtros.vendedor);
   if (_filtros.time)     params.set('time', _filtros.time);
   if (_filtros.uf)       params.set('uf', _filtros.uf);
@@ -906,6 +921,7 @@ async function loadClientes() {
 
   const r = await fetchJSON('/api/carteira/clientes?' + params.toString());
   renderTabela(r);
+  loadPosAbc();
   // Cards/donut refletem TODOS os filtros aplicados (single source of truth com a tabela)
   if (r.segmentos) {
     atualizarCardsEDonut(r.segmentos, r.total);
@@ -928,6 +944,43 @@ function atualizarCardsEDonut(segmentos, total) {
   renderDonut(segs8);
 }
 
+// Card "Positivação por curva ABC": mesmos filtros da tabela (menos a própria classe).
+let _posAbcSeq = 0;
+async function loadPosAbc() {
+  const seq = ++_posAbcSeq;
+  const p = _paramsExport();
+  p.delete('classe');
+  let j;
+  try { j = await fetchJSON('/api/carteira/positivacao-abc?' + p.toString()); } catch (e) { return; }
+  if (seq !== _posAbcSeq) return;            // resposta atrasada de um filtro anterior
+  const mes = am => { const s = String(am); return s.slice(4) + '/' + s.slice(0, 4); };
+  const pc = v => v == null ? '—' : (v * 100).toFixed(1).replace('.', ',') + '%';
+  const par = j.parcial;
+  document.getElementById('pos_abc_sub').textContent = `· mês fechado ${mes(j.mes_fechado)}` +
+    (par ? ` · mês corrente até o dia ${par.dia}` : '');
+  document.getElementById('pos_abc').innerHTML = ['A', 'B', 'C'].map(k => {
+    const f = j.fechado[k];
+    let cmp = '';
+    if (par) {
+      const a = par.atual[k].taxa, b = par.anterior_mesmo_dia[k].taxa;
+      const dif = (a != null && b != null) ? (a - b) : null;
+      const cor = dif == null ? 'var(--text-dim)' : (dif >= 0 ? 'var(--green)' : 'var(--red)');
+      cmp = `<div class="sub" style="margin-top:6px;">até dia ${par.dia}: <b>${pc(a)}</b> <span style="color:${cor};">`
+          + `${dif == null ? '' : (dif >= 0 ? '▲' : '▼') + ' ' + (Math.abs(dif) * 100).toFixed(1).replace('.', ',') + ' p.p.'}</span>`
+          + `<br><span style="color:var(--text-dim);">mesmo dia de ${mes(j.mes_fechado)}: ${pc(b)}</span></div>`;
+    }
+    return `<div class="card" style="cursor:pointer;" onclick="filtrarClasse('${k}')" title="Clique para filtrar a tabela pela classe ${k}">
+      <div class="label">Classe ${k}</div>
+      <div class="value">${pc(f.taxa)}</div>
+      <div class="sub">${NUM.format(f.positivados)} de ${NUM.format(f.base)} clientes em ${mes(j.mes_fechado)}</div>${cmp}</div>`;
+  }).join('');
+}
+
+function filtrarClasse(k) {
+  const chip = document.querySelector(`#chips_classe .chip[data-val="${k}"]`);
+  if (chip) toggleChip('classe', chip);
+}
+
 function renderTabela(r) {
   const tbody = document.getElementById('tbody');
   tbody.innerHTML = (r.rows || []).map(c => `
@@ -943,6 +996,7 @@ function renderTabela(r) {
       <td class="num">${BRL.format((c.venda_12m || 0) / 12)}</td>
       <td class="num">${c.receita_perdida_proj > 0 ? '<strong style="color:var(--red);">' + BRL.format(c.receita_perdida_proj) + '</strong>' : '—'}</td>
       <td><span class="badge b-${c.segmento}">${NOME_SEG[c.segmento] || c.segmento}</span></td>
+      <td style="text-align:center;font-family:'JetBrains Mono',monospace;font-weight:700;">${c.classe_abc || '—'}</td>
       <td>${c.telefone || '—'}</td>
     </tr>
   `).join('');
@@ -955,6 +1009,7 @@ function renderTabela(r) {
 function filtrosAtivosLabel() {
   const parts = [];
   if (_filtros.segmento.length) parts.push(`segmento=${_filtros.segmento.map(s => NOME_SEG[s] || s).join('+')}`);
+  if (_filtros.classe && _filtros.classe.length) parts.push(`curva=${_filtros.classe.join('+')}`);
   if (_filtros.vendedor) {
     const v = _vendedoresMap[_filtros.vendedor];
     parts.push(`vendedor=${v ? v.nome : _filtros.vendedor}`);
@@ -1064,7 +1119,7 @@ function aplicarDiasMin(val) {
 }
 
 function limparFiltros() {
-  _filtros = { segmento: [], status: [], vendedor: '', time: '', uf: '', cidade: '', busca: '', dias_min: '', dias_max: '', sort: 'receita_perdida', dir: 'desc' };
+  _filtros = { segmento: [], classe: [], status: [], vendedor: '', time: '', uf: '', cidade: '', busca: '', dias_min: '', dias_max: '', sort: 'receita_perdida', dir: 'desc' };
   document.getElementById('filt_vendedor').value = '';
   document.getElementById('filt_time').value = '';
   document.getElementById('filt_uf').value = '';
@@ -1115,6 +1170,7 @@ function _paramsExport() {
   const params = new URLSearchParams({ modo: _modo });
   const arr = (v) => Array.isArray(v) ? v.join(',') : v;
   if (_filtros.segmento && (Array.isArray(_filtros.segmento) ? _filtros.segmento.length : _filtros.segmento)) params.set('segmento', arr(_filtros.segmento));
+  if (_filtros.classe && _filtros.classe.length) params.set('classe', arr(_filtros.classe));
   if (_filtros.vendedor) params.set('vendedor', _filtros.vendedor);
   if (_filtros.time)     params.set('time',     _filtros.time);
   if (_filtros.uf)       params.set('uf',       _filtros.uf);
@@ -1188,7 +1244,7 @@ function renderPpCards(c) {
     { l: 'A ligar hoje', v: NUM.format(c.hoje || 0), cor: 'var(--orange)', jan: 'hoje' },
     { l: 'Próximos 7 dias', v: NUM.format(c.proximos7 || 0), cor: 'var(--accent)', jan: 'proximos7' },
     { l: 'Vencido +15 dias', v: NUM.format(c.vencido15 || 0), cor: 'var(--red)', jan: 'vencido15' },
-    { l: 'Receita em risco', v: BRL.format(c.receita_risco || 0), cor: 'var(--green)' },
+    { l: 'Receita perdida acumulada', v: BRL.format(c.receita_risco || 0), cor: 'var(--green)' },
   ];
   let html = cards.map(k => {
     const cls = k.jan ? ('pp-card pp-click' + (k.jan === jan ? ' pp-active' : '')) : 'pp-card';
