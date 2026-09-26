@@ -62,7 +62,10 @@ cliente X" · (3) "Explique este número" · (4) "Onde meu time perde dinheiro".
 ## 1. Defeitos que o agente repetiria — validados e CORRIGIDOS (25/09/2026)
 
 Validados no BI real e corrigidos na working tree (testes em `tests/test_defeitos_comercial_ia.py`;
-suíte 1.086 passam, 3 falhas pré-existentes). **Pendente: commit/deploy.**
+suíte 1.086 passam, 3 falhas pré-existentes). **Em produção** — commit `309c2a2`, deploy feito
+pelo Gabriel em 26/09/2026. Visível para o usuário: "Clientes Novos" cai de ~2.700 para dezenas
+(o número certo); Gerencial de 105 para 75 no alerta; CONSUMIDOR FINAL some das listas de clientes
+e a classe A ganha ~30 clientes. Continua pendente só a decisão do João sobre o limiar (item 3b).
 
 | # | Onde | Validação | Correção |
 |---|---|---|---|

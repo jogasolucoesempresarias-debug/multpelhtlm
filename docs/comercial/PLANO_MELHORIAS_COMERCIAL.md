@@ -291,8 +291,13 @@ recuperados. Só **53%** dos recuperados voltam a comprar nos 2 meses seguintes.
 | 7 | IA | depois |
 
 **Em produção desde 25/09/2026** — commits na `main`: `494a6f5` (tudo), `e810ae1` e `66c444d`
-(layout da ponte do mês). O João já usa `painel.jogasolucoes.com.br/performance`. Arquivos novos: `positivacao.py`, `recuperacao.py`,
-`potencial.py`, `performance_comercial.py`, `recuperacao.html`, `performance.html`, os testes
+(layout da ponte do mês). O João já usa `painel.jogasolucoes.com.br/performance`.
+Em 26/09/2026 entrou `309c2a2`, com 4 defeitos achados no levantamento da IA: Clientes Novos do
+Dashboard, alerta "/ano" do cockpit, "abaixo do limiar" do Gerencial só com pessoas e CONSUMIDOR
+FINAL fora da análise por cliente — detalhe em [IA_COMERCIAL_CONTEUDO.md §1](IA_COMERCIAL_CONTEUDO.md).
+
+Arquivos novos: `positivacao.py`, `recuperacao.py`, `potencial.py`, `performance_comercial.py`,
+`recuperacao.html`, `performance.html`, os testes
 `test_positivacao.py`, `test_recuperacao.py`, `test_recuperacao_endpoint.py`, `test_potencial.py`,
 `test_performance_comercial.py` e este plano. Alterados: `server.py`, `provider_sql.py`,
 `carteira.html`, `vendedores.html`, `vendedor.html`, `gerencial.html`, `static/joga-header.js`
