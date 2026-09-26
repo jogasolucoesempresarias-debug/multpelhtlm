@@ -28,9 +28,12 @@ Gerencial e só se responde explicando QUAL RÉGUA cada tela usa.
 **4 usos que viram botão/sugestão:** (1) "Minha lista de hoje" · (2) "Preparar visita ao
 cliente X" · (3) "Explique este número" · (4) "Onde meu time perde dinheiro".
 
-**Decidido pelo Gabriel (25/09/2026):**
-- **O VENDEDOR vai usar a IA** → o perfil vendedor é o público principal. "Minha lista de hoje" e
-  "Preparar visita ao cliente X" deixam de ser a última fase e viram o NÚCLEO da 1ª entrega.
+**Decidido pelo Gabriel (25–26/09/2026):**
+- **Quem MAIS vai usar é a parte GERENCIAL** — João, diretor e supervisores. O vendedor PODE usar
+  também (tem de funcionar no escopo dele), mas não é o público principal. ⚠️ Em 25/09 isto foi
+  registrado errado aqui ("vendedor é o público principal"); corrigido em 26/09 pelo Gabriel:
+  *"não é pra priorizar, eu só disse que podia ocorrer do vendedor usar também; quem mais vai usar
+  é a parte gerencial"*. A Fase 1 é GERENCIAL.
 - **Só na DEMO por enquanto** (`demo.jogasolucoes.com.br`, `DATA_SOURCE=postgres`, base sintética).
   A Multpel segue no estado `off` (sem `ia` no `MODULOS` — nem o botão aparece). Consequências:
   - tudo que o agente consulta tem de funcionar no **modo postgres** (os endpoints do §3 já têm
@@ -47,15 +50,22 @@ cliente X" · (3) "Explique este número" · (4) "Onde meu time perde dinheiro".
     com clientes/vendedores da demo; as respostas esperadas do §6 com dado real servem para o
     dia em que ligar na Multpel.
 
-### Fases (reordenadas pelo público vendedor)
-1. **Vendedor, na demo:** panorama do vendedor (carteira dele: em risco com chance de voltar,
-   Próximo Pedido até 60 d, recuperados, nota e metas) + consulta `cliente` + os dois botões
-   ("Minha lista de hoje", "Preparar visita ao cliente X") + glossário + usuários de demo.
-2. **Supervisor e diretor:** panoramas por time/empresa + consultas `vendedor` e `time` +
-   "Explique este número" e "Onde meu time perde dinheiro".
+### Fases (público principal = gerencial)
+1. **Gerencial, na demo** (diretor/admin e supervisor, cada um no seu escopo):
+   - panorama de GESTÃO: ponte da carteira em risco × recuperada e dinheiro na mesa (Recuperação),
+     ranking da Performance por universo (topo e fundo, com o indicador que pesa), cobertura do
+     Gerencial, metas do mês por time/vendedor (quem não vai bater), positivação por classe ABC,
+     vendedores com cadastro a transferir (fora da base: fictício / RCA inativo);
+   - consultas `vendedor` e `time` (e `cliente`, que o gestor também pergunta);
+   - "Explique este número" — responde a pergunta do JULIANO (§6) sozinho — e "Onde meu time
+     perde dinheiro";
+   - usuários de demo: 1 supervisor e 1 diretor/admin de demonstração (o vendedor pode vir junto
+     para mostrar o recorte, mas não é o foco).
+2. **Vendedor** (quando for usar): panorama da carteira dele (lista do dia até 15 d, em risco com
+   chance de voltar, recuperados, nota e metas) + "Minha lista de hoje" e "Preparar visita ao
+   cliente X" (botão no drill 360°). A consulta `cliente` e o RBAC já saem prontos da Fase 1.
 3. **Consultas `produto` e `departamento`** + sugestões de todas as telas (§5).
-4. **Ligar na Multpel** (quando decidirem): antes, corrigir os defeitos do §1 e rodar a bateria
-   do §6 com dado real.
+4. **Ligar na Multpel** (quando decidirem): rodar a bateria do §6 com dado real antes.
 
 ---
 
