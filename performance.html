@@ -42,10 +42,16 @@
   .nota.r { background:rgba(var(--red-rgb), .16); color:var(--red); }
   .small { font-size:.68rem; color:var(--text-dim); }
   .selo { display:inline-block; margin-top:3px; font-size:.64rem; padding:1px 6px; border-radius:8px; background:rgba(var(--yellow-rgb), .14); color:var(--yellow); white-space:nowrap; }
-  .table-scroll { overflow-x:auto; }
+  /* Cabeçalho preso (pedido do João, 28/09/2026): sticky só funciona contra o container que
+     rola — por isso a rolagem vertical é da tabela, não da página. O border-bottom some com
+     border-collapse + sticky; o box-shadow redesenha a linha. */
+  .table-scroll { overflow:auto; max-height:calc(100vh - 120px); }
+  thead th { position:sticky; top:0; z-index:2; background:var(--surface); box-shadow:inset 0 -1px 0 var(--border); }
   .pesos { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
   .pesos label { display:flex; flex-direction:column; font-size:.68rem; color:var(--text-dim); gap:4px; }
   .pesos input { width:84px; background:var(--surface2); border:1px solid var(--border); color:var(--text); border-radius:6px; padding:6px 8px; font-family:'JetBrains Mono',monospace; }
+  .filtros { display:flex; align-items:center; gap:8px; margin-bottom:12px; font-size:.74rem; color:var(--text-dim); }
+  .filtros select { background:var(--surface2); border:1px solid var(--border); color:var(--text); border-radius:7px; padding:6px 10px; font-family:inherit; font-size:.78rem; min-width:220px; }
   .hidden { display:none !important; }
 </style>
 </head>
@@ -57,6 +63,10 @@
   <div class="card">
     <p class="regua" id="regua">Carregando…</p>
     <div class="tabs" id="tabs"></div>
+    <div class="filtros hidden" id="filtroTime">
+      <label for="f_time">Time</label>
+      <select id="f_time" onchange="setTime(this.value)"></select>
+    </div>
     <div class="table-scroll"><table>
       <thead><tr>
         <th>#</th><th>Vendedor</th><th>Time</th><th class="num">Nota</th>
@@ -84,14 +94,19 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;
 const MES = am => { const s = String(am); return `${s.slice(4)}/${s.slice(0,4)}`; };
 const dec = (v, n=2) => v == null ? '—' : v.toFixed(n).replace('.', ',');
 const pct = v => v == null ? '—' : (v*100).toFixed(0) + '%';
-let _d = null, _univ = 'campo';
+// Atingimento de meta: 1 casa TRUNCADA, nunca arredondada (João, 28/09/2026). 99,96% arredondado
+// viraria "100,0%" ao lado de nota 9 — a faixa de 10 começa em 100% exatos. O +1e-9 anula o
+// resíduo de ponto flutuante (0,9 × 1000 = 899,999…); o servidor arredonda a 6 casas antes de pontuar.
+const pctAting = v => v == null ? '—' : (Math.floor(v * 1000 + 1e-9) / 10).toFixed(1).replace('.', ',') + '%';
+let _d = null, _univ = 'campo', _time = '';
 
-function cor(n) { return n == null ? '' : n >= 8 ? 'g' : n >= 6 ? 'y' : 'r'; }
+// Nota parcial sai sem cor: ela não disputa posição, e verde/vermelho a colocaria no placar.
+function cor(n, parcial) { return n == null || parcial ? '' : n >= 8 ? 'g' : n >= 6 ? 'y' : 'r'; }
 
 function celula(l, k) {
   const v = l.valores[k], n = l.notas[k];
   if (v == null) return `<td class="num"><span class="small">—</span></td>`;
-  const txt = (k === 'cobertura' || k === 'frequencia') ? dec(v) : pct(v);
+  const txt = (k === 'cobertura' || k === 'frequencia') ? dec(v) : pctAting(v);
   return `<td class="num">${txt}<div class="small">nota ${dec(n, 1)}</div></td>`;
 }
 
@@ -104,25 +119,49 @@ function render() {
     IND.map(([k, n]) => `${n} <b>${p[k]}</b>`).join(' · ') +
     (d.competencia_pesos ? ` (vigentes desde ${MES(d.competencia_pesos)})` : ' (padrão)') +
     `. Cada universo tem ranking e escala próprios: campo, lojas e telemarketing não se comparam. ` +
-    `Rentabilidade, receita e mix são % de atingimento da meta do Metas; <b>sem meta cadastrada o indicador fica de fora</b> e a nota sai parcial, renormalizada sobre o peso medido (mínimo 35%). ` +
-    `Escalas de atingimento são provisórias (70% → 0, 110% → 10) até medirmos a distribuição real. ` +
+    `Rentabilidade, receita e mix são % de atingimento da meta do Metas; <b>sem meta cadastrada o indicador fica de fora</b> e a nota sai parcial, renormalizada sobre o peso medido (mínimo 35%) — <b>nota parcial fica sem classificação</b> (não entra no ranking nem no "de N"). ` +
+    `Atingimento de meta: <b>abaixo de 85% → 0 · 85% a 89,9% → 6 a 7 · 90% a 99,9% → 9 · 100% ou mais → 10</b>. ` +
     `Fora do ranking: base ativa menor que 5 (caixa/balcão) e canais de e-commerce.`;
   const unis = ['campo','lojas','telemarketing'].filter(u => d.linhas.some(l => l.universo === u));
   if (!unis.includes(_univ) && unis.length) _univ = unis[0];
   document.getElementById('tabs').innerHTML = unis.map(u =>
     `<button class="btn-sm ${u === _univ ? 'on' : ''}" onclick="setUniv('${u}')">${UNIV[u]} <span class="small">(${d.total_universo[u] || 0})</span></button>`).join('');
-  const linhas = d.linhas.filter(l => l.universo === _univ);
+  const doUniv = d.linhas.filter(l => l.universo === _univ);
+  // Filtro de TIME (pedido do João, 28/09/2026: "está trazendo apenas a classificação geral").
+  // Filtra no cliente: o payload já traz o time de cada linha e o RBAC já recortou no servidor
+  // (supervisor só recebe os times dele). A lista sai da aba ATIVA — time sem ninguém no
+  // universo não aparece; trocar de aba com um time que não existe nela volta para "Todos".
+  const times = [...new Map(doUniv.filter(l => l.codsupervisor != null)
+    .map(l => [String(l.codsupervisor), l.time || `Time ${l.codsupervisor}`])).entries()]
+    .sort((a, b) => a[1].localeCompare(b[1], 'pt-BR'));
+  if (_time && !times.some(([c]) => c === _time)) _time = '';
+  document.getElementById('filtroTime').classList.toggle('hidden', times.length < 2);
+  document.getElementById('f_time').innerHTML = `<option value="">Todos os times</option>` +
+    times.map(([c, n]) => `<option value="${esc(c)}" ${c === _time ? 'selected' : ''}>${esc(n)}</option>`).join('');
+  const linhas = _time ? doUniv.filter(l => String(l.codsupervisor) === _time) : doUniv;
+  // Com time escolhido a posição principal é DENTRO do time e a geral vai embaixo, pequena.
+  // Mesma ordem do ranking geral (as linhas já chegam ordenadas por nota) — o time só recorta.
+  const nTime = linhas.filter(l => l.posicao != null).length;
+  let pt = 0;
+  const posTime = new Map(linhas.filter(l => l.posicao != null).map(l => [l.codusur, ++pt]));
+  const colPos = l => {
+    if (l.posicao == null) return `—` + (l.nota != null ? `<div class="small">sem classificação</div>` : '');
+    if (!_time) return `${l.posicao}<div class="small">de ${d.total_universo[l.universo] || ''}</div>`;
+    return `${posTime.get(l.codusur)}<div class="small">de ${nTime} no time</div>` +
+           `<div class="small">${l.posicao}º geral</div>`;
+  };
   document.getElementById('body').innerHTML = linhas.map(l => `<tr>
-    <td class="num">${l.posicao ?? '—'}<div class="small">${l.posicao ? 'de ' + (d.total_universo[l.universo] || '') : ''}</div></td>
+    <td class="num">${colPos(l)}</td>
     <td>${esc(l.nome)} <span class="small">#${l.codusur}</span></td>
     <td><span class="small">${esc(l.time || '—')}</span></td>
-    <td class="num"><span class="nota ${cor(l.nota)}">${l.nota == null ? '—' : dec(l.nota, 1)}</span>
+    <td class="num"><span class="nota ${cor(l.nota, l.parcial)}">${l.nota == null ? '—' : dec(l.nota, 1)}</span>
       ${l.parcial ? `<div><span class="selo" title="Falta: ${esc(l.faltando.join(', '))}">parcial · ${pct(l.peso_medido)} do peso</span></div>` : ''}</td>
     ${IND.map(([k]) => celula(l, k)).join('')}
   </tr>`).join('') || `<tr><td colspan="9" class="small" style="text-align:center;padding:18px;">Nenhum vendedor com nota neste universo.</td></tr>`;
 }
 
 function setUniv(u) { _univ = u; render(); }
+function setTime(t) { _time = t; render(); }
 
 async function carregarPesos() {
   let me = {};

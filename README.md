@@ -272,10 +272,26 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
     pesos do cliente (Rentab 35 · Cobertura 25 · Mix 20 · Receita 10 · Frequência 10) editáveis no
     Admin **por competência**. Rentab/receita/mix = % de atingimento da meta do Metas (absoluto mede
     território: BA ~+4 p.p. de margem); cobertura = da base **ajustada pela classe ABC**; frequência =
-    pedidos/cliente. Ranking **por universo** (campo · lojas · telemarketing, via TIPOVEND), escalas
-    p10→0/p90→10 congeladas (`NOTA_VERSAO`). Sem meta → nota PARCIAL renormalizada (mín. 35% do
-    peso). ⚠️ Escalas de atingimento PROVISÓRIAS (70%→0, 110%→10) até medir no banco de produção.
-    Fora: base < 5 e canais e-commerce. Gate: `test_performance_comercial.py`.
+    pedidos/cliente. Ranking **por universo** (campo · lojas · telemarketing, via TIPOVEND); cobertura
+    e frequência em escalas p10→0/p90→10 congeladas (`NOTA_VERSAO`). Sem meta → nota PARCIAL
+    renormalizada (mín. 35% do peso). Fora: base < 5 e canais e-commerce. Gate: `test_performance_comercial.py`.
+    - 🩹 **Atingimento de meta em FAIXAS do cliente** (28/09/2026, João: *"tem vendedor com 100% da
+      meta de rentabilidade e nota 7,6"*). A escala provisória linear 70%→0 / 110%→10 fazia bater a
+      meta valer **7,5**. Hoje, para rentabilidade, receita e mix nos três universos:
+      **< 85% → 0 · 85–89,99% → rampa 6→7 · 90–99,99% → 9 · ≥ 100% → 10** (`nota_atingimento`,
+      `NOTA_VERSAO` 2). É régua de META, não de dispersão: 90% e 99% valem o mesmo de propósito, e os
+      degraus não oscilam sozinhos (meta cadastrada, mês fechado — ≠ Compras). ⚠️ O salto em 85%
+      (0 → 6) é decisão dele: com rentabilidade pesando 35, 84,9% × 85% são ~2,1 pts na nota final.
+      ⚠️ **Muda a nota de quase todos sem ninguém mexer na operação** — avisar antes de publicar.
+    - ⚠️ **O % de atingimento sai TRUNCADO a 1 casa, nunca arredondado** (tela `pctAting` e IA
+      `_valor_ind`): 99,96% arredondado viraria "100,0%" ao lado de nota 9. O servidor arredonda a
+      6 casas antes de pontuar, senão 180.000 ÷ 200.000 cairia na rampa por resíduo de float.
+    - **Nota parcial fica SEM CLASSIFICAÇÃO** (28/09/2026, João: *"vale para todos"*). Continua com
+      nota (em cinza, sem cor de placar), mas sem posição e fora do "de N" (`classificavel`). Antes, a
+      Ellen com só cobertura + frequência (35% do peso) estava em 7º de 46.
+    - **Filtro de Time** e **cabeçalho fixo** (28/09/2026). O filtro é no cliente (o payload já traz
+      o time e o RBAC já recortou); com time escolhido a posição é **dentro do time** e a geral vai
+      embaixo. Aparece só com 2+ times na aba.
 - **Admin** — CRUD usuários, cron de email, multi-CC, segmento RFM, editor de metas. **+ acesso por área, comprador vinculado e relatórios de Compras** (ver abaixo).
 
 ## 🤖 Agente de IA (chat do Compras) — **módulo opcional, venda adicional**

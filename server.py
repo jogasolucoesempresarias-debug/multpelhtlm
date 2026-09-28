@@ -5519,7 +5519,9 @@ def _performance_dados():
     o ranking é do universo inteiro, a pessoa vê a própria posição nele)."""
     ins = _positivacao_insumos()
     ref = ins['ref']
-    key = f'multpel:performance:{ref}:v{performance_comercial.NOTA_VERSAO}'
+    # `:pc` = o detalhe ganhou `por_classe` (09/2026, Agente de IA). Só invalida o cache antigo;
+    # a nota é a mesma (NOTA_VERSAO não muda).
+    key = f'multpel:performance:{ref}:v{performance_comercial.NOTA_VERSAO}:pc'
     cached = _cache_get(key)
     hist_pesos = _perf_pesos_historico()
     pesos, comp_pesos = performance_comercial.pesos_vigentes(hist_pesos, ref)
@@ -5567,6 +5569,7 @@ def _performance_dados():
                 'valores': valores,
                 'detalhe': {
                     'base_ativa': base_n, 'cobertos': c.get('obs'), 'esperado': c.get('esperado'),
+                    'por_classe': c.get('por_classe'),
                     'clientes_atendidos': t.get('clientes'), 'mix_medio': t.get('mix'),
                     'realizado': {x: rz.get(x) for x in ('venda', 'rentabilidade', 'mix')},
                     'meta': {'venda': m.get('valor_meta'), 'rentabilidade': m.get('rentabilidade_meta'),
@@ -5597,7 +5600,7 @@ def api_performance():
     linhas = d['linhas']
     total_universo = {}
     for l in linhas:
-        if l['nota'] is not None:
+        if l['posicao'] is not None:           # "de N" conta só quem disputa posição (nota completa)
             total_universo[l['universo']] = total_universo.get(l['universo'], 0) + 1
     if role == 'vendedor':
         cu = session.get('codusur')
@@ -5613,7 +5616,7 @@ def api_performance():
            for u in performance_comercial.UNIVERSOS}
     return jsonify({
         'ok': True, 'mes': d['ref'], 'pesos': d['pesos'], 'competencia_pesos': d['competencia_pesos'],
-        'escalas': esc,
+        'escalas': esc, 'escala_atingimento': performance_comercial.ESCALA_ATINGIMENTO_PUBLICA,
         'provisorias': sorted(f'{u}:{k}' for u, k in performance_comercial.ESCALAS_PROVISORIAS),
         'total_universo': total_universo, 'nota_versao': performance_comercial.NOTA_VERSAO,
         'linhas': linhas,
