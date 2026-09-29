@@ -83,6 +83,7 @@
   }
 
   function selo(codcli, resumo, nome) {
+    css();                     // o selo aparece ANTES de qualquer clique — sem isto saía com o estilo cru do navegador
     const r = resumo || {};
     const cls = 'pc-selo' + (r.n ? ' tem' : '') + (r.destaque ? ' destaque' : '');
     const tip = r.n ? 'Plano de ação — ' + r.n + ' registro(s) desde a última compra' : 'Registrar a ação com este cliente';
@@ -183,4 +184,5 @@
   }
 
   window.PlanoCliente = { selo, resumos, abrir, fechar, _clicar, _agendar };
+  css();                       // e já no carregamento do script (a lista pode renderizar por outro caminho)
 })();

@@ -193,6 +193,10 @@ def test_telas_carregam_o_componente():
         assert '/static/plano-cliente.js' in Path(arq).read_text(encoding='utf-8'), arq
     js = Path('static/plano-cliente.js').read_text(encoding='utf-8')
     assert 'window.PlanoCliente' in js and "'/api/plano/'" in js and 'stopPropagation' in js
+    # o CSS entra ANTES do 1º clique (bug: o selo saía com o estilo cru do navegador até abrir o modal)
+    corpo_selo = js[js.index('function selo('):js.index('async function resumos(')]
+    assert 'css();' in corpo_selo
+    assert js.rstrip().endswith('})();') and 'css();                       // e já no carregamento' in js
     assert 'PlanoCliente' in Path('static/drill-cliente.js').read_text(encoding='utf-8')
     cart = Path('carteira.html').read_text(encoding='utf-8')
     assert 'tratativa' in cart and 'com_tratativa' in cart
