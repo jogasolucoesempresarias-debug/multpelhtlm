@@ -82,7 +82,15 @@
         <div class="k">Lucro perdido proj.</div><div class="v" style="color:var(--red);">${BRL2.format(c.lucro_perdido_proj || 0)}</div>
         <div class="k">RFM</div><div class="v">R=${c.r} F=${c.f} M=${c.m}</div>
         <div class="k">Segmento</div><div class="v"><span class="badge b-${c.segmento}">${(window.NOME_SEG && NOME_SEG[c.segmento]) || _NOME_SEG_PT[c.segmento] || c.segmento}</span></div>
+        <div class="k">Plano de ação</div><div class="v" id="drill_plano">—</div>
       `;
+      // Plano de ação (CRM leve): o selo abre o histórico e o registro (static/plano-cliente.js)
+      if (window.PlanoCliente) {
+        PlanoCliente.resumos([c.codcli]).then(rs => {
+          const el = document.getElementById('drill_plano');
+          if (el) el.innerHTML = PlanoCliente.selo(c.codcli, rs[String(c.codcli)], c.cliente);
+        }).catch(() => {});
+      }
 
       // Histórico
       const hist = (d.historico || []).slice().sort((a, b) => (a.AnoMes || 0) - (b.AnoMes || 0));

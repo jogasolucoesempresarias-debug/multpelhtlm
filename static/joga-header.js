@@ -285,6 +285,22 @@
     }
   }
 
+  /* Agente de IA do COMERCIAL (09/2026). O script só é BAIXADO quando as três condições valem:
+     a instância tem `ia` no MODULOS, a pessoa tem a área Comercial e a tela é do Comercial.
+     Na Multpel (sem `ia` no MODULOS) nada acontece — nem o arquivo, nem requisição a /api/ia/*.
+     A decisão sai do /api/me que este cabeçalho JÁ faz: zero requisição a mais para quem não tem.
+     O Compras (/estoque) tem o chat dele. ⚠️ Não citar a página oculta de adoção aqui: o gate do
+     test_uso procura o caminho dela neste arquivo (é o que prova que ela não está em menu). */
+  function carregarAgenteIA(me) {
+    if (localAtual() !== 'comercial') return;
+    if ((me.modulos || []).indexOf('ia') === -1) return;
+    if ((me.areas || []).indexOf('comercial') === -1) return;
+    if (document.getElementById('cia-js')) return;
+    const s = document.createElement('script');
+    s.id = 'cia-js'; s.src = '/static/comercial-ia.js'; s.defer = true;
+    document.head.appendChild(s);
+  }
+
   function iniciar() {
     // Esqueleto AGORA, de forma síncrona. A tag <script> deste arquivo fica logo depois do
     // placeholder, então quando isto roda o elemento já existe — e qualquer script inline
@@ -306,6 +322,7 @@
         // Reconcilia com o banco: se a pessoa trocou o tema em outra máquina, o banco vence.
         // (Pode haver 1 flip visível aqui — só quando os dois discordam; depois fica alinhado.)
         if (me.tema && me.tema !== temaAtual()) aplicarTema(me.tema);
+        carregarAgenteIA(me);
         const efetivas = (me.areas || []).filter(a => AREAS[a]);
         // Com 1 área não há troca a fazer — exceto no Admin, onde o seletor é a única saída.
         if (efetivas.length < 2 && !emAdmin()) return;

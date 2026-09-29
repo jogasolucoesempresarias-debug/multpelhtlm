@@ -200,7 +200,9 @@ def placar_de(movs, dono_de, time_de):
     def _slot(tab, k):
         return tab.setdefault(k, {'em_risco': 0, 'valor_em_risco': 0.0, 'rec_da_base': 0,
                                   'venda_rec_da_base': 0.0, 'rec_por_ele': 0,
-                                  'venda_rec_por_ele': 0.0, 'rec_de_outra_base': 0})
+                                  'venda_rec_por_ele': 0.0, 'rec_de_outra_base': 0,
+                                  'entraram': 0, 'valor_entraram': 0.0,
+                                  'rec_risco_da_base': 0, 'valor_rec_risco_da_base': 0.0})
 
     for c, m in movs.items():
         dono = dono_de.get(c)
@@ -208,6 +210,14 @@ def placar_de(movs, dono_de, time_de):
         if m['fim'] == RISCO:
             for tab, k in ((rcas, dono), (times, t_dono)):
                 s = _slot(tab, k); s['em_risco'] += 1; s['valor_em_risco'] += m['valor_fim']
+        # SALDO do mês (João, 29/09/2026): entraram em risco − recuperados DO RISCO, na carteira do
+        # DONO — os mesmos critérios da ponte da empresa, então a soma fecha com ela.
+        if m['entrou']:
+            for tab, k in ((rcas, dono), (times, t_dono)):
+                s = _slot(tab, k); s['entraram'] += 1; s['valor_entraram'] += m['valor_mensal_rec'] or m['valor_fim']
+        if m['recuperado'] and m['recuperado_de'] == RISCO:
+            for tab, k in ((rcas, dono), (times, t_dono)):
+                s = _slot(tab, k); s['rec_risco_da_base'] += 1; s['valor_rec_risco_da_base'] += m['valor_mensal_rec']
         if not m['recuperado']:
             continue
         total = sum(m['vendas'].values())
@@ -226,7 +236,10 @@ def placar_de(movs, dono_de, time_de):
                     st['rec_de_outra_base'] += 1
     for tab in (rcas, times):
         for s in tab.values():
-            for k in ('valor_em_risco', 'venda_rec_da_base', 'venda_rec_por_ele'):
+            s['saldo'] = s['entraram'] - s['rec_risco_da_base']        # > 0 = carteira piorou no mês
+            s['valor_saldo'] = s['valor_entraram'] - s['valor_rec_risco_da_base']
+            for k in ('valor_em_risco', 'venda_rec_da_base', 'venda_rec_por_ele', 'valor_entraram',
+                      'valor_rec_risco_da_base', 'valor_saldo'):
                 s[k] = round(s[k], 2)
     return {'rcas': rcas, 'times': times}
 

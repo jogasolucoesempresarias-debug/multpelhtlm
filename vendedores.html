@@ -119,7 +119,7 @@
       <div class="chart-wrap"><canvas id="chartTop10"></canvas></div>
     </div>
     <div class="chart-card">
-      <h3 id="h_hist_pos" title="Cobertura da base = clientes da base ativa (cadastrados no vendedor e com compra em 12m) que ELE atendeu no mês fechado ÷ base ativa. Vendedores com base ativa menor que 5 ficam fora (caixa/balcão).">Distribuição: Cobertura da base</h3>
+      <h3 id="h_hist_pos" title="Cobertura da carteira = % da carteira ativa (clientes cadastrados no vendedor, com compra em 12 meses) que comprou — de qualquer vendedor — nos 60 dias até o fim do mês fechado. É a mesma régua do Gerencial e da Performance (meta 100%). Vendedores com base ativa menor que 5 ficam fora (caixa/balcão).">Distribuição: Cobertura da base</h3>
       <div class="chart-wrap"><canvas id="chartHistPos"></canvas></div>
     </div>
   </div>
@@ -141,7 +141,7 @@
             <th class="num" onclick="ordenarPor('venda_liq')">Venda 12m</th>
             <th class="num" onclick="ordenarPor('lucro')">Lucro 12m</th>
             <th class="num" onclick="ordenarPor('ticket_medio')">Ticket</th>
-            <th class="num" id="th_pos" onclick="ordenarPor('taxa_positivacao')" title="Cobertura da base: clientes da base ativa (cadastrados no vendedor, com compra em 12m) que ELE atendeu no mês fechado ÷ base ativa. Nunca passa de 100%. '—' = base ativa menor que 5 (caixa/balcão, não é parâmetro).">Cobertura base</th>
+            <th class="num" id="th_pos" onclick="ordenarPor('taxa_positivacao')" title="Cobertura da carteira: % da carteira ativa (clientes cadastrados no vendedor, com compra em 12 meses) que comprou — de qualquer vendedor — nos 60 dias até o fim do mês fechado. É a mesma régua do Gerencial e da Performance (meta 100%). Nunca passa de 100%. '—' = base ativa menor que 5 (caixa/balcão, não é parâmetro).">Cobertura base</th>
             <th class="num" onclick="ordenarPor('fora_base')" title="Clientes de OUTRAS bases que ele atendeu no mês fechado. Passe o mouse no número para ver o tipo: cliente ativo de colega · liberado (mais de 60 dias sem comprar — regra comercial, qualquer vendedor atende) · código fictício ou RCA inativo (cadastro a transferir).">Fora da base</th>
             <th class="num" onclick="ordenarPor('mix_medio')" title="Mix: SKUs distintos por cliente atendido no mês fechado (régua de venda)">Mix</th>
             <th class="num" onclick="ordenarPor('cross_medio')" title="Cross-selling: departamentos distintos por cliente atendido no mês fechado">Deptos</th>
@@ -333,7 +333,7 @@ function foraTip(v) {
 }
 
 function renderHistPos(rows) {
-  // Cobertura da base fica entre 0 e 100% por construção (positivacao.py). Sem base mínima → fora.
+  // Cobertura da carteira (régua única, cobertura.cobertura_por_dono) fica entre 0 e 100%. Sem base mínima → fora.
   const bins = [{label: '0-20%', min: 0, max: 0.2, count: 0}, {label: '20-40%', min: 0.2, max: 0.4, count: 0},
                 {label: '40-60%', min: 0.4, max: 0.6, count: 0}, {label: '60-80%', min: 0.6, max: 0.8, count: 0},
                 {label: '80-100%', min: 0.8, max: 1.0001, count: 0}];

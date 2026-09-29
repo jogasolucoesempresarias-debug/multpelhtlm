@@ -20,7 +20,7 @@ def test_escala_linear_com_trava():
 def test_nota_parcial_e_renormalizada_sem_meta():
     """Sem meta cadastrada, rentabilidade/receita/mix saem da conta: a nota fica na escala 0–10
     sobre o peso medido (35%) em vez de ter teto 3,5 — e declara o que falta."""
-    v = {'cobertura': 1.34, 'frequencia': 3.51}         # os dois no topo da escala do campo
+    v = {'cobertura': 1.00, 'frequencia': 3.51}         # 100% da carteira + frequência no topo
     n = pc.nota(v, pc.CAMPO, pc.PESOS_PADRAO)
     assert n['nota'] == pytest.approx(10) and n['parcial'] is True
     assert n['peso_medido'] == pytest.approx(0.35)
@@ -30,7 +30,8 @@ def test_nota_parcial_e_renormalizada_sem_meta():
 def test_nota_completa_pondera_pelos_pesos():
     v = {'rentabilidade': 1.10, 'receita': 0.70, 'mix': 0.95, 'cobertura': 1.05, 'frequencia': 1.50}
     n = pc.nota(v, pc.CAMPO, pc.PESOS_PADRAO)
-    esperado = (10 * 35 + 0 * 10 + 9 * 20 + pc.escala(1.05, 0.76, 1.34) * 25 + 0 * 10) / 100
+    # cobertura 1,05 = 105% da carteira? não existe: o valor é fração (0–1); acima de 1 satura em 10
+    esperado = (10 * 35 + 0 * 10 + 9 * 20 + 10 * 25 + 0 * 10) / 100
     assert n['nota'] == pytest.approx(esperado, abs=0.01) and n['parcial'] is False
 
 
@@ -73,37 +74,26 @@ def test_escala_depende_do_universo():
     assert pc.nota({'frequencia': 3.51}, pc.LOJAS, pc.PESOS_PADRAO)['notas']['frequencia'] < 5
 
 
-def test_cobertura_ajustada_nao_pune_carteira_de_classe_C():
-    """Dois vendedores com o MESMO desempenho relativo: um só com clientes A, outro só com C.
-    Sem o ajuste, o de C perderia; com o ajuste, os dois ficam em 1,0."""
-    classes = {**{i: 'A' for i in range(10)}, **{i: 'C' for i in range(100, 120)}}
-    bases = {1: set(range(10)), 2: set(range(100, 120))}
-    atend = {1: set(range(8)), 2: set(range(100, 105))}          # 80% dos A · 25% dos C
-    r = pc.cobertura_ajustada(bases, atend, classes, {1: pc.CAMPO, 2: pc.CAMPO})
-    assert r[1]['indice'] == pytest.approx(1.0) and r[2]['indice'] == pytest.approx(1.0)
+def test_cobertura_e_pontuada_nas_faixas_de_meta_com_meta_100():
+    """Régua única (João, 29/09/2026): a cobertura é o % da carteira ativa positivada em 60 d, com
+    META DE 100% nas MESMAS faixas das metas. Sai o índice relativo ao mix ABC (NOTA_VERSAO 3)."""
+    assert pc.NOTA_VERSAO == 3 and 'cobertura' in pc.ATINGIMENTO_COBERTURA
+    assert all('cobertura' not in e for e in pc.ESCALAS.values())
+    for pct_, nota_ in ((0.80, 0.0), (0.8499, 0.0), (0.85, 6.0), (0.95, 9.0), (1.0, 10.0)):
+        assert pc.nota({'cobertura': pct_}, pc.CAMPO, pc.PESOS_PADRAO)['notas']['cobertura'] == nota_
+    assert pc.nota({'cobertura': 0.80}, pc.LOJAS, pc.PESOS_PADRAO)['notas']['cobertura'] == 0.0   # igual em todo universo
 
 
-def test_por_classe_explica_o_indice_sem_mudar_a_nota():
-    """`por_classe` (09/2026, Agente de IA) é só explicação: base e atendidos por classe somam o
-    `obs`, a taxa do universo reproduz o `esperado`, e índice/nota ficam idênticos."""
-    classes = {**{i: 'A' for i in range(10)}, **{i: 'B' for i in range(10, 20)},
-               **{i: 'C' for i in range(100, 120)}}
-    bases = {1: set(range(10)) | set(range(100, 105)), 2: set(range(10, 20)) | set(range(105, 120))}
-    atend = {1: set(range(9)) | {100}, 2: {10, 11, 105}}
-    un = {1: pc.CAMPO, 2: pc.CAMPO}
-    r = pc.cobertura_ajustada(bases, atend, classes, un)
-    for u in (1, 2):
-        pcl = r[u]['por_classe']
-        assert sum(x['atendidos'] for x in pcl.values()) == r[u]['obs']
-        assert sum(x['base'] for x in pcl.values()) == len(bases[u])
-        assert sum(x['base'] * x['taxa_universo'] for x in pcl.values()) == pytest.approx(r[u]['esperado'], abs=0.01)
-    assert r[1]['por_classe']['A'] == {'base': 10, 'atendidos': 9, 'taxa_universo': 0.9}
-    # a nota vem só de `indice` — mesmo resultado com ou sem o campo novo
-    sem = {u: {k: v for k, v in d.items() if k != 'por_classe'} for u, d in r.items()}
-    for u in (1, 2):
-        n1 = pc.nota({'cobertura': r[u]['indice']}, pc.CAMPO, pc.PESOS_PADRAO)
-        n2 = pc.nota({'cobertura': sem[u]['indice']}, pc.CAMPO, pc.PESOS_PADRAO)
-        assert n1 == n2
+def test_cobertura_INFORMATIVA_aparece_mas_nao_entra_na_nota():
+    """Mês de limpeza: a cobertura é calculada e mostrada, mas sai da nota — e sai também do peso
+    total, senão a nota de TODO MUNDO ficaria "parcial" (e sem classificação) no período."""
+    v = {'rentabilidade': 1.0, 'receita': 1.0, 'mix': 1.0, 'cobertura': 0.50, 'frequencia': 3.51}
+    n = pc.nota(v, pc.CAMPO, pc.PESOS_PADRAO, fora_da_nota=('cobertura',))
+    assert n['notas']['cobertura'] == 0.0 and n['informativos'] == ['cobertura']
+    assert n['nota'] == 10.0 and n['parcial'] is False and n['peso_medido'] == pytest.approx(1.0)
+    assert 'cobertura' not in n['faltando']
+    com = pc.nota(v, pc.CAMPO, pc.PESOS_PADRAO)
+    assert com['nota'] == pytest.approx(7.5) and com['informativos'] == []
 
 
 def test_pesos_por_competencia_nao_reescrevem_o_passado():

@@ -7,10 +7,13 @@ Pesos do cliente (editáveis no Admin, gravados por COMPETÊNCIA): Rentabilidade
 · Mix 20 · Receita 10 · Frequência 10.
 
 Como cada indicador é medido — e por quê (medido no BI em 24/09/2026):
-- COBERTURA: cobertura da base (positivacao.py) AJUSTADA PELA CURVA ABC = positivados ÷
-  esperados, onde esperado = base de cada classe × positivação da classe no universo. Sem o
-  ajuste, carteira cheia de clientes C (positivação ~25%) perde para carteira de A (~82%) sem
-  diferença de trabalho. 1,0 = a média do universo.
+- COBERTURA (v3, João 29/09/2026 — PLANO_MELHORIAS §11): a RÉGUA ÚNICA das três telas = % da
+  carteira ativa (clientes cadastrados no vendedor com compra em 365 d) positivada nos 60 d que
+  terminam no último dia do mês fechado, por QUALQUER vendedor (`cobertura.cobertura_por_dono`).
+  Meta = 100% para todos, pontuada nas MESMAS faixas das metas. Até a v2 era um ÍNDICE relativo ao
+  mix ABC (atendidos ÷ esperados): o JULIANO tinha nota 10 com 61,7% no Gerencial e ninguém
+  conseguia reconciliar as telas — o João trocou pela régua única, sabendo que carteira com muito
+  cliente C/ciclo longo perde (e é isso que ele quer que o vendedor corrija na carteira).
 - RENTABILIDADE, RECEITA, MIX: % de ATINGIMENTO da meta do Metas (lucro, venda, mix), pontuado
   nas FAIXAS do cliente (ver ATINGIMENTO abaixo — não é a escala linear p10/p90). Valores
   absolutos medem território: a margem da BA roda ~4 p.p. acima e a meta de rentabilidade já
@@ -29,7 +32,8 @@ A nota NUNCA é gravada: recalcula do ingrediente (mês fechado).
 """
 
 # v2 (28/09/2026): escala de atingimento de meta em FAIXAS, definida pelo João (era linear 70→110).
-NOTA_VERSAO = 2
+# v3 (29/09/2026): cobertura = % da régua única nas mesmas faixas (era índice ABC com escala p10/p90).
+NOTA_VERSAO = 3
 
 # Nota medida sobre menos que isso do peso não ranqueia (ex.: só cobertura = 25%). 35% é
 # cobertura + frequência, o que existe mesmo sem meta cadastrada no Metas.
@@ -51,6 +55,9 @@ UNIVERSOS = (CAMPO, LOJAS, TELEMARKETING)
 # ⚠️ O salto em 85% (0 → 6) é decisão dele, com o custo declarado: rentabilidade pesa 35, então
 # 84,9% × 85% são ~2,1 pontos na nota final.
 ATINGIMENTO = ('rentabilidade', 'receita', 'mix')
+# Indicadores pontuados nas faixas: os três de meta + a cobertura (meta fixa de 100% — o valor já
+# é a fração da carteira, então atingimento = o próprio %).
+ATINGIMENTO_COBERTURA = ATINGIMENTO + ('cobertura',)
 ATING_PISO, ATING_QUASE, ATING_META = 0.85, 0.90, 1.00
 ATING_RAMPA = (6.0, 7.0)          # nota em 85% → nota "morrendo" em 89,99%
 ESCALA_ATINGIMENTO_PUBLICA = [    # para a tela/IA descreverem a régua sem reimplementá-la
@@ -63,11 +70,11 @@ ESCALA_ATINGIMENTO_PUBLICA = [    # para a tela/IA descreverem a régua sem reim
 # (p10, p90) medidos em 12 meses fechados (set/25–ago/26). Telemarketing não tinha amostra
 # suficiente: usa a do campo, marcada como provisória.
 ESCALAS = {
-    CAMPO:         {'cobertura': (0.76, 1.34), 'frequencia': (1.50, 3.51)},
-    LOJAS:         {'cobertura': (0.92, 1.54), 'frequencia': (1.80, 6.80)},
-    TELEMARKETING: {'cobertura': (0.76, 1.34), 'frequencia': (1.50, 3.51)},
+    CAMPO:         {'frequencia': (1.50, 3.51)},
+    LOJAS:         {'frequencia': (1.80, 6.80)},
+    TELEMARKETING: {'frequencia': (1.50, 3.51)},
 }
-ESCALAS_PROVISORIAS = {(TELEMARKETING, 'cobertura'), (TELEMARKETING, 'frequencia')}
+ESCALAS_PROVISORIAS = {(TELEMARKETING, 'frequencia')}
 
 
 def universo_de(tipovend):
@@ -113,50 +120,6 @@ def atingimento(realizado, meta):
     return realizado / meta
 
 
-def cobertura_ajustada(bases, atendidos, classes, universo_rca):
-    """{codusur: {obs, esperado, indice}} — cobertura da base ajustada pela curva ABC.
-
-    bases:        {codusur: set(codcli)} — base ativa (positivacao.base_ativa)
-    atendidos:    {codusur: set(codcli)} — clientes que ELE atendeu no mês
-    classes:      {codcli: 'A'|'B'|'C'} — classe do INÍCIO do mês (positivacao.classes_abc)
-    universo_rca: {codusur: universo}
-    A taxa esperada de cada classe é a do UNIVERSO (Σ cobertos ÷ Σ base, só clientes com classe).
-    """
-    tot = {}
-    for u, base in bases.items():
-        un = universo_rca.get(u, CAMPO)
-        meus = atendidos.get(u, set())
-        for c in base:
-            k = classes.get(c)
-            if k is None:
-                continue
-            t = tot.setdefault((un, k), [0, 0])
-            t[0] += 1
-            t[1] += 1 if c in meus else 0
-    taxa = {key: (p / n) if n else None for key, (n, p) in tot.items()}
-    out = {}
-    for u, base in bases.items():
-        un = universo_rca.get(u, CAMPO)
-        meus = atendidos.get(u, set())
-        obs = esp = 0.0
-        # `por_classe` é só EXPLICAÇÃO do índice (a tela ignora; a nota não usa): a pergunta real
-        # "por que o JULIANO tem 10 se a cobertura dele é baixa?" (João, 25/09/2026) só se responde
-        # mostrando o mix A/B/C da base e quantos de cada ele atendeu contra a taxa do universo.
-        por_classe = {}
-        for c in base:
-            k = classes.get(c)
-            if k is None or taxa.get((un, k)) is None:
-                continue
-            esp += taxa[(un, k)]
-            obs += 1 if c in meus else 0
-            pc = por_classe.setdefault(k, {'base': 0, 'atendidos': 0, 'taxa_universo': round(taxa[(un, k)], 4)})
-            pc['base'] += 1
-            pc['atendidos'] += 1 if c in meus else 0
-        out[u] = {'obs': int(obs), 'esperado': round(esp, 2), 'indice': (obs / esp) if esp else None,
-                  'por_classe': por_classe}
-    return out
-
-
 def pesos_vigentes(historico, anomes):
     """Pesos da competência: o registro mais recente com competência <= anomes; senão o padrão.
     historico = {'AAAAMM': {indicador: peso}}. Mudar o foco em novembro NÃO reescreve setembro."""
@@ -183,26 +146,32 @@ def validar_pesos(pesos):
     return None
 
 
-def nota(valores, universo, pesos):
+def nota(valores, universo, pesos, fora_da_nota=()):
     """Nota 0–10 PARCIAL e RENORMALIZADA: divide pelo peso efetivamente medido.
     Indicador sem valor (sem meta, sem base) sai da conta e da tela como pendente.
-    Sem nenhum indicador medido → nota None."""
+    Sem nenhum indicador medido → nota None.
+
+    `fora_da_nota`: indicadores INFORMATIVOS (mês de limpeza da cobertura, decisão de 29/09/2026):
+    a nota do indicador é calculada e mostrada, mas ele sai da nota final E do peso total — se
+    ficasse no total, a nota de todo mundo viraria "parcial" (sem classificação) no período."""
     esc = ESCALAS.get(universo, ESCALAS[CAMPO])
+    fora = set(fora_da_nota or ())
     notas, num, den = {}, 0.0, 0.0
     for k in INDICADORES:
-        s = nota_atingimento(valores.get(k)) if k in ATINGIMENTO else escala(valores.get(k), *esc[k])
+        s = nota_atingimento(valores.get(k)) if k in ATINGIMENTO_COBERTURA else escala(valores.get(k), *esc[k])
         notas[k] = None if s is None else round(s, 2)
         w = float(pesos.get(k, 0))
-        if s is not None and w > 0:
+        if s is not None and w > 0 and k not in fora:
             num += s * w
             den += w
-    total = sum(float(pesos.get(k, 0)) for k in INDICADORES) or 100.0
+    total = sum(float(pesos.get(k, 0)) for k in INDICADORES if k not in fora) or 100.0
     suficiente = den / total >= PESO_MINIMO - 1e-9
     return {
         'nota': round(num / den, 2) if den and suficiente else None,
         'parcial': den < total - 1e-9,
         'peso_medido': round(den / total, 4),
-        'faltando': [k for k in INDICADORES if notas[k] is None and float(pesos.get(k, 0)) > 0],
+        'faltando': [k for k in INDICADORES if notas[k] is None and float(pesos.get(k, 0)) > 0 and k not in fora],
+        'informativos': [k for k in INDICADORES if k in fora],
         'notas': notas,
     }
 

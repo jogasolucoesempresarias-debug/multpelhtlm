@@ -64,14 +64,18 @@ def test_admin_ve_toda_a_empresa(client, usuario_admin, mock_carteira, clean_red
     # Estrutura
     for k in ('empresa', 'times', 'vendedores', 'limiar_pct', 'abaixo_do_limiar', 'coberto_dias'):
         assert k in d
-    # Empresa == 4 clientes; níveis reconciliam
-    assert d['empresa']['total_clientes'] == 4
-    assert _soma(d['times']) == 4
-    assert _soma(d['vendedores']) == 4
-    # 2 times (sup 18 com 3, sup 99 com 1)
+    # Régua única (29/09/2026): só a BASE ATIVA (compra em 365 d) entra — o fixture tem datas fixas,
+    # então o esperado sai da mesma regra, não de um número cravado que envelhece.
+    import server
+    import cobertura as cob
+    base = [c for c in server._carregar_carteira_full() if cob.na_base(c.get('recencia_dias'))]
+    assert 0 < len(base) <= 4
+    assert d['empresa']['total_clientes'] == len(base)
+    assert _soma(d['times']) == len(base)
+    assert _soma(d['vendedores']) == len(base)
     times_por_id = {t['id']: t['total_clientes'] for t in d['times']}
-    assert times_por_id.get(18) == 3
-    assert times_por_id.get(99) == 1
+    for sup in (18, 99):
+        assert times_por_id.get(sup, 0) == sum(1 for c in base if c.get('codsupervisor') == sup)
 
 
 def test_ranking_pior_primeiro_e_flags(client, usuario_admin, mock_carteira, clean_redis):
@@ -111,8 +115,9 @@ def test_supervisor_ve_apenas_suas_areas(client, usuario_supervisor, mock_cartei
 def test_coberto_dias_toggle_e_fallback(client, usuario_admin, mock_carteira, clean_redis):
     login_as(client, usuario_admin['email'], usuario_admin['senha'])
     assert _get_cobertura(client, coberto_dias=60).get_json()['coberto_dias'] == 60
-    # valor inválido cai no default (30)
-    assert _get_cobertura(client, coberto_dias=999).get_json()['coberto_dias'] == 30
+    # valor inválido cai no configurado no Admin (padrão 60 desde a régua única)
+    import server
+    assert _get_cobertura(client, coberto_dias=999).get_json()['coberto_dias'] == server._cobertura_coberto_dias()
 
 
 def test_csv_export(client, usuario_admin, mock_carteira, clean_redis):

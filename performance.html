@@ -71,7 +71,7 @@
       <thead><tr>
         <th>#</th><th>Vendedor</th><th>Time</th><th class="num">Nota</th>
         <th class="num" title="% de atingimento da meta de rentabilidade (lucro) do Metas">Rentabilidade</th>
-        <th class="num" title="Cobertura da base ajustada pela curva ABC: positivados ÷ esperados (1,00 = média do universo)">Cobertura</th>
+        <th class="num" title="Cobertura da carteira: % dos clientes ativos do vendedor (cadastrados nele, com compra em 12 meses) que compraram — de qualquer vendedor — nos 60 dias até o fim do mês. Meta 100%, mesmas faixas das metas. É a mesma régua do Gerencial.">Cobertura</th>
         <th class="num" title="% de atingimento da meta de mix do Metas">Mix</th>
         <th class="num" title="% de atingimento da meta de venda do Metas">Receita</th>
         <th class="num" title="Pedidos por cliente atendido no mês">Frequência</th>
@@ -106,8 +106,11 @@ function cor(n, parcial) { return n == null || parcial ? '' : n >= 8 ? 'g' : n >
 function celula(l, k) {
   const v = l.valores[k], n = l.notas[k];
   if (v == null) return `<td class="num"><span class="small">—</span></td>`;
-  const txt = (k === 'cobertura' || k === 'frequencia') ? dec(v) : pctAting(v);
-  return `<td class="num">${txt}<div class="small">nota ${dec(n, 1)}</div></td>`;
+  // Cobertura (régua única, 29/09/2026) é % da carteira como as metas — só a frequência é número.
+  const txt = k === 'frequencia' ? dec(v) : pctAting(v);
+  // Mês de limpeza: a nota da cobertura aparece, mas não entra na nota final.
+  const info = (l.informativos || []).includes(k) && k === 'cobertura' ? ' · informativa' : '';
+  return `<td class="num">${txt}<div class="small">nota ${dec(n, 1)}${info}</div></td>`;
 }
 
 function render() {
@@ -121,6 +124,8 @@ function render() {
     `. Cada universo tem ranking e escala próprios: campo, lojas e telemarketing não se comparam. ` +
     `Rentabilidade, receita e mix são % de atingimento da meta do Metas; <b>sem meta cadastrada o indicador fica de fora</b> e a nota sai parcial, renormalizada sobre o peso medido (mínimo 35%) — <b>nota parcial fica sem classificação</b> (não entra no ranking nem no "de N"). ` +
     `Atingimento de meta: <b>abaixo de 85% → 0 · 85% a 89,9% → 6 a 7 · 90% a 99,9% → 9 · 100% ou mais → 10</b>. ` +
+    `<b>Cobertura</b> = % da carteira ativa (clientes do vendedor com compra em 12 meses) que comprou, de qualquer vendedor, nos 60 dias até o fim do mês — meta 100%, mesmas faixas; é a mesma régua do Gerencial. ` +
+    (d.cobertura_informativa ? `<b>Até ${MES(d.cobertura_na_nota_desde)} a cobertura é informativa</b> (mês de limpeza da carteira): aparece com a nota, mas não entra na nota final. ` : '') +
     `Fora do ranking: base ativa menor que 5 (caixa/balcão) e canais de e-commerce.`;
   const unis = ['campo','lojas','telemarketing'].filter(u => d.linhas.some(l => l.universo === u));
   if (!unis.includes(_univ) && unis.length) _univ = unis[0];

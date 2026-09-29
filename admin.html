@@ -154,6 +154,12 @@
           <option value="60">≤ 60 dias</option>
         </select>
       </div>
+      <div class="ff" style="max-width:240px;">
+        <label>Cobertura entra na nota a partir de
+          <span style="color:var(--text-dim);font-size:0.72rem;font-weight:400;">— competência; antes é informativa (mês de limpeza)</span>
+        </label>
+        <input type="month" id="cfg_cob_desde" style="width:160px;">
+      </div>
       <button class="btn btn-primary" onclick="salvarConfigCobertura()">Salvar config</button>
       <span id="cfgMsg" style="font-size:0.8rem;color:var(--text-dim);"></span>
     </div>
@@ -957,6 +963,8 @@ async function loadConfigCobertura() {
     if (d.ok) {
       document.getElementById('cfg_limiar').value = d.limiar_pct;
       document.getElementById('cfg_coberto').value = String(d.coberto_dias);
+      const cd = String(d.cobertura_na_nota_desde || '');
+      if (cd.length === 6) document.getElementById('cfg_cob_desde').value = cd.slice(0, 4) + '-' + cd.slice(4);
     }
   } catch (e) {}
 }
@@ -968,6 +976,7 @@ async function salvarConfigCobertura() {
     const body = {
       limiar_pct: parseFloat(document.getElementById('cfg_limiar').value),
       coberto_dias: parseInt(document.getElementById('cfg_coberto').value, 10),
+      cobertura_na_nota_desde: parseInt((document.getElementById('cfg_cob_desde').value || '').replace('-', ''), 10) || undefined,
     };
     const r = await fetch('/api/admin/config/cobertura', {
       method: 'PUT', credentials: 'same-origin',

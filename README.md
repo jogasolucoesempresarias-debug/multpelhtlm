@@ -353,7 +353,33 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
 >   cookie sai `Secure` e o `requests` (ao contrário do curl) não o envia por HTTP, e o sintoma
 >   é um 401 logo depois de um login 200.
 
-> ### 🔜 Próximo passo: o mesmo Agente no COMERCIAL
+> ### ✅ 09/2026 — Agente do COMERCIAL, Fase 1 (gestão, só na DEMO)
+>
+> Implementado em 26/09/2026. Público principal = **gestão** (diretor/viewer e supervisor). O
+> vendedor também pode usar, sempre no escopo dele. Liga pelo **mesmo** `ia` no `MODULOS` (3 estados);
+> na Multpel segue `off`. Detalhe completo, lições e deploy:
+> **[docs/comercial/IA_COMERCIAL_CONTEUDO.md §7](docs/comercial/IA_COMERCIAL_CONTEUDO.md)**.
+>
+> - **Motor puro** `ia_comercial.py`: regras, glossário (as 4 positivações, 3 coberturas, 3
+>   receitas em risco, réguas pendentes com o João), panorama, consultas, sugestões e índice.
+>   Rotas `/api/ia/{status,contexto,chat}` no `server.py`; widget `static/comercial-ia.js`.
+> - ⚠️ **O agente lê as MESMAS rotas das telas, por dentro** (`_ia_rota`): mesma função, mesmo
+>   RBAC, mesmo cache, sessão copiada. Zero conta nova e zero espelho novo no `provider_sql`.
+>   Essas rotas internas **não passam** pelo `_guard_comercial`. Quem guarda a porta é o
+>   `/api/ia/chat` (e o `/contexto`): usuário sem a área Comercial leva **403** ali (gate em
+>   teste).
+> - **Consultas `vendedor`, `time` e `cliente`** por function calling, no máximo 3 por
+>   pergunta, executadas com a sessão do usuário. Supervisor pedindo um vendedor de outro time
+>   recebe "fora do escopo", sem dado.
+> - ⚠️ **O widget só é BAIXADO** quando o `/api/me` (que o cabeçalho já chama) traz `ia` em
+>   `modulos`. Na Multpel não há botão nem nenhuma requisição a `/api/ia/*`, o que foi
+>   verificado em navegador headless.
+> - Panorama frio: ~30 s no BI real, porque a Recuperação sozinha leva ~43 s em série. Por isso
+>   as fontes são buscadas **em paralelo** e o panorama é **aquecido ao ABRIR o chat**.
+> - Gate `tests/test_ia_comercial.py`. Bateria real `tests/smoke_ia_comercial_real.py
+>   --fonte demo|bi` (roda no processo: sem instância e sem a armadilha do cookie `Secure`).
+>
+> #### (histórico) o plano de 08/2026
 >
 > A arquitetura já está pronta para isso — **o que muda é pouco**:
 >
@@ -1686,6 +1712,17 @@ muitas instâncias; as env vars são o interruptor.
   analytics **e** auth (as tabelas não colidem).
 - **Login:** o `ADMIN_EMAIL` / `ADMIN_SENHA` definidos na stack. Acompanhar os logs do `demo-seed` até
   **`[bootstrap] DEMO PRONTA`** (durante o seed, o login falha — é o passo `init_db` que cria as tabelas de auth).
+- **Usuários por perfil (09/2026, Agente de IA do Comercial):** `diretor@` (viewer: vê a empresa,
+  sem `/admin`), `supervisor@` e `vendedor@jogasolucoes.com.br`, com a senha `DEMO_USUARIOS_SENHA`
+  da stack. Quem cria é o `_seed_demo/seed_usuarios_demo.py` (travas: `DEMO_SEED=1`, recusa
+  `multpel_db`, recusa banco sem "demo"). Ele roda no bootstrap e **também no redeploy de uma
+  demo já populada**. O time e o RCA são escolhidos por medição: o time com mais vendedores e,
+  nele, a maior carteira.
+- ⚠️ **Metas na virada do mês:** a base anda sozinha, mas o `seed_metas_demo` só semeava o mês
+  do bootstrap. No mês seguinte a demo ficava "sem meta", com Metas vazias e a Performance
+  parcial para todos. Agora o job diário `demo_avancar` roda `seed_usuarios_demo.py --so-metas`:
+  meta = realizado do mês anterior × fator de 0,90 a 1,30 por vendedor (tem quem bate e quem não
+  bate). Só semeia mês **sem nenhuma** meta, nunca sobrescreve a do Admin.
 - Base reprodutível (SEED=42) em `_seed_demo/`; runbook local (fumaça no navegador) em
   **`_seed_demo/FUMACA_DEMO.md`**; seeder de metas com **trava** (`DEMO_SEED=1` + recusa `multpel_db`).
 

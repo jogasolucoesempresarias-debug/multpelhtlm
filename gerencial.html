@@ -105,12 +105,13 @@
   <div class="controls">
     <span class="ctrl-label">Janela "em dia"</span>
     <div class="seg" id="segCoberto">
-      <button data-d="30" class="on" onclick="setCoberto(30)">≤30d</button>
+      <button data-d="30" onclick="setCoberto(30)">≤30d</button>
       <button data-d="45" onclick="setCoberto(45)">≤45d</button>
-      <button data-d="60" onclick="setCoberto(60)">≤60d</button>
+      <button data-d="60" class="on" onclick="setCoberto(60)">≤60d</button>
     </div>
     <span class="small" id="limiarInfo" style="margin-left:auto;"></span>
     <button class="btn-export" onclick="exportar('csv')" title="Baixar CSV">⬇ CSV</button>
+    <button class="btn-export hidden" id="btnLimpeza" onclick="baixarLimpeza()" title="Clientes da carteira ativa que não compraram na janela — para vender ou transferir (mês de limpeza)">⬇ Lista de limpeza</button>
     <button class="btn-export" onclick="exportar('pdf')" title="Baixar PDF" style="background:linear-gradient(135deg,var(--orange),var(--red));">📄 PDF</button>
   </div>
 
@@ -168,8 +169,10 @@ const FAIXA_COR = { '0-15':'#34d399', '16-30':'#a3e635', '31-45':'#fbbf24', '46-
 const FAIXA_LABEL = { '0-15':'0–15','16-30':'16–30','31-45':'31–45','46-60':'46–60','61-90':'61–90','91+':'91+' };
 
 let _data = null;        // payload completo
-let _coberto = 30;
-let _limiar = 60;        // %
+// Régua única de cobertura (João, 29/09/2026): janela padrão 60 d e limiar 85% (o piso das faixas
+// de nota). Antes a tela abria FIXA em 30 d e ignorava o Admin.
+let _coberto = 60;
+let _limiar = 85;        // %
 let _scope = { level:'empresa', id:null, nome:'Empresa' };
 
 async function loadMe() {
@@ -203,8 +206,9 @@ function setCoberto(d) {
 
 function limiarClasse(cobertura) {
   const p = cobertura * 100;
+  // As mesmas faixas da nota: abaixo do limiar (85) = nota 0 · até 99,9% = 6 a 9 · 100% = 10.
   if (p < _limiar) return 'r';
-  if (p < _limiar + 15) return 'y';
+  if (p < 100) return 'y';
   return 'g';
 }
 
@@ -244,6 +248,8 @@ function filtrarAbaixo() {
 }
 
 function render() {
+  const bl = document.getElementById('btnLimpeza');
+  if (bl) bl.classList.toggle('hidden', _scope.level === 'empresa');
   renderBreadcrumb();
   renderKpis();
   renderFaixas();
@@ -375,6 +381,13 @@ function renderRanking() {
       <td class="ctr">${abaixo ? '<span class="rowflag">⚑</span>' : ''}</td>
     </tr>`;
   }).join('');
+}
+
+// Lista de limpeza (régua única, 29/09/2026): só no drill de TIME ou VENDEDOR — a da empresa
+// inteira seria uma planilha de milhares de linhas sem dono.
+function baixarLimpeza() {
+  const p = _scope.level === 'vendedor' ? `codusur=${_scope.id}` : `codsupervisor=${_scope.id}`;
+  window.location.href = `/api/gerencial/limpeza/csv?${p}&coberto_dias=${_coberto}`;
 }
 
 function exportar(fmt) {

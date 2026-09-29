@@ -51,7 +51,7 @@ cliente X" · (3) "Explique este número" · (4) "Onde meu time perde dinheiro".
     dia em que ligar na Multpel.
 
 ### Fases (público principal = gerencial)
-1. **Gerencial, na demo** (diretor/admin e supervisor, cada um no seu escopo):
+1. ✅ **IMPLEMENTADA em 26/09/2026 (não commitada/deployada) — ver §7.** **Gerencial, na demo** (diretor/admin e supervisor, cada um no seu escopo):
    - panorama de GESTÃO: ponte da carteira em risco × recuperada e dinheiro na mesa (Recuperação),
      ranking da Performance por universo (topo e fundo, com o indicador que pesa), cobertura do
      Gerencial, metas do mês por time/vendedor (quem não vai bater), positivação por classe ABC,
@@ -246,3 +246,152 @@ Toda pergunta real que aparecer entra aqui com a resposta esperada. Começa com:
    R$ 0,55 mi de positivação abaixo do p75; NÃO somar com a receita perdida acumulada (R$ 2,65 mi).
 4. "Quem eu ligo hoje?" (vendedor 879) → até 60 d de atraso do Próximo Pedido + os em risco dele
    por valor × chance; com código e telefone; sem duplicar cliente nas duas listas.
+5. **Bateria automatizada (26/09/2026):** `tests/smoke_ia_comercial_real.py --fonte bi|demo` — as
+   perguntas 1 e 3 acima + "quem está no fim da Performance", "limiar é grave?", "vamos bater o mês?",
+   supervisor pedindo vendedor de OUTRO time (tem de recusar sem dado) e "onde meu time perde
+   dinheiro" (supervisor). Na demo o caso JULIANO é o análogo que o próprio agente acha (`explique`).
+
+> ⚠️ Item 4 acima é da Fase 2 (vendedor) e a janela certa é **até 15 dias** (§1 item 4), não 60.
+
+---
+
+## 7. Fase 1 IMPLEMENTADA (26/09/2026) — gestão, só na demo · NÃO commitada/deployada
+
+### O que existe
+| Peça | Onde |
+|---|---|
+| Motor puro (regras, glossário, blocos do panorama, consultas, sugestões, índice, `resolver`) | `ia_comercial.py` |
+| Rotas `/api/ia/status` · `/api/ia/contexto` (aquece + índice + sugestões; `?texto=1` = auditoria) · `/api/ia/chat` (SSE + function calling) | `server.py`, seção "Agente de IA do COMERCIAL" |
+| Chamada interna das rotas da tela com a sessão do usuário | `server._ia_rota` / `_ia_sessao` |
+| Widget (carregado SÓ pelo `joga-header.js` quando `/api/me.modulos` tem `ia`) | `static/comercial-ia.js` + `.css` |
+| `por_classe` (A/B/C: base, atendidos, taxa do universo) no detalhe da Performance — só explicação, a nota não muda | `performance_comercial.cobertura_ajustada` (+ chave de cache `:pc`) |
+| Usuários de demo + metas do mês | `_seed_demo/seed_usuarios_demo.py` (bootstrap + job diário `demo_avancar`) |
+| Gates | `tests/test_ia_comercial.py` (22) + `test_por_classe_explica_o_indice_sem_mudar_a_nota` |
+| Bateria com o modelo real | `tests/smoke_ia_comercial_real.py --fonte demo\|bi` |
+
+### Panorama de gestão (camada 1) — cada bloco = a rota da tela, recortada pelo perfil
+Recuperação (`/api/recuperacao`: ponte, cards, dinheiro na mesa a+b, top 5 times [diretor] ou RCAs
+[supervisor]) · Performance (`/api/performance`: topo/fundo 3 por universo, com **pontos que cada
+indicador tira** = peso × (10 − nota) ÷ peso medido; sem meta = "sem meta", nunca vilão) · Gerencial
+(`/api/gerencial/cobertura`: escopo, **mediana entre vendedores**, limiar declarado como configuração
+em revisão, piores times/RCAs ATIVOS, RCAs bloqueados com carteira à parte) · Metas (`/api/metas` +
+`/api/metas/vendedores`: **antes de 1/3 dos dias úteis a projeção é instável e ninguém é apontado**)
+· Positivação ABC (`/api/carteira/positivacao-abc`) · Cadastro a transferir (`/api/vendedores`,
+fora da base fictício/RCA inativo). As 6 fontes vão **em paralelo** (teto `IA_FONTE_TIMEOUT`=90 s
+por fonte); o panorama fica 5 min em cache por usuário+papel+escopo, com trava para o aquecimento
+do widget e a 1ª pergunta não duplicarem o trabalho.
+
+### Consultas (camada 2) — `vendedor`, `time`, `cliente` (teto 3/pergunta; repetida não conta)
+`vendedor` traz as **três réguas de cobertura lado a lado** + `por_classe` + escala que satura, a
+nota com cada indicador, metas, recuperação e o **time do cadastro**. `time`: gerencial (+ mediana),
+recuperação da base × por eles, metas e quem não bate, performance do time. `cliente`: drill 360°,
+top produtos, deptos e produtos parados, situação na Recuperação e no Próximo Pedido (≤ 15 d).
+Fora do escopo = texto "FORA DO ESCOPO", sem dado. Existe mas não é do escopo ≠ não encontrado.
+
+### Medido
+- **BI real da Multpel (leitura, sem ligar nada lá):** panorama do diretor com cache frio em
+  **32 s** (Recuperação sozinha ~43 s em série); bateria **0 falhas em 13 checagens**, conferência de
+  números limpa em todas. JULIANO #29: Gerencial 61,7% (29 de 47) · Vendedores 66,7% (30 de 45) ·
+  Performance 1,38 = 30 ÷ 21,75 → 10, mix A 19/21 · B 5/11 · C 6/13, escala satura em 1,34. Mediana
+  entre pessoas 36,9% (= a "37%" do §1). Custo típico: 2–14 s por resposta.
+- **Demo local (postgres):** panorama frio 22 s; navegador headless — estado **off** sem botão e
+  **zero** requisição a `/api/ia/*`; estado ativo abre, aquece e responde como supervisor no escopo
+  do time (números batem com os cards da tela).
+
+### Lições desta rodada (os defeitos que só apareceram rodando com o modelo e o dado real)
+1. **A regra "sempre código + nome" mudou como o modelo BUSCA** ("198 ANA TEIXEIRA PINTO"): o
+   `resolver` não achava e o agente RECUSAVA vendedor do escopo do admin. Hoje "código nome" resolve
+   pelo código.
+2. **Prefixo de código escolhia sozinho**: o supervisor do time 12 pedindo o time "1" recebia os
+   dados do 12. Código só casa EXATO; prefixo vira pergunta — achado pelo gate, não pelo modelo.
+3. **Sem o time na consulta, o modelo inventou** o time da pessoa (pegou o de maior risco do
+   panorama). Toda consulta leva a identificação completa.
+4. **Pergunta de cobertura só saiu certa com FORMATO obrigatório** no prompt (3 itens + mix + satura);
+   com regra em prosa ele citava 2 das 3 réguas.
+5. No BI real, 4 dos 5 "piores de cobertura" eram **RCA bloqueado com carteira** (0%) — cadastro a
+   transferir, não pessoa cobrindo mal. Saíram da lista e ganharam linha própria.
+6. **Metas na demo morriam na virada do mês** (o seed só fazia o mês do bootstrap e a base anda
+   sozinha) — agora o job diário garante o mês.
+
+### 2ª rodada — teste do Gabriel + 13 perguntas aleatórias no BI real (26/09/2026)
+**Sugestões refeitas** (feedback: a com nome de pessoa "por que 1449 VALDELI…" repetia sempre; "Explique
+este número:" era genérica). Agora até 6: **a da TELA** (a régua daquela tela, sem nome de pessoa —
+ex. Gerencial: "Por que a cobertura por valor é 81,9% e por cliente 35,2%?") + **as do PERFIL**, sobre
+o GRUPO: diretor → plano de ação para os supervisores, times piores e em quê, onde a empresa perde
+dinheiro, quem precisa de atenção, quem mais caiu contra o ano passado, vamos bater o mês (só com
+meta); supervisor → vendedores que precisam de atenção, o que fazer primeiro para recuperar, onde o
+time perde dinheiro, fim da Performance, meta, quedas do time. O `caso_explique` (JULIANO automático)
+saiu.
+
+**Erros achados e corrigidos:**
+1. Somou times ("juntos somam R$ 550 mil") e subtraiu ("279 não compraram") → regra 1d; o "não
+   compraram" agora vem PRONTO no bloco de positivação (a tela mostra base e positivados).
+2. Leu o realizado de set/26 (até o dia 26) como "mês fechado 08/2026" → bloco de Metas rotulado
+   "MÊS CORRENTE — EM ANDAMENTO" + regra 1e (cada número tem o período do bloco).
+3. Mandou "trabalhar com os supervisores" do 35 PROSPECÇAO e do 33 GLEICIANE - EXTERNO (18 clientes)
+   → grupo de prospecção ou com < 30 clientes sai dos piores (Gerencial e Recuperação).
+4. Atribuiu ao time 17 (60,8%) a cobertura do time 31 (32,6%) — o panorama só listava os 5 piores
+   → a cobertura de TODOS os times operacionais entra no bloco.
+5. Comparou a cobertura da EMPRESA com a mediana e chamou −0,9 p.p. de queda → mediana é de
+   vendedor; < 2 p.p. = estável.
+6. Recusou ticket médio / venda de ontem / queda contra o ano passado com "Só consigo analisar o
+   Comercial" → assunto do Comercial fora do panorama aponta a TELA (com exemplos no prompt — em
+   prosa ele ignorava); e o bloco **VENDEDORES × ANO PASSADO** (quedas/altas, base anterior ≥ R$ 50
+   mil, do `/api/vendedores` já lido) passou a responder a pergunta.
+7. "O cliente L S NASCIMENTO está bem?" → o modelo buscou "121154 L S NASCIMENTO" (código copiado do
+   EXEMPLO do prompt) e a busca da tela não casa a string inteira → a consulta tenta código, depois
+   nome; exemplos do prompt sem código real. Hoje devolve os 3 cadastros com esse nome e pergunta qual.
+8. Vendedor com 0% de cobertura vem sinalizado "confirmar se é RCA novo ou carteira parada antes de
+   cobrar".
+
+Resultado: bateria no BI real 0 falhas; o plano de ação para os supervisores passou a citar time a
+time (17, 19, 4) com o número de cada um e os vendedores a olhar. Resta imprecisão de rótulo
+(chamou de "frequência 0,4" a NOTA 0,4 da frequência) — a vigiar.
+
+### 3ª rodada — pedidos do João Victor (26/09/2026): performance do TIME e as três QUEDAS
+Decisão do Gabriel: tudo no AGENTE (não na tela), testes escritos ANTES da implementação.
+- **PERFORMANCE POR TIME** = média das notas dos vendedores do time, por universo, rotulada "NÃO é nota
+  oficial" (a tela não tem nota de time). Traz melhor, pior, parciais, sem nota e o indicador que mais
+  tira pontos no time. No BI real: 15 ES/NORTE 3,78 (cobertura) … 17 AFONSO ES-SUL 7,67 (frequência).
+  Se a gestão quiser nota de time oficial (somando os números do time), ela nasce primeiro na tela.
+- **Vendedores em queda:** o bloco × ano passado ganhou o TIME de cada um; queda > 80% vem com
+  "confirmar se o RCA saiu ou teve a carteira transferida" (no real: 1545 LEANDRO R$ 185 mil → R$ 3 mil).
+- **Produtos em queda:** board do Radar (`/api/radar/board`, 60 × 60 dias, ordem da tela), top 10.
+- **Clientes em queda:** a régua "cliente ativo comprando menos" NÃO existe (pendente com o João).
+  Entram as duas quedas que o painel mede: PARADOS (`/api/recuperacao/listas?tipo=risco`, top 10 por
+  valor × chance) e DEPARTAMENTO ABANDONADO (`/api/mix/abandonado`, top 10 por lucro do depto).
+- 9 fontes em paralelo; panorama frio no BI real ~55–70 s (o aquecimento ao abrir o widget cobre).
+- Sugestões: até 8, com "performance de cada time", "clientes em queda", "produtos em queda" (e as
+  versões "do meu time" para o supervisor).
+- Corrigidos na validação: consultava 3 times e dizia que o resto "ultrapassou o limite" (regra 10
+  agora lista o que está no panorama); chamou a janela do Radar de "mês corrente"; listou produtos
+  sem código (regra 5b agora inclui produto e departamento).
+
+### 4ª rodada — régua única de cobertura (29/09/2026, PLANO_MELHORIAS §11)
+O agente passou a falar UMA cobertura (carteira ativa 12 m, 60 d, qualquer vendedor, meta 100% nas faixas):
+a consulta `vendedor` traz o mesmo número no fim do mês fechado (o da nota) e hoje (Gerencial); o limiar é
+85% (não mais "em revisão"); as faixas de meta são oficiais; durante o mês de limpeza diz que a cobertura
+é INFORMATIVA. Saíram o índice ABC, o `por_classe` e o formato "três réguas". Quando NINGUÉM tem nota (sem
+metas + cobertura informativa) o panorama declara isso — sem o bloco, o agente inventou "piores médias" de
+time. Bateria no BI real: 12 de 13 checagens; a que falha: contagem "75 abaixo do limiar" sem citar nomes
+(a vigiar — a regra 10b pede os 3 primeiros por código e o modelo ainda não obedece nessa pergunta).
+
+### A vigiar (não bloqueia)
+- Número "solto" fora de R$/%/código escapa da conferência: numa resposta ele disse "74 abaixo do
+  limiar **sobre 81 vendedores com nota**" — o 81 não está no contexto.
+- Em bases onde a cobertura do escopo e a mediana são quase iguais (demo: 40,9% × 40,8%) ele
+  confunde as duas; no BI real (35,2% × 36,9%) não confundiu.
+- Na Multpel local não há metas de set/26: o bloco de metas sai "sem meta" (correto).
+
+### Deploy na demo (é com o Gabriel)
+1. Commit + push (GitHub Actions gera o `:latest`).
+2. Portainer → stack da demo → **Environment variables**: `DEMO_OPENAI_API_KEY` e
+   `DEMO_USUARIOS_SENHA` (8+ caracteres); colar o `docker-compose.demo.yml` novo (tem `MODULOS`
+   com `ia`, `OPENAI_API_KEY` e `DEMO_USUARIOS_SENHA` no `demo-seed`) → atualizar a stack.
+3. ⚠️ Logo depois: `sudo docker service update --image ghcr.io/jogasolucoesempresarias-debug/multpelhtlm:latest --force <stack>_demo-app`
+   (editar a stack pelo Portainer reverte a imagem — README).
+4. O `demo-seed` roda de novo no update da stack e, com a base já populada, cria os 3 usuários e as
+   metas (log: `[seed_usuarios_demo] OK`). Alternativa manual:
+   `docker exec -it <container demo-app> sh -c "DEMO_SEED=1 DEMO_USUARIOS_SENHA=... python -X utf8 _seed_demo/seed_usuarios_demo.py"`.
+5. Conferir: login `diretor@jogasolucoes.com.br` → /performance → 💬 abre "lendo os números…" e
+   mostra as sugestões; `supervisor@` só enxerga o time dele. Na Multpel nada muda (sem `ia`).

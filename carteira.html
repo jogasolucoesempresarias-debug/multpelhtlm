@@ -13,6 +13,7 @@
 <script defer src="/static/tooltips.js"></script>
 <link rel="stylesheet" href="/static/drill-cliente.css">
 <script defer src="/static/drill-cliente.js"></script>
+<script defer src="/static/plano-cliente.js"></script>
 <link rel="stylesheet" href="/static/tema.css">
 <script>try{var t=localStorage.getItem("joga:tema");if(t==="claro")document.documentElement.dataset.tema=t;}catch(e){}</script>
 <script src="/static/chart-tema.js"></script>
@@ -199,6 +200,8 @@
   .badge.b-atencao { background: rgba(var(--orange-rgb), .15); color: var(--orange); }
   .badge.b-urgente { background: rgba(var(--red-rgb), .15); color: var(--red); }
   .pp-row:hover { background: var(--surface2, rgba(255,255,255,.03)); }
+  /* retorno agendado para hoje (ou atrasado) — o vendedor marcou a volta: fica no topo, destacado */
+  .pp-row.pp-retorno { background: rgba(251,146,60,.08); box-shadow: inset 3px 0 0 var(--orange); }
   .pp-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 12px; margin-bottom: 16px; }
   .pp-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 13px 15px; }
   .pp-card .l { font-size: 0.68rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
@@ -486,6 +489,13 @@
         <div class="ff"><label>Buscar</label>
           <input id="ppBusca" placeholder="cliente, cidade, 12345" oninput="debouncedProximo()">
         </div>
+        <div class="ff"><label>Tratativa</label>
+          <select id="ppTrat" onchange="carregarProximo()" title="Plano de ação registrado desde a última compra do cliente">
+            <option value="">Todas</option>
+            <option value="sem">Sem tratativa</option>
+            <option value="com">Com tratativa</option>
+          </select>
+        </div>
         <button class="btn-sm" onclick="limparProximo()">Limpar</button>
         <button class="btn-export" onclick="exportarProximoCSV()" title="Baixar lista do dia (CSV)">⬇ CSV</button>
         <button class="btn-export" onclick="exportarProximoPDF()" title="Baixar lista do dia (PDF)" style="background:linear-gradient(135deg,var(--orange),var(--red));">📄 PDF</button>
@@ -505,6 +515,7 @@
               <th class="sortable" data-sort="atraso"         onclick="ordenarProximo('atraso')">Atraso<span class="sort-ind">↕</span></th>
               <th class="sortable" data-sort="venda_12m"      onclick="ordenarProximo('venda_12m')">Venda 12m<span class="sort-ind">↕</span></th>
               <th class="sortable" data-sort="receita_perdida" onclick="ordenarProximo('receita_perdida')">Receita perdida acumulada<span class="sort-ind">↕</span></th>
+              <th title="Plano de ação: o que foi feito com o cliente desde a última compra. Zera quando ele compra.">Plano</th>
             </tr></thead>
             <tbody id="ppBody"></tbody>
           </table>
@@ -1202,6 +1213,8 @@ function _ppParams() {
   const t = extrairCodigo(document.getElementById('ppTime').value);
   const v = extrairCodigo(document.getElementById('ppVend').value);
   const b = document.getElementById('ppBusca').value.trim();
+  const tr = document.getElementById('ppTrat').value;
+  if (tr) p.set('tratativa', tr);
   if (t) p.set('time', t);
   if (v) p.set('vendedor', v);
   if (b) p.set('busca', b);
@@ -1224,7 +1237,7 @@ function atualizarIndProximo() {
 }
 async function carregarProximo() {
   const body = document.getElementById('ppBody');
-  body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:18px;">Carregando...</td></tr>';
+  body.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-dim);padding:18px;">Carregando...</td></tr>';
   try {
     const r = await fetchJSON('/api/carteira/proximo-pedido?' + _ppParams().toString());
     _ppRows = r.rows || [];
@@ -1235,7 +1248,7 @@ async function carregarProximo() {
     atualizarIndProximo();
     renderProximo();
   } catch (e) {
-    body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--red);padding:18px;">Erro: ${e.message || e}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--red);padding:18px;">Erro: ${e.message || e}</td></tr>`;
   }
 }
 function renderPpCards(c) {
@@ -1246,9 +1259,13 @@ function renderPpCards(c) {
     { l: 'Vencido +15 dias', v: NUM.format(c.vencido15 || 0), cor: 'var(--red)', jan: 'vencido15' },
     { l: 'Receita perdida acumulada', v: BRL.format(c.receita_risco || 0), cor: 'var(--green)' },
   ];
+  // Plano de ação (CRM leve): quantos da janela já receberam tratativa — clique = só os SEM tratativa
+  if (c.na_janela != null) cards.push({ l: 'Com tratativa', v: `${NUM.format(c.com_tratativa || 0)} de ${NUM.format(c.na_janela)}`,
+                                        cor: 'var(--accent)', trat: 'sem' });
+  if (c.retornos_hoje) cards.push({ l: '⏰ Retornos p/ hoje', v: NUM.format(c.retornos_hoje), cor: 'var(--orange)', jan: 'hoje' });
   let html = cards.map(k => {
-    const cls = k.jan ? ('pp-card pp-click' + (k.jan === jan ? ' pp-active' : '')) : 'pp-card';
-    const onclick = k.jan ? `onclick="filtrarCard('${k.jan}')"` : '';
+    const cls = (k.jan || k.trat) ? ('pp-card pp-click' + (k.jan === jan ? ' pp-active' : '')) : 'pp-card';
+    const onclick = k.jan ? `onclick="filtrarCard('${k.jan}')"` : (k.trat ? `onclick="filtrarTratativa('${k.trat}')" title="Ver só os clientes sem tratativa"` : '');
     return `<div class="${cls}" ${onclick}><div class="l">${k.l}</div><div class="v" style="color:${k.cor};">${k.v}</div></div>`;
   }).join('');
   const op = c.maior_oportunidade;
@@ -1276,6 +1293,12 @@ function filtrarCard(janela) {
   aplicarSortPadraoJanela();
   carregarProximo();
 }
+function filtrarTratativa(v) {
+  document.getElementById('ppTrat').value = v;
+  carregarProximo();
+}
+// o plano salvo muda o card "com tratativa" e, com filtro ativo, a própria lista
+document.addEventListener('plano:salvo', () => { if (_ppCarregado) carregarProximo(); });
 function irParaCliente(codcli) {
   document.getElementById('ppJanela').value = 'vencidos';  // garante que o cliente apareça
   document.getElementById('ppBusca').value = String(codcli);
@@ -1288,6 +1311,7 @@ function limparProximo() {
   document.getElementById('ppTime').value = '';
   document.getElementById('ppVend').value = '';
   document.getElementById('ppBusca').value = '';
+  document.getElementById('ppTrat').value = '';
   document.getElementById('ppJanela').value = 'hoje';
   _ppSort = 'prioridade'; _ppDir = 'desc';
   carregarProximo();
@@ -1300,22 +1324,24 @@ function _statusBadge(s) {
 function renderProximo() {
   const body = document.getElementById('ppBody');
   if (!_ppRows.length) {
-    body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:18px;">Nenhum cliente nessa janela 🎉</td></tr>';
+    body.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-dim);padding:18px;">Nenhum cliente nessa janela 🎉</td></tr>';
     return;
   }
   body.innerHTML = _ppRows.map(c => {
     const a = c.dias_atraso;
     const atrasoTxt = a === 0 ? 'hoje' : a > 0 ? `${a}d atrás` : `em ${-a}d`;
-    return `<tr class="pp-row" onclick="toggleProdutos(${c.codcli}, this)" style="cursor:pointer;">
+    const pl = c.plano || {};
+    return `<tr class="pp-row${pl.destaque ? ' pp-retorno' : ''}" onclick="toggleProdutos(${c.codcli}, this)" style="cursor:pointer;">
       <td><span class="caret" id="pp-caret-${c.codcli}">▸</span></td>
       <td>${c.cliente || '#' + c.codcli}<div style="font-size:.68rem;color:var(--text-dim);">${c.cidade || ''} ${c.uf || ''} · cod ${c.codcli}</div></td>
       <td>${c.telefone || '—'}</td>
       <td>${c.ultima_compra || '—'}</td>
-      <td>${c.ciclo_pessoal}d</td>
+      <td>${c.ciclo_pessoal != null ? c.ciclo_pessoal + 'd' : '—'}</td>
       <td><strong>${c.proximo_pedido_previsto || '—'}</strong></td>
       <td>${atrasoTxt}</td>
       <td>${BRL.format(c.venda_12m || 0)}</td>
       <td>${BRL.format(c.receita_perdida_proj || 0)}</td>
+      <td>${window.PlanoCliente ? PlanoCliente.selo(c.codcli, pl, c.cliente) : ''}</td>
     </tr>`;
   }).join('');
 }
@@ -1326,7 +1352,7 @@ async function toggleProdutos(codcli, tr) {
   if (caret) caret.textContent = '▾';
   const det = document.createElement('tr');
   det.id = 'pp-prod-' + codcli;
-  det.innerHTML = '<td></td><td colspan="8" style="color:var(--text-dim);padding:8px 11px;">Carregando produtos...</td>';
+  det.innerHTML = '<td></td><td colspan="9" style="color:var(--text-dim);padding:8px 11px;">Carregando produtos...</td>';
   tr.parentNode.insertBefore(det, tr.nextSibling);
   try {
     const r = await fetchJSON(`/api/carteira/cliente/${codcli}/produtos?limit=10`);
@@ -1334,11 +1360,11 @@ async function toggleProdutos(codcli, tr) {
     const lis = ps.length ? ps.map(p =>
       `<li>${p.descricao} <span style="color:var(--text-dim);">— ${NUM.format(Math.round(p.qt_12m))} un · ${BRL.format(p.venda_12m)}</span></li>`).join('')
       : '<li style="color:var(--text-dim);">Sem produtos no período.</li>';
-    det.innerHTML = `<td></td><td colspan="8" style="padding:8px 11px 12px;">
+    det.innerHTML = `<td></td><td colspan="9" style="padding:8px 11px 12px;">
       <div style="font-size:.72rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">Top produtos a oferecer (12m)</div>
       <ol style="margin:0;padding-left:20px;font-size:.8rem;line-height:1.7;">${lis}</ol></td>`;
   } catch (e) {
-    det.innerHTML = `<td></td><td colspan="8" style="color:var(--red);padding:8px 11px;">Erro ao carregar produtos: ${e.message || e}</td>`;
+    det.innerHTML = `<td></td><td colspan="9" style="color:var(--red);padding:8px 11px;">Erro ao carregar produtos: ${e.message || e}</td>`;
   }
 }
 function exportarProximoCSV() {

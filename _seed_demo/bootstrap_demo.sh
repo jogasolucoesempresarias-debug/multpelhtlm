@@ -37,7 +37,10 @@ print(n)
 PY
 )
 if [ "${JA:-0}" -gt 1000 ]; then
-    echo "[bootstrap] joga_demo ja populado (${JA} linhas) — nada a fazer."
+    echo "[bootstrap] joga_demo ja populado (${JA} linhas) — base mantida."
+    # Usuarios de demonstracao por perfil (diretor/supervisor/vendedor) + metas do mes: roda
+    # tambem numa demo JA populada, senao a instancia no ar nunca os receberia. Idempotente.
+    DEMO_SEED=1 python -X utf8 _seed_demo/seed_usuarios_demo.py || echo "[bootstrap] usuarios de demo falharam — o resto segue."
     exit 0
 fi
 
@@ -48,6 +51,8 @@ echo "[bootstrap] 4/7 estoque..."              && python -X utf8 _seed_demo/gera
 echo "[bootstrap] 5/7 auth/config (init_db)..." && python -X utf8 init_db.py
 echo "[bootstrap] 6/7 metas + admin..."
 DEMO_SEED=1 python -X utf8 _seed_demo/seed_metas_demo.py
+# usuarios de demonstracao por perfil (Agente de IA do Comercial) + metas do mes fechado
+DEMO_SEED=1 python -X utf8 _seed_demo/seed_usuarios_demo.py || echo "[bootstrap] usuarios de demo falharam — o resto segue."
 # Historico do estoque (aba Evolucao). A demo tem "hoje" ancorado, entao o robo de foto
 # nao roda la — sem este seed a aba abriria VAZIA na apresentacao comercial.
 echo "[bootstrap] 7/7 historico de estoque (aba Evolucao)..."

@@ -500,3 +500,105 @@ frequência = 35% do peso). LARISSA e e-commerce fora do ranking.
   `abc-smoke@teste.local` (senha definida no banco local em 24/09; só existe local).
 - Agente ligado: `MODULOS=comercial,compras,ia` + `OPENAI_API_KEY` no `.env`. A bateria real
   (`tests/smoke_ia_real.py`) precisa de instância em modo dev (cookie `Secure` em produção).
+
+---
+
+## 11. Régua ÚNICA de cobertura da carteira — decidida pelo João (28–29/09/2026) · IMPLEMENTADA 29/09 (não commitada)
+
+Origem: "a positivação do Juliano na Performance está nota 10, mas no Gerencial está menos de 60% —
+estamos usando medidas diferentes?" Sim: eram três (Gerencial = carteira 24m, em dia ≤ 30 d, qualquer
+vendedor, janela móvel · Vendedores = base ativa 12m, atendidos POR ELE no mês fechado · Performance =
+índice relativo ao mix ABC). JULIANO #29: 61,7% · 66,7% · índice 1,38 → 10.
+
+**Decisões (João):**
+- UMA métrica em todas as abas (Gerencial, Vendedores, Performance) e em todos os níveis (empresa,
+  time, vendedor): **% da base ativa positivada na janela**.
+- **Base** = clientes cadastrados no vendedor/time que compraram nos últimos 12 meses (≈ 6.815 na
+  Multpel — os "7 mil ativos" dele). Sai a carteira de 24 meses.
+- **Janela = 60 dias.** Na Performance, a janela que termina no último dia do mês fechado (a nota não
+  anda todo dia); no Gerencial, 60 d por padrão (móvel).
+- **Positivado = comprou de QUALQUER vendedor** ("força o vendedor a colocar os clientes na sua base").
+  Empresa = Σ times = Σ vendedores.
+- **Nota da Performance** = mesmas faixas das metas aplicadas ao % (meta de cobertura = **100%** para
+  todos): < 85% → 0 · 85–89,99% → rampa 6→7 · 90–99,99% → 9 · 100% → 10. Sai o índice ABC.
+- **Limiar do Gerencial = 85%** (o piso da nota), com cor por faixa (vermelho < 85 · amarelo 85–99,9 ·
+  verde 100). Não 100%: pegaria 79 de 81 no alerta.
+- **3 regras** aceitas ("ok, mete bala"): (1) mês de LIMPEZA — cobertura informativa, fora da nota, e
+  cada vendedor recebe a lista dos não positivados para vender ou transferir; (2) transferência só para
+  vendedor ATIVO, nunca para código fictício (senão o cliente some da meta de todos e a empresa segue
+  igual); (3) relatório mensal de clientes retirados da carteira por vendedor.
+
+**Medido no BI real (29/09/2026):**
+- 60 d até hoje: empresa 58,4% (3.977 de 6.815); vendedores mediana 63%, p90 84%; 75 de 81 < 85%.
+- 36% da base ativa não compra em 60 d por natureza: 24% compraram 1 vez no ano, 12% ciclo > 60 d. Teto
+  do vendedor mediano (atendendo todo cliente de ciclo ≤ 60 d) = 69%. Chegar a 85% sem vender mais =
+  soltar 1.454 clientes (mediana 12 por vendedor).
+- Simulação da nota (ago/26, janela jul+ago, base 12m): campo 5,66 → 1,42 de média; 37 de 41 com
+  nota 0 na cobertura; JULIANO 10 → 2,86; MARCIO #899 (96,5%) 10 → 9,29. ⚠️ No banco LOCAL não há
+  metas de ago/26: a nota é parcial e a cobertura pesa 71% dela. Com metas cadastradas o impacto
+  máximo da cobertura é 2,5 pontos — conferir as metas de produção antes de ligar.
+
+**Implementado (29/09/2026, não commitado; testes escritos antes de cada etapa):**
+- `cobertura.py`: `na_base` (365 d) · `positivado` (60 d) · `cobertura_por_dono(ultima, dono, data)` — a MESMA
+  conta para o Gerencial (hoje) e para o mês fechado · `lista_limpeza` · `linhas_foto`. `agregar_niveis` filtra a
+  base de 12 m por dentro (tela, CSV, PDF e e-mail de alerta usam ele). Padrões: janela 60, limiar 85.
+- Gerencial: abre em 60 d (antes abria FIXO em 30 e ignorava o Admin); cor = faixas da nota (< 85 vermelho ·
+  < 100 amarelo · 100 verde); botão "⬇ Lista de limpeza" (CSV) só no drill de time/vendedor.
+- Performance: `NOTA_VERSAO` 3; cobertura = % da régua única nos 60 d até o fim do mês fechado, meta 100% nas
+  faixas (`ATINGIMENTO_COBERTURA`); sai o índice ABC (`cobertura_ajustada` e `por_classe` removidos). Mês de
+  limpeza: config `cobertura_na_nota_desde` (padrão 202611, campo novo no Admin da cobertura) — antes dela a
+  cobertura é INFORMATIVA (aparece, sai da nota e do peso total, para ninguém virar "parcial").
+- Vendedores: "cobertura da base" = a mesma régua (`_cobertura_mes_fechado`, insumo comum com a Performance).
+- Foto do cadastro: tabela `carteira_foto (anomes, codcli, codusur, codsupervisor)` gravada todo dia às 23h50
+  (a última do mês vale), sem tela; `init_db` e o próprio job criam a tabela.
+- Agente: glossário/consultas com a régua única (Gerencial = hoje × Performance = fim do mês), limiar 85%,
+  faixas oficiais, "ninguém tem nota" declarado quando for o caso.
+- Validado no BI real: JULIANO 35 de 45 = 77,8% (fim de agosto, Performance = Vendedores) e 63% hoje
+  (Gerencial); empresa hoje 58,4%; suíte 1.163 passando (+ as 3 falhas de data de sempre).
+
+**⚠️ Deploy (Gabriel):**
+1. `init_db` (cria `carteira_foto`; o job também cria).
+2. **Admin → cobertura: limiar 85 e janela 60.** Os valores SALVOS (60 e 30 hoje) vencem os padrões novos —
+   medido no banco local: sem trocar, o Gerencial segue em 30 d / 60%.
+3. Conferir "Cobertura entra na nota a partir de" = 11/2026.
+4. **Metas de setembro cadastradas no app ANTES de subir.** Sem metas e com a cobertura informativa, só a
+   frequência é medida (13% < 35%) e a Performance fica SEM NOTA para todos em outubro.
+5. Avisar os supervisores: os números de cobertura mudam nas três telas.
+
+---
+
+## 12. Plano de ação por cliente (CRM leve) + saldo da Recuperação — pedidos do João (29/09/2026) · IMPLEMENTADOS (não commitados)
+
+### CRM leve — `plano_cliente.py` (puro) + `static/plano-cliente.js` (componente único)
+- **Por que:** a lista do dia diz QUEM contatar, mas não guardava O QUE foi feito. A loja da Matriz já usa o
+  painel no dia a dia (as outras lojas estão em implantação) — o registro acontece onde eles já trabalham.
+- **Decisões dele:** 6 status de um toque (Ligação feita · Sem contato · Retorno agendado · Pedido prometido ·
+  Não compra mais · Transferir), descrição opcional; só o RETORNO AGENDADO aceita data futura (e exige);
+  retorno de hoje (ou atrasado) aparece EM DESTAQUE no topo de "A ligar hoje", mesmo fora da previsão do
+  ciclo; quem tem acesso à lista registra (porta de escopo = `_carteira_no_escopo`, autor gravado);
+  "zera quando compra" pela DATA — registro até o dia da última compra vira "acompanhamento anterior"
+  (nada é apagado: no recuperado, é o histórico do que levou à volta).
+- **Onde está:** Próximo Pedido (coluna Plano, destaque do retorno, card "Com tratativa X de N" — clique =
+  só os sem tratativa —, card "Retornos p/ hoje", filtro Tratativa), Recuperação (listas em risco e
+  recuperados) e a ficha do cliente (drill 360°, que abre de várias telas). Próximas: Mix, Radar,
+  Carteira › visão geral e o CSV da lista de limpeza — é só chamar `PlanoCliente.selo(...)` na linha.
+- **Banco:** tabela `cliente_plano` no banco de LOGIN (init_db + a própria rota criam). Rotas
+  `GET/POST /api/plano/<codcli>` e `POST /api/plano/resumo` (selos em lote, uma chamada por lista).
+- **Validado:** 11 testes (`tests/test_plano_cliente.py`) e ponta a ponta no navegador como supervisor da
+  demo (registrar, histórico, retorno no topo, card 0→2 de 13, filtro, Recuperação, ficha).
+- ⚠️ Na demo LOCAL a base está parada em 21/08: a data da ação sai 21/08 com o registro em 29/09. Na
+  Multpel e na demo de produção (base anda sozinha) o "hoje" é o dia.
+
+### Saldo do mês na Recuperação
+- **Conta (confirmada pelo João):** clientes que ENTRARAM em risco no mês − RECUPERADOS do risco no mês (e o
+  mesmo em R$/mês), na carteira do DONO. Positivo = carteira diminuindo; negativo = avançando. Mesmos
+  critérios da ponte da empresa (resgatado de perdido e "virou perdido" ficam fora), então fecha com ela.
+- **Onde (ele marcou no print):** faixa "Saldo do mês" DENTRO do quadro da ponte e coluna "Saldo" no FIM das
+  tabelas de times e vendedores. Para quem vê a empresa, a tabela de times ganhou a linha "Sem time
+  (código fictício/sem supervisor)", por último — sem ela a soma dos times não fechava (BI real ago/26:
+  169 × 219; o 999 sozinho é +43).
+- **BI real (ago/26):** empresa +219 clientes / +R$ 136.062/mês (entraram 602 − recuperados 383); piores
+  times G. VITORIA +31, AFONSO +27; entre vendedores, 29 JULIANO −4 e 1422 LEANDRO −6 avançaram.
+- Testes: `tests/test_saldo_recuperacao.py` (4). Motor: `recuperacao.placar_de` ganhou entraram,
+  rec_risco_da_base, saldo e valor_saldo.
+

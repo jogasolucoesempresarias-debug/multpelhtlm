@@ -141,6 +141,37 @@ cur.execute("""
     );
 """)
 
+# Foto MENSAL do cadastro de clientes (dono = CODUSUR1). O BI só guarda o dono ATUAL — sem esta
+# foto não existe "quem saiu da carteira de quem" (régua única de cobertura, João 29/09/2026,
+# regra 3: transferência só para vendedor ativo). Gravada todo dia pelo agendador; a última
+# gravação do mês é a foto dele. Sem tela: o relatório sai por consulta quando for pedido.
+cur.execute("""
+    CREATE TABLE IF NOT EXISTS carteira_foto (
+        anomes        INTEGER NOT NULL,
+        codcli        INTEGER NOT NULL,
+        codusur       INTEGER,
+        codsupervisor INTEGER,
+        gravado_em    TIMESTAMP DEFAULT NOW(),
+        PRIMARY KEY (anomes, codcli)
+    );
+""")
+
+# Plano de ação por cliente (CRM leve, João 29/09/2026). O acompanhamento "zera" quando o cliente
+# compra pela DATA (registros até a última compra viram histórico anterior) — nada é apagado.
+cur.execute("""
+    CREATE TABLE IF NOT EXISTS cliente_plano (
+        id          SERIAL PRIMARY KEY,
+        codcli      INTEGER NOT NULL,
+        data_acao   DATE NOT NULL,
+        status      VARCHAR(30) NOT NULL,
+        descricao   TEXT,
+        autor_id    INTEGER,
+        autor_nome  VARCHAR(120),
+        criado_em   TIMESTAMP DEFAULT NOW()
+    );
+""")
+cur.execute("CREATE INDEX IF NOT EXISTS ix_cliente_plano_codcli ON cliente_plano (codcli, criado_em);")
+
 # ── Migrations de multpel_log ──
 # Ficam AQUI, logo após o CREATE, e não junto das colunas de multpel_users lá em cima: num
 # banco novo a tabela ainda não existe naquele ponto e o init_db quebrava com

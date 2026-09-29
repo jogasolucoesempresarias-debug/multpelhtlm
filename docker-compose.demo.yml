@@ -16,6 +16,7 @@
 #
 # 🔑 TRÊS variáveis vêm do ENV DA STACK (Portainer → Environment variables), nunca deste arquivo:
 #      DEMO_SECRET_KEY · DEMO_DB_PASSWORD · DEMO_ADMIN_SENHA
+#    (+ 09/2026, Agente de IA do Comercial) DEMO_OPENAI_API_KEY · DEMO_USUARIOS_SENHA
 #    Este compose é versionado num repo PÚBLICO. Segredo literal aqui vaza no ato — e o
 #    SECRET_KEY é o que assina o cookie de sessão: quem o tem forja um admin sem senha.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -33,7 +34,10 @@ services:
       # ⚠️ SEGREDO — vem do ENV DA STACK (Portainer → Environment variables), NUNCA literal aqui:
       # este arquivo é versionado num repo PÚBLICO. Mesmo padrão do docker-compose.prod.yml.
       SECRET_KEY: "${DEMO_SECRET_KEY}"
-      MODULOS: "comercial,compras"
+      # `ia` = Agente de IA (Compras + Comercial). Estado `ativo` só com a chave abaixo.
+      MODULOS: "comercial,compras,ia"
+      # ⚠️ SEGREDO — vem do ENV DA STACK (Portainer), nunca literal: repo público.
+      OPENAI_API_KEY: "${DEMO_OPENAI_API_KEY}"
       # >>> O INTERRUPTOR <<<  lê o banco sintético, não o Power BI
       DATA_SOURCE: "postgres"
       ANALYTICS_DB_NAME: "joga_demo"
@@ -105,6 +109,8 @@ services:
       DB_USER: "demo"
       DB_PASSWORD: "${DEMO_DB_PASSWORD}"
       DEMO_SEED: "1"
+      # senha dos usuários de demonstração diretor@/supervisor@/vendedor@ (seed_usuarios_demo.py)
+      DEMO_USUARIOS_SENHA: "${DEMO_USUARIOS_SENHA}"
       ADMIN_EMAIL: "admin@jogasolucoes.com.br"
       ADMIN_SENHA: "${DEMO_ADMIN_SENHA}"
       REDIS_HOST: "demo-redis"

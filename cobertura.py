@@ -27,9 +27,65 @@ FAIXAS = [
     ('91+',   91, 10 ** 9),
 ]
 
-COBERTO_DIAS_PADRAO = 30          # "em dia" default (linha 0-30 do diretor)
+# ── Régua ÚNICA de cobertura (João, 28–29/09/2026 — PLANO_MELHORIAS §11) ──────────────────
+# Uma métrica em Gerencial, Vendedores e Performance: base = clientes CADASTRADOS no vendedor com
+# última compra (de QUALQUER vendedor) nos últimos BASE_DIAS; positivado = última compra nos
+# últimos COBERTO_DIAS_PADRAO. O Gerencial mede em HOJE; Performance/Vendedores no último dia do
+# mês fechado (`cobertura_por_dono`). Antes: carteira de 24 meses e janela de 30 d — a empresa
+# saía em 35% porque quem comprou 12–24 meses atrás contava como base.
+BASE_DIAS = 365
+COBERTO_DIAS_PADRAO = 60          # "em dia" default (era 30 até 09/2026)
+LIMIAR_PADRAO = 85.0              # % — o piso das faixas de nota (< 85% = nota 0); era 60
 MIN_AMOSTRA = 5                   # abaixo disso o % é ruído → flag amostra_pequena
 _STATUS_NO_CICLO = ('ok', 'normal')  # dentro do ciclo pessoal do cliente
+
+
+def na_base(recencia_dias, base_dias=BASE_DIAS):
+    """Cliente é BASE ativa na data: comprou (de qualquer vendedor) nos últimos `base_dias`."""
+    return recencia_dias is not None and 0 <= recencia_dias <= base_dias
+
+
+def positivado(recencia_dias, janela=COBERTO_DIAS_PADRAO):
+    """Cliente POSITIVADO na janela: comprou (de qualquer vendedor) nos últimos `janela` dias."""
+    return recencia_dias is not None and 0 <= recencia_dias <= janela
+
+
+def cobertura_por_dono(ultima_compra, dono_de, data_ref, janela=COBERTO_DIAS_PADRAO, base_dias=BASE_DIAS):
+    """{codusur: {base, positivados, pct}} na data `data_ref` — a MESMA régua do Gerencial, para o
+    mês fechado (Performance e Vendedores). `ultima_compra` = {codcli: date} (última compra de
+    qualquer vendedor até a data); `dono_de` = {codcli: codusur} (cadastro). Base < MIN_AMOSTRA →
+    pct None (caixa/balcão não é parâmetro). Compra DEPOIS de `data_ref` não vale: não se sabe a
+    anterior, então o cliente não é base naquela data (nunca vira positivado por engano)."""
+    out = {}
+    for codcli, ult in (ultima_compra or {}).items():
+        u = dono_de.get(codcli)
+        if u is None or ult is None:
+            continue
+        dias = (data_ref - ult).days
+        if not na_base(dias, base_dias):
+            continue
+        g = out.setdefault(u, {'base': 0, 'positivados': 0})
+        g['base'] += 1
+        g['positivados'] += 1 if positivado(dias, janela) else 0
+    for g in out.values():
+        g['pct'] = (g['positivados'] / g['base']) if g['base'] >= MIN_AMOSTRA else None
+    return out
+
+
+def lista_limpeza(clientes, janela=COBERTO_DIAS_PADRAO, base_dias=BASE_DIAS):
+    """Clientes da BASE que NÃO compraram na janela — a lista do mês de limpeza (regra 1 do João,
+    29/09/2026): o vendedor vende ou transfere. Maior venda 12m primeiro (onde vale mais a ação)."""
+    out = [c for c in clientes if na_base(c.get('recencia_dias'), base_dias)
+           and not positivado(c.get('recencia_dias'), janela)]
+    return sorted(out, key=lambda c: -(c.get('venda_12m') or 0))
+
+
+def linhas_foto(clientes, anomes):
+    """[(anomes, codcli, codusur, codsupervisor)] — a foto do CADASTRO do mês (toda a carteira,
+    não só a base). O BI só guarda o dono ATUAL; é a foto que permite dizer, depois, quem saiu da
+    carteira de quem (regra 3 do João: transferência só para vendedor ativo, nunca fictício)."""
+    return [(anomes, c['codcli'], c.get('codusur'), c.get('codsupervisor'))
+            for c in clientes if c.get('codcli') is not None]
 
 
 def faixa_de(recencia_dias):
@@ -145,14 +201,19 @@ def _agrupar_por(clientes, id_key, nome_key, sem_label, coberto_dias, extra_keys
     return out
 
 
-def agregar_niveis(clientes, coberto_dias=COBERTO_DIAS_PADRAO):
+def agregar_niveis(clientes, coberto_dias=COBERTO_DIAS_PADRAO, base_dias=BASE_DIAS):
     """Placar completo em 3 níveis. Empresa reconcilia com a soma dos times e dos vendedores.
+
+    ⚠️ Só a BASE ATIVA entra (última compra ≤ `base_dias`): o filtro fica AQUI, e não em cada
+    chamador, porque tela, CSV, PDF e e-mail de alerta passam por esta função — um filtro em cada
+    um deixaria o e-mail com outra régua da tela no primeiro esquecimento.
 
     Retorna {empresa, times[], vendedores[], coberto_dias, gerado_em}.
     - times: agrupado por codsupervisor (nome = campo `time`), pior→melhor.
     - vendedores: agrupado por codusur (nome = campo `vendedor`); cada um carrega codsupervisor/time
       pro drill Time→RCA no frontend. Pior→melhor.
     """
+    clientes = [c for c in clientes if na_base(c.get('recencia_dias'), base_dias)]
     empresa = agregar_grupo(clientes, coberto_dias)
     times = _agrupar_por(clientes, 'codsupervisor', 'time', '(Sem time)', coberto_dias)
     vendedores = _agrupar_por(clientes, 'codusur', 'vendedor', '(Sem RCA)', coberto_dias,

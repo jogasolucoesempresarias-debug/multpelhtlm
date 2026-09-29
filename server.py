@@ -214,19 +214,20 @@ def _config_set(chave, valor):
 
 
 def _cobertura_limiar_pct():
-    """Limiar de baixa performance (%) — configurável no Admin, default 60."""
+    """Limiar de baixa performance (%) — configurável no Admin. Default 85 = o piso das faixas
+    de nota (régua única de cobertura, João 29/09/2026; era 60)."""
     try:
-        return float(_config_get('cobertura_limiar_pct', '60'))
+        return float(_config_get('cobertura_limiar_pct', str(int(cob.LIMIAR_PADRAO))))
     except (TypeError, ValueError):
-        return 60.0
+        return cob.LIMIAR_PADRAO
 
 
 def _cobertura_coberto_dias():
-    """Janela 'em dia' default (dias) — configurável, default 30."""
+    """Janela 'em dia' default (dias) — configurável, default 60 (régua única; era 30)."""
     try:
-        return int(float(_config_get('cobertura_coberto_dias', '30')))
+        return int(float(_config_get('cobertura_coberto_dias', str(cob.COBERTO_DIAS_PADRAO))))
     except (TypeError, ValueError):
-        return 30
+        return cob.COBERTO_DIAS_PADRAO
 
 
 # ── Decorators de autenticação ──
@@ -2590,6 +2591,7 @@ import positivacao  # módulo puro de positivação por RCA (tela Vendedores + c
 import recuperacao as recup  # módulo puro: carteira em risco × recuperada (página /recuperacao)
 import potencial  # módulo puro: potencial de positivação (dinheiro na mesa, camada b)
 import performance_comercial  # módulo puro: nota 0–10 por vendedor (página /performance)
+import plano_cliente as plano  # módulo puro: plano de ação por cliente (CRM leve, 29/09/2026)
 
 VENDEDORES_TECNICOS = {999, 900, 4, 272}  # excluir das listas de vendedor (técnicos)
 
@@ -4194,12 +4196,31 @@ def api_carteira_proximo_pedido():
         dias_janela = 3
     elegiveis = _clientes_proximo_pedido(clientes, janela, dias_janela)
 
+    # ── Plano de ação (CRM leve, João 29/09/2026) ──
+    # O cliente com RETORNO AGENDADO para hoje (ou atrasado) entra na lista "A ligar hoje" em
+    # destaque, mesmo fora da previsão do ciclo — foi o vendedor que marcou a volta.
+    hoje_ref = _hoje_ref()
+    resumos = _plano_resumos(clientes)
+    vazio = plano.resumo([], hoje_ref)
+    if janela == 'hoje':
+        ja = {c['codcli'] for c in elegiveis}
+        elegiveis = elegiveis + [c for c in clientes if c['codcli'] not in ja
+                                 and (resumos.get(c['codcli']) or vazio)['destaque']]
+    na_janela = elegiveis
+    trat = request.args.get('tratativa')
+    if trat in ('com', 'sem'):
+        elegiveis = [c for c in elegiveis if bool((resumos.get(c['codcli']) or vazio)['n']) == (trat == 'com')]
+
     # Reusa filtros (time/vendedor/uf/busca) + paginação; ordena por prioridade desc por padrão.
     args = dict(request.args)
     args.setdefault('sort', 'prioridade')
     args.setdefault('dir', 'desc')
     resp = _filtrar_carteira(elegiveis, args)
     resp['janela'] = janela
+    # cópia por linha (a carteira vem de cache — não pendurar o plano no objeto compartilhado);
+    # o retorno de hoje sobe para o TOPO, o resto mantém a ordem escolhida
+    resp['rows'] = sorted(({**r, 'plano': resumos.get(r['codcli']) or vazio} for r in resp['rows']),
+                          key=lambda r: not r['plano']['destaque'])
 
     # Cards (acima da tabela): universo de VENCIDOS — independente da janela selecionada,
     # mas respeitando filtros geo (time/vendedor/uf/cidade/busca). Reusa _filtrar_carteira
@@ -4215,7 +4236,14 @@ def api_carteira_proximo_pedido():
     base = _filtrar_carteira(base_all, geo)['rows']
     acionaveis = [c for c in base if c['dias_atraso'] >= 0]  # hoje + vencidos 1-15
     top = max(acionaveis, key=lambda c: c.get('prioridade_contato') or 0, default=None)
+    na_janela_geo = _filtrar_carteira(na_janela, geo)['rows']
     resp['cards'] = {
+        # tratativa: quantos clientes da janela (com os filtros de time/vendedor/busca) têm registro
+        # no acompanhamento atual — o "quem recebeu tratativa" que o gestor pediu
+        'na_janela':     len(na_janela_geo),
+        'com_tratativa': sum(1 for c in na_janela_geo if (resumos.get(c['codcli']) or vazio)['n']),
+        'retornos_hoje': sum(1 for c in _filtrar_carteira(
+            [c for c in clientes if (resumos.get(c['codcli']) or vazio)['destaque']], geo)['rows']),
         'hoje':          sum(1 for c in base if c['dias_atraso'] == 0),
         'proximos7':     sum(1 for c in base if -7 <= c['dias_atraso'] <= -1),
         'vencido15':     sum(1 for c in base if 1 <= c['dias_atraso'] <= 15),
@@ -4307,6 +4335,124 @@ SUMMARIZECOLUMNS(
         lst.sort(key=lambda x: x['venda_12m'], reverse=True)
         out[cc] = lst[:limit_por_cliente]
     return out
+
+
+# ══════════════ Plano de ação por cliente (CRM leve — João, 29/09/2026; PLANO_MELHORIAS §12) ══════════════
+# Tabela no banco de LOGIN (como metas e config). O escopo é a MESMA porta das telas: quem enxerga
+# o cliente na lista registra (`_carteira_no_escopo`); fora dele, 404 sem dado.
+_PLANO_DDL = """
+CREATE TABLE IF NOT EXISTS cliente_plano (
+    id          SERIAL PRIMARY KEY,
+    codcli      INTEGER NOT NULL,
+    data_acao   DATE NOT NULL,
+    status      VARCHAR(30) NOT NULL,
+    descricao   TEXT,
+    autor_id    INTEGER,
+    autor_nome  VARCHAR(120),
+    criado_em   TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS ix_cliente_plano_codcli ON cliente_plano (codcli, criado_em)"""
+_PLANO_DDL_OK = False
+
+
+def _plano_conn():
+    """Conexão do banco de login com a tabela garantida (tabela nova que falta falha CALADA)."""
+    global _PLANO_DDL_OK
+    conn = get_db()
+    if not _PLANO_DDL_OK:
+        with conn, conn.cursor() as cur:
+            cur.execute(_PLANO_DDL)
+        _PLANO_DDL_OK = True
+    return conn
+
+
+def _plano_registros(codclis):
+    """{codcli: [registro]} — todos os registros (atuais e anteriores) desses clientes."""
+    ids = sorted({int(c) for c in codclis if c is not None})
+    if not ids:
+        return {}
+    conn = _plano_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, codcli, data_acao, status, descricao, autor_nome, criado_em "
+                        "FROM cliente_plano WHERE codcli = ANY(%s)", (ids,))
+            out = {}
+            for i, cc, d, st, de, an, cr in cur.fetchall():
+                out.setdefault(cc, []).append({'id': i, 'data_acao': d, 'status': st, 'descricao': de,
+                                               'autor_nome': an, 'criado_em': cr})
+            return out
+    finally:
+        conn.close()
+
+
+def _plano_resumos(clientes):
+    """{codcli: resumo} do acompanhamento ATUAL (depois da última compra) — só de quem tem registro."""
+    regs = _plano_registros([c.get('codcli') for c in clientes])
+    if not regs:
+        return {}
+    hoje = _hoje_ref()
+    ult = {c.get('codcli'): c.get('ultima_compra') for c in clientes}
+    return {cc: plano.resumo(plano.separar(rs, ult.get(cc))[0], hoje) for cc, rs in regs.items()}
+
+
+def _plano_resumos_codclis(codclis):
+    """O mesmo, a partir só dos códigos (a última compra sai da carteira global)."""
+    alvo = {int(c) for c in codclis if c is not None}
+    return _plano_resumos([c for c in _carregar_carteira_full() if c.get('codcli') in alvo])
+
+
+def _plano_cliente_no_escopo(codcli):
+    return next((c for c in _carteira_no_escopo() if c.get('codcli') == codcli), None)
+
+
+@app.route('/api/plano/<int:codcli>', methods=['GET', 'POST'])
+@login_required
+def api_plano_cliente(codcli):
+    """GET: acompanhamento atual + anteriores + opções de status. POST: novo registro
+    {status, data_acao?, descricao?}. Fora do escopo → 404 (não revela o cliente)."""
+    cli = _plano_cliente_no_escopo(codcli)
+    if cli is None:
+        return jsonify({'ok': False, 'error': 'Cliente não encontrado na sua carteira'}), 404
+    hoje = _hoje_ref()
+    if request.method == 'POST':
+        limpo, erro = plano.validar(request.get_json(silent=True) or {}, hoje)
+        if erro:
+            return jsonify({'ok': False, 'error': erro}), 400
+        uid = session.get('user_id')
+        conn = _plano_conn()
+        try:
+            with conn, conn.cursor() as cur:
+                cur.execute("INSERT INTO cliente_plano (codcli, data_acao, status, descricao, autor_id, autor_nome) "
+                            "VALUES (%s,%s,%s,%s,%s,%s)",
+                            (codcli, limpo['data_acao'], limpo['status'], limpo['descricao'] or None,
+                             uid if isinstance(uid, int) else None, (session.get('nome') or '')[:120] or None))
+        finally:
+            conn.close()
+    regs = _plano_registros([codcli]).get(codcli, [])
+    atual, anteriores = plano.separar(regs, cli.get('ultima_compra'))
+    return jsonify({'ok': True, 'codcli': codcli, 'cliente': cli.get('cliente'),
+                    'ultima_compra': cli.get('ultima_compra'),
+                    'status_opcoes': [{'codigo': s, 'rotulo': r} for s, r in plano.STATUS],
+                    'atual': [plano.serializar(r) for r in atual],
+                    'anteriores': [plano.serializar(r) for r in anteriores],
+                    'resumo': plano.resumo(atual, hoje), 'hoje': hoje.isoformat()})
+
+
+@app.route('/api/plano/resumo', methods=['POST'])
+@login_required
+def api_plano_resumo():
+    """Selos em LOTE para as linhas visíveis de uma lista ({codclis: [...]}) — uma chamada por
+    tela, não uma por cliente. Só devolve cliente do escopo (o resto some calado)."""
+    pedidos = set()
+    for c in ((request.get_json(silent=True) or {}).get('codclis') or [])[:2000]:
+        try:
+            pedidos.add(int(c))
+        except (TypeError, ValueError):
+            continue
+    clientes = [c for c in _carteira_no_escopo() if c.get('codcli') in pedidos]
+    res = _plano_resumos(clientes)
+    vazio = plano.resumo([], _hoje_ref())
+    return jsonify({'ok': True, 'resumos': {str(c['codcli']): res.get(c['codcli']) or vazio for c in clientes}})
 
 
 @app.route('/api/carteira/cliente/<int:codcli>/produtos')
@@ -4984,6 +5130,43 @@ def _cobertura_csv_linhas(niveis):
         yield _linha('RCA', v)
 
 
+@app.route('/api/gerencial/limpeza/csv')
+@login_required
+def api_gerencial_limpeza_csv():
+    """Lista do MÊS DE LIMPEZA (régua única, João 29/09/2026): clientes da carteira ativa que não
+    compraram na janela, de um vendedor (?codusur=) ou de um time (?codsupervisor=), para o vendedor
+    VENDER ou TRANSFERIR. Sem tela nova: é o botão do drill do Gerencial.
+    Escopo pela MESMA porta das telas (`_carteira_no_escopo`): pedir um time de fora devolve vazio."""
+    from datetime import date as _date
+    coberto_dias = _coberto_dias_arg()
+    clientes = _carteira_no_escopo()
+    try:
+        cu = int(request.args['codusur']) if request.args.get('codusur') else None
+        cs = int(request.args['codsupervisor']) if request.args.get('codsupervisor') else None
+    except ValueError:
+        return jsonify({'ok': False, 'error': 'parâmetro inválido'}), 400
+    if cu is not None:
+        clientes = [c for c in clientes if c.get('codusur') == cu]
+    if cs is not None:
+        clientes = [c for c in clientes if c.get('codsupervisor') == cs]
+    lista = cob.lista_limpeza(clientes, janela=coberto_dias)
+    cab = ['Vendedor', 'Time', 'CodCli', 'Cliente', 'Cidade', 'UF', 'Telefone', 'Dias sem comprar',
+           'Ciclo (dias)', 'Venda 12m', 'Ação (vender ou transferir para)']
+
+    def gerar():
+        yield CSV_PREAMBULO + _csv_linha(cab)
+        for c in lista:
+            yield _csv_linha([f"{c.get('codusur')} {c.get('vendedor') or ''}".strip(), c.get('time') or '',
+                              c.get('codcli'), c.get('cliente') or '', c.get('cidade') or '', c.get('uf') or '',
+                              c.get('telefone') or '', c.get('recencia_dias'), c.get('ciclo_pessoal') or '',
+                              round(c.get('venda_12m') or 0, 2), ''])
+
+    alvo = f"rca{cu}" if cu is not None else (f"time{cs}" if cs is not None else 'escopo')
+    nome = f"limpeza_carteira_{alvo}_{coberto_dias}d_{_date.today().isoformat()}.csv"
+    return Response(stream_with_context(gerar()), mimetype='text/csv; charset=utf-8',
+                    headers={'Content-Disposition': _content_disposition(nome)})
+
+
 @app.route('/api/gerencial/cobertura/csv')
 @login_required
 def api_gerencial_cobertura_csv():
@@ -5104,6 +5287,7 @@ def api_admin_config_cobertura_get():
         'ok': True,
         'limiar_pct': _cobertura_limiar_pct(),
         'coberto_dias': _cobertura_coberto_dias(),
+        'cobertura_na_nota_desde': _cobertura_na_nota_desde(),
     })
 
 
@@ -5127,7 +5311,17 @@ def api_admin_config_cobertura_set():
         if dias not in (30, 45, 60):
             return jsonify({'ok': False, 'error': 'coberto_dias deve ser 30, 45 ou 60'}), 400
         _config_set('cobertura_coberto_dias', dias)
-    return jsonify({'ok': True, 'limiar_pct': _cobertura_limiar_pct(), 'coberto_dias': _cobertura_coberto_dias()})
+    if 'cobertura_na_nota_desde' in data:
+        # AAAAMM da competência em que a cobertura passa a valer na nota (mês de limpeza antes dela)
+        try:
+            am = int(data['cobertura_na_nota_desde'])
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'cobertura_na_nota_desde inválido (AAAAMM)'}), 400
+        if not (200001 <= am <= 209912 and 1 <= am % 100 <= 12):
+            return jsonify({'ok': False, 'error': 'cobertura_na_nota_desde deve ser AAAAMM'}), 400
+        _config_set('cobertura_na_nota_desde', am)
+    return jsonify({'ok': True, 'limiar_pct': _cobertura_limiar_pct(), 'coberto_dias': _cobertura_coberto_dias(),
+                    'cobertura_na_nota_desde': _cobertura_na_nota_desde()})
 
 
 # ── Carteira em risco × carteira recuperada (+ dinheiro na mesa) ──
@@ -5361,12 +5555,16 @@ def api_recuperacao():
     rcas.sort(key=lambda r: -r['valor_em_risco'])
     times_out = []
     for t, s in pl['times'].items():
-        if t is None or not _ok_time(t):
+        # "Sem time" (cliente em código fictício/sem supervisor) só para quem vê a empresa inteira:
+        # sem essa linha a soma dos saldos dos times não fecha com a empresa (29/09: 169 × 219).
+        if (t is None and times is not None) or (t is not None and not _ok_time(t)):
             continue
         gap_t = sum((pot['por_rca'].get(u) or {}).get('gap', 0.0) for u, tt in time_de.items() if tt == t)
-        times_out.append({'codsupervisor': t, 'nome': (smap.get(str(t)) or {}).get('nome') or f'Time {t}',
+        times_out.append({'codsupervisor': t, 'nome': ('Sem time (código fictício/sem supervisor)' if t is None
+                          else (smap.get(str(t)) or {}).get('nome') or f'Time {t}'),
                           'potencial_positivacao': round(gap_t, 2), **s})
-    times_out.sort(key=lambda r: -r['valor_em_risco'])
+    # "Sem time" (código fictício/sem supervisor) vai para o FIM: não é um time a cobrar
+    times_out.sort(key=lambda r: (r['codsupervisor'] is None, -r['valor_em_risco']))
 
     if base_cli is None and vends is None:
         camada_b = pot['total']
@@ -5387,6 +5585,9 @@ def api_recuperacao():
             'venda_recuperada': ponte['venda_recuperada'],
             'recuperados': ponte['clientes']['recuperados'] + ponte['clientes']['resgatados_perdidos'],
             'dinheiro_na_mesa': round(ponte['valor_mensal']['risco_fim'] + camada_b, 2),
+            # saldo do mês (João, 29/09/2026): entraram em risco − recuperados do risco (> 0 = piorou)
+            'saldo': ponte['clientes']['entraram'] - ponte['clientes']['recuperados'],
+            'saldo_valor': round(ponte['valor_mensal']['entraram'] - ponte['valor_mensal']['recuperados'], 2),
             'camada_a_risco': ponte['valor_mensal']['risco_fim'],
             'camada_b_positivacao': camada_b,
             'ficou': ficou,
@@ -5440,7 +5641,11 @@ def api_recuperacao_listas():
         limit = max(1, min(int(request.args.get('limit', 300)), 2000))
     except (TypeError, ValueError):
         limit = 300
-    return jsonify({'ok': True, 'tipo': tipo, 'total': len(rows), 'rows': rows[:limit],
+    pag = rows[:limit]
+    resumos = _plano_resumos_codclis([r['codcli'] for r in pag])
+    vazio = plano.resumo([], _hoje_ref())
+    pag = [{**r, 'plano': resumos.get(r['codcli']) or vazio} for r in pag]
+    return jsonify({'ok': True, 'tipo': tipo, 'total': len(rows), 'rows': pag,
                     'mes': _recup_mes_arg(base), 'hoje': base['hoje'].isoformat()})
 
 
@@ -5519,9 +5724,7 @@ def _performance_dados():
     o ranking é do universo inteiro, a pessoa vê a própria posição nele)."""
     ins = _positivacao_insumos()
     ref = ins['ref']
-    # `:pc` = o detalhe ganhou `por_classe` (09/2026, Agente de IA). Só invalida o cache antigo;
-    # a nota é a mesma (NOTA_VERSAO não muda).
-    key = f'multpel:performance:{ref}:v{performance_comercial.NOTA_VERSAO}:pc'
+    key = f'multpel:performance:{ref}:v{performance_comercial.NOTA_VERSAO}'
     cached = _cache_get(key)
     hist_pesos = _perf_pesos_historico()
     pesos, comp_pesos = performance_comercial.pesos_vigentes(hist_pesos, ref)
@@ -5529,8 +5732,8 @@ def _performance_dados():
         vmap = _carregar_vendedores_map()
         smap = _carregar_supervisores_map()
         universo_rca = {int(k): performance_comercial.universo_de(v.get('tipo')) for k, v in vmap.items()}
-        classes = _classes_abc_clientes()['fechado']
-        cob = performance_comercial.cobertura_ajustada(ins['bases'], ins['atendidos'], classes, universo_rca)
+        # régua única (v3): % da carteira ativa positivada nos 60 d até o fim do mês fechado
+        cobs = _cobertura_mes_fechado()['por_dono']
         taxas = positivacao.taxas_atendimento(ins['mes'])
         try:
             realizado = _carregar_metas_realizado(ref // 100, ref % 100, None)['por_vendedor']
@@ -5546,16 +5749,16 @@ def _performance_dados():
             if 'COMMERCE' in (v.get('nome') or '').upper().replace('-', ''):
                 continue                       # canal (e-commerce), não pessoa
             t = taxas.get(u) or {}
-            c = cob.get(u) or {}
-            base_n = len(ins['bases'].get(u, ()))
+            c = cobs.get(u) or {}
+            base_n = c.get('base') or 0
             if base_n < positivacao.MIN_AMOSTRA:
                 continue                       # caixa/balcão sem base própria: não é parâmetro (João, 24/09)
-            if not t and not c.get('indice'):
-                continue                       # não vendeu no mês: fora do ranking
+            if not t and not c.get('positivados'):
+                continue                       # não vendeu no mês e ninguém comprou da carteira: fora
             rz = realizado.get(k, {}) or {}
             m = metas_db.get(k, {}) or {}
             valores = {
-                'cobertura':     c.get('indice') if base_n >= positivacao.MIN_AMOSTRA else None,
+                'cobertura':     c.get('pct'),
                 'rentabilidade': performance_comercial.atingimento(rz.get('rentabilidade'), m.get('rentabilidade_meta')),
                 'receita':       performance_comercial.atingimento(rz.get('venda'), m.get('valor_meta')),
                 'mix':           performance_comercial.atingimento(rz.get('mix'), m.get('mix_meta')),
@@ -5568,8 +5771,7 @@ def _performance_dados():
                 'universo': universo_rca.get(u, performance_comercial.CAMPO),
                 'valores': valores,
                 'detalhe': {
-                    'base_ativa': base_n, 'cobertos': c.get('obs'), 'esperado': c.get('esperado'),
-                    'por_classe': c.get('por_classe'),
+                    'base_ativa': base_n, 'cobertos': c.get('positivados'),
                     'clientes_atendidos': t.get('clientes'), 'mix_medio': t.get('mix'),
                     'realizado': {x: rz.get(x) for x in ('venda', 'rentabilidade', 'mix')},
                     'meta': {'venda': m.get('valor_meta'), 'rentabilidade': m.get('rentabilidade_meta'),
@@ -5578,11 +5780,17 @@ def _performance_dados():
             })
         cached = {'ref': ref, 'linhas': linhas}
         _cache_set(key, cached, 'dax_agregado')
+    # Mês de limpeza: antes da competência configurada a cobertura é INFORMATIVA. Decidido FORA do
+    # cache de propósito — mudar a data no Admin vale na hora, sem esperar o cache expirar.
+    desde = _cobertura_na_nota_desde()
+    informativa = ref < desde
     linhas = []
     for l in cached['linhas']:
-        n = performance_comercial.nota(l['valores'], l['universo'], pesos)
+        n = performance_comercial.nota(l['valores'], l['universo'], pesos,
+                                       fora_da_nota=('cobertura',) if informativa else ())
         linhas.append({**l, **n})
     return {'ref': ref, 'pesos': pesos, 'competencia_pesos': comp_pesos,
+            'cobertura_informativa': informativa, 'cobertura_na_nota_desde': desde,
             'linhas': performance_comercial.ranquear(linhas)}
 
 
@@ -5619,6 +5827,7 @@ def api_performance():
         'escalas': esc, 'escala_atingimento': performance_comercial.ESCALA_ATINGIMENTO_PUBLICA,
         'provisorias': sorted(f'{u}:{k}' for u, k in performance_comercial.ESCALAS_PROVISORIAS),
         'total_universo': total_universo, 'nota_versao': performance_comercial.NOTA_VERSAO,
+        'cobertura_informativa': d['cobertura_informativa'], 'cobertura_na_nota_desde': d['cobertura_na_nota_desde'],
         'linhas': linhas,
     })
 
@@ -5848,6 +6057,36 @@ def _positivacao_insumos():
             'atendidos': {u: set(cs) for u, cs in mes.items()}}
 
 
+COBERTURA_NA_NOTA_DESDE_PADRAO = 202611   # outubro/26 = mês de limpeza (João, 29/09/2026)
+
+
+def _cobertura_na_nota_desde():
+    """Competência (AAAAMM) a partir da qual a COBERTURA entra na nota da Performance. Antes dela o
+    indicador é INFORMATIVO (aparece, com a nota dele, mas fora da nota final) — o mês para o
+    vendedor limpar a carteira com a lista do Gerencial. Configurável no Admin."""
+    try:
+        return int(float(_config_get('cobertura_na_nota_desde', str(COBERTURA_NA_NOTA_DESDE_PADRAO))))
+    except (TypeError, ValueError):
+        return COBERTURA_NA_NOTA_DESDE_PADRAO
+
+
+def _cobertura_mes_fechado():
+    """A RÉGUA ÚNICA de cobertura no último dia do MÊS FECHADO — a mesma conta do Gerencial
+    (`cobertura.cobertura_por_dono`), só que na data do fim do mês. Insumo de Performance e
+    Vendedores: as duas telas leem daqui, então não há como divergirem entre si.
+    Última compra de QUALQUER vendedor até o fim do mês = `_carregar_ultima_compra_antes(mês+1)`
+    (já existe no Power BI e no espelho postgres); dono = cadastro (CODUSUR1)."""
+    import calendar
+    from datetime import date as _date
+    hoje = provider_sql.hoje_analitico() if CONFIG['data_source'] == 'postgres' else _date.today()
+    ref = positivacao.mes_fechado(hoje)
+    fim = _date(ref // 100, ref % 100, calendar.monthrange(ref // 100, ref % 100)[1])
+    dono_de = {c['codcli']: c.get('codusur') for c in _carregar_carteira_full() if c.get('codcli') is not None}
+    ultima = _carregar_ultima_compra_antes(positivacao.mes_add(ref, 1))
+    return {'ref': ref, 'fim': fim, 'dono_de': dono_de, 'ultima': ultima,
+            'por_dono': cob.cobertura_por_dono(ultima, dono_de, fim)}
+
+
 def _positivacao_rcas():
     """Placar de positivação por RCA no último mês FECHADO (ver positivacao.py).
     Base = carteira de CADASTRO (a carteira global já traz o CODUSUR1) com compra em 12m, pelo
@@ -5863,6 +6102,15 @@ def _positivacao_rcas():
     atendidos = {u: set(cs) for u, cs in mes.items()}
     placar = positivacao.positivacao_por_rca(bases, atendidos, codusur_de,
                                              CODIGOS_FICTICIOS, ativos, liberados)
+    # Régua ÚNICA (João, 29/09/2026): a "cobertura da base" desta tela passa a ser a mesma do
+    # Gerencial e da Performance — % da carteira ativa positivada em 60 d por QUALQUER vendedor,
+    # no fim do mês fechado. "Fora da base" e alcance seguem informativos (atendidos POR ELE).
+    for u, c in _cobertura_mes_fechado()['por_dono'].items():
+        pl = placar.setdefault(u, {'fora_base': 0, 'fora_por_tipo': {t: 0 for t in positivacao.TIPOS_DONO},
+                                   'atendidos': 0})
+        pl['base_ativa'], pl['cobertos'], pl['cobertura'] = c['base'], c['positivados'], c['pct']
+        pl['amostra_pequena'] = c['pct'] is None
+        pl['alcance'] = None if c['pct'] is None else (pl.get('atendidos') or 0) / c['base']
     for u, t in positivacao.taxas_atendimento(mes).items():   # item 4: mix/cross/marca/frequência
         placar.setdefault(u, {}).update(t)
     return ref, placar
@@ -10431,6 +10679,51 @@ def _fotografar_estoque():
         print(f"[FOTO] falhou: {e}")
 
 
+_CARTEIRA_FOTO_DDL = """
+CREATE TABLE IF NOT EXISTS carteira_foto (
+    anomes INTEGER NOT NULL, codcli INTEGER NOT NULL, codusur INTEGER, codsupervisor INTEGER,
+    gravado_em TIMESTAMP DEFAULT NOW(), PRIMARY KEY (anomes, codcli))"""
+
+
+def _fotografar_carteira(anomes=None):
+    """Foto do CADASTRO de clientes do mês (codcli → dono, time) em `carteira_foto`. Devolve quantos.
+
+    Roda todo dia (23h50): cada passagem SOBRESCREVE a do mês (upsert), então a última gravação do
+    mês é a foto dele — e um restart no último dia não custa o mês. O BI só tem o dono ATUAL; perder
+    a foto de um mês é irrecuperável (mesma lição da foto do estoque).
+    ⚠️ Cria a tabela aqui também (idempotente): tabela nova que falta falha CALADA (README, foto do
+    estoque) — o init_db do deploy cria, mas o job não pode depender de alguém ter rodado.
+    NÃO depende de CRON_HABILITADO: não manda nada para ninguém."""
+    if anomes is None:
+        from datetime import date as _date
+        hoje = provider_sql.hoje_analitico() if CONFIG['data_source'] == 'postgres' else _date.today()
+        anomes = hoje.year * 100 + hoje.month
+    linhas = cob.linhas_foto(_carregar_carteira_full(), anomes)
+    conn = get_db()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(_CARTEIRA_FOTO_DDL)
+            cur.executemany(
+                "INSERT INTO carteira_foto (anomes, codcli, codusur, codsupervisor, gravado_em) "
+                "VALUES (%s,%s,%s,%s, NOW()) ON CONFLICT (anomes, codcli) DO UPDATE SET "
+                "codusur = EXCLUDED.codusur, codsupervisor = EXCLUDED.codsupervisor, gravado_em = NOW()",
+                linhas)
+    finally:
+        conn.close()
+    return len(linhas)
+
+
+def _fotografar_carteira_job():
+    if 'comercial' not in MODULOS:
+        return
+    try:
+        n = _fotografar_carteira()
+        print(f"[FOTO] carteira fotografada: {n} clientes")
+    except Exception as e:
+        print(f"[FOTO] carteira falhou: {e}")
+        _log_background('foto:carteira', erro=str(e)[:500])
+
+
 def _avancar_demo():
     """Alimentador diário da DEMO — mantém a base sintética terminando HOJE.
 
@@ -10459,6 +10752,13 @@ def _avancar_demo():
         print(f"[DEMO] avancar_demo rc={r.returncode}\n{(r.stdout or '')[-1500:]}")
         if r.returncode != 0:
             _log_background('demo:avancar', erro=(r.stderr or '')[:500])
+        # Metas do mês que a base acabou de alcançar: sem isto, na virada do mês a demo fica
+        # "sem meta" (Metas vazias, Performance parcial para todos). Só semeia mês SEM meta.
+        # DEMO_SEED=1 só para este subprocesso — as travas deste job já garantiram que é demo.
+        r2 = subprocess.run([_sys.executable, '-X', 'utf8', '_seed_demo/seed_usuarios_demo.py', '--so-metas'],
+                            capture_output=True, text=True, timeout=300, env={**os.environ, 'DEMO_SEED': '1'},
+                            cwd=os.path.dirname(os.path.abspath(__file__)))
+        print(f"[DEMO] metas do mes rc={r2.returncode}\n{(r2.stdout or '')[-600:]}")
     except Exception as e:
         print(f"[DEMO] avancar_demo falhou: {e}")
 
@@ -10493,6 +10793,8 @@ def _start_scheduler():
         # refazerem nada, e o teto é 22h para a foto nunca cruzar a meia-noite e gravar a
         # posição de um dia na data do outro.
         _scheduler.add_job(_fotografar_estoque, 'cron', hour='18-22', minute=40, id='foto_estoque')
+        # Foto do cadastro de clientes (régua única de cobertura): todo dia, a última do mês vale.
+        _scheduler.add_job(_fotografar_carteira_job, 'cron', hour=23, minute=50, id='foto_carteira')
         # Demo: avanca a base sintetica ate hoje. 4h05 — bem antes da janela da foto, para que a
         # foto do dia ja saia sobre a base atualizada (senao a serie da Evolucao fica um dia atras).
         _scheduler.add_job(_avancar_demo, 'cron', hour=4, minute=5, id='demo_avancar')
@@ -10501,6 +10803,625 @@ def _start_scheduler():
         print(f"[CRON] Scheduler iniciado ({status})")
     except Exception as e:
         print(f"[CRON] Falhou ao iniciar scheduler: {e}")
+
+
+# ══════════════════════════ Agente de IA do COMERCIAL (/api/ia/*) ══════════════════════════
+# Desenho em docs/comercial/IA_COMERCIAL_CONTEUDO.md §0; motor puro em `ia_comercial.py`.
+# ⚠️ Import TOLERANTE A FALHA (mesma regra do Compras): código na imagem é código que pode quebrar
+# a imagem. Um erro aqui não pode derrubar o boot — levaria junto o Comercial inteiro e a
+# instância da Multpel, que nem tem o Agente ligado. Sem o módulo, as rotas respondem 404.
+try:
+    import ia_comercial as iacom
+    from estoque import ia_conferencia as _iacom_conf
+except Exception as _e_iacom:                                     # noqa: BLE001
+    iacom = _iacom_conf = None
+    print(f"[ia-comercial] Agente indisponivel ({_e_iacom}) — as rotas /api/ia/* respondem 404.")
+
+import threading as _threading
+
+
+def _iacom_off():
+    """`ia` fora do MODULOS **ou** import quebrado → o Agente não existe nesta instância."""
+    return iacom is None or not iacom.modulo_ligado()
+
+
+def _ia_rota(path, sess, **query):
+    """Chama uma rota do Comercial POR DENTRO, com a SESSÃO do usuário → (status, json).
+
+    É assim que o agente lê os números: a MESMA função que a tela chama, com o mesmo RBAC
+    (`_carteira_no_escopo`, `pode_acessar_vendedor`, `_recup_escopo`) e o mesmo cache por usuário.
+    Recalcular no agente faria dele a enésima implementação de cada régua — e número que diverge
+    da tela mata a confiança nos dois.
+
+    · contexto de requisição PRÓPRIO: querystring só com `query` (os filtros da tela NÃO vazam para
+      cá — eles viajam no corpo do chat e só são declarados);
+    · a sessão é uma CÓPIA: o que a rota interna escrever nela é descartado;
+    · ⚠️ NÃO passa pelos `before_request` (ex.: `_guard_comercial`). A guarda de área é do
+      `/api/ia/chat` e do `/api/ia/contexto`, que passam por ela — só depois disso uma rota
+      interna é chamada. 403/404 da rota = fora do escopo; o agente responde isso sem dado."""
+    q = {k: v for k, v in query.items() if v is not None}
+    with app.test_request_context(path, query_string=q):
+        session.update(sess)
+        ep, args = app.url_map.bind('localhost').match(path, method='GET')
+        r = app.view_functions[ep](**args)
+        status = 200
+        if isinstance(r, tuple):
+            r, status = r[0], r[1]
+        elif hasattr(r, 'status_code'):
+            status = r.status_code
+        j = r.get_json(silent=True) if hasattr(r, 'get_json') else None
+    return status, j
+
+
+class _ia_sessao:
+    """Contexto de requisição neutro com a sessão do usuário — para helpers que leem `session`
+    (ex.: `_carteira_no_escopo`, `_recup_linhas`) fora de uma rota. Querystring vazia."""
+
+    def __init__(self, sess):
+        self.sess = sess
+        self.ctx = None
+
+    def __enter__(self):
+        self.ctx = app.test_request_context('/')
+        self.ctx.push()
+        session.update(self.sess)
+        return self
+
+    def __exit__(self, *exc):
+        self.ctx.pop()
+        return False
+
+
+# Cache do panorama: por USUÁRIO + papel + escopo. Um contexto de diretor servido a um supervisor
+# entregaria por texto o que o HTTP recusa. TTL curto: as rotas por baixo já têm cache longo; isto
+# só evita refazer a leitura a cada pergunta da mesma conversa.
+_IACOM_CTX = {}
+_IACOM_CTX_TTL = 300
+_IACOM_LOCKS = {}
+_IACOM_LOCKS_MUTEX = _threading.Lock()
+# Cada fonte tem teto próprio: fonte lenta vira "indisponível" em vez de prender o chat. A thread
+# segue rodando e aquece o cache da rota — a próxima pergunta já a encontra pronta.
+_IACOM_FONTE_TIMEOUT = float(os.getenv('IA_FONTE_TIMEOUT', '90'))
+
+
+def _iacom_chave(sess):
+    sups = ','.join(str(s) for s in sorted(sess.get('codsupervisores') or [])) or sess.get('codsupervisor')
+    return 'iacom:ctx:%s:%s:%s:%s' % (sess.get('user_id'), sess.get('role'), sess.get('codusur'), sups)
+
+
+def _iacom_perfil(sess):
+    with _ia_sessao(sess):
+        role = session.get('role')
+        times = []
+        if role == 'supervisor':
+            smap = _carregar_supervisores_map()
+            times = [{'cod': s, 'nome': (smap.get(str(s)) or {}).get('nome')} for s in _session_supervisores()]
+        hoje = provider_sql.hoje_analitico() if CONFIG['data_source'] == 'postgres' else datetime.now().date()
+        return {'role': role, 'nome': session.get('nome'), 'codusur': session.get('codusur'),
+                'times': times, 'hoje': hoje.isoformat() if hasattr(hoje, 'isoformat') else str(hoje)}
+
+
+# (nome da fonte, rota, querystring) — as MESMAS rotas das telas de gestão
+_IACOM_FONTES = (
+    ('recuperacao', '/api/recuperacao', {}),
+    ('performance', '/api/performance', {}),
+    ('gerencial', '/api/gerencial/cobertura', {}),
+    ('metas', '/api/metas', {}),
+    ('positivacao_abc', '/api/carteira/positivacao-abc', {}),
+    ('vendedores', '/api/vendedores', {'tipovend': ''}),     # todos os tipos: cadastro a transferir
+    # quedas (pedido do João, 26/09): produtos (Radar), clientes parados e departamento abandonado
+    ('radar', '/api/radar/board', {}),
+    ('recup_risco', '/api/recuperacao/listas', {'tipo': 'risco', 'limit': 10}),
+    ('mix', '/api/mix/abandonado', {'limit': 10}),
+)
+
+
+def _iacom_buscar(fontes_spec, sess):
+    """Busca as fontes EM PARALELO (cache frio: a Recuperação sozinha leva ~43 s no BI real;
+    em série o panorama passaria de 1 min). → (fontes, erros)."""
+    fontes, erros = {}, {}
+
+    def _uma(spec):
+        _nome, path, q = spec
+        st, j = _ia_rota(path, sess, **q)
+        if st != 200 or not j or j.get('ok') is False:
+            raise RuntimeError(f'HTTP {st}')
+        return j
+
+    ex = ThreadPoolExecutor(max_workers=min(9, len(fontes_spec)))
+    try:
+        futs = [(ex.submit(_uma, s), s[0]) for s in fontes_spec]
+        t0 = time.time()
+        for fut, nome in futs:
+            try:
+                fontes[nome] = fut.result(timeout=max(1.0, _IACOM_FONTE_TIMEOUT - (time.time() - t0)))
+            except Exception as e:                                # noqa: BLE001
+                erros[nome] = str(e)[:200] or type(e).__name__
+                print(f"[ia-comercial] fonte {nome} indisponivel ({erros[nome]}).")
+    finally:
+        ex.shutdown(wait=False)
+    return fontes, erros
+
+
+def _iacom_metas_vendedores(metas_json, sess, role):
+    """Quem não vai bater: /api/metas/vendedores por time — todos os do supervisor; para a
+    diretoria só os 3 piores times na projeção (custo). Só quando a projeção já é estável."""
+    if not metas_json or not iacom.metas_estaveis(metas_json.get('dias')):
+        return {}
+    sups = [s for s in metas_json.get('supervisores') or [] if iacom._tem_meta(s)]
+    sups.sort(key=lambda s: (s.get('venda') or {}).get('pct_projecao') or 0)
+    if role in ('admin', 'viewer'):
+        sups = sups[:3]
+    out = {}
+    for s in sups[:8]:
+        try:
+            st, j = _ia_rota('/api/metas/vendedores', sess, codsupervisor=s.get('codsupervisor'),
+                             ano=metas_json.get('ano'), mes=metas_json.get('mes'))
+            if st == 200 and j:
+                out[s.get('codsupervisor')] = j
+        except Exception as e:                                    # noqa: BLE001
+            print(f"[ia-comercial] metas/vendedores {s.get('codsupervisor')} indisponivel ({e}).")
+    return out
+
+
+def _iacom_nao_pessoas(ger):
+    try:
+        return _gerencial_nao_pessoas(ger or {})
+    except Exception:                                             # noqa: BLE001
+        return set(CODIGOS_FICTICIOS)
+
+
+def _iacom_bloqueados(sess):
+    """RCAs com `bloqueio='S'` no cadastro — carteira parada neles é cadastro a transferir."""
+    try:
+        with _ia_sessao(sess):
+            return {int(k) for k, v in _carregar_vendedores_map().items()
+                    if str(k).isdigit() and v.get('bloqueio') == 'S'}
+    except Exception:                                             # noqa: BLE001
+        return set()
+
+
+def _iacom_panorama(sess, forcar=False):
+    """ctx do agente para ESTE usuário. Trava por chave: o widget aquece ao ABRIR e a 1ª pergunta
+    pode chegar no meio — a segunda espera a primeira em vez de refazer 6 fontes em paralelo."""
+    chave = _iacom_chave(sess)
+    hit = _IACOM_CTX.get(chave)
+    if hit and not forcar and time.time() - hit[0] < _IACOM_CTX_TTL:
+        return hit[1]
+    with _IACOM_LOCKS_MUTEX:
+        lock = _IACOM_LOCKS.setdefault(chave, _threading.Lock())
+    with lock:
+        hit = _IACOM_CTX.get(chave)
+        if hit and not forcar and time.time() - hit[0] < _IACOM_CTX_TTL:
+            return hit[1]
+        perfil = _iacom_perfil(sess)
+        fontes, erros = _iacom_buscar(_IACOM_FONTES, sess)
+        fontes['metas_vendedores'] = _iacom_metas_vendedores(fontes.get('metas'), sess, perfil['role'])
+        ctx = iacom.montar_panorama(perfil, fontes, erros,
+                                    nao_pessoas=_iacom_nao_pessoas(fontes.get('gerencial')),
+                                    bloqueados=_iacom_bloqueados(sess))
+        # as fontes cruas ficam FORA do ctx (que é o que vira prompt), mas as consultas as reusam
+        _IACOM_CTX[chave] = (time.time(), ctx, fontes)
+        return ctx
+
+
+def _iacom_fonte(sess, nome, path):
+    """A fonte crua do último panorama deste usuário; sem ela, busca na rota (mesmo RBAC)."""
+    hit = _IACOM_CTX.get(_iacom_chave(sess))
+    f = (hit[2] if hit else {}).get(nome)
+    if f is not None:
+        return f
+    st, j = _ia_rota(path, sess)
+    return j if st == 200 and j and j.get('ok') is not False else None
+
+
+# ── consultas sob demanda (function calling) ────────────────────────────────────────────────
+def _iacom_consulta_vendedor(busca, sess):
+    with _ia_sessao(sess):
+        itens, todos = [], []
+        for k, v in _carregar_vendedores_map().items():
+            try:
+                cu = int(k)
+            except (TypeError, ValueError):
+                continue
+            bloq = v.get('bloqueio') == 'S'
+            it = {'cod': cu, 'nome': v.get('nome') or f'RCA {cu}', 'sup': v.get('codsupervisor'),
+                  'extra': ('bloqueado' if bloq else None), 'inativo': bloq}
+            todos.append(it)
+            if pode_acessar_vendedor(cu):          # a lista JÁ é o escopo: resolver não amplia
+                itens.append(it)
+    alvo, cands = iacom.resolver(busca, itens)
+    if not alvo:
+        # existe, mas não é do escopo → "fora do escopo" (sem dado); não existe → "não encontrado"
+        if _iacom_existe_fora(busca, itens, todos):
+            return iacom.texto_fora_escopo('vendedor', busca)
+        return iacom.texto_candidatos('vendedor', busca, cands)
+    cod, falta = alvo['cod'], []
+    st, vend = _ia_rota(f'/api/vendedor/{cod}', sess)
+    if st == 403:
+        return iacom.texto_fora_escopo('vendedor', busca)
+    if st != 200:
+        vend = None
+        falta.append('cockpit do vendedor')
+    perf_j = _iacom_fonte(sess, 'performance', '/api/performance')
+    perf = next((l for l in (perf_j or {}).get('linhas') or [] if l.get('codusur') == cod), None)
+    ger_j = _iacom_fonte(sess, 'gerencial', '/api/gerencial/cobertura')
+    ger = next((v for v in (ger_j or {}).get('vendedores') or [] if v.get('id') == cod), None)
+    if ger is not None:
+        ger = {**ger, '_coberto_dias': (ger_j or {}).get('coberto_dias')}
+    rec_j = _iacom_fonte(sess, 'recuperacao', '/api/recuperacao')
+    rec = next((r for r in (rec_j or {}).get('rcas') or [] if r.get('codusur') == cod), None)
+    metas_l, dias = None, None
+    if alvo.get('sup') is not None:
+        mj = _iacom_fonte(sess, 'metas', '/api/metas')
+        q = {'codsupervisor': alvo['sup']}
+        if mj:
+            q.update(ano=mj.get('ano'), mes=mj.get('mes'))
+        st2, mv = _ia_rota('/api/metas/vendedores', sess, **q)
+        if st2 == 200 and mv:
+            dias = mv.get('dias')
+            metas_l = next((v for v in mv.get('vendedores') or [] if v.get('codusur') == cod), None)
+    for nome, fonte in (('performance', perf_j), ('gerencial', ger_j), ('recuperação', rec_j)):
+        if fonte is None:
+            falta.append(nome)
+    sup_nome = (perf or {}).get('time') or (ger or {}).get('time')
+    if not sup_nome and alvo.get('sup') is not None:
+        with _ia_sessao(sess):
+            sup_nome = (_carregar_supervisores_map().get(str(alvo['sup'])) or {}).get('nome')
+    return iacom.consulta_vendedor(cod, alvo['nome'], vend=vend, perf=perf, perf_meta=perf_j, ger=ger, rec=rec,
+                                   metas=metas_l, metas_dias=dias, indisponivel=falta,
+                                   time=(alvo.get('sup'), sup_nome))
+
+
+def _iacom_consulta_time(busca, sess):
+    with _ia_sessao(sess):
+        role = session.get('role')
+        smap = _carregar_supervisores_map()
+        if role in ('admin', 'viewer'):
+            permitidos = {int(k) for k in smap if str(k).isdigit()}
+        elif role == 'supervisor':
+            permitidos = {int(s) for s in _session_supervisores()}
+        else:
+            permitidos = set()
+        itens = [{'cod': s, 'nome': (smap.get(str(s)) or {}).get('nome') or f'Time {s}'} for s in sorted(permitidos)]
+        todos = [{'cod': int(k), 'nome': (v or {}).get('nome') or f'Time {k}'} for k, v in smap.items()
+                 if str(k).isdigit()]
+    alvo, cands = iacom.resolver(busca, itens)
+    if not alvo:
+        if _iacom_existe_fora(busca, itens, todos):
+            return iacom.texto_fora_escopo('time', busca)
+        return iacom.texto_candidatos('time', busca, cands)
+    cod, falta = alvo['cod'], []
+    ger_j = _iacom_fonte(sess, 'gerencial', '/api/gerencial/cobertura')
+    ger = next((t for t in (ger_j or {}).get('times') or [] if t.get('id') == cod), None)
+    mediana = (iacom.bloco_gerencial(ger_j, _iacom_nao_pessoas(ger_j)) or {}).get('mediana_pessoas') if ger_j else None
+    rec_j = _iacom_fonte(sess, 'recuperacao', '/api/recuperacao')
+    rec = next((t for t in (rec_j or {}).get('times') or [] if t.get('codsupervisor') == cod), None)
+    mj = _iacom_fonte(sess, 'metas', '/api/metas')
+    metas_t = next((s for s in (mj or {}).get('supervisores') or [] if s.get('codsupervisor') == cod), None)
+    q = {'codsupervisor': cod}
+    if mj:
+        q.update(ano=mj.get('ano'), mes=mj.get('mes'))
+    st, mv = _ia_rota('/api/metas/vendedores', sess, **q)
+    perf_j = _iacom_fonte(sess, 'performance', '/api/performance')
+    perf_l = [l for l in (perf_j or {}).get('linhas') or [] if l.get('codsupervisor') == cod]
+    for nome, fonte in (('gerencial', ger_j), ('recuperação', rec_j), ('metas', mj), ('performance', perf_j)):
+        if fonte is None:
+            falta.append(nome)
+    return iacom.consulta_time(cod, alvo['nome'], ger=ger, rec=rec, metas=metas_t, metas_dias=(mj or {}).get('dias'),
+                               metas_vend=(mv or {}).get('vendedores') if st == 200 else None,
+                               perf_linhas=perf_l, perf_meta=perf_j, mediana=mediana, indisponivel=falta)
+
+
+def _iacom_consulta_cliente(busca, sess):
+    # O modelo busca como escreve: "121154 L S NASCIMENTO". A busca da tela casa OU código OU trecho
+    # do nome — a string inteira não casa nada, e o agente recusou um cliente que existia (26/09).
+    # Tenta o código, depois o nome, depois a string como veio.
+    m = re.match(r'^\s*#?(\d+)\b\s*[-–—:]?\s*(.*)$', busca or '')
+    tentativas = [m.group(1), m.group(2)] if m and m.group(2) else [busca]
+    alvo, cands = None, []
+    for q in [t for t in tentativas if t and t.strip()]:
+        st, j = _ia_rota('/api/_internal/clientes-busca', sess, q=q.strip(), limit=6)
+        itens = [{'cod': c.get('codcli'), 'nome': c.get('cliente'),
+                  'extra': f"{c.get('cidade') or ''}/{c.get('uf') or ''}, vendedor {c.get('vendedor') or '—'}"}
+                 for c in ((j or {}).get('clientes') or [])] if st == 200 else []
+        alvo, cands = iacom.resolver(q, itens)
+        if alvo:
+            break
+        if cands and not q.isdigit():
+            break          # o nome deu candidatos: pergunta qual (prefixo de código não)
+    if not alvo:
+        return iacom.texto_candidatos('cliente', busca, cands)
+    cc, falta = alvo['cod'], []
+    with _ia_sessao(sess):
+        cli = next((c for c in _carteira_no_escopo() if c.get('codcli') == cc), None)
+        if cli is None:
+            return iacom.texto_fora_escopo('cliente', busca)
+        risco = recuperado = None
+        try:
+            _b, rows = _recup_linhas('risco')
+            risco = next((r for r in rows if r.get('codcli') == cc), None)
+            if risco is None:
+                _b, rows = _recup_linhas('recuperados')
+                recuperado = next((r for r in rows if r.get('codcli') == cc), None)
+        except Exception as e:                                    # noqa: BLE001
+            falta.append('recuperação')
+            print(f"[ia-comercial] recuperação do cliente indisponível ({e}).")
+
+    def _get(path, chave=None, **q):
+        try:
+            s, r = _ia_rota(path, sess, **q)
+            if s != 200 or not r:
+                raise RuntimeError(f'HTTP {s}')
+            return r.get(chave) if chave else r
+        except Exception as e:                                    # noqa: BLE001
+            falta.append(path.split('/')[2])
+            print(f"[ia-comercial] {path} indisponível ({e}).")
+            return None
+
+    drill = _get(f'/api/carteira/cliente/{cc}')
+    produtos = _get(f'/api/carteira/cliente/{cc}/produtos', 'produtos', limit=8)
+    deptos = _get(f'/api/mix/abandonado/{cc}/deptos', 'rows')
+    radar = _get(f'/api/radar/cliente/{cc}')
+    return iacom.consulta_cliente(cli, drill=drill, produtos=produtos, deptos_parados=deptos, radar=radar,
+                                  risco=risco, recuperado=recuperado, indisponivel=sorted(set(falta)))
+
+
+def _iacom_existe_fora(busca, itens, todos):
+    """A busca casa EXATAMENTE alguém que existe mas não está no escopo? Então a resposta é
+    "fora do escopo" (sem dado) — e não "qual destes?" com candidatos do escopo parecidos."""
+    alvo = iacom.resolver(busca, todos)[0]
+    return alvo is not None and alvo['cod'] not in {i['cod'] for i in itens}
+
+
+_IACOM_EXEC = {'vendedor': _iacom_consulta_vendedor, 'time': _iacom_consulta_time,
+               'cliente': _iacom_consulta_cliente}
+
+
+def _iacom_executar(nome, busca, sess):
+    fn = _IACOM_EXEC.get(nome)
+    if fn is None:
+        return f"Consulta '{nome}' não existe. Use vendedor, time ou cliente."
+    if not busca:
+        return f"Consulta {nome} sem termo de busca: informe código ou nome."
+    try:
+        return fn(busca, sess)
+    except Exception as e:                                        # noqa: BLE001
+        traceback.print_exc()
+        return f"Consulta {nome}('{busca}') falhou agora ({type(e).__name__}). Diga que o dado está indisponível."
+
+
+# ── rastro (mesmas tabelas do Compras; `unidade='comercial'`, rota 'comercial:ia:chat') ────────
+_IACOM_DDL_OK = False
+
+
+def _iacom_salvar_contexto(ctx_hash, prompt_txt, perfil):
+    """Grava o prompt COMPLETO que o modelo viu, ANTES do stream (uma falha no meio é justamente
+    quando alguém vai querer olhar). Falha em silêncio: auditoria não derruba o recurso."""
+    global _IACOM_DDL_OK
+    try:
+        conn = get_db()
+        with conn, conn.cursor() as cur:
+            if not _IACOM_DDL_OK:
+                cur.execute(iacom.DDL_LOG)
+                cur.execute("DELETE FROM estoque_ia_contexto WHERE criado_em < now() - make_interval(days => %s)",
+                            (iacom.DIAS_RETENCAO_CTX,))
+                _IACOM_DDL_OK = True
+            cur.execute("INSERT INTO estoque_ia_contexto (ctx_hash, unidade, recorte, modelo, prompt) "
+                        "VALUES (%s,%s,%s,%s,%s) ON CONFLICT (ctx_hash) DO NOTHING",
+                        (ctx_hash, 'comercial', json.dumps(perfil, ensure_ascii=False, default=str)[:1000],
+                         iacom.MODELO, prompt_txt))
+        conn.close()
+    except Exception as e:                                        # noqa: BLE001
+        print(f"[ia-comercial] contexto nao registrado ({e}).")
+
+
+def _iacom_log(uid, pergunta, resposta, duracao_ms, erro=None, ctx_hash=None, conferencia=None,
+               consultas=None, tela=None):
+    """Pergunta + RESPOSTA + impressão do prompt + consultas feitas, em `multpel_log`."""
+    try:
+        conn = get_db()
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO multpel_log (usuario_id, rota, parametros, duracao_ms, erro) VALUES (%s,%s,%s,%s,%s)",
+                (uid if isinstance(uid, int) else None, 'comercial:ia:chat',
+                 json.dumps({'pergunta': (pergunta or '')[:300], 'resposta': (resposta or '')[:8000],
+                             'resposta_chars': len(resposta or ''), 'ctx_hash': ctx_hash,
+                             'conferencia': conferencia, 'consultas': consultas or [], 'tela': tela,
+                             'modelo': iacom.MODELO}, ensure_ascii=False)[:12000],
+                 duracao_ms, erro))
+        conn.close()
+    except Exception as e:                                        # noqa: BLE001
+        print(f"[ia-comercial] log indisponivel ({e}).")
+
+
+# ── rotas ───────────────────────────────────────────────────────────────────────────────────
+@app.route('/api/ia/status')
+@login_required
+def api_iacom_status():
+    """Sonda do widget. 200 nos TRÊS estados (off/oferta/ativo), como no Compras: um 404 aqui
+    faria o front confundir "erro de rede" com "recurso ausente". Na Multpel (off) o widget nem
+    chega a chamar isto — o `joga-header.js` só carrega o script com `ia` no `/api/me.modulos`."""
+    e = 'off' if _iacom_off() else iacom.estado()
+    ok = e == 'ativo'
+    return jsonify({'ok': True, 'modulo': e != 'off', 'estado': e, 'disponivel': ok,
+                    'modelo': iacom.MODELO if ok else None,
+                    'upsell': iacom.UPSELL if e == 'oferta' else None})
+
+
+@app.route('/api/ia/contexto')
+@login_required
+def api_iacom_contexto():
+    """Monta (ou reaproveita) o panorama e devolve índice + sugestões. O widget chama isto ao
+    ABRIR, com "carregando" na tela: com cache frio as fontes levam até ~45 s, e pagar isso na
+    1ª pergunta faria o chat parecer travado. `?texto=1` devolve o texto que vira prompt (auditoria)."""
+    if _iacom_off():
+        return jsonify({'ok': False, 'error': 'Agente de IA não habilitado nesta instância'}), 404
+    ok, _m = iacom.disponivel()
+    if not ok:
+        return jsonify({'ok': False, 'upsell': iacom.UPSELL}), 402
+    sess = dict(session)
+    t0 = time.time()
+    try:
+        ctx = _iacom_panorama(sess, forcar=request.args.get('refazer') == '1')
+    except Exception as e:                                        # noqa: BLE001
+        traceback.print_exc()
+        return jsonify({'ok': False, 'error': f'Não consegui ler os dados do painel agora ({type(e).__name__}).'}), 503
+    tela = request.args.get('tela') or None
+    txt = iacom.renderizar(ctx)
+    resp = {'ok': True, 'perfil': ctx.get('perfil'), 'indice': iacom.indice(ctx, txt),
+            'indisponivel': ctx.get('indisponivel'), 'sugestoes': iacom.sugestoes(ctx, tela),
+            'ms': int((time.time() - t0) * 1000)}
+    if request.args.get('texto') == '1':
+        resp['texto'] = txt
+    return jsonify(resp)
+
+
+@app.route('/api/ia/chat', methods=['POST'])
+@login_required
+def api_iacom_chat():
+    """Pergunta → resposta em STREAM (SSE), com até 3 consultas sob demanda no meio.
+
+    ⚠️ Esta rota passa pelo `_guard_comercial` (quem não tem a área Comercial leva 403 aqui).
+    É a porta: as rotas que o agente consome por dentro (`_ia_rota`) não passam pela guarda.
+    Estados: módulo desligado → 404; sem chave → 402 (oferta); teto diário → 429."""
+    if _iacom_off():
+        return jsonify({'ok': False, 'error': 'Agente de IA não habilitado nesta instância'}), 404
+    ok, _m = iacom.disponivel()
+    if not ok:
+        return jsonify({'ok': False, 'upsell': iacom.UPSELL}), 402
+
+    uid = session.get('user_id') or 'anon'
+    try:
+        if _R is not None:
+            _k = f"ia:uso:comercial:{uid}:{datetime.now().date().isoformat()}"
+            _usos = _R.incr(_k)
+            if _usos == 1:
+                _R.expire(_k, 86400)
+            if _usos > iacom.LIMITE_DIA:
+                return jsonify({'ok': False, 'error': f'Limite de {iacom.LIMITE_DIA} perguntas por dia atingido. '
+                                                      'Ele zera amanhã.'}), 429
+    except Exception as e:                                        # noqa: BLE001
+        print(f"[ia-comercial] contador de uso indisponivel ({e}) — liberando.")
+
+    data = request.get_json(silent=True) or {}
+    pergunta = (data.get('pergunta') or '').strip()
+    if not pergunta:
+        return jsonify({'ok': False, 'error': 'Pergunta vazia'}), 400
+    if len(pergunta) > 500:
+        return jsonify({'ok': False, 'error': 'Pergunta muito longa'}), 400
+    # tela e filtros vêm no CORPO, nunca na querystring: as rotas internas leem `request.args` e
+    # estreitariam o panorama em silêncio. Aqui eles só são declarados ao modelo.
+    tela = str(data.get('tela') or '')[:60] or None
+    filtros = data.get('filtros') if isinstance(data.get('filtros'), dict) else None
+    if filtros:
+        filtros = {str(k)[:30]: str(v)[:60] for k, v in list(filtros.items())[:8] if v not in (None, '')}
+
+    sess = dict(session)
+    try:
+        ctx = _iacom_panorama(sess)
+    except Exception:                                             # noqa: BLE001
+        traceback.print_exc()
+        return jsonify({'ok': False, 'error': 'Não consegui ler os dados do painel agora.'}), 503
+
+    _sp = iacom.system_prompt(ctx, tela=tela, filtros=filtros)
+    _ctx_hash = iacom.impressao(_sp)
+    _iacom_salvar_contexto(_ctx_hash, _sp, ctx.get('perfil'))
+    mensagens = [{'role': 'system', 'content': _sp}]
+    for m in (data.get('historico') or [])[-6:]:
+        if isinstance(m, dict) and m.get('role') in ('user', 'assistant') and m.get('content'):
+            mensagens.append({'role': m['role'], 'content': str(m['content'])[:4000]})
+    mensagens.append({'role': 'user', 'content': pergunta})
+
+    consultas = []          # [{nome, busca, ms, chars}] — vai para o log
+    resultados = []         # textos devolvidos pelas consultas — entram na conferência
+
+    def gerar(sink):
+        try:
+            from openai import OpenAI
+            # ⚠️ TIMEOUT EXPLÍCITO (ver estoque/ia.py): sem ele o SDK segura um worker por até 30
+            # min, e o Waitress só tem 8 threads — oito chats travados param o painel inteiro.
+            cli = OpenAI(api_key=os.getenv('OPENAI_API_KEY'), timeout=iacom.IA_TIMEOUT,
+                         max_retries=iacom.IA_MAX_RETRIES)
+            msgs = list(mensagens)
+            n = 0
+            feitas = {}          # (consulta, busca) → resultado, dentro desta pergunta
+            for _rodada in range(iacom.MAX_CONSULTAS + 1):
+                kw = dict(model=iacom.MODELO, messages=msgs, max_tokens=iacom.MAX_TOKENS,
+                          temperature=0.3, stream=True, tools=iacom.TOOLS)
+                if n >= iacom.MAX_CONSULTAS:
+                    kw['tool_choice'] = 'none'       # teto atingido: responde com o que tem
+                calls = {}
+                for chunk in cli.chat.completions.create(**kw):
+                    if not chunk.choices:
+                        continue
+                    d = chunk.choices[0].delta
+                    if d.content:
+                        sink.append(d.content)
+                        yield f"data: {json.dumps({'token': d.content})}\n\n"
+                    for tc in (d.tool_calls or []):
+                        c = calls.setdefault(tc.index, {'id': None, 'name': '', 'args': ''})
+                        if tc.id:
+                            c['id'] = tc.id
+                        if tc.function is not None:
+                            c['name'] += tc.function.name or ''
+                            c['args'] += tc.function.arguments or ''
+                if not calls:
+                    break
+                msgs.append({'role': 'assistant', 'content': None, 'tool_calls': [
+                    {'id': c['id'], 'type': 'function', 'function': {'name': c['name'], 'arguments': c['args']}}
+                    for c in calls.values()]})
+                for c in calls.values():
+                    busca = iacom.args_tool(c['args'])
+                    chave = (c['name'], busca.lower())
+                    if chave in feitas:
+                        # o modelo às vezes pede a MESMA consulta 2x na mesma rodada: reusa e não
+                        # gasta o teto (medido no 1º ensaio: vendedor(198) duas vezes)
+                        msgs.append({'role': 'tool', 'tool_call_id': c['id'], 'content': feitas[chave]})
+                        continue
+                    if n >= iacom.MAX_CONSULTAS:
+                        out = 'Teto de 3 consultas desta pergunta atingido. Responda com o que já tem.'
+                    else:
+                        n += 1
+                        rotulo = f"consultando {c['name']} {busca}…"
+                        yield f"data: {json.dumps({'status': rotulo})}\n\n"
+                        t1 = time.time()
+                        out = _iacom_executar(c['name'], busca, sess)
+                        consultas.append({'nome': c['name'], 'busca': busca,
+                                          'ms': int((time.time() - t1) * 1000), 'chars': len(out)})
+                        resultados.append(out)
+                        feitas[chave] = out
+                    msgs.append({'role': 'tool', 'tool_call_id': c['id'], 'content': out})
+            yield "data: [DONE]\n\n"
+        except Exception as e:                                    # noqa: BLE001
+            print(f"[ia-comercial] falha no chat: {e}")
+            yield f"data: {json.dumps({'erro': 'Falha ao consultar o assistente.'})}\n\n"
+
+    _t0 = time.time()
+
+    def gerar_com_log():
+        partes, erro = [], None
+        try:
+            for pedaco in gerar(partes):
+                yield pedaco
+        except Exception as e:                                    # noqa: BLE001
+            erro = str(e)[:400]
+            raise
+        finally:
+            resp = ''.join(partes)
+            conf = None
+            try:
+                # a conferência olha o prompt E o que as consultas devolveram — senão todo número
+                # vindo de uma consulta seria marcado como inventado
+                conf = _iacom_conf.resumo(_iacom_conf.conferir(resp, _sp + '\n' + '\n'.join(resultados)))
+            except Exception as _e:                               # noqa: BLE001
+                print(f"[ia-comercial] conferencia indisponivel ({_e}).")
+            _iacom_log(uid, pergunta, resp, int((time.time() - _t0) * 1000), erro, ctx_hash=_ctx_hash,
+                       conferencia=conf, consultas=consultas, tela=tela)
+
+    return Response(stream_with_context(gerar_com_log()), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
 
 
 if __name__ == '__main__':
