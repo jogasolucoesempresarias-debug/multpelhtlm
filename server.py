@@ -5520,7 +5520,9 @@ def api_recuperacao():
     """Ponte do mês + cards + placar Time/RCA + série 12m, no escopo do usuário."""
     base = _recup_base()
     am = _recup_mes_arg(base)
-    key = cache_key_for_user('recuperacao:resumo:v1', {
+    # v2 (29/09/2026): a resposta ganhou o SALDO (cards + placar). Sem subir a versão, a produção
+    # serviu a resposta antiga do cache por até 1 h depois do deploy e a tela mostrou saldo 0.
+    key = cache_key_for_user('recuperacao:resumo:v2', {
         'mes': am, 'sup': request.args.get('supervisor', ''), 'vend': request.args.get('vendedor', ''),
         'p': f"{base['ina']}:{base['per']}:{base['atual']}"})
     cached = _cache_get(key)
@@ -6194,7 +6196,7 @@ def _carregar_ranking_vendedores(role=None, codusur=None, codsupervisor=None):
         rbac_sups = _como_lista_supervisores(codsupervisor)
 
     key = ':'.join([
-        'multpel', 'vendedores:ranking:v2',  # v2: positivação pela régua de cadastro (positivacao.py)
+        'multpel', 'vendedores:ranking:v3',  # v3: cobertura = régua única (29/09/2026); v2: régua de cadastro
         f"role={role or 'anon'}",
         f"usur={codusur if codusur is not None else '-'}",
         f"supv={','.join(str(s) for s in rbac_sups) if rbac_sups else '-'}",
@@ -6395,7 +6397,7 @@ def api_vendedor(codusur):
     if not pode_acessar_vendedor(codusur):
         return jsonify({'ok': False, 'error': 'Sem permissão'}), 403
 
-    key = cache_key_for_user(f'vendedor:full:v2:{codusur}')  # v2: positivação de cadastro
+    key = cache_key_for_user(f'vendedor:full:v3:{codusur}')  # v3: régua única de cobertura (29/09/2026)
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)

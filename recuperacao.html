@@ -298,6 +298,8 @@ function renderPonte() {
   // Saldo do mês (João, 29/09/2026): entraram em risco − recuperados do risco. Positivo = a carteira
   // piorou (diminuindo); negativo = avançando. "O vendedor bate o olho e já incomoda."
   const c = _data.cards, cls = c.saldo > 0 ? 'saldo-pos' : (c.saldo < 0 ? 'saldo-neg' : '');
+  // sem o campo (resposta antiga em cache) a faixa some em vez de mostrar um "0" enganoso
+  document.getElementById('ponteSaldo').classList.toggle('hidden', c.saldo == null);
   document.getElementById('ponteSaldo').innerHTML =
     `<b>Saldo do mês</b> <span class="n ${cls}">${sinal(c.saldo)} clientes</span>` +
     `<span class="${cls}">${sinalBRL(c.saldo_valor)}/mês</span>` +
