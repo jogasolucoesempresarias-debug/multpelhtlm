@@ -2938,6 +2938,40 @@ def _reagrega_abertos(res, abertos, **marcas):
     return {**res, "resumo": r, "abertos": abertos}
 
 
+def comprador_do_fornecedor(codfornec, forn_map, comp_map):
+    """Nome do comprador dono do fornecedor (`PCFORNEC.CODCOMPRADOR → PCEMPR`), ou None.
+    É o mesmo nome que o `orcamento_winthor` compara com o filtro da tela."""
+    try:
+        forn = forn_map.get(int(_n(codfornec))) if codfornec not in (None, "") else None
+    except (TypeError, ValueError):
+        forn = None
+    cod = (forn or {}).get("CODCOMPRADOR")
+    if cod in (None, ""):
+        return None
+    return comp_map.get(int(_n(cod)))
+
+
+def manuais_do_comprador(manuais, comprador, forn_map, comp_map):
+    """Pedidos da nossa plataforma do recorte da tela, com o comprador resolvido pelo FORNECEDOR.
+
+    🩹 Até 10/2026 o pedido gravava como comprador o que estava no FILTRO na hora de lançar:
+    lançado com "Empresa toda" virava `TODOS`, e o comprador dono do fornecedor, ao filtrar o
+    próprio nome, não via o pedido (achado pelo João Victor). E lançado com o filtro de outro
+    comprador ficava no nome errado. A régua do módulo é o comprador do FORNECEDOR, então ela vale
+    aqui na leitura — o que também corrige os pedidos antigos sem UPDATE no banco.
+    Fornecedor sem cadastro (digitado à mão) cai no nome gravado, se não for `TODOS`."""
+    todos = (not comprador or comprador == "TODOS")
+    out = []
+    for pe in manuais:
+        nome = comprador_do_fornecedor(pe.get("codfornec"), forn_map, comp_map)
+        if not nome:
+            gravado = pe.get("comprador")
+            nome = gravado if gravado and gravado != "TODOS" else None
+        if todos or nome == comprador:
+            out.append({**pe, "comprador": nome})
+    return out
+
+
 def recorta_abertos_por_fornecedor(res, codfornec):
     """Aplica o recorte de FORNECEDOR ao bloco de pedidos em aberto do Orçamento.
 

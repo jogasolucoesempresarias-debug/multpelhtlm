@@ -279,6 +279,37 @@ def test_radar_board_filtra_por_fornecedor(client, usuario_admin, mock_dax_captu
     assert filt['rows'][0]['fornec_nome'] == 'BOMBRIL SA'
 
 
+def test_radar_board_totais_somam_lista_inteira_e_trazem_o_saldo(client, usuario_admin, mock_dax_capture, clean_redis):
+    """Cards do board (10/2026): queda soma TODA a lista (não o `limit`), e o produto que CRESCEU
+    — fora da tabela — entra no 'em alta' e no saldo. Com fornecedor, os quatro recortam junto."""
+    prod_map = [
+        {'[CODPROD]': 100, '[DESCRICAO]': 'DETERGENTE', '[CODEPTO]': 1, '[CODFORNECPRINC]': 113, '[FORNECPRINC]': 'BOMBRIL SA', '[Venda]': 5000.0},
+        {'[CODPROD]': 200, '[DESCRICAO]': 'SACOLA',     '[CODEPTO]': 2, '[CODFORNECPRINC]': 999, '[FORNECPRINC]': 'OUTRO LTDA', '[Venda]': 3000.0},
+        {'[CODPROD]': 300, '[DESCRICAO]': 'ESPONJA',    '[CODEPTO]': 1, '[CODFORNECPRINC]': 113, '[FORNECPRINC]': 'BOMBRIL SA', '[Venda]': 900.0},
+    ]
+    rec = [{'[CODPROD]': 100, '[VendaRec]': 100.0, '[CliRec]': 2}, {'[CODPROD]': 200, '[VendaRec]': 100.0, '[CliRec]': 2},
+           {'[CODPROD]': 300, '[VendaRec]': 350.0, '[CliRec]': 3}]
+    ant = [{'[CODPROD]': 100, '[VendaAnt]': 500.0, '[CliAnt]': 5}, {'[CODPROD]': 200, '[VendaAnt]': 300.0, '[CliAnt]': 4},
+           {'[CODPROD]': 300, '[VendaAnt]': 100.0, '[CliAnt]': 1}]
+    mock_dax_capture.set_routes([
+        ('DESCRICAO', _payload(prod_map)), ('VendaRec', _payload(rec)), ('VendaAnt', _payload(ant)),
+        ('DEPARTAMENTO', _load('dax_deptos_nomes')),
+    ])
+    login_as(client, usuario_admin['email'], usuario_admin['senha'])
+
+    d = client.get('/api/radar/board?dias=60&limit=10').get_json()
+    t = d['totais']
+    assert d['total'] == 2 and [r['codprod'] for r in d['rows']] == [100, 200]   # o 300 cresceu
+    assert t['queda_total'] == 600.0 and t['n_queda'] == 2
+    assert t['ganho_total'] == 250.0 and t['n_alta'] == 1
+    assert t['venda_ant'] == 900.0 and t['venda_rec'] == 550.0 and t['saldo'] == -350.0
+    assert t['top10_pct'] == 1.0
+
+    f = client.get('/api/radar/board?dias=60&fornecedor=113').get_json()['totais']
+    assert f['queda_total'] == 400.0 and f['ganho_total'] == 250.0
+    assert f['saldo'] == -150.0 and f['venda_ant'] == 600.0
+
+
 def test_radar_board_export_csv_ordena_e_nomeia(client, usuario_admin, mock_dax_capture, clean_redis):
     """Export CSV do board: 200 OK, ordena pela métrica e nomeia o arquivo pelo filtro."""
     mock_dax_capture.set_routes(_radar_board_routes())

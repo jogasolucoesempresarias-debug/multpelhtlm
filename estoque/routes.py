@@ -3918,7 +3918,9 @@ def api_orcamento():
     fornec = (request.args.get("fornec") or "").strip()
     if fornec:
         res = core.recorta_abertos_por_fornecedor(res, fornec)
-    manuais = store.pedidos_pendentes(mes, comprador) if store.ensure() else []
+    # Busca TODOS os pendentes e recorta pelo comprador do FORNECEDOR — ver core.manuais_do_comprador.
+    manuais = store.pedidos_pendentes(mes) if store.ensure() else []
+    manuais = core.manuais_do_comprador(manuais, comprador, _cadastro_fornecedores(), _compradores_map())
     return jsonify({"ok": True, "resumo": res["resumo"], "pedidos": res["pedidos"],
                     "abertos": res["abertos"], "por_comprador": res.get("por_comprador", []),
                     "manuais": manuais})
@@ -3951,6 +3953,13 @@ def api_orcamento_meta():
 def api_pedido_add():
     d = request.get_json() or {}
     d.setdefault("mes", d.get("data_pedido", date.today().isoformat())[:7])
+    # O dono do pedido é o comprador do FORNECEDOR, não o filtro que estava na tela ao lançar.
+    try:
+        nome = core.comprador_do_fornecedor(d.get("codfornec"), _cadastro_fornecedores(), _compradores_map())
+        if nome:
+            d["comprador"] = nome
+    except Exception as e:
+        print(f"[pedidos] comprador do fornecedor indisponível ({e}).")
     return jsonify({"ok": True, "id": store.pedido_add(d)})
 
 

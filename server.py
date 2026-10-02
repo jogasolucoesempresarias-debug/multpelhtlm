@@ -34,7 +34,11 @@ resend.api_key = os.getenv('RESEND_API_KEY', '')
 RESEND_FROM = os.getenv('RESEND_FROM', 'onboarding@resend.dev')
 CRON_HABILITADO = os.getenv('CRON_HABILITADO', 'false').lower() == 'true'
 
-app = Flask(__name__, static_folder='.')
+# static_folder=None: NÃO registra a rota automática do Flask. Com static_folder='.' o Flask
+# criava `/./<path:filename>` servindo a RAIZ do projeto sem login (/./server.py, /./.env, etc).
+# Os assets são servidos pela rota explícita `/static/<path>` (static_assets) e os HTML por
+# send_from_directory('.', ...) nas rotas de cada página — nada depende da rota automática.
+app = Flask(__name__, static_folder=None)
 
 # ── Chave de sessão ──
 # Em produção a SECRET_KEY é OBRIGATÓRIA. Antes havia um fallback fixo ('dev-secret-change-me'):
@@ -7897,6 +7901,46 @@ def _radar_board_full(dias):
     """Lista COMPLETA de produtos sangrando (janela recente vs anterior), ordenada por queda de
     receita desc, no escopo da SESSÃO (supervisor/vendedor/cadastro). Cacheada por (dias, escopo).
     SEM filtro de fornecedor (esse é aplicado depois, em memória). Reusada pelo board e exports."""
+    return _radar_board_payload(dias)['rows']
+
+
+def _radar_totais(rows, por_fornec, fornecedor=None):
+    """Cards do topo do board (10/2026, pedido do João Victor: "um card com o total de receita
+    perdida"). `rows` já vem filtrado por fornecedor; `por_fornec` é o agregado de TODOS os
+    produtos do escopo (inclusive os que cresceram), por codfornec.
+
+    ⚠️ A queda sozinha é BRUTA: o board descarta quem cresceu, então "R$ 150 mil em queda" num
+    vendedor que cresceu no total assustaria sem motivo. Por isso o saldo do período viaja junto.
+    ⚠️ Soma a lista INTEIRA, nunca o top 200 que a tela mostra.
+    ⚠️ Não há total de "clientes perdidos": o mesmo cliente que parou 5 produtos contaria 5 vezes."""
+    if fornecedor:
+        try:
+            chaves = {str(int(fornecedor))}
+        except (TypeError, ValueError):
+            chaves = None
+    else:
+        chaves = None
+    agg = [v for k, v in (por_fornec or {}).items() if chaves is None or k in chaves]
+    venda_ant = round(sum(v.get('ant') or 0 for v in agg), 2)
+    venda_rec = round(sum(v.get('rec') or 0 for v in agg), 2)
+    queda = round(sum(r.get('queda_receita') or 0 for r in rows), 2)
+    top10 = round(sum(r.get('queda_receita') or 0 for r in rows[:10]), 2)
+    saldo = round(venda_rec - venda_ant, 2)
+    return {
+        'queda_total':  queda,
+        'n_queda':      len(rows),
+        'ganho_total':  round(sum(v.get('ganho') or 0 for v in agg), 2),
+        'n_alta':       sum(int(v.get('n_alta') or 0) for v in agg),
+        'venda_ant':    venda_ant,
+        'venda_rec':    venda_rec,
+        'saldo':        saldo,
+        'saldo_pct':    round(saldo / venda_ant, 4) if venda_ant else None,
+        'top10_pct':    round(top10 / queda, 4) if queda else None,
+    }
+
+
+def _radar_board_payload(dias):
+    """Payload cacheado do board: `rows` (só quem caiu) + `por_fornec` (agregado de todos)."""
     d2 = 2 * dias
     sup = _supervisores_filtro()
     vend = _radar_vendedor_filtro()
@@ -7904,12 +7948,13 @@ def _radar_board_full(dias):
     # do board continua servindo o payload velho do cache ate o TTL expirar — e ninguem percebe,
     # porque nao da erro. Subiu para 2 em 08/2026 com duas mudancas: escopo por CADASTRO e
     # `clientes_perdidos` por CONJUNTO. **Suba sempre que mudar o resultado desta funcao.**
+    # v3 (10/2026): o payload ganhou `por_fornec` (cards de total do board).
     key = cache_key_for_user('radar:board',
-                             {'v': 2, 'dias': dias, 'supervisor': _sup_cache_key(sup),
+                             {'v': 3, 'dias': dias, 'supervisor': _sup_cache_key(sup),
                               'vendedor': vend if vend is not None else '-'})
     cached = _cache_get(key)
     if cached:
-        return cached['rows']
+        return cached
 
     # Escopo por CADASTRO nas DUAS pontas — board e drill partem do mesmo conjunto de clientes.
     # ⚠️ Até 08/2026 o caminho admin filtrava por VENDA (`FATURAMENTO_VENDAS[CODSUPERVISOR]`)
@@ -7984,6 +8029,7 @@ SUMMARIZECOLUMNS(
     deptos_nomes = _carregar_deptos_map()['deptos']
 
     out = []
+    por_fornec = {}     # {str(codfornec): {ant, rec, ganho, n_alta}} — TODOS os produtos
     for cp in set(rec) | set(ant):
         v_rec = (rec.get(cp, {}).get('VendaRec')) or 0
         v_ant = (ant.get(cp, {}).get('VendaAnt')) or 0
@@ -7994,9 +8040,15 @@ SUMMARIZECOLUMNS(
         c_rec = (rec.get(cp, {}).get('CliRec')) or 0
         c_ant = (ant.get(cp, {}).get('CliAnt')) or 0
         queda = round(v_ant - v_rec, 2)
+        info = prod_idx.get(str(cp)) or {}
+        pf = por_fornec.setdefault(str(info.get('codfornec')), {'ant': 0.0, 'rec': 0.0, 'ganho': 0.0, 'n_alta': 0})
+        pf['ant'] += v_ant
+        pf['rec'] += v_rec
+        if queda < 0:
+            pf['ganho'] += -queda
+            pf['n_alta'] += 1
         if queda <= 0:
             continue   # board só mostra quem está sangrando (perdeu receita)
-        info = prod_idx.get(str(cp)) or {}
         codepto = info.get('codepto')
         out.append({
             'codprod':           cp,
@@ -8015,8 +8067,9 @@ SUMMARIZECOLUMNS(
             'clientes_perdidos': int(perdidos.get(cp, 0)),
         })
     out.sort(key=lambda x: x['queda_receita'], reverse=True)
-    _cache_set(key, {'ok': True, 'dias': dias, 'total': len(out), 'rows': out}, 'dax_agregado')
-    return out
+    payload = {'ok': True, 'dias': dias, 'total': len(out), 'rows': out, 'por_fornec': por_fornec}
+    _cache_set(key, payload, 'dax_agregado')
+    return payload
 
 
 # Métricas de ordenação do board (mesmas do select "Ordenar board por" do front).
@@ -8253,8 +8306,10 @@ def api_radar_board():
     except (TypeError, ValueError):
         dias, limit = 60, 200
     fornecedor = request.args.get('fornecedor')
-    full = _radar_filtrar_fornec(_radar_board_full(dias), fornecedor)
-    return jsonify({'ok': True, 'dias': dias, 'total': len(full), 'rows': full[:limit]})
+    payload = _radar_board_payload(dias)
+    full = _radar_filtrar_fornec(payload['rows'], fornecedor)
+    totais = _radar_totais(full, payload.get('por_fornec'), fornecedor)
+    return jsonify({'ok': True, 'dias': dias, 'total': len(full), 'rows': full[:limit], 'totais': totais})
 
 
 _RADAR_STATUS_PT = {'ativo': 'Comprando', 'esfriando': 'Esfriando', 'parou': 'Parou', 'perdido': 'Perdido'}

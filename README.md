@@ -125,6 +125,17 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
     (60 vs 60 dias) e o drill olha **12 meses**. São perguntas diferentes, e o tooltip declara.
     `CliRec`/`CliAnt` seguem expostos ("quantos compraram em cada janela"), só não formam mais o
     `clientes_perdidos`.
+- **Radar — 4 cards de total no board** (10/2026, pedido do João Victor: *"um card com o total de
+  receita perdida"*): **Queda de receita** · **Produtos em alta** · **Saldo do período** ·
+  **Concentração da queda** (top 10). `totais` no `/api/radar/board` (`_radar_totais`), zero query:
+  o payload cacheado ganhou `por_fornec` (venda anterior/recente e crescimento de TODOS os produtos,
+  por fornecedor — o filtro de fornecedor recorta os quatro), chave `v`=3.
+  - ⚠️ **A queda é BRUTA** — o board descarta quem cresceu. Sozinha, "R$ 150 mil em queda" num
+    vendedor que cresceu no total assustaria sem motivo; por isso o saldo vai ao lado.
+  - ⚠️ Soma a **lista inteira**, nunca o top 200 da tabela. E **não** há card de "clientes
+    perdidos": o mesmo cliente que parou 5 produtos contaria 5 vezes.
+  - O nome evita "Receita perdida" (já é a "Receita perdida acumulada" do Gerencial).
+    Gate: `test_radar_board_totais_somam_lista_inteira_e_trazem_o_saldo`.
 - **Tendências** — cohort retention heatmap (M+0..M+12) com filtros vendedor/supervisor em cascata.
 - **Curva ABC** (09/2026, pedido do João Victor: *"uma gerente me pediu a curva ABC de produtos do
   time dela"*) — produtos do **escopo** ranqueados por venda líquida 12m, Pareto **A ≤ 80% · B ≤ 95% · C**
@@ -721,6 +732,16 @@ servidor (`?busca=`, na chave de cache junto do comprador e do arraste) e o cort
 - ⚠️ Busca por **descrição casa a FAMÍLIA** (`EMB.GALV.G65` → 5 pedidos, 28.701 un contra 24 un
   do código exato); a janela é de **180 dias**. As duas coisas estão escritas na tela.
   Gate: `tests/test_orcamento_filtro_produto.py`.
+
+🩹 **Orçamento: "Pedidos da nossa plataforma" sumiam ao filtrar o comprador** (10/2026, achado pelo
+João Victor: *"só tá aparecendo no filtro Empresa toda… sendo que são meus fornecedores"*). O pedido
+gravava como comprador **o que estava no FILTRO na hora de lançar** — lançado em "Empresa toda" virava
+`TODOS` e não casava com nenhum comprador; lançado com o filtro de outro, ficava no nome errado.
+- A régua passa a ser a do módulo: **comprador do FORNECEDOR** (`PCFORNEC.CODCOMPRADOR`),
+  `core.manuais_do_comprador`. Resolvida na **LEITURA** — os pedidos antigos se corrigem sem UPDATE
+  no banco — e também no **POST** (o nome gravado passa a ser o certo).
+- Fornecedor digitado sem cadastro cai no nome gravado; `TODOS` nunca é nome (só aparece em
+  "Empresa toda"). Gate: `tests/test_orcamento_manuais_comprador.py`.
 
 **Qualidade da base — 2 blocos, 2 universos, cada um declarado** (08/2026, pedido do diretor:
 "a lista dos itens com erro de cadastro não dá para deixar numa aba, para consultar tudo que

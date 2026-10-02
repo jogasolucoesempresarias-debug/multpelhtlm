@@ -183,6 +183,21 @@
     </div>
     <div id="escopoInfo" class="hidden" style="margin:-4px 0 12px;font-size:0.76rem;color:var(--accent);"></div>
 
+    <!-- Totais do board (10/2026, pedido do João Victor). Somam a lista INTEIRA, não o top 200.
+         A queda é BRUTA (só quem caiu); o saldo ao lado impede ler "perdeu R$ X" num escopo
+         que cresceu no total. Sem card de "clientes perdidos": o mesmo cliente que parou 5
+         produtos contaria 5 vezes. -->
+    <div class="kpi-grid" id="boardKpis">
+      <div class="kpi-card" title="Soma da queda de receita de todos os produtos que venderam menos na janela recente do que na anterior (não só os 200 da tabela).">
+        <div class="label">Queda de receita</div><div class="value" id="bk_queda" style="color:var(--red);">—</div><div class="sub" id="bk_queda_sub">&nbsp;</div></div>
+      <div class="kpi-card" title="Soma do crescimento dos produtos que venderam MAIS na janela recente. Fica fora da tabela, que só lista quem caiu.">
+        <div class="label">Produtos em alta</div><div class="value" id="bk_alta" style="color:var(--green);">—</div><div class="sub" id="bk_alta_sub">&nbsp;</div></div>
+      <div class="kpi-card" title="Venda líquida da janela recente menos a da anterior, no mesmo escopo e fornecedor. É a queda menos o que cresceu.">
+        <div class="label">Saldo do período</div><div class="value" id="bk_saldo">—</div><div class="sub" id="bk_saldo_sub">&nbsp;</div></div>
+      <div class="kpi-card" title="Quanto da queda total está nos 10 produtos que mais caíram. Alto = poucos itens explicam a perda; baixo = queda espalhada pelo mix.">
+        <div class="label">Concentração da queda</div><div class="value" id="bk_conc">—</div><div class="sub">nos 10 produtos que mais caíram</div></div>
+    </div>
+
     <div class="table-card">
       <div class="table-info">
         <span id="board_info">—</span>
@@ -441,10 +456,33 @@ async function loadBoard() {
     _board = d.rows || [];
     document.getElementById('board_info').textContent =
       `${NUM.format(d.total || _board.length)} produtos perdendo receita · mostrando top ${_board.length}`;
+    renderBoardKpis(d.totais);
     renderBoard();
   } catch (e) {
     document.getElementById('board_info').textContent = 'Erro ao carregar o radar.';
+    renderBoardKpis(null);
   }
+}
+
+function renderBoardKpis(t) {
+  const set = (id, txt) => { document.getElementById(id).textContent = txt; };
+  const janela = `${dias()} vs ${dias()} dias`;
+  if (!t) {
+    ['bk_queda', 'bk_alta', 'bk_saldo', 'bk_conc'].forEach(id => set(id, '—'));
+    ['bk_queda_sub', 'bk_alta_sub', 'bk_saldo_sub'].forEach(id => set(id, ' '));
+    return;
+  }
+  const pct = v => (v * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%';
+  set('bk_queda', BRL.format(-(t.queda_total || 0)));
+  set('bk_queda_sub', `em ${NUM.format(t.n_queda || 0)} produtos · ${janela}`);
+  set('bk_alta', '+' + BRL.format(t.ganho_total || 0));
+  set('bk_alta_sub', `em ${NUM.format(t.n_alta || 0)} produtos`);
+  const el = document.getElementById('bk_saldo');
+  el.textContent = (t.saldo > 0 ? '+' : '') + BRL.format(t.saldo || 0);
+  el.style.color = t.saldo < 0 ? 'var(--red)' : (t.saldo > 0 ? 'var(--green)' : '');
+  set('bk_saldo_sub', `${BRL.format(t.venda_rec || 0)} contra ${BRL.format(t.venda_ant || 0)}`
+    + (t.saldo_pct != null ? ` (${t.saldo_pct > 0 ? '+' : ''}${pct(t.saldo_pct)})` : ''));
+  set('bk_conc', t.top10_pct != null ? pct(t.top10_pct) : '—');
 }
 
 // Export do board: respeita janela + ordenação (métrica) + escopo (sup/vend) + fornecedor.
