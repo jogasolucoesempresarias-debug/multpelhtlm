@@ -136,6 +136,14 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
     perdidos": o mesmo cliente que parou 5 produtos contaria 5 vezes.
   - O nome evita "Receita perdida" (já é a "Receita perdida acumulada" do Gerencial).
     Gate: `test_radar_board_totais_somam_lista_inteira_e_trazem_o_saldo`.
+  - **Queda × Em alta são um par de abas da tabela.** Clicar em "Produtos em alta" troca a
+    tabela para os produtos que CRESCERAM (`?lista=alta`, colunas receita ganha · % alta ·
+    clientes antes→agora; venda anterior zero = "novo") — responde "o cliente parou ou trocou
+    de item?". Os cards não mudam; CSV/PDF e o drill do produto seguem a lista ativa. A lista
+    vem do mesmo payload (`alta`, chave `v`=4). Saldo e Concentração **não** são clicáveis: um é
+    conta, o outro são as 10 primeiras linhas da própria tabela.
+    ⚠️ Ordenar por **% de alta** traz itens de base minúscula ao topo (na demo: ~R$ 21 → ~R$ 1.170, +5.362%) —
+    é a ordenação secundária; a padrão é receita ganha.
 - **Tendências** — cohort retention heatmap (M+0..M+12) com filtros vendedor/supervisor em cascata.
 - **Curva ABC** (09/2026, pedido do João Victor: *"uma gerente me pediu a curva ABC de produtos do
   time dela"*) — produtos do **escopo** ranqueados por venda líquida 12m, Pareto **A ≤ 80% · B ≤ 95% · C**

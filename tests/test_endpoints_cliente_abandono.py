@@ -309,6 +309,23 @@ def test_radar_board_totais_somam_lista_inteira_e_trazem_o_saldo(client, usuario
     assert f['queda_total'] == 400.0 and f['ganho_total'] == 250.0
     assert f['saldo'] == -150.0 and f['venda_ant'] == 600.0
 
+    # Card "Produtos em alta" clicável: a lista troca, os cards NÃO
+    a = client.get('/api/radar/board?dias=60&lista=alta').get_json()
+    assert a['lista'] == 'alta' and a['total'] == 1
+    r = a['rows'][0]
+    assert r['codprod'] == 300 and r['ganho_receita'] == 250.0 and r['pct_alta'] == 2.5
+    assert (r['clientes_ant'], r['clientes_rec']) == (1, 3)
+    assert a['totais'] == t
+    assert client.get('/api/radar/board?dias=60&lista=alta&fornecedor=999').get_json()['total'] == 0
+
+    csv = client.get('/api/radar/board/csv?dias=60&lista=alta')
+    linhas = [l for l in csv.get_data(as_text=True).splitlines() if l.strip()]
+    assert any('ReceitaGanha' in l for l in linhas)
+    assert any(l.split(';')[1:2] == ['300'] for l in linhas)
+    assert 'em-alta' in csv.headers['Content-Disposition']
+    pdf = client.get('/api/radar/board/pdf?dias=60&lista=alta')
+    assert pdf.status_code == 200 and pdf.data[:4] == b'%PDF'
+
 
 def test_radar_board_export_csv_ordena_e_nomeia(client, usuario_admin, mock_dax_capture, clean_redis):
     """Export CSV do board: 200 OK, ordena pela métrica e nomeia o arquivo pelo filtro."""

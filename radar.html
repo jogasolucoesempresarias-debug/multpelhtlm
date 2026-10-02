@@ -36,6 +36,12 @@
   .kpi-card .label { font-size: 0.64rem; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
   .kpi-card .value { font-size: 1.5rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
   .kpi-card .sub { font-size: 0.72rem; color: var(--text-dim); margin-top: 4px; }
+  /* Queda × Em alta funcionam como um par de abas da tabela do board */
+  .kpi-card.kpi-tab { cursor: pointer; transition: border-color .15s, transform .15s; }
+  .kpi-card.kpi-tab:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .kpi-card.kpi-tab.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .kpi-card.kpi-tab .go { font-size: 0.66rem; color: var(--text-dim); margin-top: 6px; }
+  .kpi-card.kpi-tab.on .go, .kpi-card.kpi-tab:hover .go { color: var(--accent); }
 
   .table-card { background: var(--surface); border: 1px solid var(--border); border-radius: 11px; overflow: hidden; }
   .table-info { padding: 10px 14px; font-size: 0.78rem; color: var(--text-dim); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -156,11 +162,7 @@
       </div>
       <div class="ff">
         <label>Ordenar board por</label>
-        <select id="board_metrica" onchange="renderBoard()">
-          <option value="queda_receita" selected>Receita em risco (R$)</option>
-          <option value="clientes_perdidos">Clientes perdidos</option>
-          <option value="pct_queda">% de queda</option>
-        </select>
+        <select id="board_metrica" onchange="renderBoard()"></select>
       </div>
       <div class="ff">
         <label>Fornecedor</label>
@@ -188,10 +190,14 @@
          que cresceu no total. Sem card de "clientes perdidos": o mesmo cliente que parou 5
          produtos contaria 5 vezes. -->
     <div class="kpi-grid" id="boardKpis">
-      <div class="kpi-card" title="Soma da queda de receita de todos os produtos que venderam menos na janela recente do que na anterior (não só os 200 da tabela).">
-        <div class="label">Queda de receita</div><div class="value" id="bk_queda" style="color:var(--red);">—</div><div class="sub" id="bk_queda_sub">&nbsp;</div></div>
-      <div class="kpi-card" title="Soma do crescimento dos produtos que venderam MAIS na janela recente. Fica fora da tabela, que só lista quem caiu.">
-        <div class="label">Produtos em alta</div><div class="value" id="bk_alta" style="color:var(--green);">—</div><div class="sub" id="bk_alta_sub">&nbsp;</div></div>
+      <div class="kpi-card kpi-tab on" id="bk_tab_queda" role="button" tabindex="0" aria-pressed="true"
+           onclick="trocarLista('queda')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();trocarLista('queda')}"
+           title="Soma da queda de receita de todos os produtos que venderam menos na janela recente do que na anterior (não só os 200 da tabela). Clique para listar esses produtos.">
+        <div class="label">Queda de receita</div><div class="value" id="bk_queda" style="color:var(--red);">—</div><div class="sub" id="bk_queda_sub">&nbsp;</div><div class="go">ver produtos em queda →</div></div>
+      <div class="kpi-card kpi-tab" id="bk_tab_alta" role="button" tabindex="0" aria-pressed="false"
+           onclick="trocarLista('alta')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();trocarLista('alta')}"
+           title="Soma do crescimento dos produtos que venderam MAIS na janela recente. Clique para listar esses produtos — ajuda a ver se o cliente parou ou trocou de item.">
+        <div class="label">Produtos em alta</div><div class="value" id="bk_alta" style="color:var(--green);">—</div><div class="sub" id="bk_alta_sub">&nbsp;</div><div class="go">ver produtos em alta →</div></div>
       <div class="kpi-card" title="Venda líquida da janela recente menos a da anterior, no mesmo escopo e fornecedor. É a queda menos o que cresceu.">
         <div class="label">Saldo do período</div><div class="value" id="bk_saldo">—</div><div class="sub" id="bk_saldo_sub">&nbsp;</div></div>
       <div class="kpi-card" title="Quanto da queda total está nos 10 produtos que mais caíram. Alto = poucos itens explicam a perda; baixo = queda espalhada pelo mix.">
@@ -209,10 +215,7 @@
       </div>
       <div class="table-scroll">
         <table>
-          <thead><tr>
-            <th>#</th><th>Produto</th><th>Departamento</th>
-            <th class="num">Receita em risco</th><th class="num">% queda</th><th class="num">Clientes perdidos</th>
-          </tr></thead>
+          <thead><tr id="boardHead"></tr></thead>
           <tbody id="boardBody"></tbody>
         </table>
       </div>
@@ -452,10 +455,12 @@ async function loadBoard() {
   document.getElementById('board_info').textContent = 'Carregando…';
   try {
     const fq = _fornecSel ? `&fornecedor=${_fornecSel}` : '';
-    const d = await fetchJSON(`/api/radar/board?dias=${dias()}&limit=200${_scopeQS()}${fq}`);
+    const lista = _lista;
+    const d = await fetchJSON(`/api/radar/board?dias=${dias()}&limit=200&lista=${lista}${_scopeQS()}${fq}`);
+    if (lista !== _lista) return;   // trocou de lista enquanto carregava: a resposta é da outra
     _board = d.rows || [];
     document.getElementById('board_info').textContent =
-      `${NUM.format(d.total || _board.length)} produtos perdendo receita · mostrando top ${_board.length}`;
+      `${BOARD_LISTAS[lista].info(NUM.format(d.total || _board.length))} · mostrando top ${_board.length}`;
     renderBoardKpis(d.totais);
     renderBoard();
   } catch (e) {
@@ -485,14 +490,61 @@ function renderBoardKpis(t) {
   set('bk_conc', t.top10_pct != null ? pct(t.top10_pct) : '—');
 }
 
-// Export do board: respeita janela + ordenação (métrica) + escopo (sup/vend) + fornecedor.
+// Export do board: respeita lista (queda/alta) + janela + ordenação + escopo (sup/vend) + fornecedor.
 function exportarBoard(fmt) {
   const fq = _fornecSel ? `&fornecedor=${_fornecSel}` : '';
   const sort = document.getElementById('board_metrica').value;
-  window.location.href = `/api/radar/board/${fmt}?dias=${dias()}&sort=${sort}${_scopeQS()}${fq}`;
+  window.location.href = `/api/radar/board/${fmt}?dias=${dias()}&lista=${_lista}&sort=${sort}${_scopeQS()}${fq}`;
+}
+
+// As duas listas do board. Os cards "Queda de receita" e "Produtos em alta" trocam entre elas;
+// cada uma tem as próprias colunas e opções de ordenação (espelham _RADAR_*_METRICAS no server).
+const BOARD_LISTAS = {
+  queda: {
+    vazio: 'Nenhum produto perdendo receita nessa janela / escopo.',
+    info: n => `${n} produtos perdendo receita`,
+    metricas: [['queda_receita', 'Receita em risco (R$)'], ['clientes_perdidos', 'Clientes perdidos'], ['pct_queda', '% de queda']],
+    cols: ['Receita em risco', '% queda', 'Clientes perdidos'],
+    celulas: r => `
+      <td class="num" style="color:var(--red);font-weight:600;">${BRL.format(r.queda_receita || 0)}</td>
+      <td class="num">${r.pct_queda == null ? '—' : PCT(r.pct_queda)}</td>
+      <td class="num">${NUM.format(r.clientes_perdidos || 0)}</td>`,
+  },
+  alta: {
+    vazio: 'Nenhum produto em alta nessa janela / escopo.',
+    info: n => `${n} produtos em alta`,
+    metricas: [['ganho_receita', 'Receita ganha (R$)'], ['pct_alta', '% de alta'], ['clientes_rec', 'Clientes (janela recente)']],
+    cols: ['Receita ganha', '% alta', 'Clientes antes → agora'],
+    celulas: r => `
+      <td class="num" style="color:var(--green);font-weight:600;">+${BRL.format(r.ganho_receita || 0)}</td>
+      <td class="num">${r.pct_alta == null ? 'novo' : '+' + PCT(r.pct_alta)}</td>
+      <td class="num">${NUM.format(r.clientes_ant || 0)} → ${NUM.format(r.clientes_rec || 0)}</td>`,
+  },
+};
+let _lista = 'queda';
+
+function montarBoardLista() {
+  const L = BOARD_LISTAS[_lista];
+  document.getElementById('board_metrica').innerHTML =
+    L.metricas.map(([v, t], i) => `<option value="${v}"${i ? '' : ' selected'}>${t}</option>`).join('');
+  document.getElementById('boardHead').innerHTML =
+    '<th>#</th><th>Produto</th><th>Departamento</th>' + L.cols.map(c => `<th class="num">${c}</th>`).join('');
+  ['queda', 'alta'].forEach(k => {
+    const el = document.getElementById('bk_tab_' + k);
+    el.classList.toggle('on', k === _lista);
+    el.setAttribute('aria-pressed', k === _lista ? 'true' : 'false');
+  });
+}
+
+function trocarLista(lista) {
+  if (lista === _lista) return;
+  _lista = lista;
+  montarBoardLista();
+  loadBoard();
 }
 
 function renderBoard() {
+  const L = BOARD_LISTAS[_lista];
   const metrica = document.getElementById('board_metrica').value;
   const rows = _board.slice().sort((a, b) => (b[metrica] || 0) - (a[metrica] || 0));
   const tb = document.getElementById('boardBody');
@@ -500,13 +552,11 @@ function renderBoard() {
     <tr class="clickable" onclick="abrirProduto(${r.codprod})">
       <td>${i + 1}</td>
       <td><strong>${r.descricao}</strong><div style="font-size:0.7rem;color:var(--text-dim);">${r.fornec_nome || ''}</div></td>
-      <td>${r.depto_nome || '—'}</td>
-      <td class="num" style="color:var(--red);font-weight:600;">${BRL.format(r.queda_receita || 0)}</td>
-      <td class="num">${r.pct_queda == null ? '—' : PCT(r.pct_queda)}</td>
-      <td class="num">${NUM.format(r.clientes_perdidos || 0)}</td>
+      <td>${r.depto_nome || '—'}</td>${L.celulas(r)}
     </tr>`).join('');
-  if (!rows.length) tb.innerHTML = '<tr><td colspan="6" style="color:var(--text-dim)">Nenhum produto perdendo receita nessa janela / escopo.</td></tr>';
+  if (!rows.length) tb.innerHTML = `<tr><td colspan="6" style="color:var(--text-dim)">${L.vazio}</td></tr>`;
 }
+montarBoardLista();
 
 // ─────────── BUSCA type-ahead ───────────
 let _buscaTimer = null, _buscaItems = [], _buscaHl = -1;

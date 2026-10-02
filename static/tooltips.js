@@ -30,7 +30,10 @@
       'Clientes perdidos': 'Clientes que compravam o item na janela anterior e NÃO voltaram a comprar na janela recente. Não é o saldo entre as duas janelas: 20 clientes que param e 20 que entram dariam zero e esconderiam a perda. Ao abrir o produto, a lista pode mostrar MAIS clientes — lá o recorte é de 12 meses, aqui é só a janela escolhida.',
       'Situação': 'Situação do cliente no item: esfriando (volume caiu >50%), parou (sem comprar há ≥ a janela) ou perdido (há ≥2× a janela, ou nunca).',
       'Dias parado': 'Dias desde a última compra desse item pelo cliente.',
-      'Comprava→Agora': 'Quanto o cliente comprava do item antes vs. agora — mostra a queda de volume.'
+      'Comprava→Agora': 'Quanto o cliente comprava do item antes vs. agora — mostra a queda de volume.',
+      'Receita ganha': 'Quanto o item vendeu A MAIS na janela recente do que na anterior. Um item que sobe no mesmo departamento de outro que caiu costuma ser troca, não perda.',
+      '% alta': 'Crescimento percentual da receita vs. o período anterior. "novo" = o item não vendia na janela anterior.',
+      'Clientes antes → agora': 'Quantos clientes compraram o item na janela anterior e na recente.'
     },
     metas: {
       'Meta': 'Meta do mês para a métrica (venda, rentabilidade, clientes ou mix).',

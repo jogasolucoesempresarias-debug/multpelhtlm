@@ -7897,11 +7897,20 @@ def _radar_frag_codcli():
     return ('', False)
 
 
-def _radar_board_full(dias):
+def _radar_lista(valor):
+    """'alta' (produtos que cresceram) ou 'queda' (default, o board original)."""
+    return 'alta' if valor == 'alta' else 'queda'
+
+
+def _radar_board_full(dias, lista='queda'):
     """Lista COMPLETA de produtos sangrando (janela recente vs anterior), ordenada por queda de
     receita desc, no escopo da SESSÃO (supervisor/vendedor/cadastro). Cacheada por (dias, escopo).
-    SEM filtro de fornecedor (esse é aplicado depois, em memória). Reusada pelo board e exports."""
-    return _radar_board_payload(dias)['rows']
+    SEM filtro de fornecedor (esse é aplicado depois, em memória). Reusada pelo board e exports.
+    `lista='alta'` devolve os que CRESCERAM, ordenados por receita ganha."""
+    payload = _radar_board_payload(dias)
+    if lista == 'alta':
+        return payload.get('alta') or []
+    return payload['rows']
 
 
 def _radar_totais(rows, por_fornec, fornecedor=None):
@@ -7948,9 +7957,9 @@ def _radar_board_payload(dias):
     # do board continua servindo o payload velho do cache ate o TTL expirar — e ninguem percebe,
     # porque nao da erro. Subiu para 2 em 08/2026 com duas mudancas: escopo por CADASTRO e
     # `clientes_perdidos` por CONJUNTO. **Suba sempre que mudar o resultado desta funcao.**
-    # v3 (10/2026): o payload ganhou `por_fornec` (cards de total do board).
+    # v3 (10/2026): o payload ganhou `por_fornec` (cards de total do board); v4: lista `alta`.
     key = cache_key_for_user('radar:board',
-                             {'v': 3, 'dias': dias, 'supervisor': _sup_cache_key(sup),
+                             {'v': 4, 'dias': dias, 'supervisor': _sup_cache_key(sup),
                               'vendedor': vend if vend is not None else '-'})
     cached = _cache_get(key)
     if cached:
@@ -8029,6 +8038,7 @@ SUMMARIZECOLUMNS(
     deptos_nomes = _carregar_deptos_map()['deptos']
 
     out = []
+    alta = []           # produtos que CRESCERAM (lista "Em alta")
     por_fornec = {}     # {str(codfornec): {ant, rec, ganho, n_alta}} — TODOS os produtos
     for cp in set(rec) | set(ant):
         v_rec = (rec.get(cp, {}).get('VendaRec')) or 0
@@ -8044,12 +8054,29 @@ SUMMARIZECOLUMNS(
         pf = por_fornec.setdefault(str(info.get('codfornec')), {'ant': 0.0, 'rec': 0.0, 'ganho': 0.0, 'n_alta': 0})
         pf['ant'] += v_ant
         pf['rec'] += v_rec
+        codepto = info.get('codepto')
         if queda < 0:
             pf['ganho'] += -queda
             pf['n_alta'] += 1
+            # Lista "Em alta" (card Produtos em alta clicável): responde "o cliente parou ou
+            # TROCOU?" — o item que sobe no mesmo depto de um que caiu. Venda anterior zero =
+            # produto novo na janela: `pct_alta` None (a tela mostra "novo"), não infinito.
+            alta.append({
+                'codprod':       cp,
+                'descricao':     info.get('descricao') or f'Produto {cp}',
+                'codepto':       codepto,
+                'depto_nome':    deptos_nomes.get(str(codepto)) if codepto is not None else None,
+                'codfornec':     info.get('codfornec'),
+                'fornec_nome':   info.get('fornec_nome'),
+                'venda_rec':     round(v_rec, 2),
+                'venda_ant':     round(v_ant, 2),
+                'ganho_receita': -queda,
+                'pct_alta':      round((-queda / v_ant), 4) if v_ant else None,
+                'clientes_rec':  int(c_rec),
+                'clientes_ant':  int(c_ant),
+            })
         if queda <= 0:
             continue   # board só mostra quem está sangrando (perdeu receita)
-        codepto = info.get('codepto')
         out.append({
             'codprod':           cp,
             'descricao':         info.get('descricao') or f'Produto {cp}',
@@ -8067,7 +8094,9 @@ SUMMARIZECOLUMNS(
             'clientes_perdidos': int(perdidos.get(cp, 0)),
         })
     out.sort(key=lambda x: x['queda_receita'], reverse=True)
-    payload = {'ok': True, 'dias': dias, 'total': len(out), 'rows': out, 'por_fornec': por_fornec}
+    alta.sort(key=lambda x: x['ganho_receita'], reverse=True)
+    payload = {'ok': True, 'dias': dias, 'total': len(out), 'rows': out, 'alta': alta,
+               'por_fornec': por_fornec}
     _cache_set(key, payload, 'dax_agregado')
     return payload
 
@@ -8080,10 +8109,19 @@ _RADAR_BOARD_METRICAS = {
 }
 
 
-def _radar_board_ordenar(rows, metrica):
-    """Ordena as linhas do board pela métrica escolhida (desc). Default = queda de receita."""
-    if metrica not in _RADAR_BOARD_METRICAS:
-        metrica = 'queda_receita'
+# Lista "Em alta" (mesmas do select quando o card Produtos em alta está ativo).
+_RADAR_ALTA_METRICAS = {
+    'ganho_receita': 'Receita ganha',
+    'pct_alta':      '% de alta',
+    'clientes_rec':  'Clientes na janela recente',
+}
+
+
+def _radar_board_ordenar(rows, metrica, lista='queda'):
+    """Ordena as linhas do board pela métrica escolhida (desc). Default = a 1ª da lista."""
+    metricas = _RADAR_ALTA_METRICAS if lista == 'alta' else _RADAR_BOARD_METRICAS
+    if metrica not in metricas:
+        metrica = next(iter(metricas))
     return sorted(rows, key=lambda r: (r.get(metrica) or 0), reverse=True), metrica
 
 
@@ -8111,8 +8149,9 @@ def _nome_arquivo_radar_board(ext, dias, metrica):
     Ex: radar_board_60d_receita-risco_AFONSO_ES-SUL_BOMBRIL_2026-07-06.csv"""
     from datetime import date as _date
     slug_metrica = {'queda_receita': 'receita-risco', 'clientes_perdidos': 'clientes-perdidos',
-                    'pct_queda': 'pct-queda'}.get(metrica, 'receita-risco')
-    partes = [f"{dias}d", slug_metrica]
+                    'pct_queda': 'pct-queda', 'ganho_receita': 'receita-ganha',
+                    'pct_alta': 'pct-alta', 'clientes_rec': 'clientes'}.get(metrica, 'receita-risco')
+    partes = [f"{dias}d"] + (['em-alta'] if metrica in _RADAR_ALTA_METRICAS else []) + [slug_metrica]
 
     vend = _radar_vendedor_filtro()
     if vend is not None:
@@ -8141,19 +8180,31 @@ def api_radar_board_csv():
     except (TypeError, ValueError):
         dias = 60
     fornecedor = request.args.get('fornecedor')
-    rows = _radar_filtrar_fornec(_radar_board_full(dias), fornecedor)
-    rows, metrica = _radar_board_ordenar(rows, request.args.get('sort'))
+    lista = _radar_lista(request.args.get('lista'))
+    rows = _radar_filtrar_fornec(_radar_board_full(dias, lista), fornecedor)
+    rows, metrica = _radar_board_ordenar(rows, request.args.get('sort'), lista)
 
-    cabecalho = ['#', 'CodProd', 'Produto', 'Departamento', 'Fornecedor', 'ReceitaEmRisco',
-                 'PctQueda', 'ClientesPerdidos', 'VendaAnterior', 'VendaRecente']
+    if lista == 'alta':
+        cabecalho = ['#', 'CodProd', 'Produto', 'Departamento', 'Fornecedor', 'ReceitaGanha',
+                     'PctAlta', 'ClientesAntes', 'ClientesAgora', 'VendaAnterior', 'VendaRecente']
+    else:
+        cabecalho = ['#', 'CodProd', 'Produto', 'Departamento', 'Fornecedor', 'ReceitaEmRisco',
+                     'PctQueda', 'ClientesPerdidos', 'VendaAnterior', 'VendaRecente']
 
     def gerar():
         yield CSV_PREAMBULO  # BOM UTF-8
         yield _csv_linha(cabecalho)
         for i, r in enumerate(rows, 1):
+            base = [i, r.get('codprod'), r.get('descricao'), r.get('depto_nome'), r.get('fornec_nome')]
+            if lista == 'alta':
+                pct = r.get('pct_alta')
+                yield _csv_linha(base + [
+                    r.get('ganho_receita'), (round(pct * 100, 1) if pct is not None else 'novo'),
+                    r.get('clientes_ant'), r.get('clientes_rec'), r.get('venda_ant'), r.get('venda_rec'),
+                ])
+                continue
             pct = r.get('pct_queda')
-            yield _csv_linha([
-                i, r.get('codprod'), r.get('descricao'), r.get('depto_nome'), r.get('fornec_nome'),
+            yield _csv_linha(base + [
                 r.get('queda_receita'), (round(pct * 100, 1) if pct is not None else ''),
                 r.get('clientes_perdidos'), r.get('venda_ant'), r.get('venda_rec'),
             ])
@@ -8166,7 +8217,7 @@ def api_radar_board_csv():
     )
 
 
-def _gerar_pdf_radar_board(rows, dias, metrica, resumo=''):
+def _gerar_pdf_radar_board(rows, dias, metrica, resumo='', lista='queda'):
     """PDF do board do Radar (produtos perdendo receita). Landscape A4, zebra — igual aos outros."""
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib import colors
@@ -8188,22 +8239,34 @@ def _gerar_pdf_radar_board(rows, dias, metrica, resumo=''):
     sub_style = ParagraphStyle('sub', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#475569'))
 
     story = []
-    story.append(Paragraph('<b>JOGA Analytics</b> — Radar · Produtos perdendo receita', titulo_style))
+    alta = (lista == 'alta')
+    titulo = 'Produtos em alta' if alta else 'Produtos perdendo receita'
+    story.append(Paragraph(f'<b>JOGA Analytics</b> — Radar · {titulo}', titulo_style))
+    rotulo = (_RADAR_ALTA_METRICAS if alta else _RADAR_BOARD_METRICAS).get(metrica, '')
     sub = (f"Gerado em {_date.today().strftime('%d/%m/%Y')} · janela {dias}d · "
-           f"ordenado por {_RADAR_BOARD_METRICAS.get(metrica, '')} · {len(rows)} produtos"
+           f"ordenado por {rotulo} · {len(rows)} produtos"
            + (f" · {resumo}" if resumo else ''))
     story.append(Paragraph(sub, sub_style))
     story.append(Spacer(1, 0.3*cm))
 
-    header = ['#', 'Produto', 'Departamento', 'Fornecedor', 'Receita em risco', '% queda', 'Clientes perdidos']
+    if alta:
+        header = ['#', 'Produto', 'Departamento', 'Fornecedor', 'Receita ganha', '% alta', 'Clientes antes -> agora']
+    else:
+        header = ['#', 'Produto', 'Departamento', 'Fornecedor', 'Receita em risco', '% queda', 'Clientes perdidos']
     data = [header]
     for i, r in enumerate(rows, 1):
+        base = [i, (r.get('descricao') or '')[:40], (r.get('depto_nome') or '')[:20],
+                (r.get('fornec_nome') or '')[:26]]
+        if alta:
+            pct = r.get('pct_alta')
+            data.append(base + [
+                f"R$ {(r.get('ganho_receita') or 0):,.0f}".replace(',', '.'),
+                (f"+{pct*100:.0f}%" if pct is not None else 'novo'),
+                f"{r.get('clientes_ant') or 0} -> {r.get('clientes_rec') or 0}",
+            ])
+            continue
         pct = r.get('pct_queda')
-        data.append([
-            i,
-            (r.get('descricao') or '')[:40],
-            (r.get('depto_nome') or '')[:20],
-            (r.get('fornec_nome') or '')[:26],
+        data.append(base + [
             f"R$ {(r.get('queda_receita') or 0):,.0f}".replace(',', '.'),
             (f"{pct*100:.0f}%" if pct is not None else '—'),
             r.get('clientes_perdidos') or 0,
@@ -8245,8 +8308,9 @@ def api_radar_board_pdf():
     except (TypeError, ValueError):
         dias = 60
     fornecedor = request.args.get('fornecedor')
-    rows = _radar_filtrar_fornec(_radar_board_full(dias), fornecedor)
-    rows, metrica = _radar_board_ordenar(rows, request.args.get('sort'))
+    lista = _radar_lista(request.args.get('lista'))
+    rows = _radar_filtrar_fornec(_radar_board_full(dias, lista), fornecedor)
+    rows, metrica = _radar_board_ordenar(rows, request.args.get('sort'), lista)
 
     # Resumo (fornecedor/escopo) pro subtítulo do PDF
     parts = []
@@ -8261,7 +8325,7 @@ def api_radar_board_pdf():
     if fornecedor:
         parts.append(f"Fornecedor: {_radar_fornec_nome(fornecedor) or fornecedor}")
 
-    pdf_bytes = _gerar_pdf_radar_board(rows, dias, metrica, resumo=' · '.join(parts))
+    pdf_bytes = _gerar_pdf_radar_board(rows, dias, metrica, resumo=' · '.join(parts), lista=lista)
     nome = _nome_arquivo_radar_board('pdf', dias, metrica)
     return Response(
         pdf_bytes,
@@ -8306,10 +8370,14 @@ def api_radar_board():
     except (TypeError, ValueError):
         dias, limit = 60, 200
     fornecedor = request.args.get('fornecedor')
+    lista = _radar_lista(request.args.get('lista'))
     payload = _radar_board_payload(dias)
-    full = _radar_filtrar_fornec(payload['rows'], fornecedor)
-    totais = _radar_totais(full, payload.get('por_fornec'), fornecedor)
-    return jsonify({'ok': True, 'dias': dias, 'total': len(full), 'rows': full[:limit], 'totais': totais})
+    queda = _radar_filtrar_fornec(payload['rows'], fornecedor)
+    # os cards são sempre os mesmos — a lista só troca a TABELA
+    totais = _radar_totais(queda, payload.get('por_fornec'), fornecedor)
+    full = _radar_filtrar_fornec(_radar_board_full(dias, lista), fornecedor) if lista == 'alta' else queda
+    return jsonify({'ok': True, 'dias': dias, 'lista': lista, 'total': len(full),
+                    'rows': full[:limit], 'totais': totais})
 
 
 _RADAR_STATUS_PT = {'ativo': 'Comprando', 'esfriando': 'Esfriando', 'parou': 'Parou', 'perdido': 'Perdido'}
