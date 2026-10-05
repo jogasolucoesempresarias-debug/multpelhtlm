@@ -309,6 +309,14 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
       "Saldo" virou **"Variação do risco"** e a faixa da ponte fala em verbo ("cresceu 179
       clientes") — "+179" em vermelho era lido como ganho. Cache `recuperacao:resumo:v3`.
       Gate: `tests/test_recuperacao_leitura.py`.
+    - **Gráfico de 12 meses = MOVIMENTO** (05/10/2026, João: *"rapidamente identificar se a
+      empresa, time ou vendedor está perdendo mais cliente do que recuperando"*). Era linha de
+      ESTOQUE em risco × barra de VENDA recuperada — duas réguas que não respondem isso, e o João
+      leu "perdeu mais" num mês em que o vendedor melhorou. Hoje: barra **entraram em risco** ×
+      **recuperados do risco** + linha da **variação**, alternando **Clientes | R$/mês**; o balão
+      traz o saldo, o estoque no fim e a venda aos recuperados. Mesma `serie` (ponte de cada mês),
+      zero query. ⚠️ A cor do R$ segue o **próprio** sinal (`clsSinal`): clientes e R$ podem
+      discordar (abr/26 do Eliedson: −1 cliente e +R$ 818/mês).
   - **Plano de ação por cliente** (CRM leve, `plano_cliente.py` + `static/plano-cliente.js`, tabela
     `cliente_plano`): 6 status de um toque nas listas (Próximo Pedido, Recuperação, ficha do cliente).
     - 🩹 **"Registrado em 13:38" eram 10:38** (05/10/2026). A mesma armadilha do `multpel_log` em
@@ -345,6 +353,28 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
     - **Filtro de Time** e **cabeçalho fixo** (28/09/2026). O filtro é no cliente (o payload já traz
       o time e o RBAC já recortou); com time escolhido a posição é **dentro do time** e a geral vai
       embaixo. Aparece só com 2+ times na aba.
+- **Evolução da carteira** (`/evolucao`, `evolucao_carteira.py`, 10/2026, pedido do Gabriel: *"um
+  histórico de performance na gestão de carteira, igual temos na gestão de estoque… quem usa a
+  plataforma versus quem não usa"*). 12 meses fechados por empresa → time → vendedor: **cobertura**
+  (régua única, `cobertura_por_dono` no fim de cada mês — o último mês bate com a Performance, gate),
+  **% da base em risco** e **variação do risco** (placar da Recuperação), + **uso da plataforma**.
+  - ⚠️ **Ao contrário do estoque, quase nada é gravado.** Venda é EVENTO: a série se recalcula para
+    TRÁS a partir do fato, e mudar a régua refaz o passado sem degrau. Só o que o sistema
+    SOBRESCREVE vai para foto, no job das 23h50: dono do cliente (`carteira_foto`, desde 09/2026),
+    **vendedor → time** (`vendedor_foto`, novo) e **uso por pessoa** (`uso_mensal`, novo — o
+    `multpel_log` é expurgado aos 12 meses; só os 12 meses intocados pelo expurgo são regravados, e
+    papel/áreas do usuário congelam no mês fechado). Mês sem foto usa o dono/time ATUAL e a tela
+    declara quais meses são assim.
+  - **"Usa" é do TIME**, não do vendedor: em 10/2026 só 4 dos ~97 RCAs têm login. Time usa a partir
+    do 1º mês (≥ `EVOL_MARCO_USO` = 08/2026, quando o log tem uso real) com ≥ N dias ativos
+    (seletor, default 4) de algum usuário ligado a ele — supervisor pelas áreas, vendedor pelo time.
+    **Todos os times entram** (decisão do Gabriel), com filtro Usa/Não usa e Universo.
+  - **Antes × depois = média do PERÍODO** (3 meses antes do marco × do marco em diante, contagens
+    somadas), nunca dia de início contra dia de fim — o relatório de performance do estoque mostrou
+    um −46% fabricado pelo dia escolhido. A tela diz que é **evidência, não prova** (seleção: quem
+    usa pode ser o time mais organizado).
+  - 🚧 Fase 2: receita/margem e nota da Performance mês a mês (cada uma é query nova por mês).
+    Gate: `tests/test_evolucao_carteira.py`.
 - **Admin** — CRUD usuários, cron de email, multi-CC, segmento RFM, editor de metas. **+ acesso por área, comprador vinculado e relatórios de Compras** (ver abaixo).
 
 ## 🤖 Agente de IA (chat do Compras) — **módulo opcional, venda adicional**

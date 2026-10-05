@@ -36,6 +36,7 @@
     { href: '/gerencial', rotulo: 'Gerencial' },
     { href: '/recuperacao', rotulo: 'Recuperação' },
     { href: '/performance', rotulo: 'Performance' },
+    { href: '/evolucao', rotulo: 'Evolução' },
   ];
 
   const emCompras = () => location.pathname.startsWith('/estoque');

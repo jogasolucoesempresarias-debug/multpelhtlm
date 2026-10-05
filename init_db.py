@@ -155,6 +155,35 @@ cur.execute("""
         PRIMARY KEY (anomes, codcli)
     );
 """)
+# Evolução da carteira (10/2026): vendedor → time também é POSIÇÃO (PCUSUARI sobrescreve), e o
+# multpel_log é expurgado aos 12 meses — o resumo mensal de uso é o que sobra de "quem usava".
+# O job das 23h50 grava as duas (e cria as tabelas, caso o init_db não tenha rodado).
+cur.execute("""
+    CREATE TABLE IF NOT EXISTS vendedor_foto (
+        anomes INTEGER NOT NULL, codusur INTEGER NOT NULL, codsupervisor INTEGER, tipovend VARCHAR(5),
+        bloqueio VARCHAR(5), nome VARCHAR(120), gravado_em TIMESTAMPTZ DEFAULT NOW(),
+        PRIMARY KEY (anomes, codusur)
+    );
+""")
+cur.execute("""
+    CREATE TABLE IF NOT EXISTS uso_mensal (
+        anomes INTEGER NOT NULL, usuario_id INTEGER NOT NULL, role VARCHAR(20), codusur INTEGER,
+        codsupervisores JSONB DEFAULT '[]'::jsonb, dias_ativos INTEGER NOT NULL DEFAULT 0,
+        logins INTEGER NOT NULL DEFAULT 0, downloads INTEGER NOT NULL DEFAULT 0,
+        plano_registros INTEGER NOT NULL DEFAULT 0, atualizado_em TIMESTAMPTZ DEFAULT NOW(),
+        PRIMARY KEY (anomes, usuario_id)
+    );
+""")
+# carteira_foto.gravado_em nasceu sem fuso (banco em UTC) — mesma correção do multpel_log/plano
+cur.execute("""DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'carteira_foto' AND column_name = 'gravado_em'
+                  AND data_type = 'timestamp without time zone') THEN
+        ALTER TABLE carteira_foto ALTER COLUMN gravado_em TYPE TIMESTAMPTZ
+            USING gravado_em AT TIME ZONE current_setting('TimeZone');
+    END IF;
+END $$;""")
 
 # Plano de ação por cliente (CRM leve, João 29/09/2026). O acompanhamento "zera" quando o cliente
 # compra pela DATA (registros até a última compra viram histórico anterior) — nada é apagado.

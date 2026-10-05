@@ -120,7 +120,13 @@
       <p class="small" id="ponteNota" style="margin-top:10px; line-height:1.5;"></p>
     </div>
     <div class="card">
-      <h3>12 meses — valor mensal em risco × venda recuperada</h3>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        <h3 style="margin:0">12 meses — entraram em risco × recuperados</h3>
+        <div class="tabs" style="margin:0">
+          <button class="btn-sm on" id="modoCli" onclick="setModoSerie('clientes')">Clientes</button>
+          <button class="btn-sm" id="modoRs" onclick="setModoSerie('valor')">R$/mês</button>
+        </div>
+      </div>
       <div class="chart-wrap"><canvas id="chartSerie"></canvas></div>
     </div>
   </div>
@@ -267,11 +273,14 @@ function renderBreadcrumb() {
 }
 
 function sinal(n) { return (n > 0 ? '+' : '') + NUM.format(n || 0); }
+// Cor pelo PRÓPRIO sinal (05/10/2026): clientes e R$ podem discordar — abr/26 do Eliedson foi −1
+// cliente (melhorou) e +R$ 818/mês (piorou); com a cor dos clientes o R$ saía verde.
+function clsSinal(v) { return v > 0 ? 'saldo-pos' : (v < 0 ? 'saldo-neg' : ''); }
 function sinalBRL(v) { return (v > 0 ? '+' : '') + BRL.format(v || 0); }
 function celSaldo(r) {
   const cls = r.saldo > 0 ? 'saldo-pos' : (r.saldo < 0 ? 'saldo-neg' : '');
   return `<td class="num" title="Entraram em risco ${NUM.format(r.entraram || 0)} (${BRL.format(r.valor_entraram || 0)}/mês) − recuperados do risco ${NUM.format(r.rec_risco_da_base || 0)} (${BRL.format(r.valor_rec_risco_da_base || 0)}/mês)">`
-    + `<span class="${cls}">${sinal(r.saldo)}</span> <span class="small">· ${sinalBRL(r.valor_saldo)}</span></td>`;
+    + `<span class="${cls}">${sinal(r.saldo)}</span> <span class="small ${clsSinal(r.valor_saldo)}">· ${sinalBRL(r.valor_saldo)}</span></td>`;
 }
 
 function renderKpis() {
@@ -308,7 +317,7 @@ function renderPonte() {
   document.getElementById('ponteSaldo').classList.toggle('hidden', c.saldo == null);
   document.getElementById('ponteSaldo').innerHTML =
     `<b>Carteira em risco no mês</b> <span class="n ${cls}">${verbo}${c.saldo ? ' ' + NUM.format(Math.abs(c.saldo)) + ' clientes' : ''}</span>` +
-    `<span class="${cls}">${sinalBRL(c.saldo_valor)}/mês</span>` +
+    `<span class="${clsSinal(c.saldo_valor)}">${sinalBRL(c.saldo_valor)}/mês</span>` +
     `<span class="small">entraram ${NUM.format(p.entraram)} − recuperados do risco ${NUM.format(p.recuperados)} · crescer = piorou, diminuir = avançou</span>`;
   const recortado = _sup || _vend;
   document.getElementById('ponteNota').innerHTML =
@@ -316,24 +325,49 @@ function renderPonte() {
     (recortado ? 'No recorte de time/vendedor, a ponte é da <b>base</b> (dono do cadastro); o crédito de quem recuperou está no placar.' : '');
 }
 
+// 05/10/2026 (João): o gráfico tem de mostrar o MOVIMENTO — entraram em risco × recuperados do
+// risco, mês a mês, no escopo da tela —, e não estoque (linha) × venda (barra), que são réguas que
+// não respondem "está perdendo mais cliente do que recupera?". Mesmos números da ponte de cada mês.
+let _modoSerie = 'clientes';
+function setModoSerie(m) {
+  _modoSerie = m;
+  document.getElementById('modoCli').classList.toggle('on', m === 'clientes');
+  document.getElementById('modoRs').classList.toggle('on', m === 'valor');
+  renderSerie();
+}
+
 function renderSerie() {
-  const s = _data.serie;
+  const s = _data.serie, rs = _modoSerie === 'valor';
   const css = getComputedStyle(document.documentElement);
   const red = css.getPropertyValue('--red').trim() || '#f87171';
   const green = css.getPropertyValue('--green').trim() || '#34d399';
+  const acc = css.getPropertyValue('--accent').trim() || '#38bdf8';
+  const ent = s.map(x => rs ? x.valor_mensal.entraram : x.clientes.entraram);
+  const rec = s.map(x => rs ? x.valor_mensal.recuperados : x.clientes.recuperados);
+  const fmt = v => rs ? BRL.format(v) : NUM.format(v);
   if (_chart) _chart.destroy();
   _chart = new Chart(document.getElementById('chartSerie'), {
     data: {
       labels: s.map(x => MES(x.anomes)),
       datasets: [
-        { type:'line', label:'Valor mensal em risco (fim do mês)', data:s.map(x => x.valor_mensal.risco_fim), borderColor:red, backgroundColor:red, yAxisID:'y', tension:.25 },
-        { type:'bar', label:'Venda recuperada no mês', data:s.map(x => x.venda_recuperada), backgroundColor:green + '99', yAxisID:'y' },
+        { type:'bar', label:'Entraram em risco', data:ent, backgroundColor:red + 'cc', order:2 },
+        { type:'bar', label:'Recuperados do risco', data:rec, backgroundColor:green + 'cc', order:2 },
+        { type:'line', label:'Variação (entraram − recuperados)', data:ent.map((v, i) => v - rec[i]),
+          borderColor:acc, backgroundColor:acc, tension:.25, order:1 },
       ],
     },
     options: {
       responsive:true, maintainAspectRatio:false, interaction:{ mode:'index', intersect:false },
-      plugins:{ tooltip:{ callbacks:{ label:c => `${c.dataset.label}: ${BRL.format(c.parsed.y)}` } } },
-      scales:{ y:{ ticks:{ callback:v => BRL.format(v) } } },
+      plugins:{ tooltip:{ callbacks:{
+        label:c => `${c.dataset.label}: ${c.datasetIndex === 2 && c.parsed.y > 0 ? '+' : ''}${fmt(c.parsed.y)}${rs ? '/mês' : ''}`,
+        footer:items => {
+          const x = s[items[0].dataIndex], v = rs ? x.valor_mensal.entraram - x.valor_mensal.recuperados
+                                                 : x.clientes.entraram - x.clientes.recuperados;
+          return [`Variação do mês: ${v > 0 ? 'carteira em risco CRESCEU' : (v < 0 ? 'carteira em risco DIMINUIU' : 'ficou igual')}`,
+                  `Em risco no fim: ${NUM.format(x.clientes.risco_fim)} clientes · ${BRL.format(x.valor_mensal.risco_fim)}/mês`,
+                  `Venda feita aos recuperados: ${BRL.format(x.venda_recuperada)}`];
+        } } } },
+      scales:{ y:{ grace:'8%', ticks:{ callback:v => rs ? BRL.format(v) : NUM.format(v) } } },
     },
   });
 }

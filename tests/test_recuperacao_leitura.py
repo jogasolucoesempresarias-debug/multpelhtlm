@@ -127,3 +127,25 @@ def test_lista_e_ponte_declaram_a_data():
     h = HTML.read_text(encoding='utf-8')
     assert 'em risco em ${' in h                            # a lista leva a data de hoje
     assert 'j.hoje' in h
+
+
+# ───────────────────────── gráfico de 12 meses (João, 05/10/2026) ─────────────────────────
+# "eu entendi que aquele gráfico iria mostrar exatamente o movimento de clientes em risco versus os
+# clientes recuperados… rapidamente é possível identificar se a empresa, time ou vendedor está
+# perdendo mais cliente do que recuperando". Era estoque (linha) × venda (barra) — duas réguas que
+# não respondem isso. Agora: entraram × recuperados do risco, mês a mês, no escopo da tela.
+def test_grafico_mostra_entraram_x_recuperados_e_a_variacao():
+    h = HTML.read_text(encoding='utf-8')
+    corpo = h[h.index('function renderSerie('):h.index('function linhaPlacar(')]
+    assert "label:'Entraram em risco'" in corpo and "label:'Recuperados do risco'" in corpo
+    assert 'x.clientes.entraram' in corpo and 'x.clientes.recuperados' in corpo
+    assert 'x.valor_mensal.entraram' in corpo                  # modo R$/mês, mesma régua do card
+    assert 'Variação' in corpo                                 # o saldo do mês no balão
+    assert 'setModoSerie' in h and '12 meses — entraram em risco × recuperados' in h
+
+
+def test_cor_do_rs_segue_o_proprio_sinal():
+    """Abril/26 do Eliedson: −1 cliente (melhorou) e +R$ 818/mês (piorou). O R$ saía verde porque a
+    cor era a dos CLIENTES."""
+    h = HTML.read_text(encoding='utf-8')
+    assert 'clsSinal(c.saldo_valor)' in h and 'clsSinal(r.valor_saldo)' in h

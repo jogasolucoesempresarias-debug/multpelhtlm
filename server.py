@@ -2590,6 +2590,7 @@ SUMMARIZECOLUMNS(
 # ──────────────────────────────────────────────────────────────────────
 
 import rfm  # módulo puro de RFM
+import evolucao_carteira as evol
 import cobertura as cob  # módulo puro de Cobertura de Carteira (página Gerencial)
 import positivacao  # módulo puro de positivação por RCA (tela Vendedores + cockpit)
 import recuperacao as recup  # módulo puro: carteira em risco × recuperada (página /recuperacao)
@@ -10881,7 +10882,26 @@ def _fotografar_estoque():
 _CARTEIRA_FOTO_DDL = """
 CREATE TABLE IF NOT EXISTS carteira_foto (
     anomes INTEGER NOT NULL, codcli INTEGER NOT NULL, codusur INTEGER, codsupervisor INTEGER,
-    gravado_em TIMESTAMP DEFAULT NOW(), PRIMARY KEY (anomes, codcli))"""
+    gravado_em TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (anomes, codcli));
+CREATE TABLE IF NOT EXISTS vendedor_foto (
+    anomes INTEGER NOT NULL, codusur INTEGER NOT NULL, codsupervisor INTEGER, tipovend VARCHAR(5),
+    bloqueio VARCHAR(5), nome VARCHAR(120), gravado_em TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (anomes, codusur));
+CREATE TABLE IF NOT EXISTS uso_mensal (
+    anomes INTEGER NOT NULL, usuario_id INTEGER NOT NULL, role VARCHAR(20), codusur INTEGER,
+    codsupervisores JSONB DEFAULT '[]'::jsonb, dias_ativos INTEGER NOT NULL DEFAULT 0,
+    logins INTEGER NOT NULL DEFAULT 0, downloads INTEGER NOT NULL DEFAULT 0,
+    plano_registros INTEGER NOT NULL DEFAULT 0, atualizado_em TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (anomes, usuario_id));
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'carteira_foto' AND column_name = 'gravado_em'
+                  AND data_type = 'timestamp without time zone') THEN
+        ALTER TABLE carteira_foto ALTER COLUMN gravado_em TYPE TIMESTAMPTZ
+            USING gravado_em AT TIME ZONE current_setting('TimeZone');
+    END IF;
+END $$;"""
 
 
 def _fotografar_carteira(anomes=None):
@@ -10898,6 +10918,10 @@ def _fotografar_carteira(anomes=None):
         hoje = provider_sql.hoje_analitico() if CONFIG['data_source'] == 'postgres' else _date.today()
         anomes = hoje.year * 100 + hoje.month
     linhas = cob.linhas_foto(_carregar_carteira_full(), anomes)
+    # Vendedor → time (10/2026, Evolução da carteira): PCUSUARI também é POSIÇÃO. Sem esta foto,
+    # o vendedor que troca de time leva o passado inteiro junto para o time novo.
+    vend = [(anomes, int(k), v.get('codsupervisor'), v.get('tipo'), v.get('bloqueio'),
+             (v.get('nome') or '')[:120]) for k, v in _carregar_vendedores_map().items()]
     conn = get_db()
     try:
         with conn, conn.cursor() as cur:
@@ -10907,6 +10931,12 @@ def _fotografar_carteira(anomes=None):
                 "VALUES (%s,%s,%s,%s, NOW()) ON CONFLICT (anomes, codcli) DO UPDATE SET "
                 "codusur = EXCLUDED.codusur, codsupervisor = EXCLUDED.codsupervisor, gravado_em = NOW()",
                 linhas)
+            cur.executemany(
+                "INSERT INTO vendedor_foto (anomes, codusur, codsupervisor, tipovend, bloqueio, nome, gravado_em) "
+                "VALUES (%s,%s,%s,%s,%s,%s, NOW()) ON CONFLICT (anomes, codusur) DO UPDATE SET "
+                "codsupervisor = EXCLUDED.codsupervisor, tipovend = EXCLUDED.tipovend, "
+                "bloqueio = EXCLUDED.bloqueio, nome = EXCLUDED.nome, gravado_em = NOW()",
+                vend)
     finally:
         conn.close()
     return len(linhas)
@@ -10921,6 +10951,257 @@ def _fotografar_carteira_job():
     except Exception as e:
         print(f"[FOTO] carteira falhou: {e}")
         _log_background('foto:carteira', erro=str(e)[:500])
+    # try PRÓPRIO: uso vem de outra fonte (o log) e uma falha dele não pode custar a foto
+    try:
+        n = _consolidar_uso_mensal()
+        print(f"[FOTO] uso mensal consolidado: {n} linhas")
+    except Exception as e:
+        print(f"[FOTO] uso mensal falhou: {e}")
+        _log_background('foto:uso_mensal', erro=str(e)[:500])
+
+
+def _consolidar_uso_mensal(meses=None):
+    """Resumo de USO por pessoa e mês em `uso_mensal` (Evolução da carteira, 10/2026).
+
+    Por que existe: o `multpel_log` é EXPURGADO aos 12 meses (`_expurgar_log`) e "quem usa a
+    plataforma" é o eixo da comparação — sem o resumo, o começo da série some em jul/2027.
+    Mesmas réguas da /uso: dia ativo = dia DISTINTO de `login:sucesso` no fuso do negócio;
+    download = `export:%`. + registros no plano de ação (autor).
+
+    ⚠️ Só recalcula os 12 meses que o expurgo ainda não tocou (mês corrente e os 11 anteriores):
+    o mais antigo do log pode estar pela metade, e regravá-lo DIMINUIRIA um mês já fechado.
+    ⚠️ Papel/time do usuário é ESTADO: gravado na 1ª vez e só atualizado no mês corrente — mês
+    fechado guarda quem a pessoa era naquele mês."""
+    from datetime import date as _date
+    hoje = _date.today()
+    atual = hoje.year * 100 + hoje.month
+    if meses is None:
+        meses = [positivacao.mes_add(atual, -i) for i in range(12)]
+    conn = get_db()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(_CARTEIRA_FOTO_DDL)
+            cur.execute(_PLANO_DDL)
+            cur.execute("""
+WITH l AS (
+    SELECT usuario_id, rota, (acessado_em AT TIME ZONE %(tz)s) AS t
+      FROM multpel_log WHERE usuario_id IS NOT NULL
+), a AS (
+    SELECT (EXTRACT(YEAR FROM t) * 100 + EXTRACT(MONTH FROM t))::int AS anomes, usuario_id,
+           COUNT(DISTINCT t::date) FILTER (WHERE rota = 'login:sucesso') AS dias,
+           COUNT(*) FILTER (WHERE rota = 'login:sucesso') AS logins,
+           COUNT(*) FILTER (WHERE rota LIKE 'export:%%') AS downloads
+      FROM l GROUP BY 1, 2
+), p AS (
+    SELECT (EXTRACT(YEAR FROM t) * 100 + EXTRACT(MONTH FROM t))::int AS anomes, autor_id AS usuario_id,
+           COUNT(*) AS registros
+      FROM (SELECT autor_id, (criado_em AT TIME ZONE %(tz)s) AS t FROM cliente_plano
+             WHERE excluido_em IS NULL AND autor_id IS NOT NULL) x
+     GROUP BY 1, 2
+), k AS (
+    SELECT anomes, usuario_id FROM a UNION SELECT anomes, usuario_id FROM p
+)
+INSERT INTO uso_mensal (anomes, usuario_id, role, codusur, codsupervisores, dias_ativos, logins,
+                        downloads, plano_registros, atualizado_em)
+SELECT k.anomes, k.usuario_id, u.role, u.codusur, COALESCE(u.codsupervisores, '[]'::jsonb),
+       COALESCE(a.dias, 0), COALESCE(a.logins, 0), COALESCE(a.downloads, 0), COALESCE(p.registros, 0), NOW()
+  FROM k JOIN multpel_users u ON u.id = k.usuario_id
+  LEFT JOIN a ON a.anomes = k.anomes AND a.usuario_id = k.usuario_id
+  LEFT JOIN p ON p.anomes = k.anomes AND p.usuario_id = k.usuario_id
+ WHERE k.anomes = ANY(%(meses)s)
+ON CONFLICT (anomes, usuario_id) DO UPDATE SET
+    dias_ativos = EXCLUDED.dias_ativos, logins = EXCLUDED.logins, downloads = EXCLUDED.downloads,
+    plano_registros = EXCLUDED.plano_registros, atualizado_em = NOW(),
+    role = CASE WHEN EXCLUDED.anomes >= %(atual)s THEN EXCLUDED.role ELSE uso_mensal.role END,
+    codusur = CASE WHEN EXCLUDED.anomes >= %(atual)s THEN EXCLUDED.codusur ELSE uso_mensal.codusur END,
+    codsupervisores = CASE WHEN EXCLUDED.anomes >= %(atual)s THEN EXCLUDED.codsupervisores
+                           ELSE uso_mensal.codsupervisores END""",
+                        {'tz': TZ_APP, 'meses': list(meses), 'atual': atual})
+            return cur.rowcount
+    finally:
+        conn.close()
+
+
+# ═════════════ Evolução da carteira (10/2026) — ver evolucao_carteira.py ═════════════
+EVOL_MARCO_USO = 202608        # 1º mês com uso registrado de verdade (o log começa em 22/07/2026)
+EVOL_LIMIAR_PADRAO = 4         # dias ativos no mês para o time contar como "usa" (~1x por semana)
+EVOL_MESES = 12
+
+
+def _evol_foto(sql, anomes):
+    try:
+        conn = get_db()
+        try:
+            with conn, conn.cursor() as cur:
+                cur.execute(_CARTEIRA_FOTO_DDL)
+                cur.execute(sql, (anomes,))
+                return cur.fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f'[EVOLUCAO] foto indisponivel ({e}) — usando o cadastro atual')
+        return []
+
+
+def _evolucao_dados(limiar):
+    """Série mensal (12 meses fechados) por time e por vendedor + uso — GLOBAL; o recorte por
+    RBAC e filtros é do endpoint. Cache por mês de referência e limiar."""
+    base = _recup_base()
+    ref = base['ref']
+    key = f'multpel:evolucao:{ref}:{limiar}:v1'
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+    meses = evol.meses_fechados(ref, EVOL_MESES)
+    carteira = _carregar_carteira_full()
+    vmap = _carregar_vendedores_map()
+    smap = _carregar_supervisores_map()
+    dono_atual = {c['codcli']: c.get('codusur') for c in carteira if c.get('codcli') is not None}
+    time_atual = {}
+    for k, v in vmap.items():
+        try:
+            time_atual[int(k)] = int(v['codsupervisor']) if v.get('codsupervisor') is not None else None
+        except (TypeError, ValueError):
+            continue
+    dono_fonte, time_fonte, time_por_mes = {}, {}, {}
+    cob_m, rec_m = {}, {}
+    for am in meses:
+        rows = _evol_foto("SELECT codcli, codusur FROM carteira_foto WHERE anomes=%s", am)
+        dono = {c: u for c, u in rows} if rows else dono_atual
+        dono_fonte[str(am)] = 'foto' if rows else 'atual'
+        rows = _evol_foto("SELECT codusur, codsupervisor FROM vendedor_foto WHERE anomes=%s", am)
+        tm = {u: t for u, t in rows} if rows else time_atual
+        time_fonte[str(am)] = 'foto' if rows else 'atual'
+        time_por_mes[am] = tm
+        ultima = _carregar_ultima_compra_antes(positivacao.mes_add(am, 1))
+        cob_m[am] = evol.cobertura_mes(ultima, dono, tm, evol.fim_do_mes(am))
+        rec_m[am] = evol.recuperacao_mes(base['movs'].get(am, {}), dono, tm)
+
+    def _serie(nivel, k):
+        return [evol.linha_de(am, cob_m[am][nivel].get(k), rec_m[am][nivel].get(k)) for am in meses]
+
+    # uso: resumo mensal por pessoa (contas de teste fora, mesmo filtro da /uso)
+    uso_rows = []
+    try:
+        conn = get_db()
+        try:
+            with conn, conn.cursor() as cur:
+                cur.execute(_CARTEIRA_FOTO_DDL)
+                ignora = " AND ".join(["u.email NOT ILIKE %s"] * len(_USO_EMAILS_IGNORADOS))
+                cur.execute(f"""SELECT m.anomes, m.usuario_id, m.role, m.codusur, m.codsupervisores, m.dias_ativos
+                                  FROM uso_mensal m JOIN multpel_users u ON u.id = m.usuario_id
+                                 WHERE {ignora}""", _USO_EMAILS_IGNORADOS)
+                uso_rows = [{'anomes': a, 'usuario_id': i, 'role': r, 'codusur': cu,
+                             'codsupervisores': cs or [], 'dias_ativos': d}
+                            for a, i, r, cu, cs, d in cur.fetchall()]
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f'[EVOLUCAO] uso indisponivel ({e})')
+    uso_time = evol.uso_por_time(uso_rows, time_por_mes)
+    uso_rca = {}
+    for r in uso_rows:
+        if r['role'] == 'vendedor' and r['codusur'] is not None:
+            g = uso_rca.setdefault(r['anomes'], {})
+            g[int(r['codusur'])] = max(g.get(int(r['codusur']), 0), r['dias_ativos'] or 0)
+
+    times_ids = sorted({t for am in meses for t in cob_m[am]['times']} |
+                       {t for am in meses for t in rec_m[am]['times']}, key=lambda t: (t is None, t or 0))
+    cl_t = evol.classificar_uso(uso_time, times_ids, EVOL_MARCO_USO, limiar)
+    univ_rca = {int(k): performance_comercial.universo_de(v.get('tipo')) for k, v in vmap.items()}
+
+    def _univ_time(t):
+        if t is None:
+            return None
+        votos = {}
+        for u, tt in time_atual.items():
+            if tt == t:
+                votos[univ_rca.get(u)] = votos.get(univ_rca.get(u), 0) + 1
+        return max(votos, key=votos.get) if votos else performance_comercial.CAMPO
+
+    times = []
+    for t in times_ids:
+        serie = _serie('times', t)
+        times.append({'codsupervisor': t,
+                      'nome': ('Sem time (código fictício/sem supervisor)' if t is None
+                               else (smap.get(str(t)) or {}).get('nome') or f'Time {t}'),
+                      'universo': _univ_time(t), 'uso': cl_t[t],
+                      'dias_ativos': [((uso_time.get(am) or {}).get(t) or {}).get('dias_ativos', 0) for am in meses],
+                      'serie': serie, 'antes_depois': evol.antes_depois(serie, EVOL_MARCO_USO)})
+    rca_ids = sorted({u for am in meses for u in cob_m[am]['rcas']} |
+                     {u for am in meses for u in rec_m[am]['rcas'] if u is not None})
+    cl_r = evol.classificar_uso({am: {u: {'dias_ativos': d} for u, d in g.items()} for am, g in uso_rca.items()},
+                                rca_ids, EVOL_MARCO_USO, limiar)
+    rcas = []
+    for u in rca_ids:
+        serie = _serie('rcas', u)
+        if not any(ln['base'] or ln['em_risco'] or ln['entraram'] for ln in serie):
+            continue
+        v = vmap.get(str(u)) or {}
+        rcas.append({'codusur': u, 'nome': v.get('nome') or f'RCA {u}', 'codsupervisor': time_atual.get(u),
+                     'universo': univ_rca.get(u, performance_comercial.CAMPO), 'uso': cl_r[u],
+                     'dias_ativos': [(uso_rca.get(am) or {}).get(u, 0) for am in meses],
+                     'serie': serie, 'antes_depois': evol.antes_depois(serie, EVOL_MARCO_USO)})
+    dados = {'ref': ref, 'meses': meses, 'dono_fonte': dono_fonte, 'time_fonte': time_fonte,
+             'times': times, 'rcas': rcas}
+    _cache_set(key, dados, 'dax_agregado')
+    return dados
+
+
+@app.route('/evolucao')
+@login_required
+def evolucao_page():
+    return send_from_directory('.', 'evolucao.html')
+
+
+@app.route('/api/evolucao-carteira')
+@login_required
+def api_evolucao_carteira():
+    """Série mensal da carteira (cobertura régua única + recuperação) por time/vendedor, com o uso
+    da plataforma. Filtros: ?uso=todos|usa|nao · ?universo=campo|lojas|telemarketing ·
+    ?supervisor= (drill) · ?limiar= (dias ativos para "usa", 1–20)."""
+    try:
+        limiar = max(1, min(20, int(request.args.get('limiar', EVOL_LIMIAR_PADRAO))))
+    except (TypeError, ValueError):
+        limiar = EVOL_LIMIAR_PADRAO
+    d = _evolucao_dados(limiar)
+    role = session.get('role')
+    times, rcas = d['times'], d['rcas']
+    if role == 'vendedor':
+        cu = session.get('codusur')
+        times, rcas = [], [r for r in rcas if cu is not None and r['codusur'] == int(cu)]
+    elif role not in ('admin', 'viewer'):
+        meus = set(_session_supervisores())
+        times = [t for t in times if t['codsupervisor'] in meus]
+        rcas = [r for r in rcas if r['codsupervisor'] in meus]
+    uso_f = request.args.get('uso', 'todos')
+    univ_f = request.args.get('universo') or ''
+    if uso_f in ('usa', 'nao'):
+        times = [t for t in times if t['uso']['usa'] == (uso_f == 'usa')]
+    if univ_f in performance_comercial.UNIVERSOS:
+        times = [t for t in times if t['universo'] == univ_f]
+        rcas = [r for r in rcas if r['universo'] == univ_f]
+    sup = request.args.get('supervisor')
+    if sup not in (None, ''):
+        try:
+            s = int(sup)
+            ok = {t['codsupervisor'] for t in times}
+            rcas = [r for r in rcas if r['codsupervisor'] == s] if s in ok else []
+        except (TypeError, ValueError):
+            rcas = []
+    elif role != 'vendedor':
+        rcas = []                              # a lista de vendedores sai só no drill do time
+    meses = d['meses']
+    fonte = times if times or role != 'vendedor' else rcas
+    empresa = [evol.somar([x['serie'][i] for x in fonte], am) for i, am in enumerate(meses)]
+    grupos = {g: [evol.somar([t['serie'][i] for t in times if t['uso']['usa'] == (g == 'usa')], am)
+                  for i, am in enumerate(meses)] for g in ('usa', 'nao_usa')}
+    return jsonify({'ok': True, 'ref': d['ref'], 'meses': meses, 'marco': EVOL_MARCO_USO, 'limiar': limiar,
+                    'dono_fonte': d['dono_fonte'], 'time_fonte': d['time_fonte'],
+                    'empresa': empresa, 'empresa_antes_depois': evol.antes_depois(empresa, EVOL_MARCO_USO),
+                    'grupos': grupos,
+                    'grupos_antes_depois': {g: evol.antes_depois(v, EVOL_MARCO_USO) for g, v in grupos.items()},
+                    'times': times, 'rcas': rcas})
 
 
 def _avancar_demo():

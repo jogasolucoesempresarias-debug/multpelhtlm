@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>JOGA Analytics — Evolução da carteira</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/static/joga-mark.svg" type="image/svg+xml">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+<script src="/static/fetch-resiliente.js"></script>
+<link rel="stylesheet" href="/static/tooltips.css">
+<script defer src="/static/tooltips.js"></script>
+<link rel="stylesheet" href="/static/tema.css">
+<script>try{var t=localStorage.getItem("joga:tema");if(t==="claro")document.documentElement.dataset.tema=t;}catch(e){}</script>
+<script src="/static/chart-tema.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+  @keyframes fadeUp { from { opacity:0; transform:translateY(16px);} to { opacity:1; transform:translateY(0);} }
+  .dashboard { padding:24px; max-width:1600px; margin:0 auto; animation:fadeUp .4s ease; }
+  .top-bar { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; flex-wrap:wrap; gap:14px; }
+  .brand { display:flex; align-items:center; gap:12px; }
+  .brand .mark { width:36px; height:36px; border-radius:8px; background:linear-gradient(135deg,var(--accent),var(--accent2)); display:flex; align-items:center; justify-content:center; font-weight:700; color: var(--sobre-accent); flex:0 0 36px; }
+  .top-bar h1 { font-size:1.3rem; font-weight:700; background:linear-gradient(135deg,var(--accent),var(--accent2)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+  .meta { font-size:.74rem; color:var(--text-dim); font-family:'JetBrains Mono',monospace; }
+  .nav { display:flex; gap:8px; flex-wrap:wrap; }
+  .nav .btn-sm, .nav a { text-decoration:none; }
+  .btn-sm { padding:7px 14px; background:var(--surface2); border:1px solid var(--border); color:var(--text); font-weight:500; font-size:.78rem; border-radius:7px; cursor:pointer; text-decoration:none; display:inline-block; font-family:inherit; }
+  .btn-sm:hover, .btn-sm.on { border-color:var(--accent); color:var(--accent); }
+
+  .controls { display:flex; gap:12px; flex-wrap:wrap; align-items:center; background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:12px 16px; margin-bottom:10px; }
+  .ctrl-label { font-size:.66rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.04em; font-weight:600; }
+  select { background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 10px; font-family:inherit; font-size:.8rem; }
+  .regua { font-size:.74rem; color:var(--text-dim); margin:0 2px 14px; line-height:1.5; }
+  .regua b { color:var(--text); }
+
+  .breadcrumb { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px; font-size:.9rem; }
+  .breadcrumb .crumb { color:var(--accent); cursor:pointer; font-weight:600; }
+  .breadcrumb .crumb.current { color:var(--text); cursor:default; }
+  .breadcrumb .sep { color:var(--text-dim); }
+
+  .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:18px; }
+  @media (max-width:900px){ .kpis { grid-template-columns:repeat(2,1fr);} }
+  @media (max-width:520px){ .kpis { grid-template-columns:1fr;} .dashboard { padding:16px; } }
+  .kpi { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px 18px; position:relative; overflow:hidden; }
+  .kpi::before { content:''; position:absolute; top:0; left:0; right:0; height:4px; background:var(--border); }
+  .kpi.g::before { background:var(--green);} .kpi.r::before { background:var(--red);} .kpi.b::before{ background:var(--accent);} .kpi.o::before{ background:var(--orange);}
+  .kpi .label { font-size:.68rem; font-weight:600; color:var(--text-dim); text-transform:uppercase; letter-spacing:.05em; margin-bottom:8px; }
+  .kpi .value { font-size:1.7rem; font-weight:700; font-family:'JetBrains Mono',monospace; line-height:1.1; }
+  .kpi .sub { font-size:.72rem; color:var(--text-dim); margin-top:6px; line-height:1.45; }
+
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:18px; }
+  .card h3 { font-size:.72rem; font-weight:600; color:var(--text-dim); text-transform:uppercase; letter-spacing:.05em; margin-bottom:14px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  @media (max-width:1100px){ .grid2 { grid-template-columns:1fr; } }
+  .chart-wrap { position:relative; height:260px; }
+
+  table { width:100%; border-collapse:collapse; font-size:.8rem; }
+  thead th { text-align:left; font-weight:600; font-size:.66rem; text-transform:uppercase; letter-spacing:.04em; color:var(--text-dim); border-bottom:1px solid var(--border); padding:9px 8px; white-space:nowrap; }
+  thead th.num, td.num { text-align:right; }
+  thead tr.grp th { border-bottom:none; padding-bottom:0; text-align:center; }
+  td { padding:8px; border-bottom:1px solid var(--border); }
+  td.num { font-family:'JetBrains Mono',monospace; white-space:nowrap; }
+  tbody tr.click { cursor:pointer; }
+  tbody tr.click:hover { background:rgba(var(--accent-rgb), .05); }
+  .small { font-size:.68rem; color:var(--text-dim); }
+  .bom { color:var(--green); font-weight:700; } .ruim { color:var(--red); font-weight:700; }
+  .tag { padding:1px 7px; border-radius:9px; font-size:.64rem; font-weight:700; white-space:nowrap; }
+  .tag.usa { background:rgba(var(--green-rgb), .15); color:var(--green); }
+  .tag.nao { background:var(--surface2); color:var(--text-dim); border:1px solid var(--border); }
+  .table-scroll { overflow-x:auto; }
+  .aviso { font-size:.74rem; color:var(--text-dim); line-height:1.55; margin-top:8px; }
+  .aviso b { color:var(--text); }
+
+  .loading-screen { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:60vh; gap:14px; }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body data-page="evolucao">
+
+<div id="loading" class="loading-screen">
+  <img src="/static/joga-loader.svg" alt="JOGA" width="78" height="78" style="object-fit: contain;">
+  <div style="color:var(--text-dim); font-size:.85rem;">Montando 12 meses de carteira…</div>
+</div>
+
+<div id="app" class="dashboard hidden">
+  <div class="top-bar" data-joga-header data-titulo="Evolução da carteira"></div>
+  <script src="/static/joga-header.js"></script>
+
+  <div class="controls">
+    <span class="ctrl-label">Universo</span>
+    <select id="selUniverso" onchange="setFiltro('universo', this.value)">
+      <option value="">Todos</option><option value="campo">Campo</option>
+      <option value="lojas">Lojas</option><option value="telemarketing">Telemarketing</option>
+    </select>
+    <span class="ctrl-label">Uso da plataforma</span>
+    <select id="selUso" onchange="setFiltro('uso', this.value)">
+      <option value="todos">Todos os times</option><option value="usa">Times que usam</option>
+      <option value="nao">Times que não usam</option>
+    </select>
+    <span class="ctrl-label" title="Dias com login no mês para o time contar como 'usa'">Usa = a partir de</span>
+    <select id="selLimiar" onchange="setFiltro('limiar', this.value)">
+      <option value="2">2 dias/mês</option><option value="4">4 dias/mês</option>
+      <option value="8">8 dias/mês</option><option value="12">12 dias/mês</option>
+    </select>
+  </div>
+  <p class="regua" id="regua"></p>
+  <div class="breadcrumb" id="breadcrumb"></div>
+  <div class="kpis" id="kpis"></div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3 id="tituloCob">Cobertura da carteira — mês a mês</h3>
+      <div class="chart-wrap"><canvas id="chartCob"></canvas></div>
+    </div>
+    <div class="card">
+      <h3>Variação do risco — entraram − recuperados do risco</h3>
+      <div class="chart-wrap"><canvas id="chartVar"></canvas></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 id="tituloTabela">Times — antes × depois</h3>
+    <div class="table-scroll"><table>
+      <thead>
+        <tr class="grp"><th></th><th></th><th></th>
+          <th colspan="3" class="num">Cobertura</th><th colspan="3" class="num">% da base em risco</th>
+          <th colspan="2" class="num">Variação do risco / mês</th></tr>
+        <tr>
+          <th id="thNome">Time</th><th>Universo</th>
+          <th title="Usa = algum usuário ligado ao time (supervisor pelas áreas, vendedor pelo time) com login em pelo menos N dias num mês">Uso da plataforma</th>
+          <th class="num">Antes</th><th class="num">Depois</th><th class="num">Δ</th>
+          <th class="num">Antes</th><th class="num">Depois</th><th class="num">Δ</th>
+          <th class="num" title="Média de (entraram em risco − recuperados do risco) por mês. Negativo = carteira em risco diminuindo">Antes</th>
+          <th class="num">Depois</th>
+        </tr>
+      </thead>
+      <tbody id="tabBody"></tbody>
+    </table></div>
+    <p class="aviso" id="avisoTabela"></p>
+  </div>
+
+  <div class="card">
+    <h3>Como ler — e o que esta tela NÃO prova</h3>
+    <p class="aviso" id="avisoFonte"></p>
+  </div>
+</div>
+
+<script>
+const NUM = new Intl.NumberFormat('pt-BR');
+const BRL = new Intl.NumberFormat('pt-BR', { style:'currency', currency:'BRL', maximumFractionDigits:0 });
+const PCT = v => (v == null ? '—' : (v * 100).toFixed(1).replace('.', ',') + '%');
+const PP = v => (v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(1).replace('.', ',') + ' p.p.');
+const NUM1 = v => (v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(1).replace('.', ','));
+const MES = am => { const s = String(am); return `${s.slice(4)}/${s.slice(2,4)}`; };
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// sinal "bom" de cada métrica: cobertura subir é bom; risco e variação, descer
+const cls = (v, bomSobe) => v == null || v === 0 ? '' : ((v > 0) === bomSobe ? 'bom' : 'ruim');
+
+const params = new URLSearchParams(location.search);
+const F = { universo: params.get('universo') || '', uso: params.get('uso') || 'todos',
+            limiar: params.get('limiar') || '4', supervisor: params.get('supervisor') || '' };
+let _d = null, _cCob = null, _cVar = null;
+
+function qs() {
+  const p = new URLSearchParams();
+  Object.entries(F).forEach(([k, v]) => { if (v && !(k === 'uso' && v === 'todos') && !(k === 'limiar' && v === '4')) p.set(k, v); });
+  return p.toString();
+}
+function navegar() { history.replaceState(null, '', '/evolucao' + (qs() ? '?' + qs() : '')); carregar(); }
+function setFiltro(k, v) { F[k] = v; if (k !== 'supervisor') F.supervisor = ''; navegar(); }
+function irEmpresa() { F.supervisor = ''; navegar(); }
+function irTime(id) { if (id == null) return; F.supervisor = String(id); navegar(); }
+
+async function carregar() {
+  try {
+    _d = await fetchJSON('/api/evolucao-carteira?' + qs());
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+    render();
+  } catch (e) {
+    document.getElementById('loading').innerHTML = '<div style="color:var(--red)">Erro ao carregar: ' + esc(e) + '</div>';
+  }
+}
+
+function antesTxt() {
+  const a = _d.empresa_antes_depois.antes.meses, d = _d.empresa_antes_depois.depois.meses;
+  return { a: a.length ? `${MES(a[0])}–${MES(a[a.length - 1])}` : 'sem 3 meses antes do marco',
+           d: d.length ? `${MES(d[0])}–${MES(d[d.length - 1])}` : 'ainda sem mês fechado depois do marco' };
+}
+
+function render() {
+  ['Universo', 'Uso', 'Limiar'].forEach(k => { document.getElementById('sel' + k).value = F[k.toLowerCase()]; });
+  const p = antesTxt();
+  document.getElementById('regua').innerHTML =
+    `<b>Cobertura</b> = % da carteira ativa (clientes cadastrados no vendedor que compraram em 365 dias) que comprou nos últimos 60 dias, no fim de cada mês — a mesma régua do Gerencial e da Performance · ` +
+    `<b>% em risco</b> = clientes da base com mais de 60 dias sem comprar e além do próprio ciclo · ` +
+    `<b>variação do risco</b> = entraram em risco − recuperados do risco no mês (negativo = melhorou) · ` +
+    `<b>Antes</b> = ${p.a} · <b>Depois</b> = ${p.d} (uso da plataforma registrado desde ${MES(_d.marco)}). Antes × depois é a <b>média do período</b>, não o primeiro dia contra o último.`;
+  renderBreadcrumb(); renderKpis(); renderCharts(); renderTabela(); renderAvisos();
+}
+
+function renderBreadcrumb() {
+  const parts = [`<span class="crumb ${F.supervisor ? '' : 'current'}" onclick="irEmpresa()">🏢 Empresa</span>`];
+  if (F.supervisor) {
+    const t = (_d.times.find(x => String(x.codsupervisor) === F.supervisor) || {}).nome || ('Time ' + F.supervisor);
+    parts.push('<span class="sep">▸</span>', `<span class="crumb current">👥 ${esc(t)}</span>`);
+  }
+  document.getElementById('breadcrumb').innerHTML = parts.join(' ');
+}
+
+function escopo() {
+  // no drill do time, KPIs e gráficos são do time; senão, da soma dos times visíveis
+  if (F.supervisor) {
+    const t = _d.times.find(x => String(x.codsupervisor) === F.supervisor);
+    if (t) return { serie: t.serie, ad: t.antes_depois, nome: t.nome };
+  }
+  return { serie: _d.empresa, ad: _d.empresa_antes_depois, nome: 'Times filtrados' };
+}
+
+function renderKpis() {
+  const e = escopo(), ult = e.serie[e.serie.length - 1] || {}, ad = e.ad;
+  const usam = _d.times.filter(t => t.uso.usa).length;
+  const k = [
+    { c:'b', l:'Cobertura · ' + MES(ult.anomes), v:PCT(ult.cobertura),
+      s:`antes ${PCT(ad.antes.cobertura)} → depois ${PCT(ad.depois.cobertura)} · <span class="${cls(ad.delta.cobertura_pp, true)}">${PP(ad.delta.cobertura_pp)}</span>` },
+    { c:'r', l:'% da base em risco · ' + MES(ult.anomes), v:PCT(ult.pct_risco),
+      s:`antes ${PCT(ad.antes.pct_risco)} → depois ${PCT(ad.depois.pct_risco)} · <span class="${cls(ad.delta.pct_risco_pp, false)}">${PP(ad.delta.pct_risco_pp)}</span>` },
+    { c:'o', l:'Variação do risco / mês', v:NUM1(ad.depois.variacao_media),
+      s:`média depois · antes ${NUM1(ad.antes.variacao_media)} clientes/mês (negativo = carteira em risco diminuindo)` },
+    { c:'g', l:'Times que usam', v:`${usam} de ${_d.times.length}`,
+      s:`com login em ≥ ${_d.limiar} dias num mês desde ${MES(_d.marco)} · ${NUM.format(ult.base || 0)} clientes na base` },
+  ];
+  document.getElementById('kpis').innerHTML = k.map(x =>
+    `<div class="kpi ${x.c}"><div class="label">${x.l}</div><div class="value">${x.v}</div><div class="sub">${x.s}</div></div>`).join('');
+}
+
+// linha vertical no mês do marco (sem plugin externo)
+const marcoPlugin = {
+  id:'marco',
+  afterDatasetsDraw(ch, _a, opts) {
+    const i = (_d.meses || []).indexOf(_d.marco);
+    if (i < 0) return;
+    const x = ch.scales.x.getPixelForValue(i), { top, bottom } = ch.chartArea, c = ch.ctx;
+    c.save(); c.strokeStyle = opts.cor || '#888'; c.setLineDash([4, 4]); c.beginPath();
+    c.moveTo(x, top); c.lineTo(x, bottom); c.stroke();
+    c.fillStyle = opts.cor || '#888'; c.font = '11px DM Sans'; c.fillText('uso registrado', x + 4, top + 12);
+    c.restore();
+  },
+};
+
+function renderCharts() {
+  const css = getComputedStyle(document.documentElement);
+  const cor = n => css.getPropertyValue(n).trim();
+  const green = cor('--green') || '#34d399', red = cor('--red') || '#f87171', acc = cor('--accent') || '#38bdf8', dim = cor('--text-dim') || '#94a3b8';
+  const labels = _d.meses.map(MES), e = escopo();
+  const ds = [];
+  if (F.supervisor) {
+    ds.push({ label:e.nome, data:e.serie.map(x => x.cobertura == null ? null : x.cobertura * 100), borderColor:acc, backgroundColor:acc, tension:.25 });
+  } else {
+    if (F.uso !== 'nao') ds.push({ label:'Times que usam', data:_d.grupos.usa.map(x => x.cobertura == null ? null : x.cobertura * 100), borderColor:green, backgroundColor:green, tension:.25 });
+    if (F.uso !== 'usa') ds.push({ label:'Times que não usam', data:_d.grupos.nao_usa.map(x => x.cobertura == null ? null : x.cobertura * 100), borderColor:dim, backgroundColor:dim, tension:.25 });
+    ds.push({ label:'Total filtrado', data:_d.empresa.map(x => x.cobertura == null ? null : x.cobertura * 100), borderColor:acc, backgroundColor:acc, borderDash:[5, 4], tension:.25 });
+  }
+  document.getElementById('tituloCob').textContent = 'Cobertura da carteira — mês a mês' + (F.supervisor ? ' · ' + e.nome : '');
+  if (_cCob) _cCob.destroy();
+  _cCob = new Chart(document.getElementById('chartCob'), {
+    type:'line', data:{ labels, datasets:ds }, plugins:[marcoPlugin],
+    options:{ responsive:true, maintainAspectRatio:false, interaction:{ mode:'index', intersect:false },
+      plugins:{ marco:{ cor:dim }, tooltip:{ callbacks:{ label:c => `${c.dataset.label}: ${c.parsed.y == null ? '—' : c.parsed.y.toFixed(1).replace('.', ',') + '%'}` } } },
+      scales:{ y:{ ticks:{ callback:v => v + '%' } } } },
+  });
+  if (_cVar) _cVar.destroy();
+  _cVar = new Chart(document.getElementById('chartVar'), {
+    type:'bar', plugins:[marcoPlugin],
+    data:{ labels, datasets:[{ label:'Variação do risco (clientes)', data:e.serie.map(x => x.variacao),
+      backgroundColor:e.serie.map(x => (x.variacao > 0 ? red : green) + 'cc') }] },
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{ marco:{ cor:dim }, legend:{ display:false }, tooltip:{ callbacks:{ label:c => {
+        const x = e.serie[c.dataIndex];
+        return [`${x.variacao > 0 ? '+' : ''}${NUM.format(x.variacao)} clientes (entraram ${NUM.format(x.entraram)} − recuperados ${NUM.format(x.recuperados)})`,
+                `${x.valor_variacao > 0 ? '+' : ''}${BRL.format(x.valor_variacao)}/mês em valor mensal`];
+      } } } } },
+  });
+}
+
+function linhaTabela(r, drill) {
+  const ad = r.antes_depois, u = r.uso, dias = r.dias_ativos[r.dias_ativos.length - 1] || 0;
+  const uso = u.usa ? `<span class="tag usa">usa desde ${MES(u.comecou_em)}</span> <span class="small">${dias} dias em ${MES(_d.meses[_d.meses.length - 1])}</span>`
+                    : `<span class="tag nao">não usa</span>`;
+  const id = r.codsupervisor;
+  return `<tr class="${drill && id != null ? 'click' : ''}" ${drill && id != null ? `onclick="irTime(${id})"` : ''}>
+    <td>${esc(r.nome)}</td><td class="small">${esc(r.universo || '—')}</td><td>${uso}</td>
+    <td class="num">${PCT(ad.antes.cobertura)}</td><td class="num">${PCT(ad.depois.cobertura)}</td>
+    <td class="num ${cls(ad.delta.cobertura_pp, true)}">${PP(ad.delta.cobertura_pp)}</td>
+    <td class="num">${PCT(ad.antes.pct_risco)}</td><td class="num">${PCT(ad.depois.pct_risco)}</td>
+    <td class="num ${cls(ad.delta.pct_risco_pp, false)}">${PP(ad.delta.pct_risco_pp)}</td>
+    <td class="num">${NUM1(ad.antes.variacao_media)}</td>
+    <td class="num ${cls(ad.depois.variacao_media, false)}">${NUM1(ad.depois.variacao_media)}</td></tr>`;
+}
+
+function renderTabela() {
+  const drill = !!F.supervisor;
+  document.getElementById('tituloTabela').textContent = drill ? 'Vendedores do time — antes × depois' : 'Times — antes × depois';
+  document.getElementById('thNome').textContent = drill ? 'Vendedor' : 'Time';
+  const linhas = drill ? _d.rcas : _d.times;
+  document.getElementById('tabBody').innerHTML = linhas.length ? linhas.map(r => linhaTabela(r, !drill)).join('')
+    : '<tr><td colspan="11" class="small" style="text-align:center;padding:18px">Nenhum grupo neste filtro.</td></tr>';
+  document.getElementById('avisoTabela').innerHTML = drill
+    ? 'No vendedor, "usa" é o <b>login dele</b> (poucos vendedores têm acesso); a carteira é a do cadastro dele. Base pequena oscila muito de um mês para o outro.'
+    : 'Clique num time para ver os vendedores. Na linha "Sem time" ficam os clientes de código fictício ou sem supervisor.';
+}
+
+function renderAvisos() {
+  const atual = Object.entries(_d.dono_fonte).filter(([, f]) => f === 'atual').map(([m]) => MES(m));
+  document.getElementById('avisoFonte').innerHTML =
+    `<b>Tudo é recalculado da venda</b> — nada é número gravado: mudar uma régua refaz o passado inteiro, sem degrau no gráfico. ` +
+    `O que muda com o tempo e não fica no ERP é fotografado: o dono de cada cliente e o time de cada vendedor. ` +
+    (atual.length ? `<b>Nos meses ${atual.join(', ')} ainda não havia foto</b>, então esses meses usam o dono e o time de HOJE — cliente que trocou de vendedor aparece na carteira atual. ` : '') +
+    `<br><br><b>Evidência, não prova.</b> Times que usam a plataforma podem ser também os mais organizados — a comparação justa é cada time contra ele mesmo (antes × depois) e essa diferença contra a dos times que não usam. Com poucos times de cada lado, um supervisor muda a média; leia time a time antes de concluir.`;
+}
+
+carregar();
+</script>
+</body>
+</html>
