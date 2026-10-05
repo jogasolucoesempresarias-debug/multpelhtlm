@@ -72,6 +72,14 @@ def status_regua_personalizada(dias_sem_comprar, ciclo):
     return 'urgente'
 
 
+def margem(lucro, venda):
+    """Margem = lucro ÷ venda líquida (régua do Comercial: Dashboard, Curva ABC). Sem venda
+    positiva não há margem (None) — cliente só com devolução daria um % sem sentido."""
+    if venda is None or venda <= 0:
+        return None
+    return (lucro or 0.0) / venda
+
+
 def lucro_perdido_projetado(lucro_12m, dias_sem_comprar, ciclo):
     """Lucro mensal médio × meses atrasado (não negativo). Floor 0.
     Cliente ainda dentro do ciclo dele = 0. Sem ciclo (1 compra) = 0."""

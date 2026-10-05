@@ -3983,6 +3983,10 @@ def _filtrar_carteira(clientes, args, vendedor_forcado=None):
 
     # Aplica todos os filtros (geo + drill + busca) num único pass.
     # Cards/donut e tabela compartilham o mesmo resultado (single source of truth).
+    # Margem 12m (lead, 10/2026) calculada aqui e não no cache: vale também para a carteira já
+    # cacheada antes do deploy, sem subir a chave (e sem refazer as 7 queries do BI).
+    for c in clientes:
+        c['margem_12m'] = rfm.margem(c.get('lucro_12m'), c.get('venda_12m'))
     filtrados = clientes
     if uf:
         ufs = {u.strip().upper() for u in uf.split(',') if u.strip()}
@@ -4044,6 +4048,7 @@ def _filtrar_carteira(clientes, args, vendedor_forcado=None):
         'atraso':          'dias_atraso',
         'ciclo':           'ciclo_pessoal',
         'ultima_compra':   'ultima_compra',
+        'margem':          'margem_12m',
     }
     reverse = (direction == 'desc')
 
@@ -4058,6 +4063,12 @@ def _filtrar_carteira(clientes, args, vendedor_forcado=None):
         # Severidade (não alfabético): ok < normal < atencao < urgente
         _rank = {'ok': 0, 'normal': 1, 'atencao': 2, 'urgente': 3}
         filtrados = sorted(filtrados, key=lambda c: _rank.get(c.get(status_key), -1), reverse=reverse)
+    elif sort == 'margem':
+        # "Sem margem" (sem venda) vai SEMPRE para o fim — no desc a chave genérica abaixo o poria
+        # no topo, e a tabela abriria com uma página de "—".
+        com = sorted((c for c in filtrados if c.get('margem_12m') is not None),
+                     key=lambda c: c['margem_12m'], reverse=reverse)
+        filtrados = com + [c for c in filtrados if c.get('margem_12m') is None]
     else:
         sort_attr = sort_map.get(sort, 'lucro_perdido_proj')
         filtrados = sorted(filtrados, key=lambda c: (c.get(sort_attr) is None, _sort_key(c.get(sort_attr))), reverse=reverse)
@@ -4353,9 +4364,23 @@ CREATE TABLE IF NOT EXISTS cliente_plano (
     descricao   TEXT,
     autor_id    INTEGER,
     autor_nome  VARCHAR(120),
-    criado_em   TIMESTAMP DEFAULT NOW()
+    criado_em   TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS ix_cliente_plano_codcli ON cliente_plano (codcli, criado_em)"""
+CREATE INDEX IF NOT EXISTS ix_cliente_plano_codcli ON cliente_plano (codcli, criado_em);
+-- 05/10/2026: criado_em sem fuso mostrava 3 h adiantado (banco em UTC) — mesma correção do
+-- multpel_log; guardado por tipo, reaplicar não converte duas vezes. + exclusão lógica.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'cliente_plano' AND column_name = 'criado_em'
+                  AND data_type = 'timestamp without time zone') THEN
+        ALTER TABLE cliente_plano
+            ALTER COLUMN criado_em TYPE TIMESTAMPTZ
+            USING criado_em AT TIME ZONE current_setting('TimeZone');
+    END IF;
+END $$;
+ALTER TABLE cliente_plano ADD COLUMN IF NOT EXISTS excluido_em TIMESTAMPTZ;
+ALTER TABLE cliente_plano ADD COLUMN IF NOT EXISTS excluido_por INTEGER;"""
 _PLANO_DDL_OK = False
 
 
@@ -4378,12 +4403,12 @@ def _plano_registros(codclis):
     conn = _plano_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, codcli, data_acao, status, descricao, autor_nome, criado_em "
-                        "FROM cliente_plano WHERE codcli = ANY(%s)", (ids,))
+            cur.execute("SELECT id, codcli, data_acao, status, descricao, autor_id, autor_nome, criado_em "
+                        "FROM cliente_plano WHERE codcli = ANY(%s) AND excluido_em IS NULL", (ids,))
             out = {}
-            for i, cc, d, st, de, an, cr in cur.fetchall():
+            for i, cc, d, st, de, ai, an, cr in cur.fetchall():
                 out.setdefault(cc, []).append({'id': i, 'data_acao': d, 'status': st, 'descricao': de,
-                                               'autor_nome': an, 'criado_em': cr})
+                                               'autor_id': ai, 'autor_nome': an, 'criado_em': cr})
             return out
     finally:
         conn.close()
@@ -4432,7 +4457,17 @@ def api_plano_cliente(codcli):
                              uid if isinstance(uid, int) else None, (session.get('nome') or '')[:120] or None))
         finally:
             conn.close()
+    return _plano_resposta(codcli, cli, hoje)
+
+
+def _plano_resposta(codcli, cli, hoje):
+    """Payload do modal: atual + anteriores, cada registro com `pode_excluir` para quem está vendo."""
     regs = _plano_registros([codcli]).get(codcli, [])
+    uid = session.get('user_id')
+    admin = session.get('role') == 'admin'
+    agora = datetime.now(timezone.utc)
+    for r in regs:
+        r['pode_excluir'] = plano.pode_excluir(r, uid if isinstance(uid, int) else None, admin, agora)
     atual, anteriores = plano.separar(regs, cli.get('ultima_compra'))
     return jsonify({'ok': True, 'codcli': codcli, 'cliente': cli.get('cliente'),
                     'ultima_compra': cli.get('ultima_compra'),
@@ -4440,6 +4475,34 @@ def api_plano_cliente(codcli):
                     'atual': [plano.serializar(r) for r in atual],
                     'anteriores': [plano.serializar(r) for r in anteriores],
                     'resumo': plano.resumo(atual, hoje), 'hoje': hoje.isoformat()})
+
+
+@app.route('/api/plano/<int:codcli>/<int:reg_id>', methods=['DELETE'])
+@login_required
+def api_plano_excluir(codcli, reg_id):
+    """Exclui (LOGICAMENTE) um registro preenchido errado — pedido do Gabriel, 05/10/2026. O autor
+    exclui o próprio em até 24 h; admin, qualquer um. O rastro fica (excluido_em/excluido_por) e vai
+    para o multpel_log: o plano existe para o gestor ver o que foi feito."""
+    cli = _plano_cliente_no_escopo(codcli)
+    if cli is None:
+        return jsonify({'ok': False, 'error': 'Cliente não encontrado na sua carteira'}), 404
+    reg = next((r for r in _plano_registros([codcli]).get(codcli, []) if r['id'] == reg_id), None)
+    if reg is None:
+        return jsonify({'ok': False, 'error': 'Registro não encontrado'}), 404
+    uid = session.get('user_id')
+    uid = uid if isinstance(uid, int) else None
+    if not plano.pode_excluir(reg, uid, session.get('role') == 'admin', datetime.now(timezone.utc)):
+        return jsonify({'ok': False, 'error': 'Só quem registrou pode excluir, e até 24 h depois'}), 403
+    conn = _plano_conn()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("UPDATE cliente_plano SET excluido_em = NOW(), excluido_por = %s "
+                        "WHERE id = %s AND codcli = %s AND excluido_em IS NULL", (uid, reg_id, codcli))
+    finally:
+        conn.close()
+    log_request('plano:excluido', {'codcli': codcli, 'id': reg_id, 'status': reg['status'],
+                                   'autor_id': reg.get('autor_id')})
+    return _plano_resposta(codcli, cli, _hoje_ref())
 
 
 @app.route('/api/plano/resumo', methods=['POST'])
@@ -4690,7 +4753,7 @@ def api_carteira_csv():
         'CodCli', 'Cliente', 'Fantasia', 'Cidade', 'UF',
         'CodUsur', 'Vendedor', 'CodSupervisor', 'Supervisor', 'Telefone',
         'UltimaCompra', 'RecenciaDias', 'Frequencia12m', 'CicloPessoal',
-        'Venda12m', 'MediaVenda12m', 'Lucro12m', 'ReceitaPerdidaProj', 'LucroPerdidoProj',
+        'Venda12m', 'MediaVenda12m', 'Lucro12m', 'Margem12m(%)', 'ReceitaPerdidaProj', 'LucroPerdidoProj',
         'Segmento', 'R', 'F', 'M', 'Bloqueio',
     ]
 
@@ -4717,6 +4780,7 @@ def api_carteira_csv():
                 venda,
                 round(venda / 12, 2),  # MediaVenda12m
                 c.get('lucro_12m'),
+                round(c['margem_12m'] * 100, 1) if c.get('margem_12m') is not None else None,
                 c.get('receita_perdida_proj'),
                 c.get('lucro_perdido_proj'),
                 c.get('segmento'),
@@ -4736,7 +4800,8 @@ def api_carteira_csv():
 
 def _gerar_pdf_carteira(filtrados, filtros_resumo=''):
     """Gera PDF da carteira filtrada. Retorna bytes do PDF.
-    Colunas: CodCli · Cliente · Cidade/UF · Vendedor · R · Segmento · Telefone · Venda 12m · Média Venda."""
+    Colunas: CodCli · Cliente · Cidade/UF · Vendedor · R · Segmento · Telefone · Venda 12m · Média Venda ·
+    Margem 12m."""
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib import colors
     from reportlab.lib.units import cm
@@ -4762,30 +4827,9 @@ def _gerar_pdf_carteira(filtrados, filtros_resumo=''):
     story.append(Paragraph(f"Gerado em {_date.today().strftime('%d/%m/%Y')} · {len(filtrados)} clientes" + (f" · {filtros_resumo}" if filtros_resumo else ''), sub_style))
     story.append(Spacer(1, 0.3*cm))
 
-    header = ['CodCli', 'Cliente', 'Cidade/UF', 'Vendedor', 'R (dias)', 'Segmento', 'Telefone', 'Venda 12m', 'Média Venda']
-    data = [header]
-    NOME_SEG_PT = {
-        'champions': 'Campeões', 'loyal': 'Fiéis', 'cant_lose': 'Não Perder', 'at_risk': 'Em Risco',
-        'potential_loyalist': 'Promissores', 'new': 'Novos', 'hibernating': 'Inativos', 'lost': 'Perdidos',
-    }
-    for c in filtrados:
-        venda = c.get('venda_12m') or 0
-        cliente_nome = (c.get('cliente') or '')[:42]
-        cidade_uf = f"{(c.get('cidade') or '')[:20]}/{c.get('uf') or ''}"
-        vendedor = (c.get('vendedor') or '')[:22]
-        seg_pt = NOME_SEG_PT.get(c.get('segmento') or '', c.get('segmento') or '')
-        data.append([
-            c.get('codcli') or '',
-            cliente_nome,
-            cidade_uf,
-            vendedor,
-            c.get('recencia_dias') or '',
-            seg_pt,
-            c.get('telefone') or '',
-            f"R$ {venda:,.0f}".replace(',', '.'),
-            f"R$ {(venda/12):,.0f}".replace(',', '.'),
-        ])
-    tbl = Table(data, repeatRows=1, colWidths=[1.5*cm, 6.5*cm, 4*cm, 4*cm, 1.5*cm, 2.4*cm, 3*cm, 2.4*cm, 2.4*cm])
+    header, linhas = _linhas_pdf_carteira(filtrados)
+    data = [header] + linhas
+    tbl = Table(data, repeatRows=1, colWidths=[1.5*cm, 5.5*cm, 3.6*cm, 3.6*cm, 1.5*cm, 2.4*cm, 3*cm, 2.4*cm, 2.4*cm, 1.8*cm])
     tbl.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e293b')),
         ('TEXTCOLOR',  (0,0), (-1,0), colors.white),
@@ -4794,7 +4838,7 @@ def _gerar_pdf_carteira(filtrados, filtros_resumo=''):
         ('GRID',       (0,0), (-1,-1), 0.3, colors.HexColor('#cbd5e1')),
         ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8fafc')]),
         ('ALIGN',      (4,0), (4,-1), 'CENTER'),
-        ('ALIGN',      (7,0), (8,-1), 'RIGHT'),
+        ('ALIGN',      (7,0), (9,-1), 'RIGHT'),
         ('VALIGN',     (0,0), (-1,-1), 'MIDDLE'),
         ('LEFTPADDING',(0,0), (-1,-1), 4),
         ('RIGHTPADDING',(0,0), (-1,-1), 4),
@@ -4810,6 +4854,35 @@ def _gerar_pdf_carteira(filtrados, filtros_resumo=''):
 
     doc.build(story, onFirstPage=_rodape, onLaterPages=_rodape)
     return buf.getvalue()
+
+
+def _linhas_pdf_carteira(filtrados):
+    """(cabeçalho, linhas) da tabela do PDF da Carteira — separado do reportlab para ser testável."""
+    header = ['CodCli', 'Cliente', 'Cidade/UF', 'Vendedor', 'R (dias)', 'Segmento', 'Telefone',
+              'Venda 12m', 'Média Venda', 'Margem 12m']
+    NOME_SEG_PT = {
+        'champions': 'Campeões', 'loyal': 'Fiéis', 'cant_lose': 'Não Perder', 'at_risk': 'Em Risco',
+        'potential_loyalist': 'Promissores', 'new': 'Novos', 'hibernating': 'Inativos', 'lost': 'Perdidos',
+    }
+    linhas = []
+    for c in filtrados:
+        venda = c.get('venda_12m') or 0
+        m = c.get('margem_12m')
+        if m is None and 'margem_12m' not in c:
+            m = rfm.margem(c.get('lucro_12m'), c.get('venda_12m'))
+        linhas.append([
+            c.get('codcli') or '',
+            (c.get('cliente') or '')[:42],
+            f"{(c.get('cidade') or '')[:20]}/{c.get('uf') or ''}",
+            (c.get('vendedor') or '')[:22],
+            c.get('recencia_dias') or '',
+            NOME_SEG_PT.get(c.get('segmento') or '', c.get('segmento') or ''),
+            c.get('telefone') or '',
+            f"R$ {venda:,.0f}".replace(',', '.'),
+            f"R$ {(venda/12):,.0f}".replace(',', '.'),
+            '—' if m is None else f"{m * 100:.1f}%".replace('.', ','),
+        ])
+    return header, linhas
 
 
 def _gerar_pdf_proximo_pedido(filtrados, filtros_resumo=''):
@@ -5526,7 +5599,8 @@ def api_recuperacao():
     am = _recup_mes_arg(base)
     # v2 (29/09/2026): a resposta ganhou o SALDO (cards + placar). Sem subir a versão, a produção
     # serviu a resposta antiga do cache por até 1 h depois do deploy e a tela mostrou saldo 0.
-    key = cache_key_for_user('recuperacao:resumo:v2', {
+    # v3 (05/10/2026): placar ganhou rec_perdido_da_base e rec_por_outros.
+    key = cache_key_for_user('recuperacao:resumo:v3', {
         'mes': am, 'sup': request.args.get('supervisor', ''), 'vend': request.args.get('vendedor', ''),
         'p': f"{base['ina']}:{base['per']}:{base['atual']}"})
     cached = _cache_get(key)

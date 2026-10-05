@@ -446,6 +446,7 @@
               <th class="num sortable" data-sort="recencia"        onclick="ordenarPor('recencia')">R (dias)<span class="sort-ind">↕</span></th>
               <th class="num sortable" data-sort="frequencia"      onclick="ordenarPor('frequencia')">F (12m)<span class="sort-ind">↕</span></th>
               <th class="num sortable" data-sort="venda_12m"       onclick="ordenarPor('venda_12m')">Venda 12m<span class="sort-ind">↕</span></th>
+              <th class="num sortable" data-sort="margem"          onclick="ordenarPor('margem')" title="Lucro 12m ÷ venda líquida 12m do cliente (mesma régua do Dashboard e da Curva ABC). Sem venda no período: —">Margem 12m<span class="sort-ind">↕</span></th>
               <th class="num sortable" data-sort="media_venda"     onclick="ordenarPor('media_venda')" title="Venda 12m ÷ 12 meses">Média Venda<span class="sort-ind">↕</span></th>
               <th class="num sortable" data-sort="receita_perdida" onclick="ordenarPor('receita_perdida')">⚠ Receita Perdida proj.<span class="sort-ind">↓</span></th>
               <th class="sortable"     data-sort="segmento"        onclick="ordenarPor('segmento')">Segmento<span class="sort-ind">↕</span></th>
@@ -1004,6 +1005,7 @@ function renderTabela(r) {
       <td class="num">${c.recencia_dias != null ? NUM.format(c.recencia_dias) : '—'}</td>
       <td class="num">${NUM.format(c.frequencia_12m || 0)}</td>
       <td class="num">${BRL.format(c.venda_12m || 0)}</td>
+      <td class="num"${c.margem_12m < 0 ? ' style="color:var(--red);"' : ''}>${PCT(c.margem_12m)}</td>
       <td class="num">${BRL.format((c.venda_12m || 0) / 12)}</td>
       <td class="num">${c.receita_perdida_proj > 0 ? '<strong style="color:var(--red);">' + BRL.format(c.receita_perdida_proj) + '</strong>' : '—'}</td>
       <td><span class="badge b-${c.segmento}">${NOME_SEG[c.segmento] || c.segmento}</span></td>

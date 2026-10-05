@@ -93,6 +93,13 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
     tabela (`_carteira_por_praca`, no laço de `_filtrar_carteira` — zero query), então clicar em
     "Perdidos" mostra ONDE estão os perdidos; UF sozinha seria a distribuição estática que todo
     mundo sabe. Gate: `tests/test_carteira_praca.py`.
+  - **Coluna Margem 12m** (10/2026, sugestão do lead na apresentação). `rfm.margem` =
+    **lucro 12m ÷ venda líquida 12m** (régua do Dashboard e da Curva ABC); zero query — o
+    `lucro_12m` já viajava (é o M do RFM). ⚠️ A Carteira **não tem seletor de período**: "margem do
+    período filtrado" é a de 12m, recortada pelos filtros da tela. Calculada em `_filtrar_carteira`
+    (não no cache) para valer sem subir a chave da carteira. Venda ≤ 0 → `—`; negativa em vermelho;
+    na ordenação "sem margem" fica **sempre no fim**. Viaja no CSV (`Margem12m(%)`) e no PDF.
+    Sem card, por decisão. Gate: `tests/test_carteira_margem.py`.
 - **Vendedores** — ranking YoY, positivação, cockpit individual.
 - **Categorias** — treemap de deptos (tamanho=venda, cor=margem) + top fornecedores + drill.
 - **Mix abandonado** — clientes que pararam de comprar um depto há X dias; drill top 5 deptos perdidos; export CSV.
@@ -287,6 +294,33 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
     Dado: cliente × vendedor × dia, 26 meses, em **blocos de 4 meses** (o `executeQueries` corta em
     100 mil linhas em silêncio; bloco no teto levanta erro). Base calculada 1×/h por processo.
     Gates: `test_recuperacao.py`, `test_potencial.py`, `test_recuperacao_endpoint.py`.
+    - 🩹 **As contas fechavam; a LEITURA não** (05/10/2026, Gabriel: *"acredito que não está
+      batendo, mas não sei explicar o porquê"*). Conferido nos prints: ponte, saldos por time e
+      linha do vendedor fechavam. Cinco causas de leitura, todas corrigidas na tela:
+      (1) "recuperados" tinha dois sentidos — a ponte conta só os do **risco**, a coluna "Recuperado
+      da base" somava os da base **perdida** (agora abre em "X do risco + Y da perdida");
+      (2) o saldo vinha de "entraram", que a tabela não mostrava (coluna nova **Entraram em risco**);
+      (3) R$ de duas réguas na mesma linha — ao lado do recuperado é **venda no mês**, no saldo é
+      **valor mensal** (cabeçalhos declaram);
+      (4) "De outra base" era de mão única — nova coluna **Por outros** (`rec_por_outros`: cliente
+      da base recuperado só por quem não é o dono), e a linha fecha:
+      `da base = (por ele − de outra base) + por outros`;
+      (5) a lista é **hoje** e a ponte é o **fim do mês** — as duas datas escritas.
+      "Saldo" virou **"Variação do risco"** e a faixa da ponte fala em verbo ("cresceu 179
+      clientes") — "+179" em vermelho era lido como ganho. Cache `recuperacao:resumo:v3`.
+      Gate: `tests/test_recuperacao_leitura.py`.
+  - **Plano de ação por cliente** (CRM leve, `plano_cliente.py` + `static/plano-cliente.js`, tabela
+    `cliente_plano`): 6 status de um toque nas listas (Próximo Pedido, Recuperação, ficha do cliente).
+    - 🩹 **"Registrado em 13:38" eram 10:38** (05/10/2026). A mesma armadilha do `multpel_log` em
+      08/2026: `criado_em` nasceu `TIMESTAMP` sem fuso e o `NOW()` roda no banco (outra stack, UTC).
+      Virou `TIMESTAMPTZ` (migration guardada por tipo, em `init_db.py` e no `_PLANO_DDL`) e a tela
+      recebe a hora de Brasília (`plano.hora_local`). Errava também a **data** das 21h à meia-noite —
+      e é pela data que o acompanhamento separa "atual" de "anterior à compra". ⚠️ No Postgres
+      local (fuso de Brasília) o defeito não aparece; o gate é o teste puro.
+    - **✕ para excluir registro preenchido errado** (05/10/2026). O autor exclui o PRÓPRIO até
+      **24 h** depois de registrar; admin, qualquer um. Exclusão **lógica**
+      (`excluido_em`/`excluido_por`) + `plano:excluido` no `multpel_log`: some da tela e do selo, o
+      rastro fica. `DELETE /api/plano/<codcli>/<id>`. Gate: `tests/test_plano_fuso_exclusao.py`.
   - **Performance Comercial** (`/performance`, `performance_comercial.py`): nota 0–10 do mês fechado,
     pesos do cliente (Rentab 35 · Cobertura 25 · Mix 20 · Receita 10 · Frequência 10) editáveis no
     Admin **por competência**. Rentab/receita/mix = % de atingimento da meta do Metas (absoluto mede

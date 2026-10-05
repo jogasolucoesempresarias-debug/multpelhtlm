@@ -192,6 +192,10 @@ def placar_de(movs, dono_de, time_de):
     - `da_base`: a carteira do DONO (cadastro) — em risco no fim do mês e recuperado da base
       por qualquer vendedor;
     - `por_ele`: o que o VENDEDOR recuperou, de qualquer base (é quem leva o crédito).
+    Identidades que a tela deixa refazer (05/10/2026):
+      rec_da_base = rec_risco_da_base + rec_perdido_da_base
+      rec_da_base = (rec_por_ele − rec_de_outra_base) + rec_por_outros
+      saldo       = entraram − rec_risco_da_base
     `dono_de` = {codcli: codusur do cadastro}; `time_de` = {codusur: codsupervisor}.
     Venda recuperada de um cliente com dois vendedores no mês é dividida pelo que cada um vendeu.
     """
@@ -202,7 +206,8 @@ def placar_de(movs, dono_de, time_de):
                                   'venda_rec_da_base': 0.0, 'rec_por_ele': 0,
                                   'venda_rec_por_ele': 0.0, 'rec_de_outra_base': 0,
                                   'entraram': 0, 'valor_entraram': 0.0,
-                                  'rec_risco_da_base': 0, 'valor_rec_risco_da_base': 0.0})
+                                  'rec_risco_da_base': 0, 'valor_rec_risco_da_base': 0.0,
+                                  'rec_perdido_da_base': 0, 'rec_por_outros': 0})
 
     for c, m in movs.items():
         dono = dono_de.get(c)
@@ -221,8 +226,15 @@ def placar_de(movs, dono_de, time_de):
         if not m['recuperado']:
             continue
         total = sum(m['vendas'].values())
-        for tab, k in ((rcas, dono), (times, t_dono)):
+        times_que_venderam = {time_de.get(u) for u in m['vendas']}
+        for tab, k, vendeu in ((rcas, dono, dono in m['vendas']), (times, t_dono, t_dono in times_que_venderam)):
             s = _slot(tab, k); s['rec_da_base'] += 1; s['venda_rec_da_base'] += total
+            if m['recuperado_de'] != RISCO:
+                s['rec_perdido_da_base'] += 1
+            # A volta do "de outra base" (05/10/2026): cliente DA BASE recuperado só por quem não é
+            # o dono. Fecha a linha: da base = (por ele − de outra base) + por outros.
+            if not vendeu:
+                s['rec_por_outros'] += 1
         times_creditados = set()
         for u, v in m['vendas'].items():
             s = _slot(rcas, u); s['rec_por_ele'] += 1; s['venda_rec_por_ele'] += v

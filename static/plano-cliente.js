@@ -52,7 +52,10 @@
         padding:7px 12px;font-weight:600;cursor:pointer;font-family:inherit}
       .pc-fechar{float:right;background:transparent;color:var(--text-dim,#94a3b8);font-size:1rem;padding:2px 6px}
       .pc-h{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-dim,#94a3b8);margin:14px 0 6px}
-      .pc-item{border-left:2px solid var(--accent,#38bdf8);padding:4px 0 6px 10px;margin-bottom:6px;font-size:.8rem}
+      .pc-item{border-left:2px solid var(--accent,#38bdf8);padding:4px 0 6px 10px;margin-bottom:6px;font-size:.8rem;position:relative}
+      .pc-del{position:absolute;top:2px;right:0;background:transparent;border:none;color:var(--text-dim,#94a3b8);
+        cursor:pointer;font-size:.85rem;padding:2px 6px;border-radius:6px;font-family:inherit}
+      .pc-del:hover{color:var(--red,#f87171);background:rgba(248,113,113,.12)}
       .pc-item .m{font-size:.7rem;color:var(--text-dim,#94a3b8)}
       .pc-msg{font-size:.75rem;min-height:1em;margin-top:4px}
       .pc-modal details summary{cursor:pointer;font-size:.75rem;color:var(--text-dim,#94a3b8);margin-top:10px}`;
@@ -102,7 +105,11 @@
 
   function itemHTML(x) {
     const quando = x.status === 'retorno_agendado' ? 'para ' + dataBR(x.data_acao) : dataBR(x.data_acao);
-    return `<div class="pc-item"><b>${ICONE[x.status] || '•'} ${esc(x.rotulo)}</b> · ${quando}`
+    // ✕ só aparece para quem pode excluir (autor até 24 h, admin sempre) — o servidor confere de novo
+    const del = x.pode_excluir
+      ? `<button type="button" class="pc-del" title="Excluir este registro (preenchido errado)" onclick="PlanoCliente._excluir(${Number(x.id)})">✕</button>`
+      : '';
+    return `<div class="pc-item">${del}<b>${ICONE[x.status] || '•'} ${esc(x.rotulo)}</b> · ${quando}`
       + (x.descricao ? `<div>${esc(x.descricao)}</div>` : '')
       + `<div class="m">${esc(x.autor_nome)} · registrado em ${dataBR(x.criado_em)} ${String(x.criado_em || '').slice(11, 16)}</div></div>`;
   }
@@ -169,6 +176,22 @@
     }
   }
 
+  async function _excluir(id) {
+    if (!confirm('Excluir este registro do plano? Use para corrigir um registro preenchido errado.')) return;
+    const msg = document.getElementById('pc-msg');
+    try {
+      const r = await fetch('/api/plano/' + _atual.codcli + '/' + id, { method: 'DELETE', credentials: 'same-origin' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) throw new Error(j.error || ('erro ' + r.status));
+      render(j);
+      document.getElementById('pc-msg').textContent = '✓ Excluído';
+      if (_atual.el && _atual.el.isConnected) _atual.el.outerHTML = selo(_atual.codcli, j.resumo, _atual.nome);
+      document.dispatchEvent(new CustomEvent('plano:salvo', { detail: { codcli: _atual.codcli, resumo: j.resumo } }));
+    } catch (e) {
+      msg.textContent = 'Não excluiu: ' + e.message; msg.style.color = 'var(--red,#f87171)';
+    }
+  }
+
   function _clicar(status) {
     if (status === 'retorno_agendado') {       // só o retorno pede a data
       document.getElementById('pc-ret').classList.add('on');
@@ -183,6 +206,6 @@
              descricao: document.getElementById('pc-desc').value });
   }
 
-  window.PlanoCliente = { selo, resumos, abrir, fechar, _clicar, _agendar };
+  window.PlanoCliente = { selo, resumos, abrir, fechar, _clicar, _agendar, _excluir };
   css();                       // e já no carregamento do script (a lista pode renderizar por outro caminho)
 })();

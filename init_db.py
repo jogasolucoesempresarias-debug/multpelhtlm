@@ -171,6 +171,21 @@ cur.execute("""
     );
 """)
 cur.execute("CREATE INDEX IF NOT EXISTS ix_cliente_plano_codcli ON cliente_plano (codcli, criado_em);")
+# 05/10/2026: "registrado em 13:38" eram 10:38 — criado_em nasceu sem fuso e o NOW() roda no banco
+# (UTC). Mesma correção do multpel_log (ver "Fuso (08/2026)" abaixo), guardada por tipo. + exclusão
+# LÓGICA do registro preenchido errado (o rastro fica).
+cur.execute("""DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'cliente_plano' AND column_name = 'criado_em'
+                  AND data_type = 'timestamp without time zone') THEN
+        ALTER TABLE cliente_plano
+            ALTER COLUMN criado_em TYPE TIMESTAMPTZ
+            USING criado_em AT TIME ZONE current_setting('TimeZone');
+    END IF;
+END $$;
+ALTER TABLE cliente_plano ADD COLUMN IF NOT EXISTS excluido_em TIMESTAMPTZ;
+ALTER TABLE cliente_plano ADD COLUMN IF NOT EXISTS excluido_por INTEGER;""")
 
 # ── Migrations de multpel_log ──
 # Ficam AQUI, logo após o CREATE, e não junto das colunas de multpel_users lá em cima: num

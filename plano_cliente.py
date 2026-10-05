@@ -14,7 +14,11 @@ Regras (decididas por ele):
 
 Funções PURAS — sem Flask nem banco. Testes em tests/test_plano_cliente.py.
 """
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+FUSO = ZoneInfo('America/Sao_Paulo')
+JANELA_EXCLUSAO = timedelta(hours=24)   # autor exclui o próprio registro até aqui; admin, sempre
 
 STATUS = [
     ('ligacao_feita', 'Ligação feita'),
@@ -41,6 +45,30 @@ def _data(v):
         return date.fromisoformat(str(v)[:10])
     except ValueError:
         return False
+
+
+def hora_local(dt):
+    """criado_em do banco (TIMESTAMPTZ) → hora de Brasília, sem fuso. O banco é outra stack e roda
+    em UTC: sem converter, a tela mostrava 3 h adiantado e a DATA virava às 21 h (05/10/2026).
+    Naive fica como está (não há como saber o fuso)."""
+    if isinstance(dt, datetime) and dt.tzinfo is not None:
+        return dt.astimezone(FUSO).replace(tzinfo=None)
+    return dt
+
+
+def pode_excluir(reg, user_id, admin, agora):
+    """Admin exclui qualquer registro; o autor, o PRÓPRIO até 24 h depois de registrar (erro de
+    digitação aparece na hora — um "não compra mais" antigo não some porque mudaram de ideia)."""
+    if admin:
+        return True
+    if user_id is None or reg.get('autor_id') != user_id:
+        return False
+    cr = reg.get('criado_em')
+    if not isinstance(cr, datetime):
+        return False
+    if cr.tzinfo is None:
+        cr = cr.replace(tzinfo=timezone.utc) if agora.tzinfo else cr
+    return agora - cr <= JANELA_EXCLUSAO
 
 
 def validar(dados, hoje):
@@ -75,8 +103,8 @@ def separar(registros, ultima_compra):
     ordem = sorted(registros or [], key=lambda r: (r['criado_em'], r.get('id') or 0), reverse=True)
     if not ult:
         return ordem, []
-    atual = [r for r in ordem if _data(r['criado_em']) > ult]
-    anteriores = [r for r in ordem if _data(r['criado_em']) <= ult]
+    atual = [r for r in ordem if _data(hora_local(r['criado_em'])) > ult]
+    anteriores = [r for r in ordem if _data(hora_local(r['criado_em'])) <= ult]
     return atual, anteriores
 
 
@@ -103,5 +131,6 @@ def serializar(r):
     return {'id': r.get('id'), 'status': r['status'], 'rotulo': ROTULO.get(r['status'], r['status']),
             'data_acao': _data(r['data_acao']).isoformat(), 'descricao': r.get('descricao') or '',
             'autor_nome': r.get('autor_nome') or '—',
-            'criado_em': r['criado_em'].isoformat(timespec='minutes') if isinstance(r['criado_em'], datetime)
-            else str(r['criado_em'])}
+            'criado_em': hora_local(r['criado_em']).isoformat(timespec='minutes')
+            if isinstance(r['criado_em'], datetime) else str(r['criado_em']),
+            'pode_excluir': bool(r.get('pode_excluir'))}

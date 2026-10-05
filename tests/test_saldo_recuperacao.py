@@ -73,15 +73,15 @@ def test_rota_devolve_card_e_coluna_de_saldo(client, usuario_admin, monkeypatch)
 
 def test_tela_mostra_o_saldo():
     html = Path('recuperacao.html').read_text(encoding='utf-8')
-    assert 'Saldo do mês' in html and 'saldo_valor' in html
-    assert html.count('>Saldo<') >= 2                          # coluna nas tabelas de time e de vendedor
+    assert 'Carteira em risco no mês' in html and 'saldo_valor' in html   # 05/10: "Saldo" → leitura direta
+    assert html.count('>Variação do risco<') >= 2              # coluna nas tabelas de time e de vendedor
 
 
 def test_versao_do_cache_sobe_quando_a_resposta_muda():
     """Produção, 29/09/2026: depois do deploy a Recuperação mostrou "Saldo do mês 0" — o Redis serviu a
     resposta ANTIGA (sem o campo) com a mesma chave. A chave tem de mudar junto com o conteúdo."""
     fonte = Path('server.py').read_text(encoding='utf-8')
-    assert "'recuperacao:resumo:v2'" in fonte and "'recuperacao:resumo:v1'" not in fonte
+    assert "'recuperacao:resumo:v3'" in fonte and "'recuperacao:resumo:v2'" not in fonte
     assert "'vendedores:ranking:v3'" in fonte and "vendedor:full:v3:" in fonte
     assert "classList.toggle('hidden', c.saldo == null)" in Path('recuperacao.html').read_text(encoding='utf-8')
 

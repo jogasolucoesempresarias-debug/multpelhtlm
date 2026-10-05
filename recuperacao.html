@@ -133,10 +133,12 @@
         <th class="num" title="Clientes da BASE do time (cadastro) em risco no fim do mês">Em risco</th>
         <th class="num" title="Valor mensal desses clientes (venda 12m até a última compra ÷ 12)">Valor mensal em risco</th>
         <th class="num" title="Positivação abaixo da referência (p75 dos vendedores do mesmo universo, por classe ABC), só dos clientes que NÃO estão em risco">Potencial de positivação</th>
-        <th class="num" title="Clientes da base do time recuperados no mês, por QUALQUER vendedor">Recuperado da base</th>
-        <th class="num" title="O que os vendedores do time recuperaram, de QUALQUER base — é quem leva o crédito">Recuperado pelo time</th>
-        <th class="num" title="Recuperações do time em clientes de outro time">De outra base</th>
-        <th class="num" title="Saldo do mês: clientes da base que ENTRARAM em risco − RECUPERADOS do risco. Positivo = carteira diminuindo; negativo = avançando.">Saldo</th>
+        <th class="num" title="Clientes da base do time que ENTRARAM em risco no mês · valor mensal deles">Entraram em risco</th>
+        <th class="num" title="Clientes da base do time recuperados no mês, por QUALQUER vendedor — do risco + da base perdida. O R$ é a VENDA feita no mês (não o valor mensal).">Recuperado da base<br><span class="small">venda no mês</span></th>
+        <th class="num" title="O que os vendedores do time recuperaram, de QUALQUER base — é quem leva o crédito. O R$ é a VENDA feita no mês.">Recuperado pelo time<br><span class="small">venda no mês</span></th>
+        <th class="num" title="Recuperações do time em clientes da base de OUTRO time">De outra base</th>
+        <th class="num" title="Clientes da base do time que OUTROS times recuperaram (o time não vendeu). Recuperado da base = (pelo time − de outra base) + por outros.">Por outros</th>
+        <th class="num" title="Entraram em risco − recuperados do risco (sem os da base perdida), em clientes e em valor mensal. Positivo (vermelho) = a carteira em risco cresceu; negativo (verde) = diminuiu.">Variação do risco</th>
       </tr></thead>
       <tbody id="timesBody"></tbody>
     </table></div>
@@ -150,10 +152,12 @@
         <th class="num">Em risco</th>
         <th class="num">Valor mensal em risco</th>
         <th class="num">Potencial de positivação</th>
-        <th class="num">Recuperado da base</th>
-        <th class="num">Recuperado por ele</th>
-        <th class="num">De outra base</th>
-        <th class="num" title="Saldo do mês: clientes da carteira dele que ENTRARAM em risco − RECUPERADOS do risco. Positivo = carteira diminuindo; negativo = avançando.">Saldo</th>
+        <th class="num" title="Clientes da carteira dele que ENTRARAM em risco no mês · valor mensal deles">Entraram em risco</th>
+        <th class="num" title="Clientes da carteira dele recuperados no mês, por QUALQUER vendedor — do risco + da base perdida. O R$ é a VENDA feita no mês (não o valor mensal).">Recuperado da base<br><span class="small">venda no mês</span></th>
+        <th class="num" title="O que ele recuperou, de QUALQUER base — é quem leva o crédito. O R$ é a VENDA feita no mês.">Recuperado por ele<br><span class="small">venda no mês</span></th>
+        <th class="num" title="Recuperações dele em clientes da carteira de OUTRO vendedor">De outra base</th>
+        <th class="num" title="Clientes da carteira dele que OUTROS vendedores recuperaram (ele não vendeu). Recuperado da base = (por ele − de outra base) + por outros.">Por outros</th>
+        <th class="num" title="Entraram em risco − recuperados do risco (sem os da base perdida), em clientes e em valor mensal. Positivo (vermelho) = a carteira em risco cresceu; negativo (verde) = diminuiu.">Variação do risco</th>
       </tr></thead>
       <tbody id="rcasBody"></tbody>
     </table></div>
@@ -266,7 +270,7 @@ function sinal(n) { return (n > 0 ? '+' : '') + NUM.format(n || 0); }
 function sinalBRL(v) { return (v > 0 ? '+' : '') + BRL.format(v || 0); }
 function celSaldo(r) {
   const cls = r.saldo > 0 ? 'saldo-pos' : (r.saldo < 0 ? 'saldo-neg' : '');
-  return `<td class="num" title="Entraram em risco ${NUM.format(r.entraram || 0)} − recuperados do risco ${NUM.format(r.rec_risco_da_base || 0)}">`
+  return `<td class="num" title="Entraram em risco ${NUM.format(r.entraram || 0)} (${BRL.format(r.valor_entraram || 0)}/mês) − recuperados do risco ${NUM.format(r.rec_risco_da_base || 0)} (${BRL.format(r.valor_rec_risco_da_base || 0)}/mês)">`
     + `<span class="${cls}">${sinal(r.saldo)}</span> <span class="small">· ${sinalBRL(r.valor_saldo)}</span></td>`;
 }
 
@@ -292,21 +296,23 @@ function renderPonte() {
   document.getElementById('ponte').innerHTML =
     box('', '', 'Em risco no início', p.risco_ini, v.risco_ini) +
     box('mais', '+', 'Entraram em risco', p.entraram, v.entraram) +
-    box('menos', '−', 'Recuperados', p.recuperados, v.recuperados) +
+    box('menos', '−', 'Recuperados do risco', p.recuperados, v.recuperados) +
     box('perd', '−', 'Viraram perdidos', p.viraram_perdidos, v.viraram_perdidos) +
     box('', '=', 'Em risco no fim', p.risco_fim, v.risco_fim);
   // Saldo do mês (João, 29/09/2026): entraram em risco − recuperados do risco. Positivo = a carteira
   // piorou (diminuindo); negativo = avançando. "O vendedor bate o olho e já incomoda."
+  // 05/10/2026: escrito como VERBO ("cresceu 179") — o "+179" em vermelho era lido como ganho.
   const c = _data.cards, cls = c.saldo > 0 ? 'saldo-pos' : (c.saldo < 0 ? 'saldo-neg' : '');
+  const verbo = c.saldo > 0 ? 'cresceu' : (c.saldo < 0 ? 'diminuiu' : 'ficou igual');
   // sem o campo (resposta antiga em cache) a faixa some em vez de mostrar um "0" enganoso
   document.getElementById('ponteSaldo').classList.toggle('hidden', c.saldo == null);
   document.getElementById('ponteSaldo').innerHTML =
-    `<b>Saldo do mês</b> <span class="n ${cls}">${sinal(c.saldo)} clientes</span>` +
+    `<b>Carteira em risco no mês</b> <span class="n ${cls}">${verbo}${c.saldo ? ' ' + NUM.format(Math.abs(c.saldo)) + ' clientes' : ''}</span>` +
     `<span class="${cls}">${sinalBRL(c.saldo_valor)}/mês</span>` +
-    `<span class="small">entraram ${NUM.format(p.entraram)} − recuperados ${NUM.format(p.recuperados)} · positivo = carteira diminuindo, negativo = avançando</span>`;
+    `<span class="small">entraram ${NUM.format(p.entraram)} − recuperados do risco ${NUM.format(p.recuperados)} · crescer = piorou, diminuir = avançou</span>`;
   const recortado = _sup || _vend;
   document.getElementById('ponteNota').innerHTML =
-    `Clientes e, embaixo, o <b>valor mensal</b> deles (R$ por mês; passe o mouse para o valor exato). Também voltaram <b>${NUM.format(p.resgatados_perdidos)}</b> clientes da base perdida (mais de ${_data.regua.perdido_dias} dias), que não passam pelo estoque em risco. ` +
+    `Posição no <b>fim de ${MES(_data.mes)}</b>${_data.parcial ? ' (mês em curso)' : ''}. Clientes e, embaixo, o <b>valor mensal</b> deles (R$ por mês; passe o mouse para o valor exato). Também voltaram <b>${NUM.format(p.resgatados_perdidos)}</b> clientes da base perdida (mais de ${_data.regua.perdido_dias} dias), que não passam pelo estoque em risco — por isso o card "Venda recuperada" e a coluna "Recuperado da base" contam ${NUM.format(p.recuperados + p.resgatados_perdidos)}. ` +
     (recortado ? 'No recorte de time/vendedor, a ponte é da <b>base</b> (dono do cadastro); o crédito de quem recuperou está no placar.' : '');
 }
 
@@ -338,9 +344,12 @@ function linhaPlacar(r, id, nome, drill) {
     <td class="num">${NUM.format(r.em_risco)}</td>
     <td class="num">${BRL.format(r.valor_em_risco)}</td>
     <td class="num">${BRL.format(r.potencial_positivacao || 0)}</td>
-    <td class="num">${NUM.format(r.rec_da_base)} <span class="small">· ${BRL.format(r.venda_rec_da_base)}</span></td>
+    <td class="num">${NUM.format(r.entraram || 0)} <span class="small">· ${BRL.format(r.valor_entraram || 0)}/mês</span></td>
+    <td class="num">${NUM.format(r.rec_da_base)} <span class="small">· ${BRL.format(r.venda_rec_da_base)}</span>
+      <div class="small">${NUM.format(r.rec_risco_da_base || 0)} do risco${r.rec_perdido_da_base ? ' + ' + NUM.format(r.rec_perdido_da_base) + ' da perdida' : ''}</div></td>
     <td class="num">${NUM.format(r.rec_por_ele)} <span class="small">· ${BRL.format(r.venda_rec_por_ele)}</span></td>
     <td class="num">${NUM.format(r.rec_de_outra_base)}</td>
+    <td class="num">${NUM.format(r.rec_por_outros || 0)}</td>
     ${celSaldo(r)}
   </tr>`;
 }
@@ -370,7 +379,7 @@ async function carregarLista() {
   const head = document.getElementById('listaHead'), body = document.getElementById('listaBody');
   if (_lista === 'risco') {
     document.getElementById('listaInfo').textContent =
-      `${NUM.format(j.total)} clientes em risco hoje — ordem: valor mensal × chance de voltar no mês (61–90 d: 32,5% · 91–180 d: 15,2% · 181–365 d: 4,6%)` +
+      `${NUM.format(j.total)} clientes em risco em ${j.hoje.split('-').reverse().join('/')} (hoje — a ponte acima é a posição no fim de ${MES(_data.mes)}) — ordem: valor mensal × chance de voltar no mês (61–90 d: 32,5% · 91–180 d: 15,2% · 181–365 d: 4,6%)` +
       (j.total > j.rows.length ? ` · mostrando ${j.rows.length}; o CSV traz todos` : '');
     head.innerHTML = `<tr><th>Cliente</th><th>Cidade</th><th>Dono (cadastro)</th><th class="num">Última compra</th><th class="num">Dias</th><th class="num">Ciclo</th><th class="num">Valor mensal</th><th class="num">Chance</th><th>Telefone</th><th>Plano</th></tr>`;
     body.innerHTML = j.rows.map(r => `<tr>
