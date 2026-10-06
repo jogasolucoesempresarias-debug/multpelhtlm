@@ -715,7 +715,9 @@ async function renderEvolucao(){
     {k:'_qual',label:'Cadastro c/ erro',num:1,fmt:(_v,d)=>{const t=d.qualidade;return !t?'—':
       `${int(t.total)} <small class="muted">de ${int(t.base)}</small>`;}}];
   const ord=[...dias].reverse();   // mais recente primeiro: é a linha que o diretor olha
-  $('#evo-tbl').innerHTML=`<h3><span>Foto dia a dia</span> <small class="muted">· ${int(dias.length)} ${dias.length===1?'dia medido':'dias medidos'}</small></h3>
+  // Excel (06/10/2026): a MESMA série da tela, pela MESMA querystring (S.evoQS) — recorte idêntico.
+  $('#evo-tbl').innerHTML=`<h3><span>Foto dia a dia</span> <small class="muted">· ${int(dias.length)} ${dias.length===1?'dia medido':'dias medidos'}</small>
+      <a class="btn" style="margin-left:auto" href="/estoque/api/evolucao.xlsx?${S.evoQS||''}" title="Baixar a tabela em Excel, no recorte da tela">⬇ Excel</a></h3>
     <div class="count-line">Tudo que a foto guarda por dia. As colunas sem gráfico estão aqui porque
       <b>estado não se reconstrói</b>: guardar hoje é barato, medir o passado depois é impossível.
       Coluna vazia = <b>não medida naquele dia</b>, não zero.</div>

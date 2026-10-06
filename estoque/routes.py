@@ -1890,6 +1890,14 @@ def api_evolucao():
     if not store.ensure():
         return jsonify({"ok": True, "dias": [], "log": [], "resumo": {},
                         "indisponivel": "Postgres indisponivel"})
+    unidade, dias, log, filtros = _evolucao_serie()
+    return jsonify({"ok": True, "unidade": unidade, "dias": dias, "log": log,
+                    "filtros": filtros, "resumo": _resumo_evolucao(dias, log)})
+
+
+def _evolucao_serie():
+    """(unidade, dias, log, filtros) da série da Evolução no recorte da querystring — fonte ÚNICA
+    da tela e do Excel (a exportação não pode recalcular por conta própria e divergir)."""
     unidade = _unidade()
     ini = core._parse_dt(request.args.get("ini"))
     fim = core._parse_dt(request.args.get("fim"))
@@ -1904,10 +1912,93 @@ def api_evolucao():
                            curva=curva, xyz=xyz)
     log = historico.dias_com_foto(unidade, ini, fim)
     _juntar_vencidos(dias, _filiais_estoque(), comprador, fornec, curva, xyz)
-    return jsonify({"ok": True, "unidade": unidade, "dias": dias, "log": log,
-                    "filtros": {"comprador": comprador, "fornec": fornec,
-                                "curva": curva, "xyz": xyz},
-                    "resumo": _resumo_evolucao(dias, log)})
+    return unidade, dias, log, {"comprador": comprador, "fornec": fornec, "curva": curva, "xyz": xyz}
+
+
+def _g(d, *ks):
+    for k in ks:
+        d = (d or {}).get(k)
+    return d
+
+
+def _pct100(v):
+    return round(v * 100, 1) if v is not None else None
+
+
+# Colunas do Excel da "Foto dia a dia" — as MESMAS da tabela da tela, em número puro (o "(n)"
+# pequeno da tela vira coluna própria). (rótulo, função dia -> valor)
+_EVO_XLSX_COLS = [
+    ("Data", lambda d: d.get("data")),
+    ("Estoque R$", lambda d: d.get("valor_estoque")),
+    ("Parado R$", lambda d: d.get("valor_parado")),
+    ("% parado", lambda d: d.get("pct_parado")),
+    ("Ruptura", lambda d: d.get("n_ruptura")),
+    ("% ruptura", lambda d: d.get("pct_ruptura")),
+    ("Rup. A %", lambda d: _g(d, "ruptura_curva", "A", "pct")),
+    ("Rup. A itens", lambda d: _g(d, "ruptura_curva", "A", "n")),
+    ("Rup. B %", lambda d: _g(d, "ruptura_curva", "B", "pct")),
+    ("Rup. B itens", lambda d: _g(d, "ruptura_curva", "B", "n")),
+    ("Rup. C %", lambda d: _g(d, "ruptura_curva", "C", "pct")),
+    ("Rup. C itens", lambda d: _g(d, "ruptura_curva", "C", "n")),
+    ("% ideal", lambda d: _pct100(d.get("pct_ideal"))),
+    ("SKUs", lambda d: d.get("n_skus")),
+    ("Rup. s/ prov.", lambda d: d.get("n_rup_sem_prov")),
+    ("Desacel. R$", lambda d: d.get("valor_desacel")),
+    ("Desacel. itens", lambda d: d.get("n_desacel")),
+    ("Ocupação %", lambda d: _pct100(d.get("ocupacao_pct"))),
+    ("Posições ocupadas", lambda d: _g(d, "ocupacao", "ocupadas")),
+    ("Posições total", lambda d: _g(d, "ocupacao", "posicoes")),
+    ("A vencer R$", lambda d: _g(d, "validade", "valor")),
+    ("A vencer itens", lambda d: _g(d, "validade", "itens")),
+    ("Vencido no dia R$", lambda d: d.get("vencido_dia")),
+    ("Vencido no mês R$", lambda d: d.get("vencido_mes")),
+    ("Pedidos abertos R$", lambda d: _g(d, "pedidos", "valor_aberto")),
+    ("Pedidos abertos", lambda d: _g(d, "pedidos", "n_abertos")),
+    ("Pedidos atrasados", lambda d: _g(d, "pedidos", "n_atrasados")),
+    ("Avaria R$", lambda d: _g(d, "avaria", "valor")),
+    ("Avaria itens", lambda d: _g(d, "avaria", "n_itens")),
+    ("Cadastro c/ erro", lambda d: _g(d, "qualidade", "total")),
+    ("Cadastro base", lambda d: _g(d, "qualidade", "base")),
+]
+
+
+@bp.route("/api/evolucao.xlsx")
+def api_evolucao_xlsx():
+    """Excel da "Foto dia a dia" (pedido do Gabriel, 06/10/2026). Mesma restrição e MESMA série
+    da tela (`_evolucao_serie`), no recorte da querystring; células em número puro (texto
+    formatado não soma no Excel); o recorte vai escrito no topo, senão quem recebe o arquivo não
+    sabe que é, por exemplo, só a curva A de um comprador. Célula vazia = não medido naquele dia."""
+    if (session.get("role") or "") != "admin":
+        return jsonify({"ok": False, "error": "Aba restrita ao administrador"}), 403
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    dias, unidade, f = [], _unidade(), {}
+    if store.ensure():
+        unidade, dias, _log, f = _evolucao_serie()
+    recorte = ["unidade " + str(unidade)]
+    for chave, rotulo in (("comprador", "comprador"), ("fornec", "fornecedor"),
+                          ("curva", "curva"), ("xyz", "XYZ")):
+        if f.get(chave):
+            recorte.append(rotulo + " " + str(f[chave]))
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Foto dia a dia"
+    ws.append(["Evolução do estoque — foto dia a dia · " + " · ".join(recorte)])
+    ws.append(["Gerado em " + date.today().strftime("%d/%m/%Y")
+               + " · célula vazia = não medido naquele dia · vencido 0 = mediu e não perdeu"])
+    ws.append([])
+    ws.append([c for c, _ in _EVO_XLSX_COLS])
+    for cel in ws[4]:
+        cel.font = Font(bold=True)
+    for d in sorted(dias, key=lambda x: x.get("data") or "", reverse=True):  # mais recente primeiro, como a tela
+        ws.append([fn(d) for _, fn in _EVO_XLSX_COLS])
+    ws.freeze_panes = "B5"
+    bio = io.BytesIO()
+    wb.save(bio)
+    nome = "evolucao_estoque_" + str(unidade) + "_" + date.today().isoformat() + ".xlsx"
+    return Response(bio.getvalue(),
+                    mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": 'attachment; filename="' + nome + '"'})
 
 
 def _juntar_vencidos(dias, filiais, comprador=None, fornec=None, curva=None, xyz=None):

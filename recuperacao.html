@@ -174,6 +174,18 @@
     <div class="tabs">
       <button class="btn-sm on" id="tabRisco" onclick="setLista('risco')">Em risco hoje</button>
       <button class="btn-sm" id="tabRec" onclick="setLista('recuperados')">Recuperados no mês</button>
+      <span class="ctrl-label" style="margin-left:8px;">Plano</span>
+      <select id="selPlano" onchange="setPlano(this.value)" title="Filtra pela ÚLTIMA ação registrada no plano do cliente">
+        <option value="">Todos</option>
+        <option value="sem">Sem plano</option>
+        <option value="com">Com plano</option>
+        <option value="transferir">↪ Transferir</option>
+        <option value="retorno_agendado">Retorno agendado</option>
+        <option value="pedido_prometido">Pedido prometido</option>
+        <option value="nao_compra_mais">Não compra mais</option>
+        <option value="sem_contato">Sem contato</option>
+        <option value="ligacao_feita">Ligação feita</option>
+      </select>
       <span class="small" id="listaInfo" style="margin-left:8px;"></span>
       <button class="btn-export" style="margin-left:auto;" onclick="exportarLista()">⬇ CSV</button>
     </div>
@@ -204,6 +216,7 @@ let _mes = params.get('mes') || '';
 let _sup = params.get('supervisor') || '';
 let _vend = params.get('vendedor') || '';
 let _lista = 'risco';
+let _plano = params.get('plano') || '';   // filtro de plano das listas (06/10/2026) — aplicado no servidor
 let _data = null;
 let _chart = null;
 
@@ -402,6 +415,8 @@ function renderPlacar() {
   document.getElementById('rcasBody').innerHTML = rcas.map(r => linhaPlacar(r, r.codusur, r.nome, _vend ? null : 'irVendedor')).join('');
 }
 
+function setPlano(v) { _plano = v; carregarLista(); }
+
 function setLista(t) {
   _lista = t;
   document.getElementById('tabRisco').classList.toggle('on', t === 'risco');
@@ -410,12 +425,14 @@ function setLista(t) {
 }
 
 async function carregarLista() {
-  const j = await fetchJSON('/api/recuperacao/listas?' + qs({ tipo:_lista }));
+  document.getElementById('selPlano').value = _plano;
+  const j = await fetchJSON('/api/recuperacao/listas?' + qs({ tipo:_lista, plano:_plano }));
+  const filtroTxt = _plano ? ` · filtro de plano: ${document.getElementById('selPlano').selectedOptions[0].textContent.trim()}` : '';
   const head = document.getElementById('listaHead'), body = document.getElementById('listaBody');
   if (_lista === 'risco') {
     document.getElementById('listaInfo').textContent =
       `${NUM.format(j.total)} clientes em risco em ${j.hoje.split('-').reverse().join('/')} (hoje — a ponte acima é a posição no fim de ${MES(_data.mes)}) — ordem: valor mensal × chance de voltar no mês (61–90 d: 32,5% · 91–180 d: 15,2% · 181–365 d: 4,6%)` +
-      (j.total > j.rows.length ? ` · mostrando ${j.rows.length}; o CSV traz todos` : '');
+      filtroTxt + (j.total > j.rows.length ? ` · mostrando ${j.rows.length}; o CSV traz todos` : '');
     head.innerHTML = `<tr><th>Cliente</th><th>Cidade</th><th>Dono (cadastro)</th><th class="num">Última compra</th><th class="num">Dias</th><th class="num">Ciclo</th><th class="num">Valor mensal</th><th class="num">Chance</th><th>Telefone</th><th>Plano</th></tr>`;
     body.innerHTML = j.rows.map(r => `<tr>
       <td>${esc(r.cliente)} <span class="small">#${r.codcli}</span></td>
@@ -430,7 +447,7 @@ async function carregarLista() {
       <td>${window.PlanoCliente ? PlanoCliente.selo(r.codcli, r.plano, r.cliente) : ''}</td></tr>`).join('');
   } else {
     document.getElementById('listaInfo').textContent =
-      `${NUM.format(j.total)} clientes recuperados em ${MES(j.mes)}` + (j.total > j.rows.length ? ` · mostrando ${j.rows.length}; o CSV traz todos` : '');
+      `${NUM.format(j.total)} clientes recuperados em ${MES(j.mes)}` + filtroTxt + (j.total > j.rows.length ? ` · mostrando ${j.rows.length}; o CSV traz todos` : '');
     head.innerHTML = `<tr><th>Cliente</th><th>Cidade</th><th>Dono (cadastro)</th><th>Quem vendeu</th><th class="num">Voltou de</th><th class="num">Dias parado</th><th class="num">Valor mensal</th><th class="num">Venda no mês</th><th title="Recuperado: o acompanhamento que levou à compra fica em 'anteriores'">Plano</th></tr>`;
     body.innerHTML = j.rows.map(r => `<tr>
       <td>${esc(r.cliente)} <span class="small">#${r.codcli}</span></td>
@@ -446,7 +463,7 @@ async function carregarLista() {
 }
 
 function exportarLista() {
-  window.location.href = '/api/recuperacao/listas/csv?' + qs({ tipo:_lista });
+  window.location.href = '/api/recuperacao/listas/csv?' + qs({ tipo:_lista, plano:_plano });
 }
 
 carregar();

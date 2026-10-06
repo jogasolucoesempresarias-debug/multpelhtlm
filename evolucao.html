@@ -147,8 +147,8 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;
 const cls = (v, bomSobe) => v == null || v === 0 ? '' : ((v > 0) === bomSobe ? 'bom' : 'ruim');
 
 const params = new URLSearchParams(location.search);
-const F = { universo: params.get('universo') || '', uso: params.get('uso') || 'todos',
-            supervisor: params.get('supervisor') || '' };
+const F = { universo: params.get('universo') || '', supervisor: params.get('supervisor') || '',
+            vendedor: params.get('vendedor') || '' };
 let _d = null, _cCob = null, _cVar = null;
 
 function qs() {
@@ -157,9 +157,16 @@ function qs() {
   return p.toString();
 }
 function navegar() { history.replaceState(null, '', '/evolucao' + (qs() ? '?' + qs() : '')); carregar(); }
-function setFiltro(k, v) { F[k] = v; if (k !== 'supervisor') F.supervisor = ''; navegar(); }
-function irEmpresa() { F.supervisor = ''; navegar(); }
-function irTime(id) { if (id == null) return; F.supervisor = String(id); navegar(); }
+function setFiltro(k, v) { F[k] = v; if (k !== 'supervisor') F.supervisor = ''; F.vendedor = ''; navegar(); }
+function irEmpresa() { F.supervisor = ''; F.vendedor = ''; navegar(); }
+function irTime(id) { if (id == null) return; F.supervisor = String(id); F.vendedor = ''; navegar(); }
+// 06/10/2026 (Gabriel): clicar no vendedor troca cards e gráficos para ele. A série dele já veio
+// no drill do time (_d.rcas) — só redesenha, sem nova chamada. Clicar de novo volta para o time.
+function irVendedor(id) {
+  F.vendedor = (String(id) === F.vendedor) ? '' : String(id);
+  history.replaceState(null, '', '/evolucao' + (qs() ? '?' + qs() : ''));
+  render();
+}
 
 async function carregar() {
   try {
@@ -193,13 +200,19 @@ function renderBreadcrumb() {
   const parts = [`<span class="crumb ${F.supervisor ? '' : 'current'}" onclick="irEmpresa()">🏢 Empresa</span>`];
   if (F.supervisor) {
     const t = (_d.times.find(x => String(x.codsupervisor) === F.supervisor) || {}).nome || ('Time ' + F.supervisor);
-    parts.push('<span class="sep">▸</span>', `<span class="crumb current">👥 ${esc(t)}</span>`);
+    parts.push('<span class="sep">▸</span>', `<span class="crumb ${F.vendedor ? '' : 'current'}" onclick="irTime(${Number(F.supervisor)})">👥 ${esc(t)}</span>`);
   }
+  const v = F.vendedor && _d.rcas.find(x => String(x.codusur) === F.vendedor);
+  if (v) parts.push('<span class="sep">▸</span>', `<span class="crumb current">🧑‍💼 ${esc(v.nome)}</span>`);
   document.getElementById('breadcrumb').innerHTML = parts.join(' ');
 }
 
 function escopo() {
-  // no drill do time, KPIs e gráficos são do time; senão, da soma dos times visíveis
+  // vendedor escolhido (clique na linha) > time do drill > soma dos times visíveis
+  if (F.vendedor) {
+    const v = _d.rcas.find(x => String(x.codusur) === F.vendedor);
+    if (v) return { serie: v.serie, ad: v.antes_depois, nome: v.nome };
+  }
   if (F.supervisor) {
     const t = _d.times.find(x => String(x.codsupervisor) === F.supervisor);
     if (t) return { serie: t.serie, ad: t.antes_depois, nome: t.nome };
@@ -243,13 +256,13 @@ function renderCharts() {
   const green = cor('--green') || '#34d399', red = cor('--red') || '#f87171', acc = cor('--accent') || '#38bdf8', dim = cor('--text-dim') || '#94a3b8';
   const labels = _d.meses.map(MES), e = escopo();
   const ds = [];
-  if (F.supervisor) {
+  if (F.supervisor || F.vendedor) {
     ds.push({ label:e.nome, data:e.serie.map(x => x.cobertura == null ? null : x.cobertura * 100), borderColor:acc, backgroundColor:acc, tension:.25 });
   } else {
     // 06/10/2026: linhas "usa / não usa" fora até a classificação de uso ser corrigida
     ds.push({ label:'Cobertura', data:_d.empresa.map(x => x.cobertura == null ? null : x.cobertura * 100), borderColor:acc, backgroundColor:acc, tension:.25 });
   }
-  document.getElementById('tituloCob').textContent = 'Cobertura da carteira — mês a mês' + (F.supervisor ? ' · ' + e.nome : '');
+  document.getElementById('tituloCob').textContent = 'Cobertura da carteira — mês a mês' + (F.supervisor || F.vendedor ? ' · ' + e.nome : '');
   if (_cCob) _cCob.destroy();
   _cCob = new Chart(document.getElementById('chartCob'), {
     type:'line', data:{ labels, datasets:ds }, plugins:[marcoPlugin],
@@ -275,8 +288,12 @@ function linhaTabela(r, drill) {
   // 06/10/2026: coluna "Uso da plataforma" removida a pedido do Gabriel — a classificação por time
   // ficou contaminada (um usuário com quase todas as áreas marcava todos como "usa").
   const ad = r.antes_depois;
-  const id = r.codsupervisor;
-  return `<tr class="${drill && id != null ? 'click' : ''}" ${drill && id != null ? `onclick="irTime(${id})"` : ''}>
+  // nível empresa: a linha é um TIME (abre o time); no drill: a linha é um VENDEDOR (troca os gráficos)
+  const vend = r.codusur != null;
+  const id = vend ? r.codusur : r.codsupervisor;
+  const acao = id == null ? '' : (vend ? `onclick="irVendedor(${Number(id)})"` : (drill ? `onclick="irTime(${Number(id)})"` : ''));
+  const sel = vend && String(id) === F.vendedor;
+  return `<tr class="${acao ? 'click' : ''}" ${acao} ${sel ? 'style="background:rgba(var(--accent-rgb),.10);font-weight:600"' : ''}>
     <td>${esc(r.nome)}</td><td class="small">${esc(r.universo || '—')}</td>
     <td class="num">${PCT(ad.antes.cobertura)}</td><td class="num">${PCT(ad.depois.cobertura)}</td>
     <td class="num ${cls(ad.delta.cobertura_pp, true)}">${PP(ad.delta.cobertura_pp)}</td>
@@ -294,7 +311,7 @@ function renderTabela() {
   document.getElementById('tabBody').innerHTML = linhas.length ? linhas.map(r => linhaTabela(r, !drill)).join('')
     : '<tr><td colspan="10" class="small" style="text-align:center;padding:18px">Nenhum grupo neste filtro.</td></tr>';
   document.getElementById('avisoTabela').innerHTML = drill
-    ? 'No vendedor, "usa" é o <b>login dele</b> (poucos vendedores têm acesso); a carteira é a do cadastro dele. Base pequena oscila muito de um mês para o outro.'
+    ? 'Clique num vendedor para ver os gráficos e os cards dele (clique de novo para voltar ao time). A carteira é a do cadastro dele; base pequena oscila muito de um mês para o outro.'
     : 'Clique num time para ver os vendedores. Na linha "Sem time" ficam os clientes de código fictício ou sem supervisor.';
 }
 

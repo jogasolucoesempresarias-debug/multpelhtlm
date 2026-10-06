@@ -5714,6 +5714,25 @@ def _recup_linhas(tipo):
     return base, rows
 
 
+def _recup_com_plano(rows, filtro=None):
+    """Anexa o plano de ação (selo) a TODAS as linhas e aplica o filtro de plano — no servidor, antes
+    do corte de 300 linhas da lista (06/10/2026, Gabriel: "o supervisor precisa saber quais clientes
+    precisam ser transferidos"). Filtrar só na tela esconderia, em silêncio, os clientes marcados
+    depois da 300ª linha.
+    `filtro`: 'sem' (sem plano atual) · 'com' (qualquer plano) · código do ÚLTIMO status
+    (`transferir`, `retorno_agendado`…). Valor desconhecido = sem filtro (não esvazia a lista)."""
+    resumos = _plano_resumos_codclis([r['codcli'] for r in rows])
+    vazio = plano.resumo([], _hoje_ref())
+    out = [{**r, 'plano': resumos.get(r['codcli']) or vazio} for r in rows]
+    if filtro == 'sem':
+        return [r for r in out if not r['plano']['n']]
+    if filtro == 'com':
+        return [r for r in out if r['plano']['n']]
+    if filtro in plano.ROTULO:
+        return [r for r in out if (r['plano']['ultimo'] or {}).get('status') == filtro]
+    return out
+
+
 @app.route('/api/recuperacao/listas')
 @login_required
 def api_recuperacao_listas():
@@ -5723,11 +5742,9 @@ def api_recuperacao_listas():
         limit = max(1, min(int(request.args.get('limit', 300)), 2000))
     except (TypeError, ValueError):
         limit = 300
-    pag = rows[:limit]
-    resumos = _plano_resumos_codclis([r['codcli'] for r in pag])
-    vazio = plano.resumo([], _hoje_ref())
-    pag = [{**r, 'plano': resumos.get(r['codcli']) or vazio} for r in pag]
-    return jsonify({'ok': True, 'tipo': tipo, 'total': len(rows), 'rows': pag,
+    rows = _recup_com_plano(rows, request.args.get('plano'))
+    return jsonify({'ok': True, 'tipo': tipo, 'total': len(rows), 'rows': rows[:limit],
+                    'plano': request.args.get('plano') or '',
                     'mes': _recup_mes_arg(base), 'hoje': base['hoje'].isoformat()})
 
 
@@ -5736,22 +5753,30 @@ def api_recuperacao_listas():
 def api_recuperacao_listas_csv():
     tipo = 'recuperados' if request.args.get('tipo') == 'recuperados' else 'risco'
     base, rows = _recup_linhas(tipo)
+    filtro = request.args.get('plano')
+    rows = _recup_com_plano(rows, filtro)           # o CSV sai com o MESMO filtro da tela
+
+    def _plano_cols(r):
+        u = (r.get('plano') or {}).get('ultimo') or {}
+        return [u.get('rotulo') or '', u.get('data_acao') or '']
     if tipo == 'risco':
         cab = ['CodCli', 'Cliente', 'Cidade', 'UF', 'Telefone', 'Dono (cadastro)', 'Time', 'Última compra',
                'Dias sem comprar', 'Ciclo (dias)', 'Valor mensal', 'Inativo no ERP (91+)',
-               'Chance de voltar no mês', 'Prioridade (valor × chance)']
+               'Chance de voltar no mês', 'Prioridade (valor × chance)', 'Plano (último)', 'Data do plano']
         campos = lambda r: [r['codcli'], r['cliente'], r.get('cidade'), r.get('uf'), r.get('telefone'),
                             r['dono_nome'], r.get('time'), r['ultima_compra'], r['dias'], r.get('ciclo'),
                             r['valor_mensal'], 'sim' if r['inativo_erp'] else 'não',
-                            f"{r['chance_volta'] * 100:.1f}%".replace('.', ','), r['prioridade']]
-        nome = f"carteira_em_risco_{base['hoje'].isoformat()}.csv"
+                            f"{r['chance_volta'] * 100:.1f}%".replace('.', ','), r['prioridade'],
+                            *_plano_cols(r)]
+        nome = f"carteira_em_risco_{base['hoje'].isoformat()}{'_' + filtro if filtro else ''}.csv"
     else:
         cab = ['CodCli', 'Cliente', 'Cidade', 'UF', 'Dono (cadastro)', 'Quem vendeu', 'De outra base',
-               'Voltou de', 'Dias parado', 'Valor mensal', 'Venda no mês']
+               'Voltou de', 'Dias parado', 'Valor mensal', 'Venda no mês', 'Plano (último)', 'Data do plano']
         campos = lambda r: [r['codcli'], r['cliente'], r.get('cidade'), r.get('uf'), r['dono_nome'],
                             ', '.join(r['vendedores_nomes']), 'sim' if r['de_outra_base'] else 'não',
-                            r['recuperado_de'], r['dias_parado'], r['valor_mensal'], r['venda_mes']]
-        nome = f"recuperados_{_recup_mes_arg(base)}.csv"
+                            r['recuperado_de'], r['dias_parado'], r['valor_mensal'], r['venda_mes'],
+                            *_plano_cols(r)]
+        nome = f"recuperados_{_recup_mes_arg(base)}{'_' + filtro if filtro else ''}.csv"
 
     def gerar():
         yield CSV_PREAMBULO + _csv_linha(cab)

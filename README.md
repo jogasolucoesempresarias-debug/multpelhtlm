@@ -337,6 +337,12 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
       **24 h** depois de registrar; admin, qualquer um. Exclusão **lógica**
       (`excluido_em`/`excluido_por`) + `plano:excluido` no `multpel_log`: some da tela e do selo, o
       rastro fica. `DELETE /api/plano/<codcli>/<id>`. Gate: `tests/test_plano_fuso_exclusao.py`.
+    - **Filtro por plano nas listas da Recuperação** (06/10/2026: "o supervisor precisa saber quais
+      clientes precisam ser transferidos"). `?plano=sem|com|<status do último registro>` em
+      `/api/recuperacao/listas` e no CSV (`_recup_com_plano`). ⚠️ Aplicado **antes** do corte de
+      300 linhas — filtrar na tela esconderia em silêncio quem está depois da 300ª. Valor
+      desconhecido não filtra. CSV ganhou "Plano (último)" e "Data do plano".
+      Gate: `tests/test_recuperacao_plano_filtro.py`.
   - **Performance Comercial** (`/performance`, `performance_comercial.py`): nota 0–10 do mês fechado,
     pesos do cliente (Rentab 35 · Cobertura 25 · Mix 20 · Receita 10 · Frequência 10) editáveis no
     Admin **por competência**. Rentab/receita/mix = % de atingimento da meta do Metas (absoluto mede
@@ -390,6 +396,8 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
   - Sazonalidade medida (BI, régua da tela): a cobertura cai de mai–jul para ago–set TODO ano
     (2025: −2,0 p.p.; 2026: −1,4 p.p.) — antes × depois sem o mesmo período do ano anterior
     confunde estação com efeito. Próximo passo: série de 24 meses e coluna "Δ no mesmo período de 2025".
+  - **Clique no vendedor** (06/10/2026): no drill do time, a linha do vendedor troca cards e
+    gráficos para ele (`F.vendedor`, série já no payload — sem nova chamada).
   - 🚧 Fase 2: receita/margem e nota da Performance mês a mês (cada uma é query nova por mês).
     Gate: `tests/test_evolucao_carteira.py`.
 - **Admin** — CRUD usuários, cron de email, multi-CC, segmento RFM, editor de metas. **+ acesso por área, comprador vinculado e relatórios de Compras** (ver abaixo).
@@ -698,8 +706,9 @@ série não amadurece.
   o caso do parado acima (mesmas chaves, número diferente). Por isso o payload leva um selo
   **`_v` (`_ROLLUP_VERSAO`)**: suba o número sempre que mudar o resultado do `agregar`.
   O rebuild continua valendo, mas agora por **performance**, não por correção.
-- 🚧 **Ainda não tem export** (CSV/XLSX/PDF) nem entra no catálogo de e-mail — enquanto for
-  ADM-only isso não faz falta, mas é o que falta para ela virar aba normal.
+- **⬇ Excel da "Foto dia a dia"** (06/10/2026): `/estoque/api/evolucao.xlsx`, ADM-only, a MESMA
+  série da tela (`_evolucao_serie`, fonte única) pela mesma querystring (`S.evoQS`); números puros,
+  recorte no topo do arquivo. Gate: `tests/test_evolucao_export.py`. Ainda fora do catálogo de e-mail.
 
 **Aba Fornecedores — ciclo de compras + lucro com verba** (07/2026). Quatro colunas novas:
 `Compras` (quantas vezes compramos no período), `Ciclo 12m` (de quanto em quanto tempo),

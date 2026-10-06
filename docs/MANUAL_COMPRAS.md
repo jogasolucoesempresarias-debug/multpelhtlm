@@ -1,13 +1,24 @@
 # Manual do Módulo GESTÃO DE ESTOQUE — JOGA Analytics
 
-**Versão 4.0 · Atualizado em 19/08/2026 · Base de conhecimento do agente de IA de dúvidas.**
+**Versão 5.0 · Atualizado em 06/10/2026 · Base de conhecimento do agente de IA de dúvidas.**
+
+> **O que mudou desde a v4.0 (19/08/2026):** aba nova **Performance** (nota do comprador, §7.4.1);
+> **régua OFICIAL** dos ⚙ Parâmetros — sai do navegador (§2, §9); **consumo de produção** (rotina
+> 1122) entra no giro e a indústria (JID) passa a ter giro (§5.2); card **"Recém-chegados s/ giro"**
+> e watchlist **"Em desaceleração"** (§5.14); **peso e cubagem** passam a sair do `PCPRODUT` e batem
+> com o 211 (§5.16 — o texto antigo estava errado); Orçamento com **mês anterior apurado**, busca
+> por produto/fornecedor e pedidos da plataforma no comprador do fornecedor (§5.17, §7.8); Evolução
+> com foto às **18h–22h**, ruptura por curva, ocupação, vencido e desaceleração (§7.4); aba
+> Fornecedores com **cards de total** e **360° do fornecedor** (§7.17); Verbas numa janela só
+> (§7.19); Qualidade da base em **2 blocos** (§7.22); Pesquisa de preço com **três preços** (§7.23);
+> Agente de IA com **três estados** (§7.24); modal de pedido com **Cob.proj e peso vivos** (§8.2).
 
 > ⚠️ **O módulo mudou de nome em 19/08/2026: "Compras" → "Gestão de Estoque".** Mudou só o
 > RÓTULO. A chave interna continua `compras` — está na env `MODULOS`, na coluna
 > `multpel_users.areas` (por pessoa, já gravada em produção) e na URL `/estoque`. Se alguém
 > perguntar "onde fica o módulo Compras", é este. Gate: `tests/test_nome_gestao_estoque.py`.
 >
-> **Escopo:** este manual cobre o módulo — as **22 abas**, a tela de campo da pesquisa de
+> **Escopo:** este manual cobre o módulo — as **23 abas**, a tela de campo da pesquisa de
 > preço, todos os cálculos, o
 > pedido de compra, a tributação, os relatórios e as armadilhas de dados. O **módulo Comercial**
 > (dashboard, carteira RFM, vendedores, metas, cobertura de carteira) tem manual próprio:
@@ -20,7 +31,8 @@
 >
 > **Regra de precedência:** quando o comportamento divergir deste manual, **o código manda**.
 > Fontes da verdade: `estoque/core.py` (motor de cálculo), `estoque/routes.py` (rotas/dados),
-> `estoque/queries.py` (DAX), `static/estoque/estoque.js` (telas),
+> `estoque/queries.py` (DAX), `estoque/nota.py` (Performance do comprador),
+> `estoque/historico.py` (foto diária/Evolução), `static/estoque/estoque.js` (telas),
 > `estoque/relatorios.py` (catálogo de e-mail). Detalhe de fórmulas de estoque também em
 > `docs/estoque/planilha_v3.md`.
 
@@ -37,8 +49,9 @@ orçamento, fornecedores, verbas e lead time.
   principal (ver §2).
 - **Fontes de dados:** dataset Power BI **"Estoque"** (PCEST, PCPRODUT, PCFORNEC, PCEMPR,
   PCEMBALAGEM, PCESTENDERECO, PCPEDIDO, PCITEM, PCVERBA, PCLANC/PCCONTA, PCNFSAID/PCMOV,
-  TRIB_ENTRADA, PEDIDO_ENTRADA) + dataset **"RCA"** (faturamento/venda/devolução) + **Postgres**
-  (estado editável: orçamento, pedidos da plataforma, planos de ação).
+  TRIB_ENTRADA, PEDIDO_ENTRADA, CONSUMO_PRODUCAO) + dataset **"RCA"** (faturamento/venda/devolução)
+  + **Postgres** (estado editável: orçamento, pedidos da plataforma, planos de ação, régua oficial
+  dos parâmetros, metas de margem, pesquisa de preço e a **foto diária** do estoque).
 - **Atualização:** o cabeçalho mostra "BI atualizado …". O app cacheia os dados pesados por
   **30 min**.
 
@@ -51,10 +64,20 @@ orçamento, fornecedores, verbas e lead time.
 - **Comprador vinculado** (`codcomprador` no Admin): é o **filtro inicial** do painel — **não
   trava**, o usuário pode ver os outros compradores. Ele também recorta os **relatórios por
   e-mail** (§13).
-- **Preferências por navegador:** unidade, período de venda, filtros, aba e **⚙ Parâmetros**
-  ficam no `localStorage` — o painel lembra as escolhas no próximo acesso.
-  ⚠️ Isso significa que **os parâmetros são por pessoa/navegador**: enquanto um valor não for
-  fechado como padrão do servidor, o painel pode significar coisas diferentes para cada um.
+- **Preferências por navegador:** unidade, período de venda, filtros e aba ficam no
+  `localStorage` — o painel lembra as escolhas no próximo acesso. Não mudam nenhum número.
+- **⚙ Parâmetros = RÉGUA OFICIAL da empresa** (desde 28/08/2026). Antes eles também ficavam no
+  navegador, e o diretor chegou a ver uma sugestão de compra **R$ 808 mil** diferente da dos
+  compradores, na mesma base e no mesmo dia, sem ninguém saber. Hoje são três camadas:
+  1. padrão do código;
+  2. **régua oficial** (gravada no servidor, vale para todos — inclusive a foto diária e os e-mails);
+  3. **simulação de sessão**: qualquer pessoa pode mexer no ⚙ para testar (ex.: subir o lead de um
+     fornecedor e gerar o pedido dele). A tela avisa que está simulando, e **a simulação some ao
+     recarregar** — ela nunca vira a régua permanente e invisível de ninguém.
+  Gravar a régua oficial exige a permissão **"Pode definir a régua oficial de Compras (⚙
+  Parâmetros)"**, concedida pessoa a pessoa no Admin (não basta ser admin).
+- **Metas de margem por comprador** (indicador da Performance, §7.4.1) se cadastram no Admin, painel
+  **"Metas de margem (Gestão de Estoque)"**.
 
 ---
 
@@ -137,6 +160,22 @@ O app tenta, **nesta ordem**:
 
 O **360° do produto informa qual fonte está sendo usada.**
 
+**Consumo de PRODUÇÃO (rotina 1122 — Montar Produtos), desde 08/2026.** A 1122 dá baixa no
+componente como movimento interno (`PCMOV` com `NUMNOTA = 0`): o Winthor atualiza a última saída mas
+**não soma em `QTVENDMES1..3`**, então o item consumia e o painel enxergava giro zero. A tabela
+**`CONSUMO_PRODUCAO`** (publicada no dataset, validada contra o rodapé da 1122) resolve isso de dois
+jeitos:
+- **Atacado (filiais 3+5):** o consumo **SOMA** à venda no giro, nos **mesmos 3 meses fechados** do
+  `QTVENDMES` (janelas desalinhadas inflariam o giro sem erro). Efeito medido: 35 itens mudaram; a
+  cobertura de quem consome estava inflada ~3× (o 67146 dizia 128 dias e eram 49).
+- **Indústria (unidade JID, filial 9):** a matéria-prima não vende, se transforma — o consumo
+  **SUBSTITUI** a venda como giro, com média de **12 meses** (demanda errática: com 3 meses quatro
+  itens teriam giro zero). A unidade saiu de R$ 0 / 29 SKUs para **R$ 341 mil / 67 SKUs** com
+  cobertura e sugestão de compra.
+- O universo da indústria é **quem consome**, não todo `REVENDA='N'` (isso traria +1.612 itens e
+  R$ 5,9 mi ao Atacado). `FILIAIS_INDUSTRIA` é configuração explícita (padrão `9`).
+- Sem a tabela publicada (ou na demo), o giro volta a ser só venda — idêntico ao de antes.
+
 ### 5.3 Cobertura (dias)
 > **Cobertura = ARREDONDA.CIMA(disponível ÷ giro diário)**
 > Giro ≤ 0 → **não calculável** (vale 9999 e cai na faixa 121+). Disponível ≤ 0 com giro → 0.
@@ -191,8 +230,9 @@ a sugestão em silêncio).
 ### 5.8 Sugestão de compra
 > **Sugestão = max(0, estoque-alvo − estoque projetado)**
 
-- Sai **em caixas fechadas** (arredonda pra cima pelo fator `QTUNIT` do PCEMBALAGEM; fallback
-  `QTUNITCX` do cadastro). Item **sem fator de caixa** sai em **unidades ("un")** — não força
+- Sai **em caixas fechadas** (arredonda pra cima pelo fator de caixa: `PCEMBALAGEM[QTUNIT]` **só
+  quando > 1**, senão `PCPRODUT[QTUNITCX]` — os dois divergem em ~150 produtos e 120 deles têm
+  `QTUNIT = 1`). Item **sem fator de caixa** sai em **unidades ("un")** — não força
   "1 cx"; normaliza sozinho quando o TI cadastrar o fator. Pendências em
   `estoque/itens_sem_fator_caixa.csv`.
 - Desconta o já-pedido → o "quanto comprar" fica **menor** que o buraco até o alvo. É melhoria,
@@ -239,6 +279,12 @@ valor_sugerido_nf  = valor_sugerido_liq × (1 + IPI% + ST%)                     
   custo** se o item não teve venda em 3m.
 - Só para item **em ruptura** (disponível ≤ 0 **e** giro > 0); senão é 0.
 - Aparece nas abas **Estoque zerado** e **Ruptura por comprador**.
+- ⚠️ **Preço médio = venda ÷ quantidade, com a quantidade na MESMA régua da venda** (09/2026): a
+  medida `[VENDA BRUTA]` conta só `CODOPER = "S"` (venda), mas a quantidade somava também `"ST"`
+  (**transferência entre filiais**) e `"SB"` (bonificação, que sai com valor zero). O preço saía
+  diluído — a esponja 58511 aparecia a R$ 2,07 contra R$ 4,74 reais. O erro não é uniforme (item sem
+  transferência sai certo), por isso conferir alguns produtos não prova nada. A devolução tem a mesma
+  armadilha do outro lado.
 
 ### 5.12 Custo de reposição / sugestão de compra em R$
 > **= Σ `valor_sugerido_nf`** dos itens a comprar (sugestão > 0, giro > 0, não suspensos).
@@ -272,8 +318,26 @@ custo (com imposto)** e já **descontando o já-pedido**.
   e foi **reposto** continua na faixa dos dias sem venda. *Exemplo real:* cód. 57071, última venda
   há **1.249 dias**, chegado há 9 — é exatamente a compra que precisa aparecer no 121+, e a regra
   "chegou há menos de 15 dias" a esconderia num card chamado "Produtos novos".
-- Status de parado do Cockpit (bandas fixas, sobre a **mesma** régua acima): `novo` · atenção ≥60d
-  · crítico ≥90d · muito crítico ≥120d.
+- **Recém-chegados s/ giro** (28/08/2026, pedido do diretor): item que **já vendeu**, está parado
+  há **≥ 60 dias** e **recebeu mercadoria dentro de `novo_dias`** sai das faixas de parado com nome
+  próprio. *Caso que originou:* cód. 59289 (milho verde), última venda há 317 dias, 1.632 un recebidas
+  há 3 dias, R$ 24 mil — sozinho 26,7% do 121+ do comprador: capital parado é valor × tempo, e a tela
+  multiplicava dinheiro novo por ociosidade velha. A régua de "dias parado" **não muda** (segue
+  contando da última venda). Ficou separado do card "Novos" porque entre esses itens há bandejas
+  paradas há 8–10 **anos** que chegaram anteontem — chamá-las de "novos" esconderia justamente o que
+  é para liquidar.
+- **Duas réguas de "parado", cada uma no seu lugar:** o **capital parado** do Cockpit (e da
+  Evolução) conta a partir de **60 dias** sem venda; a **aba Estoque parado** lista a partir de
+  **15 dias**, porque o papel dela é mostrar o gradiente. Item sem venda há 20 dias é rotação num
+  distribuidor, não dead stock.
+- **Em desaceleração** (watchlist, 08/2026): o aviso **antes** do capital parado. Item que parou de
+  vender há **20–59 dias**, com cobertura **> 90 dias** e valor **≥ R$ 200** (parâmetros no ⚙).
+  É **disjunta** do capital parado por construção (item parado nunca entra). Nasceu do pedido de
+  baixar o piso do parado de 60 para 20 dias — medido, isso dobraria o KPI só com rotação normal de
+  curva C (a faixa 20–59 dias é 100% curva C, e 392 de 413 itens dela giram). O piso de R$ 200
+  (e não um "top 50") existe para a lista **encolher** quando o problema diminui.
+- Status de parado do Cockpit (bandas fixas, sobre a **mesma** régua acima): `novo` ·
+  `recem_chegado` · atenção ≥60d · crítico ≥90d · muito crítico ≥120d.
   ⚠️ **`status_parado` NÃO é booleano** desde que ganhou o `novo`. Para perguntar "isto é capital
   parado?" use **`core.eh_parado(p)`** (`ehParado` no JS) — testar a verdade do campo volta a somar
   produto recém-chegado como dead stock.
@@ -296,10 +360,18 @@ ok       : demais
 `acompanhar_entrega` · `sem_compra`.
 
 ### 5.16 Cubagem (m³) e peso (kg)
-- **Cubagem da caixa** = `PCEMBALAGEM[VOLUME]`; se vazio, deriva de `PCPRODUT[VOLUME]` × fator de
-  caixa.
-- **Cubagem do pedido** = Σ (caixas sugeridas × volume da caixa).
-- **Peso da caixa** = `PCEMBALAGEM[PESOBRUTO]`; **peso do pedido** = Σ (caixas × peso da caixa).
+> **Fonte única: `PCPRODUT` — `VOLUME`, `PESOBRUTO` e `PESOLIQ` são POR UNIDADE.**
+> Caixa = unitário × fator · **Total do pedido = quantidade em UNIDADES × unitário.**
+
+- Validado contra o **rodapé do relatório 211** do Winthor (pedido 565848, 22 itens): peso líquido
+  **14.482,02 kg**, bruto **14.497,64 kg**, volume **23,50 m³** — os três exatos. Por isso o PDF do
+  pedido traz os três e deixou de dizer "estimado".
+- ⚠️ **NÃO usar a `PCEMBALAGEM` para peso/cubagem** (era a fonte até 08/2026): o `PESOBRUTO` vem
+  vazio em 75,6% dos produtos e o `VOLUME` em 100%. O PDF dizia 6.758 kg onde o ERP dizia 14.497,64
+  (−53%) — o item mais pesado do pedido contava zero e o total *parecia* completo.
+- **Guarda de plausibilidade:** caixa implicada acima de **1,5 m³** ou **50 kg** é cadastro
+  impossível (dado do máster gravado na unidade — ex.: 66919 com 530 kg por caixa). O item sai com
+  `—` e a tela diz **quantos ficaram de fora**. A lista está na aba Qualidade da base (§7.22).
 
 ### 5.17 Orçamento de compras
 ```
@@ -321,6 +393,12 @@ Saldo       = Meta − Comprado
   Isso evita marcar como atrasado um pedido em que o Winthor só repetiu a data de emissão.
 - **Status de prazo:** `recebido` · `atrasado` (previsão no passado) · `chega_7` (≤ 7 dias) ·
   `no_prazo` · `sem_prev`.
+- **Mês anterior apurado e exibido sempre** (08/2026, pergunta do diretor: "quando vira o mês o
+  orçamento zera; quem estourou não deveria arrastar?"). Meta, comprado e saldo do mês passado ficam
+  visíveis. **Descontar o estouro** da meta deste mês é **opcional** (checkbox **"arrastar"**): a
+  meta é 65% da venda dos últimos 30 dias — régua de fluxo, não orçamento anual —, então ligado por
+  padrão puniria duas vezes quem estourou porque a venda subiu. Sobra **não** vira crédito e o
+  arraste **não cascateia**. A meta do mês passado usa a venda de 30 dias **daquele fechamento**.
 
 ### 5.18 Estoque ideal (régua do Painel gerencial)
 ```
@@ -492,13 +570,13 @@ dinheiro).
 
 ---
 
-## 7. Navegação — 5 grupos, 22 abas (+ 1 tela de campo fora do painel)
+## 7. Navegação — 5 grupos, 23 abas (+ 1 tela de campo fora do painel)
 
 **Visão · Comprar · Pedidos · Estoque · Análise**
 
 | Grupo | Abas |
 |---|---|
-| **Visão** | Cockpit · Painel gerencial · Meta de ruptura · **Evolução do estoque** *(só ADM)* |
+| **Visão** | Cockpit · Painel gerencial · Meta de ruptura · **Performance** · **Evolução do estoque** *(só ADM)* |
 | **Comprar** | Abastecimento · Estoque zerado · Plano reposição |
 | **Pedidos** | Orçamento *(+ Logística, oculta)* |
 | **Estoque** | Cobertura · Parado · Validade · Vencidos · Ruptura · Ocupação |
@@ -513,7 +591,9 @@ Visão executiva do dia.
   Parado 120+ dias. Cada card leva à tela já filtrada.
 - **Curva ABC (vendas):** gráfico + tabela (A/B/C com nº de itens, valor, % dos itens, % da
   venda) e **toggle Vendas | Estoque**.
-- **Maiores ofensores:** capital parado e risco de vencimento (top 6 cada).
+- **Card "Em desaceleração"** (§5.14): itens que pararam de vender há 20–59 dias com cobertura
+  > 90 dias — o aviso antes do capital parado; clique leva à lista em Análise → Produtos.
+- **Maiores ofensores:** capital parado, em desaceleração e risco de vencimento.
 
 ### 7.2 Painel gerencial (Visão)
 Réplica dos blocos-resumo do relatório gerencial do diretor:
@@ -547,16 +627,33 @@ Vencidos mostra mês a mês desde sempre porque perda por validade é **evento d
 **estado**. A cobertura é a mais irrecuperável — depende de `QTVENDMES1..3`, janelas móveis
 regravadas todo mês.
 
-**Como nasce:** um robô fotografa o estoque todo dia (6h-12h, e só **depois do refresh do BI do
-dia** — antes disso gravaria a posição de ontem com a data de hoje). A primeira leitura útil sai
-em ~4 semanas; tendência firme em ~90 dias. Enquanto enche, a tela mostra o contador de fotos e
-explica — não diz "sem dados".
+**Como nasce:** um robô fotografa o estoque todo dia entre **18h e 22h** (minuto 40, cinco
+passagens). O horário veio de **medição**: o BI do estoque atualiza 7× por dia (a última às ~17h44);
+fotografando de manhã, a foto pegava a posição **antes de qualquer movimento do dia** — o
+fechamento de ontem com a data de hoje. Às 18h40 a foto vale o fechamento **real** do dia. É janela
+(5 passagens) e não disparo único porque perder um dia é irrecuperável. Em produção a série começa
+em **20/08/2026**. Primeira leitura útil em ~4 semanas; tendência firme em ~90 dias.
 
-- **KPIs:** Valor em estoque · Capital parado · Itens em ruptura · Cobertura ideal, cada um com a
-  **variação na janela** (é a pergunta da aba; o nível o Cockpit já respondia).
-- **Gráficos:** barras de estoque com o parado em linha (eixo próprio à direita, senão a linha
-  fica esmagada) · composição da cobertura empilhada · itens em ruptura.
-- **Tabela:** a foto dia a dia, mais recente primeiro.
+- **KPIs:** Valor em estoque · Capital parado · Itens em ruptura · Cobertura ideal · **Ocupação
+  do depósito**, cada um com a **variação na janela** (é a pergunta da aba; o nível o Cockpit já
+  respondia).
+- **Gráficos:** barras de estoque com o parado em linha e a **desaceleração tracejada no mesmo
+  eixo** (eixo próprio à direita para não esmagar) · composição da cobertura empilhada · itens em
+  ruptura e **ruptura por curva A/B/C em %** · ocupação do depósito.
+- **Ruptura por curva** (pedido do diretor) é a ruptura **REAL** — zerado com giro, tenha ou não
+  pedido — e não o placar da Meta de ruptura (que só conta o que está sem providência e é sempre
+  menor). Sai em % porque a curva C tem ~6× mais itens que a A.
+- **Capital parado da série = régua do Cockpit (60+ dias)** desde 08/2026 (antes era 15+ e dizia o
+  dobro do Cockpit no mesmo dia). Como a foto guarda o ingrediente, o passado inteiro foi recalculado
+  sem degrau.
+- **Tabela:** a foto dia a dia, mais recente primeiro, com a coluna **"Vencido R$"** — lida do
+  **livro** (conta 200042), não fotografada: perda por validade é evento datado, então a coluna já
+  nasce com anos de histórico. `0,0` = mediu e não perdeu; `—` = não medido.
+- **Estado do dia** (o que não sai do grão do item, gravado à parte em `estoque_foto_estado`):
+  **ocupação do WMS**, qualidade de cadastro, valor **a vencer** por faixa, **pedidos em aberto**
+  (valor, atrasados, chegando em 7 dias) e **avaria**. Cada um tem coleta própria — uma fonte fora do
+  ar não custa a foto do estoque. Com recorte ativo (comprador, curva…) a ocupação **não** aparece:
+  é do depósito inteiro e não se decompõe.
 - **Recorte:** unidade · comprador · fornecedor · curva · XYZ. **Depto e Buscar produto a aba NÃO
   honra**, e avisa na tela.
 
@@ -577,7 +674,59 @@ têm direção inequívoca. Pintar queda de estoque de verde faria a aba um dia 
   do mês: no dia 1º a ABC sairia de UM dia de venda — dente de serra em toda virada de mês.
 - **Na demo** o robô não roda (o "hoje" é ancorado no dado); o histórico vem de um seeder de 90
   dias, senão a aba abriria vazia na apresentação comercial.
-- 🚧 **Ainda não tem export.** Enquanto for ADM-only não faz falta.
+- **⬇ Excel da "Foto dia a dia"** (06/10/2026): a mesma série da tela, no **mesmo recorte**
+  (unidade, comprador, fornecedor, curva, XYZ — escrito no topo do arquivo), com as células em
+  **número** (dá para somar e fazer gráfico no Excel). Célula vazia = não medido naquele dia. Restrito
+  ao ADM, como a aba.
+
+### 7.4.1 Performance — Nota do comprador (Visão)
+
+A **Metodologia de Performance do diretor** (documento de 30/08/2026): nota de **0 a 10** por
+comprador, com ranking, prioridade automática e evolução. Motor em `estoque/nota.py`; nenhuma query
+nova (os indicadores saem do que o módulo já calcula). **Visível a todo mundo com a área de
+Estoque** (não é só ADM, como a Evolução).
+
+**Os 5 indicadores e os pesos (fixos):**
+
+| Peso | Indicador | Como mede | Janela |
+|---|---|---|---|
+| 25% | **Ruptura** | itens zerados com giro ÷ SKUs do comprador — ruptura **REAL** (conta tenha ou não pedido em aberto), todas as curvas | hoje |
+| 20% | **Cobertura A+B** | SKUs de curva A+B com cobertura ≥ o mínimo do ⚙ "Estoque ideal", sobre os que giram | hoje (curva de 90 dias) |
+| 20% | **Margem × Meta** | margem realizada ÷ meta de margem do comprador na competência, em % | **mês corrente** |
+| 20% | **Estoque parado** | **% de SKUs** parados na régua da aba Parado (sem os novos/recém-chegados) | hoje |
+| 15% | **Compras × Meta** | comprado ÷ meta do Orçamento, todas as curvas (como a aba Orçamento) | **mês FECHADO** |
+
+**Regras que explicam a nota:**
+- **Janelas próprias, imunes ao seletor "Venda" do topo** (08/09/2026): a margem usa o mês corrente
+  (a mesma competência da meta) e a curva usa 90 dias. Antes, o mesmo comprador no mesmo dia tirava
+  9 no "mês" e 7 no "12m" só por causa do filtro. Verificado: a nota é idêntica nos 5 valores do
+  seletor.
+- **Compras mede o mês FECHADO**, e a meta desse mês é ancorada no **fechamento dele** (não em
+  hoje) — senão a nota de agosto mudava sozinha em setembro. O **mês em curso aparece ao lado como
+  informação** e não entra na nota (no dia 8 do mês ele não tem sinal: compra é aos trancos).
+- **Escala de Compras ASSIMÉTRICA** (09/2026, pedido do João Victor): **estourar dói ~1,4× mais que
+  faltar**, porque nesta fase a meta é teto ("o momento é calibrar o estoque"). Não 2×: a reposição
+  medida é 80,6% da venda contra a meta de 65%, então o comprador só passa a **crescer** estoque a
+  partir de ~124% da meta. Nenhum degrau passa de 2 pontos (a meta oscila ~7% ao mês sozinha). ⚠️ Se a
+  empresa voltar a repor estoque, a escala tem de voltar a ser simétrica.
+- **Parado por SKU, não por valor** (pergunta do diretor em 08/09): por valor a escala não discrimina
+  (ninguém passa de 8,5%) e o número fica refém de um item (um comprador tem 35 parados com UM
+  valendo 42% do total). O **R$ parado aparece na tela ao lado do %**, como informação, sem pontuar.
+- **Meta de margem é do COMPRADOR × COMPETÊNCIA** (Admin → Metas de margem), não do usuário —
+  comprador sem login também precisa de meta, e subir a meta em novembro não pode derrubar a nota de
+  setembro. É lida na competência de **hoje**.
+- **Indicador faltando → nota PARCIAL e RENORMALIZADA** (dividida pelo peso medido), com selo do
+  peso e do que falta. Sem dividir, quem não tem meta teria teto de 8,0. Quando a meta é cadastrada a
+  nota **muda** — para cima ou para baixo — e o selo é o que avisa.
+- **A nota NUNCA é gravada**: recalcula do ingrediente. Quando a régua oficial mudou em 01/09, a
+  série de 46 dias se refez inteira sem buraco.
+- **A prioridade** (o indicador que mais tira pontos) é um cálculo simples, não IA — funciona sem o
+  Agente.
+- Faixa de cor da nota: ≥ 8 verde · 6–7,9 amarelo · < 6 vermelho (calibrável em `nota.py`).
+- 🚧 Sem seletor de competência e fora do catálogo de e-mail/export, por ora.
+
+⚠️ **Mudança de régua muda a nota sem mudança de operação** (ex.: trocar "cobertura > 90 dias" por
+"aba parado" valeu 3 pontos para o maior comprador) — comparar antes × depois uma vez.
 
 ### 7.5 Abastecimento (Comprar) — "o que comprar, por fornecedor"
 A tela principal de compra: itens com sugestão > 0, **agrupados por fornecedor**.
@@ -612,7 +761,16 @@ Meta de compras do mês × realizado (§5.17).
   previsão de entrega e status. **Clicar num pedido abre os itens** (Pedida / Entregue /
   A entregar); clicar num item abre o 360°.
 - **Pedidos da nossa plataforma:** criados no app, pendentes de envio ao Winthor. **Não somam na
-  meta.** Cada um tem PDF, planilha e remover.
+  meta.** Cada um tem PDF, planilha e remover. Ficam no comprador **do FORNECEDOR**
+  (`PCFORNEC.CODCOMPRADOR`), não no que estava no filtro na hora de lançar (10/2026 — antes, lançado
+  em "Empresa toda", o pedido só aparecia em "Empresa toda"). Corrige também os antigos, sem mexer
+  no banco.
+- **"Buscar produto" e o filtro de Fornecedor recortam os pedidos em aberto** (08/2026: "saber se
+  existe pedido para aquele item, a quantidade e quando foi feito"). O recorte vale para a lista **e**
+  para os cards de prazo; os KPIs de orçamento **não** mudam (meta e comprado são do comprador no
+  mês). Duas quantidades por linha: **pedida** ("eu já pedi?") e **a chegar** ("está chegando?").
+  Busca por descrição casa a **família** (ex.: `EMB.GALV.G65` traz 5 pedidos); janela de 180 dias.
+- **Bloco do mês anterior** (meta, comprado, saldo) e checkbox **"arrastar"** o estouro (§5.17).
 
 > **Logística — cubagem & ocupação** existe no código mas está **oculta do menu** a pedido do
 > diretor. Calculava, dos pedidos em aberto, a cubagem (Σ qtd × volume unitário) e a ocupação
@@ -629,7 +787,8 @@ Distribuição do capital por faixa de cobertura (métrica oficial, §5.3).
 ### 7.10 Parado (Estoque) — "o que liquidar"
 Itens com estoque e **≥15 dias** parados. **Reconciliado com a Cobertura:** as faixas
 **somam o total**.
-- **Cards por faixa** (**Novos** · 15-30 … 121+) + gráfico + "por comprador".
+- **Cards por faixa** (**Novos** · **Recém-chegados s/ giro** · 15-30 … 121+) + gráfico +
+  "por comprador". (Recém-chegados = já vendeu, parado ≥ 60 dias e recebeu mercadoria agora — §5.14.)
 - **Card "Novos (<15d)"** (08/2026, §5.14) — itens que **nunca venderam** e **entraram há menos de
   `novo_dias`**. Ele não acrescenta itens à aba: **tira do 121+** os que estavam rotulados errado,
   por isso entra na mesma soma. *Medido na virada:* 18 itens saíram do 121+ (10 para Novos, 8 para
@@ -725,6 +884,18 @@ lead) → `alta_performance` (índice ≥ 1,2) → `equilibrado` (≥ 0,8) → `
 
 Fórmulas em §5.20 (compras/ciclo), §5.21 (crescimento) e §5.22 (verba/lucro).
 
+**3 cards de total — Venda · Lucro · Margem** (21/09/2026, pedido do João Victor: "não tem o total
+em lugar nenhum… tenho que ir em outra tela"): somados sobre **o que a tabela lista** (filtros do
+topo + Curva + Classe). Margem = **Σ lucro ÷ Σ venda** (nunca média das linhas). Sem filtro batem
+centavo a centavo com o Cockpit. ⚠️ **Com o filtro Curva ativo NÃO batem com o Cockpit, por
+construção** — aqui a curva é a do **fornecedor**, lá é a do produto (a tela avisa). O sub-rótulo
+"c/ verba" segue os 3 estados da coluna Cresc. AA (carregando/falha = `—`).
+
+**360° do FORNECEDOR** (clique na linha, 07/2026): venda de 12 meses **com o mesmo mês do ano
+anterior sobreposto**, ciclo × lead time, pedidos em aberto, valor a comprar (com impostos) e top
+produtos. A série soma no **fato por fornecedor** (não os produtos da tela — senão item que saiu de
+linha sumiria do histórico). Lead com amostra fraca aparece como `~26d (amostra fraca)`.
+
 ⚠️ **Notas de implementação que explicam comportamentos:**
 - As colunas de ciclo/verba/crescimento chegam por um endpoint separado
   (`/api/fornecedores_extra`), buscado **só quando a aba abre** — pendurá-las no snapshot faria
@@ -755,6 +926,11 @@ Verbas/bonificações negociadas com fornecedores (**rotina 1801** do Winthor).
   **120 dias**). Alerta para fornecedor com **compra 12m > R$ 300 mil e nenhuma verba**.
 - **O tripé:** compra × lead × verba — quanto compro, quanto demora, quanto devolve.
 - Conferida contra o relatório **1826** (BOMBRIL centavo a centavo no recorte 2024+).
+- **A página inteira fala UMA janela** (08/2026): KPI "Negociado 12m" = soma da coluna = soma das
+  barras do gráfico = soma do "Por conta" (validado: 819.001,73 nos quatro lugares). O **filtro de
+  fornecedor recorta no servidor** (antes a tabela mostrava 1 fornecedor ao lado do gráfico da
+  empresa toda). O eixo do gráfico é de **calendário** (mês zerado também aparece), com rótulo por
+  extenso (`ago/26`). As duas pontas da janela são parciais e marcadas com `*`.
 
 ### 7.20 ABC-XYZ (Análise)
 Matriz **curva de vendas (ABC) × variabilidade da demanda (XYZ)** — 9 células com nº de itens e
@@ -774,8 +950,17 @@ Tabela completa de todos os produtos: Cód · Produto · Fornecedor · ABC · XY
   `Cobertura ≤ limiar−1` já preenchido, e o Excel/PDF saem com o mesmo recorte.
 
 ### 7.22 Qualidade da base (Análise)
-Lista itens com problema de cadastro para o TI/diretor corrigir: sem custo · sem fornecedor ·
-sem comprador · sem giro com estoque · estoque negativo.
+Lista itens com problema de cadastro para o TI/diretor corrigir, em **dois blocos com universos
+diferentes** (08/2026 — substituiu o CSV montado à mão):
+- **Bloco 1 — saldo** (sobre o **snapshot** da unidade): sem custo · sem fornecedor · sem comprador ·
+  sem giro com estoque · estoque negativo.
+- **Bloco 2 — cadastro logístico** (sobre a **BASE INTEIRA**): **cadastro impossível** (caixa
+  implicada acima de 1,5 m³ ou 50 kg — dado do máster gravado na unidade; 72 itens na Multpel) e
+  **sem cubagem** (241). Os limiares aparecem na tela.
+- ⚠️ **Por isso os números não batem entre os blocos**, e a tela escreve os dois escopos: são 72
+  cadastros impossíveis na base contra 21 dentro do snapshot do Atacado.
+- Não viraram card: "sem peso" (zero casos) e "sem fator de caixa" (1.744, mas todos com
+  `QTUNITCX = 1` explícito — venda em unidade é legítima).
 
 ---
 
@@ -851,9 +1036,25 @@ que é a única coisa que não se manda a quem negocia conosco.
    devolveria o **custo rotulado como preço de venda** — o vazamento de volta, com etiqueta
    errada. Sem preço realizado, a coluna sai **vazia**.
 
-**Nosso preço = realizado médio dos últimos 3 meses** (`_preco_venda_map`, cache 6h). O preço de
-tabela do BI (`PCPRODUT[PVENDA]`) está vazio nesta base; a régua foi aprovada pelo diretor
-(*"pode pegar a média de preço dos últimos 3 meses"*).
+#### Três preços, três perguntas (09/2026)
+O diretor cobrou a coluna de custo que tinha sumido (*"vc pode ter substituído e ter tirado o preço
+de vendas"*). Hoje são as três, lado a lado:
+
+| Coluna | Pergunta | Fonte |
+|---|---|---|
+| **Custo últ. entrada** | por quanto **entrou** | `PCEST[CUSTOULTENT]` (não o `CUSTOFIN`, que é o financeiro) |
+| **Nosso preço** | por quanto **sai** | realizado líquido dos últimos **30 dias** |
+| **Pesquisado** | por quanto o concorrente **vende** | medição de campo |
+
+- ⚠️ **O custo entra na planilha e na tela de campo, mas NÃO no PDF por padrão.** O mesmo PDF vai
+  ao **fornecedor**, e custo de aquisição não se manda a quem negocia conosco. Para incluir, marcar
+  **"custo no PDF"** (opt-in: esquecer de tirar é fácil; esquecer de marcar custa um clique).
+- **A janela do "nosso preço" é de 30 dias** (pedido do diretor: "a média do último mês"). Só na
+  Pesquisa — a **venda perdida** segue em 90 dias (§5.11).
+- O "nosso preço" e o preço médio do 360° saem da **mesma** função (antes eram duas fórmulas e no
+  cód. 42253 a gaveta dizia R$ 1,84 e a linha da Pesquisa implicava R$ 1,65 — os dois errados).
+- 🚧 **Preço de TABELA por região não dá para entregar hoje:** mora no `PCTABPR`, que não está
+  publicado no dataset (`PCPRODUT[PVENDA]` vem nulo). É pedir a publicação ao TI.
 
 ⚠️ **A COR é pela perspectiva de quem compra** (decisão do diretor): concorrente mais **barato**
 = o nosso preço está acima do mercado = **vermelho**. É o inverso da leitura de "oportunidade" —
@@ -926,8 +1127,17 @@ ou mais**; o placar conta a partir de **60**. Por isso o valor da série é semp
 medições diferentes, não uma variação. O agente é instruído a comparar pontos da série entre si e
 nunca com o placar. *(A divergência entre as duas telas é anterior ao agente.)*
 
-**Sem o recurso contratado**, o botão continua aparecendo e mostra o que o Agente faria — é
-recurso adicional, e o servidor recusa qualquer pergunta (nenhum consumo indevido).
+**Três estados por instância** (08/2026 — o que muda é configuração, não código):
+- **desligado** (sem `ia` no `MODULOS`) — o botão **não aparece** e nenhuma requisição é feita. É o
+  caso da **Multpel**;
+- **oferta** (`ia` ligado, sem chave da OpenAI) — cadeado + o que o Agente faria; o servidor recusa
+  perguntas (nenhum consumo);
+- **ativo** — o chat.
+
+**Defesas além do prompt:** conferência de saída (cada número citado é comparado ao contexto que o
+modelo recebeu e registrado no log); timeout que protege o painel inteiro; **rastro auditável** do
+contexto que o modelo viu (para investigar "ele me falou algo errado ontem"); teto diário por
+pessoa. Modelo `gpt-4.1-mini`.
 
 Gate: `tests/test_ia_compras.py` · motor em `estoque/ia.py`.
 
@@ -957,6 +1167,13 @@ Modal para montar um pedido **da plataforma** (pendente de envio ao Winthor).
   **IPI/ST % editável** (quando a alíquota é estimada) · Valor · remover.
 - O botão **"Gerar pedido"** da aba Abastecimento abre o construtor **já preenchido** com os
   itens sugeridos daquele fornecedor.
+- **Coluna Cob.proj VIVA** (08/2026, pedido do diretor para "analisar o que aumentar para completar
+  uma carga"): mostra `15 → 56d` — onde a cobertura projetada está e onde ela **fica** com a
+  quantidade digitada. Mesma régua da Cob.proj da Abastecimento (disponível + já pedido +
+  pré-entrada). Sem cor de propósito.
+- **Peso e cubagem no rodapé, somando a cada tecla**, ao lado de mercadoria, impostos e total da NF
+  — na régua do PDF (unidades × unitário, §5.16). Item sem cadastro ou reprovado pela guarda entra
+  como zero e o rodapé avisa.
 - **Lançar** salva o pedido; ele aparece em "Pedidos da nossa plataforma" e **não soma na meta**
   até ser lançado no Winthor.
 
@@ -968,8 +1185,10 @@ de caixa mostra "—" e só aceita unidade.
 ### 8.3 Documentos do pedido
 - **PDF (estilo relatório 211 do Winthor):** logo + bloco **Emitente** + bloco **Fornecedor**
   (CNPJ/IE/endereço do PCFORNEC) + tabela **Cód · Cód fábrica · Produto · Un · Qtde · Custo un. ·
-  IPI% · Vlr. Total**, em retrato, ordenado por código, com **total do pedido + peso total**.
-  Arquivo nomeado pelo fornecedor.
+  IPI% · Vlr. Total**, em retrato, ordenado por código, com **total do pedido + peso líquido,
+  peso bruto e volume** (iguais ao rodapé do 211, §5.16). Arquivo nomeado pelo fornecedor.
+- O **rótulo da unidade** sai do texto da embalagem (`FD/8X192/UN` imprime **FD**), mas o **fator**
+  segue o `QTUNITCX` — o comprador confere o PDF contra o 211 linha a linha.
 - **Planilha de importação do Winthor (XLSX).**
 
 ⚠️ **Duas armadilhas que já custaram caro:**
@@ -1001,11 +1220,14 @@ item; pode ser editado ou excluído.
 | Estoque de segurança (dias) | **25** | status de abastecimento, DRP |
 | **Cobertura alvo (dias)** | **45** | **estoque-alvo (a COMPRA)** |
 | Horizonte de validade (dias) | **30** *(o diretor costuma usar 120)* | aba Validade |
-| Parado: dias parados (≥) | 60 | filtro de exibição da aba Parado |
+| **Parado: mín. dias p/ listar** | 60 | **só filtra a LISTAGEM** da aba Parado — não muda faixa nem o capital parado (o nome antigo, "dias parados (≥)", parecia a régua e não era) |
 | Meta % s/ ped. curva A / B / C | **2 / 5 / 10** | Meta de ruptura |
 | **Estoque ideal: mínimo (dias)** | **45** | **só MEDE o Painel gerencial** |
 | **Estoque ideal: meta (%)** | **90** | gatilho de alerta do Painel gerencial |
-| **Produto novo: até (dias)** | **15** | faixa `novo` da aba Parado (§5.14) — item que nunca vendeu e acabou de entrar |
+| **Produto novo: até (dias)** | **15** | faixa `novo` e "Recém-chegados s/ giro" da aba Parado (§5.14) |
+| **Desaceleração: de / até (dias sem venda)** | **20 / 60** | watchlist "Em desaceleração" (§5.14) |
+| **Desaceleração: cobertura mínima (dias)** | **90** | idem — é piso medido, não preferência: a cobertura mediana de um item C que vende normal é 84 dias |
+| **Desaceleração: valor mínimo (R$)** | **200** | idem — piso de valor, para a lista encolher quando o problema diminui |
 | Demanda (giro) | Média 3m (oficial) | giro — alternativas: Forecast, Forecast sazonal |
 | Janela do forecast (meses) | 6 | forecast |
 | Arredondar por caixa | Caixa fechada | sugestão em caixas fechadas |
@@ -1016,8 +1238,12 @@ item; pode ser editado ou excluído.
 o outro diz **a partir de quanto o SKU conta como coberto** no placar gerencial. Mexer num não
 mexe no outro.
 
-⚠️ Os parâmetros ficam no **navegador** (`localStorage`). Enquanto um valor não for promovido a
-padrão do servidor, o painel pode significar coisas diferentes para cada pessoa.
+**Régua oficial × simulação (§2):** os valores acima são os **padrões do código**; a empresa grava
+a sua **régua oficial** no servidor (quem tem a permissão "Pode definir a régua oficial"), e ela vale
+para todos — tela, foto diária e e-mails. Qualquer pessoa pode **simular** outros valores na
+própria sessão; a simulação é avisada na tela e **some ao recarregar**. Todos os parâmetros têm
+trava contra valores absurdos (zero ou negativo apenas esvaziariam um card — e card vazio se lê como
+"não há problema").
 
 ---
 
@@ -1038,8 +1264,9 @@ padrão do servidor, o painel pode significar coisas diferentes para cada pessoa
   `estoque/relatorios.py` — Admin e cron leem do mesmo lugar (evita "aparece no Admin mas o cron
   não sabe gerar").
 - **Regra de corte:** só entra tela em formato de **tabela**. Painéis (Cockpit, Painel gerencial,
-  Meta de ruptura, Plano reposição, Orçamento) **não são relatórios** e ficam de fora por
-  definição.
+  Meta de ruptura, Plano reposição, Orçamento, **Performance**, **Evolução**) **não são relatórios**
+  e ficam de fora por definição.
+- Os e-mails rodam na **régua oficial** dos parâmetros (§2), nunca na simulação de alguém.
 
 | Grupo | Relatórios |
 |---|---|
@@ -1114,6 +1341,11 @@ padrão do servidor, o painel pode significar coisas diferentes para cada pessoa
   nasceu fora do ERP e foi lançado junto com a NF. O indicador serve para acompanhar isso caindo.
 
 ### Placares e metas
+- **"Por que minha nota da Performance é parcial?"** Falta algum indicador — quase sempre a **meta
+  de margem** do comprador no Admin. A nota é renormalizada e o selo mostra o que falta (§7.4.1).
+- **"Mudei o filtro de Venda e a nota não mudou."** Correto: a nota tem janelas próprias (§7.4.1).
+- **"Comprei 110% da meta e perdi mais pontos do que quem comprou 90%."** A escala de compras é
+  assimétrica: estourar dói ~1,4× mais que faltar, nesta fase de calibrar estoque (§7.4.1).
 - **"A Meta de ruptura ignora meus filtros."** De propósito — meta que muda de valor conforme o
   filtro não é meta (§5.19).
 - **"O placar de ruptura melhorou sem ninguém mudar nada."** Provável efeito da separação das
@@ -1123,6 +1355,13 @@ padrão do servidor, o painel pode significar coisas diferentes para cada pessoa
 - **"O 'Estoque ideal' está em 100%."** Verifique o limiar — valores muito baixos fariam tudo
   virar ideal (o app clampa 0 para 45 justamente por isso).
 - **"'Sem giro' entra no % ideal?"** Não — fica reportado à parte para não distorcer o percentual.
+
+### Parâmetros
+- **"Mudei o ⚙ e no dia seguinte voltou."** A mudança era uma **simulação de sessão**; ela some ao
+  recarregar. Para mudar a régua da empresa é preciso a permissão "Pode definir a régua oficial"
+  (§2, §9).
+- **"Minha sugestão de compra é diferente da do diretor."** Hoje não deveria: todos abrem na régua
+  oficial. Se ele estiver simulando, a tela dele avisa.
 
 ### Dados e cadastro
 - **"Item sem fator de caixa."** A sugestão sai em **unidades** e o campo "Caixas" do pedido
@@ -1134,6 +1373,13 @@ padrão do servidor, o painel pode significar coisas diferentes para cada pessoa
   traria vendedores e financeiro.
 - **"Este painel mostra dado real?"** No endereço `demo.jogasolucoes.com.br`, não — é base
   sintética. As fórmulas e telas são as mesmas.
+- **"O peso do pedido no PDF não bate com o ERP."** Desde 08/2026 bate com o rodapé do 211. Se um
+  item saiu com `—`, ele foi reprovado pela guarda de plausibilidade (cadastro impossível) — ver
+  Qualidade da base (§5.16, §7.22).
+- **"A indústria (JID) aparecia vazia."** A matéria-prima não vende; desde 08/2026 o giro dela vem
+  do consumo de produção (rotina 1122) (§5.2).
+- **"O item recebeu mercadoria e saiu do 121+."** É o card "Recém-chegados s/ giro" (§5.14); a
+  régua de dias parado não mudou.
 
 ---
 
@@ -1180,6 +1426,18 @@ padrão do servidor, o painel pode significar coisas diferentes para cada pessoa
     "12,50" e o campo fica vazio. Use `type=text` + `inputmode=decimal` (§7.23).
 21. **`CUSTOFIN` vive no SNAPSHOT (PCEST), não no cadastro de produto.** Lê-lo do `PCPRODUT`
     devolve 0 em tudo — e o documento que vai ao fornecedor sairia dizendo que pagamos R$ 0,00.
+22. **Quantidade de venda na MESMA régua da medida** (`CODOPER = "S"`): somar transferência (`ST`) e
+    bonificação (`SB`) dilui todo preço médio (§5.11). Gate: `tests/test_regua_codoper.py`.
+23. **Peso e cubagem: `PCPRODUT` por unidade, nunca `PCEMBALAGEM`** (§5.16).
+24. **Consumo de produção na MESMA janela do giro** (3 meses fechados no Atacado; 12 na indústria) —
+    janela desalinhada infla o giro sem erro (§5.2).
+25. **Foto: só se fotografa ESTADO, nunca EVENTO.** Saldo, ocupação, pedido em aberto somem e só
+    existem se alguém guardar; baixa por validade, venda e verba ficam no livro. Fotografar evento
+    cria uma 2ª cópia que um dia diverge da contabilidade (§7.4).
+26. **Mudou o significado de uma métrica da série → subir a versão do rollup** (`_ROLLUP_VERSAO`),
+    senão a Evolução serve o agregado velho em silêncio.
+27. **Parâmetros: a simulação de sessão nunca vira régua** — e foto/e-mail sempre rodam na oficial
+    (§2).
 
 ---
 

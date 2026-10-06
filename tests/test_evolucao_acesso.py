@@ -187,7 +187,9 @@ def test_o_endpoint_devolve_o_log_que_a_tela_usa_para_decidir():
     src = routes.api_evolucao.__doc__ or ""
     import inspect
     corpo = inspect.getsource(routes.api_evolucao)
-    assert '"log": log' in corpo and "dias_com_foto" in corpo
+    # 06/10/2026: a montagem da série foi para `_evolucao_serie` (fonte única da tela e do Excel)
+    assert '"log": log' in corpo and "_evolucao_serie()" in corpo
+    assert "dias_com_foto" in inspect.getsource(routes._evolucao_serie)
 
 
 def test_ruptura_por_curva_sai_na_foto_do_dia():

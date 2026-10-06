@@ -263,3 +263,14 @@ def test_supervisor_so_ve_os_proprios_times(client, pg):
         assert client.get('/api/evolucao-carteira?supervisor=14').get_json()['rcas'] == []
     finally:
         _remover_usuario('sup-evol@teste.local')
+
+
+# ───────────────────────── clique no vendedor (Gabriel, 06/10/2026) ─────────────────────────
+def test_clicar_no_vendedor_troca_graficos_e_cards():
+    """No drill do time, clicar num vendedor passa os cards e os dois gráficos para ele (a série
+    dele já vem no payload — nada de nova chamada); o caminho mostra Empresa ▸ Time ▸ Vendedor."""
+    h = Path('evolucao.html').read_text(encoding='utf-8')
+    assert 'function irVendedor(' in h and 'F.vendedor' in h
+    corpo = h[h.index('function escopo('):h.index('function renderKpis(')]
+    assert '_d.rcas.find' in corpo and 'F.vendedor' in corpo
+    assert "irVendedor(" in h[h.index('function linhaTabela('):h.index('function renderTabela(')]
