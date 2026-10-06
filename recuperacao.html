@@ -43,7 +43,8 @@
   .breadcrumb .sep { color:var(--text-dim); }
 
   .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:18px; }
-  .saldo-pos { color:var(--red); font-weight:700; } .saldo-neg { color:var(--green); font-weight:700; }
+  /* saldo de recuperação (06/10/2026): positivo = BOM = verde — 'na nossa cabeça + é bom e − é ruim' (João) */
+  .saldo-pos { color:var(--green); font-weight:700; } .saldo-neg { color:var(--red); font-weight:700; }
   @media (max-width:900px){ .kpis { grid-template-columns:repeat(2,1fr);} }
   @media (max-width:520px){ .kpis { grid-template-columns:1fr;} .dashboard { padding:16px; } }
   .kpi { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px 18px; position:relative; overflow:hidden; }
@@ -144,7 +145,7 @@
         <th class="num" title="O que os vendedores do time recuperaram, de QUALQUER base — é quem leva o crédito. O R$ é a VENDA feita no mês.">Recuperado pelo time<br><span class="small">venda no mês</span></th>
         <th class="num" title="Recuperações do time em clientes da base de OUTRO time">De outra base</th>
         <th class="num" title="Clientes da base do time que OUTROS times recuperaram (o time não vendeu). Recuperado da base = (pelo time − de outra base) + por outros.">Por outros</th>
-        <th class="num" title="Entraram em risco − recuperados do risco (sem os da base perdida), em clientes e em valor mensal. Positivo (vermelho) = a carteira em risco cresceu; negativo (verde) = diminuiu.">Variação do risco</th>
+        <th class="num" title="Recuperados do risco − entraram em risco (sem os da base perdida), em clientes e em valor mensal. Positivo (verde) = recuperou mais do que perdeu; negativo (vermelho) = perdeu mais do que recuperou.">Saldo de recuperação</th>
       </tr></thead>
       <tbody id="timesBody"></tbody>
     </table></div>
@@ -163,7 +164,7 @@
         <th class="num" title="O que ele recuperou, de QUALQUER base — é quem leva o crédito. O R$ é a VENDA feita no mês.">Recuperado por ele<br><span class="small">venda no mês</span></th>
         <th class="num" title="Recuperações dele em clientes da carteira de OUTRO vendedor">De outra base</th>
         <th class="num" title="Clientes da carteira dele que OUTROS vendedores recuperaram (ele não vendeu). Recuperado da base = (por ele − de outra base) + por outros.">Por outros</th>
-        <th class="num" title="Entraram em risco − recuperados do risco (sem os da base perdida), em clientes e em valor mensal. Positivo (vermelho) = a carteira em risco cresceu; negativo (verde) = diminuiu.">Variação do risco</th>
+        <th class="num" title="Recuperados do risco − entraram em risco (sem os da base perdida), em clientes e em valor mensal. Positivo (verde) = recuperou mais do que perdeu; negativo (vermelho) = perdeu mais do que recuperou.">Saldo de recuperação</th>
       </tr></thead>
       <tbody id="rcasBody"></tbody>
     </table></div>
@@ -279,7 +280,7 @@ function clsSinal(v) { return v > 0 ? 'saldo-pos' : (v < 0 ? 'saldo-neg' : ''); 
 function sinalBRL(v) { return (v > 0 ? '+' : '') + BRL.format(v || 0); }
 function celSaldo(r) {
   const cls = r.saldo > 0 ? 'saldo-pos' : (r.saldo < 0 ? 'saldo-neg' : '');
-  return `<td class="num" title="Entraram em risco ${NUM.format(r.entraram || 0)} (${BRL.format(r.valor_entraram || 0)}/mês) − recuperados do risco ${NUM.format(r.rec_risco_da_base || 0)} (${BRL.format(r.valor_rec_risco_da_base || 0)}/mês)">`
+  return `<td class="num" title="Recuperados do risco ${NUM.format(r.rec_risco_da_base || 0)} (${BRL.format(r.valor_rec_risco_da_base || 0)}/mês) − entraram em risco ${NUM.format(r.entraram || 0)} (${BRL.format(r.valor_entraram || 0)}/mês)">`
     + `<span class="${cls}">${sinal(r.saldo)}</span> <span class="small ${clsSinal(r.valor_saldo)}">· ${sinalBRL(r.valor_saldo)}</span></td>`;
 }
 
@@ -312,13 +313,13 @@ function renderPonte() {
   // piorou (diminuindo); negativo = avançando. "O vendedor bate o olho e já incomoda."
   // 05/10/2026: escrito como VERBO ("cresceu 179") — o "+179" em vermelho era lido como ganho.
   const c = _data.cards, cls = c.saldo > 0 ? 'saldo-pos' : (c.saldo < 0 ? 'saldo-neg' : '');
-  const verbo = c.saldo > 0 ? 'cresceu' : (c.saldo < 0 ? 'diminuiu' : 'ficou igual');
+  const leitura = c.saldo > 0 ? 'recuperou mais do que perdeu' : (c.saldo < 0 ? 'perdeu mais do que recuperou' : 'empatou');
   // sem o campo (resposta antiga em cache) a faixa some em vez de mostrar um "0" enganoso
   document.getElementById('ponteSaldo').classList.toggle('hidden', c.saldo == null);
   document.getElementById('ponteSaldo').innerHTML =
-    `<b>Carteira em risco no mês</b> <span class="n ${cls}">${verbo}${c.saldo ? ' ' + NUM.format(Math.abs(c.saldo)) + ' clientes' : ''}</span>` +
+    `<b>Saldo de recuperação</b> <span class="n ${cls}">${sinal(c.saldo)} clientes</span>` +
     `<span class="${clsSinal(c.saldo_valor)}">${sinalBRL(c.saldo_valor)}/mês</span>` +
-    `<span class="small">entraram ${NUM.format(p.entraram)} − recuperados do risco ${NUM.format(p.recuperados)} · crescer = piorou, diminuir = avançou</span>`;
+    `<span class="small">recuperados do risco ${NUM.format(p.recuperados)} − entraram em risco ${NUM.format(p.entraram)} · ${leitura} · positivo = bom</span>`;
   const recortado = _sup || _vend;
   document.getElementById('ponteNota').innerHTML =
     `Posição no <b>fim de ${MES(_data.mes)}</b>${_data.parcial ? ' (mês em curso)' : ''}. Clientes e, embaixo, o <b>valor mensal</b> deles (R$ por mês; passe o mouse para o valor exato). Também voltaram <b>${NUM.format(p.resgatados_perdidos)}</b> clientes da base perdida (mais de ${_data.regua.perdido_dias} dias), que não passam pelo estoque em risco — por isso o card "Venda recuperada" e a coluna "Recuperado da base" contam ${NUM.format(p.recuperados + p.resgatados_perdidos)}. ` +
@@ -352,7 +353,7 @@ function renderSerie() {
       datasets: [
         { type:'bar', label:'Entraram em risco', data:ent, backgroundColor:red + 'cc', order:2 },
         { type:'bar', label:'Recuperados do risco', data:rec, backgroundColor:green + 'cc', order:2 },
-        { type:'line', label:'Variação (entraram − recuperados)', data:ent.map((v, i) => v - rec[i]),
+        { type:'line', label:'Saldo (recuperados − entraram)', data:rec.map((v, i) => v - ent[i]),
           borderColor:acc, backgroundColor:acc, tension:.25, order:1 },
       ],
     },
@@ -361,9 +362,9 @@ function renderSerie() {
       plugins:{ tooltip:{ callbacks:{
         label:c => `${c.dataset.label}: ${c.datasetIndex === 2 && c.parsed.y > 0 ? '+' : ''}${fmt(c.parsed.y)}${rs ? '/mês' : ''}`,
         footer:items => {
-          const x = s[items[0].dataIndex], v = rs ? x.valor_mensal.entraram - x.valor_mensal.recuperados
-                                                 : x.clientes.entraram - x.clientes.recuperados;
-          return [`Variação do mês: ${v > 0 ? 'carteira em risco CRESCEU' : (v < 0 ? 'carteira em risco DIMINUIU' : 'ficou igual')}`,
+          const x = s[items[0].dataIndex], v = rs ? x.valor_mensal.recuperados - x.valor_mensal.entraram
+                                                 : x.clientes.recuperados - x.clientes.entraram;
+          return [`Saldo do mês: ${v > 0 ? 'recuperou mais do que perdeu' : (v < 0 ? 'perdeu mais do que recuperou' : 'empatou')}`,
                   `Em risco no fim: ${NUM.format(x.clientes.risco_fim)} clientes · ${BRL.format(x.valor_mensal.risco_fim)}/mês`,
                   `Venda feita aos recuperados: ${BRL.format(x.venda_recuperada)}`];
         } } } },

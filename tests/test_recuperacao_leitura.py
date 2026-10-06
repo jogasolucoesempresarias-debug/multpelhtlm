@@ -62,8 +62,8 @@ def test_recuperado_da_base_se_abre_em_risco_mais_perdida(pl):
 # ───────────────────────── 2. o saldo se refaz com a linha ─────────────────────────
 def test_variacao_se_refaz_com_as_colunas_da_linha(pl):
     for s in _slots(pl):
-        assert s['saldo'] == s['entraram'] - s['rec_risco_da_base']
-    assert pl['rcas'][29]['saldo'] == 1 - 3
+        assert s['saldo'] == s['rec_risco_da_base'] - s['entraram']
+    assert pl['rcas'][29]['saldo'] == 3 - 1
 
 
 # ───────────────────────── 4. a volta do "de outra base" ─────────────────────────
@@ -83,7 +83,7 @@ def test_a_linha_fecha_base_igual_proprios_mais_outros(pl):
 
 def test_soma_do_por_outros_nao_muda_a_ponte(pl):
     p = recup.ponte_de(MOVS, 202609)
-    assert sum(s['saldo'] for s in pl['rcas'].values()) == p['clientes']['entraram'] - p['clientes']['recuperados']
+    assert sum(s['saldo'] for s in pl['rcas'].values()) == p['clientes']['recuperados'] - p['clientes']['entraram']
 
 
 # ───────────────────────── endpoint ─────────────────────────
@@ -101,7 +101,7 @@ def test_rota_devolve_os_campos_novos(client, usuario_admin, monkeypatch):
 
 def test_cache_da_resposta_subiu_de_versao():
     fonte = Path('server.py').read_text(encoding='utf-8')
-    assert "'recuperacao:resumo:v3'" in fonte and "'recuperacao:resumo:v2'" not in fonte
+    assert "'recuperacao:resumo:v4'" in fonte and "'recuperacao:resumo:v3'" not in fonte
 
 
 # ───────────────────────── tela ─────────────────────────
@@ -112,7 +112,7 @@ def test_placar_mostra_entraram_por_outros_e_a_variacao():
     h = HTML.read_text(encoding='utf-8')
     assert h.count('>Entraram em risco<') >= 2              # times e vendedores
     assert h.count('>Por outros<') >= 2
-    assert h.count('>Variação do risco<') >= 2
+    assert h.count('>Saldo de recuperação<') >= 2
     assert '>Saldo<' not in h                               # o "+179" em vermelho lia como ganho
     assert 'rec_perdido_da_base' in h and 'rec_por_outros' in h and 'valor_entraram' in h
 
@@ -140,7 +140,8 @@ def test_grafico_mostra_entraram_x_recuperados_e_a_variacao():
     assert "label:'Entraram em risco'" in corpo and "label:'Recuperados do risco'" in corpo
     assert 'x.clientes.entraram' in corpo and 'x.clientes.recuperados' in corpo
     assert 'x.valor_mensal.entraram' in corpo                  # modo R$/mês, mesma régua do card
-    assert 'Variação' in corpo                                 # o saldo do mês no balão
+    assert 'Saldo (recuperados − entraram)' in corpo         # a linha: acima do zero = bom (06/10)
+    assert 'recuperou mais do que perdeu' in corpo            # o saldo do mês no balão
     assert 'setModoSerie' in h and '12 meses — entraram em risco × recuperados' in h
 
 

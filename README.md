@@ -317,6 +317,14 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
       traz o saldo, o estoque no fim e a venda aos recuperados. Mesma `serie` (ponte de cada mês),
       zero query. ⚠️ A cor do R$ segue o **próprio** sinal (`clsSinal`): clientes e R$ podem
       discordar (abr/26 do Eliedson: −1 cliente e +R$ 818/mês).
+    - 🔄 **SINAL INVERTIDO: "Saldo de recuperação" = recuperados do risco − entraram**
+      (06/10/2026, João: *"na nossa cabeça + é bom e − é ruim… quem fez um bom trabalho fica
+      negativo"*). Era entraram − recuperados (positivo = ruim), decisão dele de 29/09 que não
+      sobreviveu ao uso. **Positivo/verde = recuperou mais do que perdeu**; a linha do gráfico acima
+      do zero = bom. Vale na ponte, nas colunas de time/vendedor, no gráfico e na aba **Evolução**
+      (`saldo`/`saldo_medio`, que era `variacao`). Mesma informação, só o sinal — mas mexe no
+      significado do campo `saldo` do placar: cache `recuperacao:resumo:v4` e `evolucao:…:v2`.
+      O "% da base em risco" NÃO inverteu: é estoque, menor continua melhor.
   - **Plano de ação por cliente** (CRM leve, `plano_cliente.py` + `static/plano-cliente.js`, tabela
     `cliente_plano`): 6 status de um toque nas listas (Próximo Pedido, Recuperação, ficha do cliente).
     - 🩹 **"Registrado em 13:38" eram 10:38** (05/10/2026). A mesma armadilha do `multpel_log` em
@@ -373,6 +381,15 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
     somadas), nunca dia de início contra dia de fim — o relatório de performance do estoque mostrou
     um −46% fabricado pelo dia escolhido. A tela diz que é **evidência, não prova** (seleção: quem
     usa pode ser o time mais organizado).
+  - ⚠️ **"Usa × não usa" SAIU DA TELA em 06/10/2026** (coluna, filtro, limiar, card e linhas do
+    gráfico). Em produção, 10 times apareciam com exatamente "11 dias em 09/26": um único usuário
+    supervisor com quase todas as áreas marcava todos como "usa", e o "não usa" sobrou só com
+    DIRETORIA/BIMBO/RONILSON/Sem time — a comparação não media nada. O backend continua gravando
+    o `uso_mensal` e expondo `uso`/`?uso=`; para voltar: usuário com ≥ 4 áreas conta como gestão (não
+    marca time), amostra mínima de base e canais (e-commerce, diretoria, prospecção) fora do campo.
+  - Sazonalidade medida (BI, régua da tela): a cobertura cai de mai–jul para ago–set TODO ano
+    (2025: −2,0 p.p.; 2026: −1,4 p.p.) — antes × depois sem o mesmo período do ano anterior
+    confunde estação com efeito. Próximo passo: série de 24 meses e coluna "Δ no mesmo período de 2025".
   - 🚧 Fase 2: receita/margem e nota da Performance mês a mês (cada uma é query nova por mês).
     Gate: `tests/test_evolucao_carteira.py`.
 - **Admin** — CRUD usuários, cron de email, multi-CC, segmento RFM, editor de metas. **+ acesso por área, comprador vinculado e relatórios de Compras** (ver abaixo).

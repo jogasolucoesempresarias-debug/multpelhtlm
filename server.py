@@ -5601,7 +5601,8 @@ def api_recuperacao():
     # v2 (29/09/2026): a resposta ganhou o SALDO (cards + placar). Sem subir a versão, a produção
     # serviu a resposta antiga do cache por até 1 h depois do deploy e a tela mostrou saldo 0.
     # v3 (05/10/2026): placar ganhou rec_perdido_da_base e rec_por_outros.
-    key = cache_key_for_user('recuperacao:resumo:v3', {
+    # v4 (06/10/2026): o saldo INVERTEU o sinal (recuperados − entraram, positivo = bom).
+    key = cache_key_for_user('recuperacao:resumo:v4', {
         'mes': am, 'sup': request.args.get('supervisor', ''), 'vend': request.args.get('vendedor', ''),
         'p': f"{base['ina']}:{base['per']}:{base['atual']}"})
     cached = _cache_get(key)
@@ -5666,9 +5667,9 @@ def api_recuperacao():
             'venda_recuperada': ponte['venda_recuperada'],
             'recuperados': ponte['clientes']['recuperados'] + ponte['clientes']['resgatados_perdidos'],
             'dinheiro_na_mesa': round(ponte['valor_mensal']['risco_fim'] + camada_b, 2),
-            # saldo do mês (João, 29/09/2026): entraram em risco − recuperados do risco (> 0 = piorou)
-            'saldo': ponte['clientes']['entraram'] - ponte['clientes']['recuperados'],
-            'saldo_valor': round(ponte['valor_mensal']['entraram'] - ponte['valor_mensal']['recuperados'], 2),
+            # saldo de recuperação (06/10/2026): recuperados do risco − entraram (> 0 = melhorou)
+            'saldo': ponte['clientes']['recuperados'] - ponte['clientes']['entraram'],
+            'saldo_valor': round(ponte['valor_mensal']['recuperados'] - ponte['valor_mensal']['entraram'], 2),
             'camada_a_risco': ponte['valor_mensal']['risco_fim'],
             'camada_b_positivacao': camada_b,
             'ficou': ficou,
@@ -11048,7 +11049,7 @@ def _evolucao_dados(limiar):
     RBAC e filtros é do endpoint. Cache por mês de referência e limiar."""
     base = _recup_base()
     ref = base['ref']
-    key = f'multpel:evolucao:{ref}:{limiar}:v1'
+    key = f'multpel:evolucao:{ref}:{limiar}:v2'   # v2: saldo com sinal invertido
     cached = _cache_get(key)
     if cached is not None:
         return cached

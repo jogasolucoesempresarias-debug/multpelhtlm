@@ -1,5 +1,9 @@
 """Saldo do mês na Recuperação (pedido do João, 29/09/2026: "risco menos recuperado = saldo").
 
+⚠️ SINAL INVERTIDO em 06/10/2026 (João: "na nossa cabeça + é bom e − é ruim… quem fez um bom
+trabalho fica negativo"): agora é o SALDO DE RECUPERAÇÃO = recuperados do risco − entraram.
+Positivo = recuperou mais do que perdeu (bom). A informação é a mesma; só o sinal mudou.
+
 Decisão confirmada por ele: saldo = clientes que ENTRARAM em risco no mês − RECUPERADOS do risco no
 mês (e o mesmo em R$/mês). Positivo = a carteira piorou (diminuindo); negativo = avançando.
 Mesmos critérios da ponte da empresa (`ponte_de`): resgatado de PERDIDO não é "recuperado do risco"
@@ -35,23 +39,23 @@ TIME = {29: 17, 30: 19}
 def test_saldo_por_vendedor_e_da_carteira_do_dono():
     pl = recup.placar_de(MOVS, DONO, TIME)
     a, b = pl['rcas'][29], pl['rcas'][30]
-    assert (a['entraram'], a['rec_risco_da_base'], a['saldo']) == (2, 1, 1)          # 2 entraram − 1 recuperado
-    assert a['valor_saldo'] == pytest.approx(150.0 - 70.0)
+    assert (a['entraram'], a['rec_risco_da_base'], a['saldo']) == (2, 1, -1)         # 1 recuperado − 2 entraram
+    assert a['valor_saldo'] == pytest.approx(70.0 - 150.0)
     assert (b['entraram'], b['rec_risco_da_base'], b['saldo']) == (1, 1, 0)
-    assert b['valor_saldo'] == pytest.approx(40.0 - 25.0)
+    assert b['valor_saldo'] == pytest.approx(25.0 - 40.0)
     # a recuperação do cliente 7 conta na BASE do dono (30), não em quem vendeu (29) — é a carteira dele
     t = pl['times']
-    assert (t[17]['saldo'], t[19]['saldo']) == (1, 0)
+    assert (t[17]['saldo'], t[19]['saldo']) == (-1, 0)
 
 
 def test_soma_dos_saldos_fecha_com_a_ponte_da_empresa():
     pl = recup.placar_de(MOVS, DONO, TIME)
     p = recup.ponte_de(MOVS, 202608)
-    saldo_emp = p['clientes']['entraram'] - p['clientes']['recuperados']
-    assert sum(r['saldo'] for r in pl['rcas'].values()) == saldo_emp == 1
+    saldo_emp = p['clientes']['recuperados'] - p['clientes']['entraram']
+    assert sum(r['saldo'] for r in pl['rcas'].values()) == saldo_emp == -1
     assert sum(r['saldo'] for r in pl['times'].values()) == saldo_emp
     assert sum(r['valor_saldo'] for r in pl['rcas'].values()) == pytest.approx(
-        p['valor_mensal']['entraram'] - p['valor_mensal']['recuperados'])
+        p['valor_mensal']['recuperados'] - p['valor_mensal']['entraram'])
 
 
 def test_rota_devolve_card_e_coluna_de_saldo(client, usuario_admin, monkeypatch):
@@ -62,8 +66,8 @@ def test_rota_devolve_card_e_coluna_de_saldo(client, usuario_admin, monkeypatch)
     login_as(client, usuario_admin['email'], usuario_admin['senha'])
     j = client.get('/api/recuperacao').get_json()
     p = j['ponte']
-    assert j['cards']['saldo'] == p['clientes']['entraram'] - p['clientes']['recuperados']
-    assert j['cards']['saldo_valor'] == pytest.approx(p['valor_mensal']['entraram'] - p['valor_mensal']['recuperados'], abs=0.02)
+    assert j['cards']['saldo'] == p['clientes']['recuperados'] - p['clientes']['entraram']
+    assert j['cards']['saldo_valor'] == pytest.approx(p['valor_mensal']['recuperados'] - p['valor_mensal']['entraram'], abs=0.02)
     assert all('saldo' in t and 'valor_saldo' in t for t in j['times'])
     assert all('saldo' in r for r in j['rcas'])
     assert sum(t['saldo'] for t in j['times']) == j['cards']['saldo']
@@ -73,15 +77,15 @@ def test_rota_devolve_card_e_coluna_de_saldo(client, usuario_admin, monkeypatch)
 
 def test_tela_mostra_o_saldo():
     html = Path('recuperacao.html').read_text(encoding='utf-8')
-    assert 'Carteira em risco no mês' in html and 'saldo_valor' in html   # 05/10: "Saldo" → leitura direta
-    assert html.count('>Variação do risco<') >= 2              # coluna nas tabelas de time e de vendedor
+    assert 'Saldo de recuperação' in html and 'saldo_valor' in html     # 06/10: positivo = bom
+    assert html.count('>Saldo de recuperação<') >= 2              # coluna nas tabelas de time e de vendedor
 
 
 def test_versao_do_cache_sobe_quando_a_resposta_muda():
     """Produção, 29/09/2026: depois do deploy a Recuperação mostrou "Saldo do mês 0" — o Redis serviu a
     resposta ANTIGA (sem o campo) com a mesma chave. A chave tem de mudar junto com o conteúdo."""
     fonte = Path('server.py').read_text(encoding='utf-8')
-    assert "'recuperacao:resumo:v3'" in fonte and "'recuperacao:resumo:v2'" not in fonte
+    assert "'recuperacao:resumo:v4'" in fonte and "'recuperacao:resumo:v3'" not in fonte
     assert "'vendedores:ranking:v3'" in fonte and "vendedor:full:v3:" in fonte
     assert "classList.toggle('hidden', c.saldo == null)" in Path('recuperacao.html').read_text(encoding='utf-8')
 

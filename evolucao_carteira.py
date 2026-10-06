@@ -14,8 +14,9 @@ Réguas:
 - COBERTURA = `cobertura.cobertura_por_dono` no último dia de cada mês FECHADO (carteira ativa =
   cadastrados no RCA com compra em 365 d; positivado = comprou em 60 d, de qualquer vendedor). É a
   régua única do Gerencial/Performance/Vendedores: o último mês da série tem de bater com elas.
-- RECUPERAÇÃO = `recuperacao.placar_de` do mês (em risco no fim, entraram, recuperados do risco,
-  variação), na carteira do DONO.
+- RECUPERAÇÃO = `recuperacao.placar_de` do mês (em risco no fim, entraram, recuperados do risco),
+  na carteira do DONO. SALDO DE RECUPERAÇÃO = recuperados − entraram: positivo = recuperou mais do
+  que perdeu (06/10/2026 — antes era o inverso e o João lia o bom trabalho como negativo).
 - Time agrega CONTAGENS (Σ positivados ÷ Σ base). Média de percentuais daria ao RCA de 5 clientes
   o mesmo peso do de 300.
 - USO é do TIME: o time "usa" a partir do 1º mês (≥ marco) em que algum usuário ligado a ele teve
@@ -72,14 +73,14 @@ def _div(a, b):
     return (a / b) if b else None
 
 
-def linha(anomes, base, positivados, em_risco, valor_em_risco, entraram, recuperados, valor_variacao):
+def linha(anomes, base, positivados, em_risco, valor_em_risco, entraram, recuperados, valor_saldo):
     """Um mês de um grupo (empresa, time ou vendedor). Percentuais saem das CONTAGENS."""
     return {'anomes': anomes, 'base': base, 'positivados': positivados,
             'cobertura': _div(positivados, base),
             'em_risco': em_risco, 'valor_em_risco': round(valor_em_risco or 0.0, 2),
             'pct_risco': _div(em_risco, base),
-            'entraram': entraram, 'recuperados': recuperados, 'variacao': entraram - recuperados,
-            'valor_variacao': round(valor_variacao or 0.0, 2)}
+            'entraram': entraram, 'recuperados': recuperados, 'saldo': recuperados - entraram,
+            'valor_saldo': round(valor_saldo or 0.0, 2)}
 
 
 def linha_de(anomes, cob_g, rec_g):
@@ -97,7 +98,7 @@ def somar(linhas, anomes):
         for k in s:
             s[k] += ln.get(k) or 0
         vr += ln.get('valor_em_risco') or 0.0
-        vv += ln.get('valor_variacao') or 0.0
+        vv += ln.get('valor_saldo') or 0.0
     return linha(anomes, s['base'], s['positivados'], s['em_risco'], vr, s['entraram'],
                  s['recuperados'], vv)
 
@@ -141,7 +142,7 @@ def _periodo(linhas):
     risco = sum(ln['em_risco'] for ln in linhas)
     return {'meses': [ln['anomes'] for ln in linhas],
             'cobertura': _div(pos, base), 'pct_risco': _div(risco, base),
-            'variacao_media': (sum(ln['variacao'] for ln in linhas) / len(linhas)) if linhas else None}
+            'saldo_medio': (sum(ln['saldo'] for ln in linhas) / len(linhas)) if linhas else None}
 
 
 def antes_depois(serie, marco, n_antes=3):
@@ -158,5 +159,5 @@ def antes_depois(serie, marco, n_antes=3):
     return {'antes': a, 'depois': d,
             'delta': {'cobertura_pp': _pp(a['cobertura'], d['cobertura']),
                       'pct_risco_pp': _pp(a['pct_risco'], d['pct_risco']),
-                      'variacao_media': (d['variacao_media'] - a['variacao_media'])
-                      if a['variacao_media'] is not None and d['variacao_media'] is not None else None}}
+                      'saldo_medio': (d['saldo_medio'] - a['saldo_medio'])
+                      if a['saldo_medio'] is not None and d['saldo_medio'] is not None else None}}

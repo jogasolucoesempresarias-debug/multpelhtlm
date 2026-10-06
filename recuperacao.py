@@ -195,7 +195,7 @@ def placar_de(movs, dono_de, time_de):
     Identidades que a tela deixa refazer (05/10/2026):
       rec_da_base = rec_risco_da_base + rec_perdido_da_base
       rec_da_base = (rec_por_ele − rec_de_outra_base) + rec_por_outros
-      saldo       = entraram − rec_risco_da_base
+      saldo       = rec_risco_da_base − entraram   (positivo = bom)
     `dono_de` = {codcli: codusur do cadastro}; `time_de` = {codusur: codsupervisor}.
     Venda recuperada de um cliente com dois vendedores no mês é dividida pelo que cada um vendeu.
     """
@@ -215,8 +215,8 @@ def placar_de(movs, dono_de, time_de):
         if m['fim'] == RISCO:
             for tab, k in ((rcas, dono), (times, t_dono)):
                 s = _slot(tab, k); s['em_risco'] += 1; s['valor_em_risco'] += m['valor_fim']
-        # SALDO do mês (João, 29/09/2026): entraram em risco − recuperados DO RISCO, na carteira do
-        # DONO — os mesmos critérios da ponte da empresa, então a soma fecha com ela.
+        # SALDO do mês (João, 29/09/2026), na carteira do DONO — os mesmos critérios da ponte da
+        # empresa, então a soma fecha com ela. Sinal: ver o fim da função.
         if m['entrou']:
             for tab, k in ((rcas, dono), (times, t_dono)):
                 s = _slot(tab, k); s['entraram'] += 1; s['valor_entraram'] += m['valor_mensal_rec'] or m['valor_fim']
@@ -248,8 +248,11 @@ def placar_de(movs, dono_de, time_de):
                     st['rec_de_outra_base'] += 1
     for tab in (rcas, times):
         for s in tab.values():
-            s['saldo'] = s['entraram'] - s['rec_risco_da_base']        # > 0 = carteira piorou no mês
-            s['valor_saldo'] = s['valor_entraram'] - s['valor_rec_risco_da_base']
+            # SALDO DE RECUPERAÇÃO = recuperados do risco − entraram (06/10/2026). Era o contrário
+            # (entraram − recuperados, positivo = ruim) e o João lia "quem fez um bom trabalho fica
+            # negativo". Positivo agora = recuperou mais do que perdeu. Mesma informação, outro sinal.
+            s['saldo'] = s['rec_risco_da_base'] - s['entraram']
+            s['valor_saldo'] = s['valor_rec_risco_da_base'] - s['valor_entraram']
             for k in ('valor_em_risco', 'venda_rec_da_base', 'venda_rec_por_ele', 'valor_entraram',
                       'valor_rec_risco_da_base', 'valor_saldo'):
                 s[k] = round(s[k], 2)

@@ -58,11 +58,11 @@ def test_cliente_sem_dono_ou_de_vendedor_sem_time_vai_para_sem_time():
 # ───────────────────────── linha do mês ─────────────────────────
 def test_linha_do_mes_junta_cobertura_e_recuperacao():
     ln = ev.linha(anomes=202609, base=100, positivados=60, em_risco=20, valor_em_risco=5000.0,
-                  entraram=9, recuperados=16, valor_variacao=-6419.0)
+                  entraram=9, recuperados=16, valor_saldo=6419.0)
     assert ln['cobertura'] == pytest.approx(0.60) and ln['pct_risco'] == pytest.approx(0.20)
-    assert ln['variacao'] == -7
+    assert ln['saldo'] == 7                    # recuperados − entraram: positivo = bom
     vazio = ev.linha(anomes=202609, base=0, positivados=0, em_risco=0, valor_em_risco=0.0,
-                     entraram=0, recuperados=0, valor_variacao=0.0)
+                     entraram=0, recuperados=0, valor_saldo=0.0)
     assert vazio['cobertura'] is None and vazio['pct_risco'] is None
 
 
@@ -70,7 +70,7 @@ def test_somar_linhas_recalcula_percentuais():
     a = ev.linha(202609, 100, 60, 20, 10.0, 5, 3, 1.0)
     b = ev.linha(202609, 50, 10, 5, 5.0, 2, 4, -2.0)
     s = ev.somar([a, b], 202609)
-    assert (s['base'], s['positivados'], s['variacao']) == (150, 70, 0)
+    assert (s['base'], s['positivados'], s['saldo']) == (150, 70, 0)
     assert s['cobertura'] == pytest.approx(70 / 150) and s['valor_em_risco'] == 15.0
 
 
@@ -126,8 +126,8 @@ def test_antes_depois_e_media_do_periodo_com_contagens():
     assert ad['antes']['cobertura'] == pytest.approx(150 / 300)
     assert ad['depois']['cobertura'] == pytest.approx(124 / 200)
     assert ad['delta']['cobertura_pp'] == pytest.approx((124 / 200 - 150 / 300) * 100)
-    assert ad['antes']['variacao_media'] == pytest.approx(3.0)
-    assert ad['depois']['variacao_media'] == pytest.approx(-3.0)
+    assert ad['antes']['saldo_medio'] == pytest.approx(-3.0)
+    assert ad['depois']['saldo_medio'] == pytest.approx(3.0)
 
 
 def test_antes_depois_sem_meses_suficientes_nao_inventa():
@@ -140,8 +140,12 @@ def test_antes_depois_sem_meses_suficientes_nao_inventa():
 def test_menu_e_tela():
     assert "href: '/evolucao'" in Path('static/joga-header.js').read_text(encoding='utf-8')
     h = Path('evolucao.html').read_text(encoding='utf-8')
-    for t in ('/api/evolucao-carteira', 'uso', 'universo', 'Antes', 'Depois', 'dono_fonte'):
+    for t in ('/api/evolucao-carteira', 'universo', 'Antes', 'Depois', 'dono_fonte'):
         assert t in h, t
+    # 06/10/2026: a classificação "usa / não usa" saiu da tela (contaminada por um usuário com quase
+    # todas as áreas); o backend continua gravando o uso para ela voltar corrigida
+    for t in ('selUso', 'selLimiar', 'Times que usam', 'Uso da plataforma</th>'):
+        assert t not in h, t
 
 
 def test_fotos_novas_no_init_db():
