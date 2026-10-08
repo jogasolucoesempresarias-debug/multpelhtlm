@@ -804,6 +804,11 @@ function renderTable(P,cols,view,onClickRow){
 const colCod={key:'codprod',label:'Cód',num:true};
 const colProd={key:'descricao',label:'Produto',fmt:v=>`<span class="prod" title="${esc(v)}">${esc(v)}</span>`};
 const colForn={key:'fornecedor',label:'Fornecedor',fmt:v=>`<span class="prod" title="${esc(v)}">${esc(v||'—')}</span>`};
+// Razão social sem o sufixo societário e sem o "INDUSTRIA E COMERCIO DE" — o nome inteiro fica no title.
+const fornCurto=v=>String(v||'').replace(/\bIND(?:USTRIA|\.)?\s+E\s+COM(?:ERCIO|\.)?(?:\s+D[EOA]S?)?\b/gi,'')
+  .replace(/\s*(?:\bLTDA\b\.?|\bS\/?\.?A\b\.?|\bEIRELI\b|\bEPP\b)\s*/gi,' ').replace(/[\s\-–,.]+$/,'').replace(/\s{2,}/g,' ').trim();
+const colProdCurto={...colProd,fmt:v=>`<span class="prod" style="max-width:280px" title="${esc(v)}">${esc(v)}</span>`};
+const colFornCurto={key:'fornecedor',label:'Fornecedor',fmt:v=>`<span class="prod" style="max-width:200px" title="${esc(v)}">${esc(fornCurto(v)||v||'—')}</span>`};
 const colGiroSpark={key:'giro_mes',label:'Giro/mês',num:true,html:p=>`${int(p.giro_mes)} ${spark(p.serie_giro)}`};
 // crescimento vs. mesmo período do ano anterior. null = sem base no ano passado (item novo ou
 // período anterior a 2024, início do RCA) → "—", nunca −100%.
@@ -1724,15 +1729,18 @@ function renderParado(P){
   const totItens=par.length, totVal=par.reduce((s,p)=>s+(p.valor||0),0);
   if(!S.sort.parado) S.sort.parado={key:'valor',dir:-1};   // maior valor parado primeiro
   P.forEach(p=>{const cx=p.caixa||1; p._dispCx=cx>1?Math.round((p.qtdisp||0)/cx):null;});
-  const cols=[colCod,colProd,colForn,{key:'curva_abc',label:'ABC',badge:true},{key:'dtultsaida',label:'Última venda',fmt:v=>dt(v)},
+  // Tabela ENXUTA (10/2026, pedido do João: "a barra de correr está ruim — perco o cód do produto
+  // até chegar no + plano"). Sem coluna Faixa (os cards/filtro acima já dizem a faixa), Última venda
+  // virou tooltip do Dias parado (é só hoje − dias), Disp. e Disp. cx numa célula e o fornecedor
+  // sem o sufixo societário. Ganho ~400 px — o "+ plano" cabe na tela sem rolar.
+  const cols=[colCod,colProdCurto,colFornCurto,{key:'curva_abc',label:'ABC',badge:true},
     // "Dias parado" do item novo mostra a CHEGADA, não "nunca": dizer "nunca" ao lado do card
     // que acabou de chamá-lo de recém-chegado era a contradição que o diretor leria primeiro.
-    {key:'dias_sem_venda',label:'Dias parado',num:true,html:p=>paradoDiasCel(p)},
+    {key:'dias_sem_venda',label:'Dias parado',num:true,html:p=>`<span title="${p.dtultsaida?'última venda '+dt(p.dtultsaida):'nunca vendeu'}">${paradoDiasCel(p)}</span>`},
     {key:'dias_sem_entrada',label:'Chegou há',num:true,fmt:v=>v==null?'—':int(v)+'d'},
-    {key:'qtdisp',label:'Disp.',num:true,fmt:int},
-    {key:'_dispCx',label:'Disp. cx',num:true,fmt:v=>v==null?'—':int(v)},
+    {key:'qtdisp',label:'Disp.',num:true,html:p=>int(p.qtdisp)+(p._dispCx!=null?` <small class="muted">· ${int(p._dispCx)} cx</small>`:'')},
     {key:'valor',label:'Valor',num:true,fmt:money},
-    {key:'status_saida',label:'Saída',badge:true},{key:'parado_faixa',label:'Faixa',badge:true},
+    {key:'status_saida',label:'Saída',badge:true},
     {key:'_plano',label:'Ação',html:p=>planoCell('parado',String(p.codprod),p.codprod,p.descricao,null)}];
   const nNovos=faixas.find(f=>f.key==='novo')||{qt:0,valor:0};
   const nRec=faixas.find(f=>f.key==='recem_chegado')||{qt:0,valor:0};

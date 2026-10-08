@@ -16,7 +16,7 @@
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const dataBR = (iso) => iso ? String(iso).slice(0, 10).split('-').reverse().join('/') : '—';
-  const ICONE = { ligacao_feita: '📞', sem_contato: '📵', retorno_agendado: '⏰', pedido_prometido: '🤝',
+  const ICONE = { ligacao_feita: '📞', sem_contato: '📵', retorno_agendado: '⏰', pedido_prometido: '🤝', pedido_feito: '🧾',
                   nao_compra_mais: '⛔', transferir: '↪' };
   let _atual = null;           // {codcli, nome, el}
 
@@ -80,6 +80,9 @@
     if (!r || !r.n) return '+ Plano';
     if (r.retorno_situacao === 'hoje') return '⏰ Retorno hoje';
     if (r.retorno_situacao === 'atrasado') return '⏰ Retorno ' + dataBR(r.retorno) + ' (atrasado)';
+    // pedido feito: some da lista até faturar; passou do prazo sem NF, volta em destaque
+    if (r.pedido && r.pedido.situacao === 'nao_faturou') return '🧾 Pedido de ' + dataBR((r.ultimo || {}).data_acao) + ' não faturou (' + r.pedido.dias + 'd)';
+    if (r.pedido) return '🧾 Pedido feito · aguardando faturar' + (r.pedido.dias ? ' (' + r.pedido.dias + 'd)' : '');
     const u = r.ultimo || {};
     return (ICONE[u.status] || '•') + ' ' + esc(u.rotulo) + ' · ' + dataBR(u.status === 'retorno_agendado' ? r.retorno : u.data_acao)
       + (r.n > 1 ? ' (' + r.n + ')' : '');

@@ -142,7 +142,10 @@ def _periodo(linhas):
     risco = sum(ln['em_risco'] for ln in linhas)
     return {'meses': [ln['anomes'] for ln in linhas],
             'cobertura': _div(pos, base), 'pct_risco': _div(risco, base),
-            'saldo_medio': (sum(ln['saldo'] for ln in linhas) / len(linhas)) if linhas else None}
+            'saldo_medio': (sum(ln['saldo'] for ln in linhas) / len(linhas)) if linhas else None,
+            # a mesma média em R$/mês (botão Clientes | R$/mês da tela, João 06/10/2026)
+            'saldo_medio_valor': (sum(ln.get('valor_saldo') or 0.0 for ln in linhas) / len(linhas))
+            if linhas else None}
 
 
 def antes_depois(serie, marco, n_antes=3):
@@ -160,4 +163,6 @@ def antes_depois(serie, marco, n_antes=3):
             'delta': {'cobertura_pp': _pp(a['cobertura'], d['cobertura']),
                       'pct_risco_pp': _pp(a['pct_risco'], d['pct_risco']),
                       'saldo_medio': (d['saldo_medio'] - a['saldo_medio'])
-                      if a['saldo_medio'] is not None and d['saldo_medio'] is not None else None}}
+                      if a['saldo_medio'] is not None and d['saldo_medio'] is not None else None,
+                      'saldo_medio_valor': (d['saldo_medio_valor'] - a['saldo_medio_valor'])
+                      if a['saldo_medio_valor'] is not None and d['saldo_medio_valor'] is not None else None}}

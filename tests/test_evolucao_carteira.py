@@ -274,3 +274,36 @@ def test_clicar_no_vendedor_troca_graficos_e_cards():
     corpo = h[h.index('function escopo('):h.index('function renderKpis(')]
     assert '_d.rcas.find' in corpo and 'F.vendedor' in corpo
     assert "irVendedor(" in h[h.index('function linhaTabela('):h.index('function renderTabela(')]
+
+
+def test_saldo_zero_aparece_no_grafico():
+    """Saldo 0 (recuperou exatamente o que perdeu) virava um buraco no gráfico e parecia dado
+    faltando (Gabriel, 06/10/2026 — IGOR em 12/25 e 08/26: 8−8 e 13−13). Barra mínima e cinza."""
+    h = Path('evolucao.html').read_text(encoding='utf-8')
+    corpo = h[h.index("label:'Saldo de recuperação ('"):h.index('function linhaTabela(')]
+    assert 'minBarLength' in corpo and "(!v ? dim" in corpo
+
+
+def test_saldo_medio_em_reais_no_antes_depois():
+    """Botão Clientes | R$/mês (João, 06/10/2026): a tabela e o card precisam da MESMA média em R$,
+    senão o gráfico troca de régua e o resto da tela continua em clientes."""
+    serie = [ev.linha(am, 100, 50, 30, 0.0, 5, 5, v) for am, v in
+             ((202605, -1000.0), (202606, -2000.0), (202607, -3000.0), (202608, 4000.0), (202609, 2000.0))]
+    ad = ev.antes_depois(serie, marco=202608, n_antes=3)
+    assert ad['antes']['saldo_medio_valor'] == pytest.approx(-2000.0)
+    assert ad['depois']['saldo_medio_valor'] == pytest.approx(3000.0)
+    assert ad['delta']['saldo_medio_valor'] == pytest.approx(5000.0)
+    assert ev.antes_depois(serie[3:], marco=202608)['antes']['saldo_medio_valor'] is None
+
+
+def test_botao_clientes_reais_troca_grafico_card_e_tabela():
+    h = Path('evolucao.html').read_text(encoding='utf-8')
+    assert 'id="modoCli"' in h and 'id="modoRs"' in h
+    # gráfico, card e tabela leem do MESMO seletor de modo
+    assert 'data:e.serie.map(saldoMes)' in h
+    kpi = h[h.index('function renderKpis('):h.index('const marcoPlugin')]
+    tab = h[h.index('function linhaTabela('):h.index('function renderTabela(')]
+    assert 'saldoMedio(ad.depois)' in kpi and 'saldoMedio(ad.depois)' in tab
+    # o gráfico de cobertura não ganha o botão
+    cob = h[h.index('_cCob = new Chart'):h.index('_cVar = new Chart')]
+    assert '_modo' not in cob

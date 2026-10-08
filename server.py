@@ -4198,6 +4198,31 @@ def api_carteira_positivacao_abc():
     return jsonify(resp)
 
 
+def _proximo_elegiveis(clientes, janela, dias_janela, trat=None):
+    """Lista do dia com o PLANO DE AÇÃO aplicado — fonte única da tela, do CSV e do PDF (antes os
+    exports ignoravam retorno e tratativa e saíam diferentes da tela). Devolve
+    (elegiveis, na_janela, resumos, vazio).
+    - RETORNO AGENDADO de hoje/atrasado e PEDIDO QUE NÃO FATUROU entram em "A ligar hoje" em
+      destaque, mesmo fora da previsão do ciclo (João 29/09 e 08/10/2026);
+    - PEDIDO FEITO aguardando faturar sai de TODA janela — o pedido existe, só a NF não saiu;
+      `tratativa=aguardando` lista só esses (independe da janela)."""
+    resumos = _plano_resumos(clientes)
+    vazio = plano.resumo([], _hoje_ref())
+    pl = lambda c: resumos.get(c['codcli']) or vazio
+    if trat == 'aguardando':
+        sel = [c for c in clientes if pl(c)['aguardando']]
+        return sel, sel, resumos, vazio
+    elegiveis = _clientes_proximo_pedido(clientes, janela, dias_janela)
+    if janela == 'hoje':
+        ja = {c['codcli'] for c in elegiveis}
+        elegiveis = elegiveis + [c for c in clientes if c['codcli'] not in ja and pl(c)['destaque']]
+    elegiveis = [c for c in elegiveis if not pl(c)['aguardando']]
+    na_janela = elegiveis
+    if trat in ('com', 'sem'):
+        elegiveis = [c for c in elegiveis if bool(pl(c)['n']) == (trat == 'com')]
+    return elegiveis, na_janela, resumos, vazio
+
+
 @app.route('/api/carteira/proximo-pedido')
 @login_required
 def api_carteira_proximo_pedido():
@@ -4210,22 +4235,9 @@ def api_carteira_proximo_pedido():
         dias_janela = int(request.args.get('dias', 3))
     except (TypeError, ValueError):
         dias_janela = 3
-    elegiveis = _clientes_proximo_pedido(clientes, janela, dias_janela)
-
-    # ── Plano de ação (CRM leve, João 29/09/2026) ──
-    # O cliente com RETORNO AGENDADO para hoje (ou atrasado) entra na lista "A ligar hoje" em
-    # destaque, mesmo fora da previsão do ciclo — foi o vendedor que marcou a volta.
-    hoje_ref = _hoje_ref()
-    resumos = _plano_resumos(clientes)
-    vazio = plano.resumo([], hoje_ref)
-    if janela == 'hoje':
-        ja = {c['codcli'] for c in elegiveis}
-        elegiveis = elegiveis + [c for c in clientes if c['codcli'] not in ja
-                                 and (resumos.get(c['codcli']) or vazio)['destaque']]
-    na_janela = elegiveis
-    trat = request.args.get('tratativa')
-    if trat in ('com', 'sem'):
-        elegiveis = [c for c in elegiveis if bool((resumos.get(c['codcli']) or vazio)['n']) == (trat == 'com')]
+    elegiveis, na_janela, resumos, vazio = _proximo_elegiveis(
+        clientes, janela, dias_janela, request.args.get('tratativa'))
+    pl = lambda c: resumos.get(c['codcli']) or vazio
 
     # Reusa filtros (time/vendedor/uf/busca) + paginação; ordena por prioridade desc por padrão.
     args = dict(request.args)
@@ -4247,8 +4259,10 @@ def api_carteira_proximo_pedido():
         if v:
             geo[k] = v
     # 16+ dias vencido o diretor NÃO quer → fora dos cards também (janela acionável = -7 a +15)
+    # quem já tem PEDIDO FEITO aguardando faturar não é "a ligar" — fora dos cards de janela também
     base_all = [c for c in clientes if c.get('ciclo_pessoal') is not None
-                and c.get('dias_atraso') is not None and c['dias_atraso'] <= 15]
+                and c.get('dias_atraso') is not None and c['dias_atraso'] <= 15
+                and not pl(c)['aguardando']]
     base = _filtrar_carteira(base_all, geo)['rows']
     acionaveis = [c for c in base if c['dias_atraso'] >= 0]  # hoje + vencidos 1-15
     top = max(acionaveis, key=lambda c: c.get('prioridade_contato') or 0, default=None)
@@ -4257,9 +4271,14 @@ def api_carteira_proximo_pedido():
         # tratativa: quantos clientes da janela (com os filtros de time/vendedor/busca) têm registro
         # no acompanhamento atual — o "quem recebeu tratativa" que o gestor pediu
         'na_janela':     len(na_janela_geo),
-        'com_tratativa': sum(1 for c in na_janela_geo if (resumos.get(c['codcli']) or vazio)['n']),
+        'com_tratativa': sum(1 for c in na_janela_geo if pl(c)['n']),
         'retornos_hoje': sum(1 for c in _filtrar_carteira(
-            [c for c in clientes if (resumos.get(c['codcli']) or vazio)['destaque']], geo)['rows']),
+            [c for c in clientes if pl(c)['retorno_situacao'] in ('hoje', 'atrasado')], geo)['rows']),
+        # pedido feito: os que aguardam faturar (fora da lista) e os que passaram do prazo sem NF
+        'aguardando_faturar': sum(1 for c in _filtrar_carteira(
+            [c for c in clientes if pl(c)['aguardando']], geo)['rows']),
+        'pedido_nao_faturou': sum(1 for c in _filtrar_carteira(
+            [c for c in clientes if (pl(c)['pedido'] or {}).get('situacao') == 'nao_faturou'], geo)['rows']),
         'hoje':          sum(1 for c in base if c['dias_atraso'] == 0),
         'proximos7':     sum(1 for c in base if -7 <= c['dias_atraso'] <= -1),
         'vencido15':     sum(1 for c in base if 1 <= c['dias_atraso'] <= 15),
@@ -4972,7 +4991,7 @@ def api_carteira_proximo_pedido_pdf():
         dias_janela = int(request.args.get('dias', 3))
     except (TypeError, ValueError):
         dias_janela = 3
-    elegiveis = _clientes_proximo_pedido(clientes, janela, dias_janela)
+    elegiveis = _proximo_elegiveis(clientes, janela, dias_janela, request.args.get('tratativa'))[0]
     args = dict(request.args)
     args.update({'limit': 100000, 'offset': 0, '_interno': True,
                  'sort': 'proximo_pedido', 'dir': 'asc'})
@@ -5023,7 +5042,7 @@ def api_carteira_proximo_pedido_csv():
         dias_janela = int(request.args.get('dias', 3))
     except (TypeError, ValueError):
         dias_janela = 3
-    elegiveis = _clientes_proximo_pedido(clientes, janela, dias_janela)
+    elegiveis = _proximo_elegiveis(clientes, janela, dias_janela, request.args.get('tratativa'))[0]
     args = dict(request.args)
     args.update({'limit': 100000, 'offset': 0, '_interno': True})
     args.setdefault('sort', 'prioridade')
@@ -11074,7 +11093,7 @@ def _evolucao_dados(limiar):
     RBAC e filtros é do endpoint. Cache por mês de referência e limiar."""
     base = _recup_base()
     ref = base['ref']
-    key = f'multpel:evolucao:{ref}:{limiar}:v2'   # v2: saldo com sinal invertido
+    key = f'multpel:evolucao:{ref}:{limiar}:v3'   # v2: saldo com sinal invertido · v3: saldo_medio_valor
     cached = _cache_get(key)
     if cached is not None:
         return cached

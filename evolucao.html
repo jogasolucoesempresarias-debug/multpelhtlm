@@ -104,7 +104,13 @@
       <div class="chart-wrap"><canvas id="chartCob"></canvas></div>
     </div>
     <div class="card">
-      <h3>Saldo de recuperação — recuperados do risco − entraram</h3>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        <h3 style="margin:0">Saldo de recuperação — recuperados do risco − entraram</h3>
+        <div style="display:flex;gap:6px">
+          <button class="btn-sm on" id="modoCli" onclick="setModo('clientes')">Clientes</button>
+          <button class="btn-sm" id="modoRs" onclick="setModo('valor')" title="Valor mensal dos clientes (venda 12m até a última compra ÷ 12) — não é o faturamento do mês">R$/mês</button>
+        </div>
+      </div>
       <div class="chart-wrap"><canvas id="chartVar"></canvas></div>
     </div>
   </div>
@@ -115,7 +121,7 @@
       <thead>
         <tr class="grp"><th></th><th></th>
           <th colspan="3" class="num">Cobertura</th><th colspan="3" class="num">% da base em risco</th>
-          <th colspan="2" class="num">Saldo de recuperação / mês</th></tr>
+          <th colspan="2" class="num" id="thSaldo">Saldo de recuperação / mês</th></tr>
         <tr>
           <th id="thNome">Time</th><th>Universo</th>
           <th class="num">Antes</th><th class="num">Depois</th><th class="num">Δ</th>
@@ -150,10 +156,26 @@ const params = new URLSearchParams(location.search);
 const F = { universo: params.get('universo') || '', supervisor: params.get('supervisor') || '',
             vendedor: params.get('vendedor') || '' };
 let _d = null, _cCob = null, _cVar = null;
+// Botão Clientes | R$/mês (João, 06/10/2026: "o de receita é tão ou mais importante"). Troca o
+// gráfico de saldo, o card e a coluna de saldo da tabela JUNTOS — senão a tela se contradiz. O
+// gráfico de cobertura NÃO troca: cobertura em R$ seria outra métrica. Cor pelo PRÓPRIO sinal.
+let _modo = params.get('modo') === 'valor' ? 'valor' : 'clientes';
+const BRL_S = v => (v == null ? '—' : (v > 0 ? '+' : (v < 0 ? '−' : '')) + BRL.format(Math.abs(v)));
+const saldoMes = x => _modo === 'valor' ? x.valor_saldo : x.saldo;
+const saldoMedio = p => _modo === 'valor' ? p.saldo_medio_valor : p.saldo_medio;
+const fmtSaldo = v => _modo === 'valor' ? BRL_S(v) : NUM1(v);
+function setModo(m) {
+  _modo = m;
+  const p = new URLSearchParams(location.search);
+  if (m === 'valor') p.set('modo', 'valor'); else p.delete('modo');
+  history.replaceState(null, '', '/evolucao' + (p.toString() ? '?' + p : ''));
+  render();
+}
 
 function qs() {
   const p = new URLSearchParams();
   Object.entries(F).forEach(([k, v]) => { if (v) p.set(k, v); });
+  if (_modo === 'valor') p.set('modo', 'valor');
   return p.toString();
 }
 function navegar() { history.replaceState(null, '', '/evolucao' + (qs() ? '?' + qs() : '')); carregar(); }
@@ -191,8 +213,12 @@ function render() {
   document.getElementById('regua').innerHTML =
     `<b>Cobertura</b> = % da carteira ativa (clientes cadastrados no vendedor que compraram em 365 dias) que comprou nos últimos 60 dias, no fim de cada mês — a mesma régua do Gerencial e da Performance · ` +
     `<b>% em risco</b> = clientes da base com mais de 60 dias sem comprar e além do próprio ciclo · ` +
-    `<b>saldo de recuperação</b> = recuperados do risco − entraram em risco no mês (positivo = recuperou mais do que perdeu) · ` +
+    `<b>saldo de recuperação</b> = recuperados do risco − entraram em risco no mês (positivo = recuperou mais do que perdeu)` +
+    (_modo === 'valor' ? `, em <b>R$/mês</b> = valor mensal desses clientes (venda 12m até a última compra ÷ 12) — não é o faturamento do mês; numa carteira pequena um cliente grande decide o mês` : '') + ` · ` +
     `<b>Antes</b> = ${p.a} · <b>Depois</b> = ${p.d} (uso da plataforma registrado desde ${MES(_d.marco)}). Antes × depois é a <b>média do período</b>, não o primeiro dia contra o último.`;
+  document.getElementById('modoCli').classList.toggle('on', _modo === 'clientes');
+  document.getElementById('modoRs').classList.toggle('on', _modo === 'valor');
+  document.getElementById('thSaldo').textContent = 'Saldo de recuperação / mês' + (_modo === 'valor' ? ' (R$/mês)' : ' (clientes)');
   renderBreadcrumb(); renderKpis(); renderCharts(); renderTabela(); renderAvisos();
 }
 
@@ -227,8 +253,8 @@ function renderKpis() {
       s:`antes ${PCT(ad.antes.cobertura)} → depois ${PCT(ad.depois.cobertura)} · <span class="${cls(ad.delta.cobertura_pp, true)}">${PP(ad.delta.cobertura_pp)}</span>` },
     { c:'r', l:'% da base em risco · ' + MES(ult.anomes), v:PCT(ult.pct_risco),
       s:`antes ${PCT(ad.antes.pct_risco)} → depois ${PCT(ad.depois.pct_risco)} · <span class="${cls(ad.delta.pct_risco_pp, false)}">${PP(ad.delta.pct_risco_pp)}</span>` },
-    { c:'o', l:'Saldo de recuperação / mês', v:NUM1(ad.depois.saldo_medio),
-      s:`média depois · antes ${NUM1(ad.antes.saldo_medio)} clientes/mês (positivo = recuperou mais do que perdeu)` },
+    { c:'o', l:'Saldo de recuperação / mês' + (_modo === 'valor' ? ' · R$' : ''), v:fmtSaldo(saldoMedio(ad.depois)),
+      s:`média depois · antes ${fmtSaldo(saldoMedio(ad.antes))} ${_modo === 'valor' ? 'em valor mensal' : 'clientes/mês'} (positivo = recuperou mais do que perdeu)` },
     { c:'g', l:'Em risco no fim · ' + MES(ult.anomes), v:NUM.format(ult.em_risco || 0),
       s:`clientes · ${BRL.format(ult.valor_em_risco || 0)}/mês em valor mensal · ${NUM.format(ult.base || 0)} clientes na base` },
   ];
@@ -273,14 +299,20 @@ function renderCharts() {
   if (_cVar) _cVar.destroy();
   _cVar = new Chart(document.getElementById('chartVar'), {
     type:'bar', plugins:[marcoPlugin],
-    data:{ labels, datasets:[{ label:'Saldo de recuperação (clientes)', data:e.serie.map(x => x.saldo),
-      backgroundColor:e.serie.map(x => (x.saldo < 0 ? red : green) + 'cc') }] },
+    data:{ labels, datasets:[{ label:'Saldo de recuperação (' + (_modo === 'valor' ? 'R$/mês' : 'clientes') + ')', data:e.serie.map(saldoMes),
+      // saldo 0 (recuperou exatamente o que perdeu) = traço cinza, não buraco: sem isto o mês
+      // parecia sem dado (06/10/2026). minBarLength desenha a barra de altura zero.
+      minBarLength:3,
+      backgroundColor:e.serie.map(x => { const v = saldoMes(x); return (!v ? dim : (v < 0 ? red : green)) + 'cc'; }) }] },
     options:{ responsive:true, maintainAspectRatio:false,
       plugins:{ marco:{ cor:dim }, legend:{ display:false }, tooltip:{ callbacks:{ label:c => {
         const x = e.serie[c.dataIndex];
-        return [`${x.saldo > 0 ? '+' : ''}${NUM.format(x.saldo)} clientes (recuperados ${NUM.format(x.recuperados)} − entraram ${NUM.format(x.entraram)})`,
-                `${x.valor_saldo > 0 ? '+' : ''}${BRL.format(x.valor_saldo)}/mês em valor mensal`];
-      } } } } },
+        // os DOIS números sempre: clientes e R$ podem discordar no mesmo mês
+        const cli = `${x.saldo > 0 ? '+' : ''}${NUM.format(x.saldo)} clientes (recuperados ${NUM.format(x.recuperados)} − entraram ${NUM.format(x.entraram)})`;
+        const rs = `${BRL_S(x.valor_saldo)}/mês em valor mensal`;
+        return _modo === 'valor' ? [rs, cli] : [cli, rs];
+      } } } },
+      scales:{ y:{ ticks:{ callback:v => _modo === 'valor' ? BRL.format(v) : v } } } },
   });
 }
 
@@ -299,8 +331,8 @@ function linhaTabela(r, drill) {
     <td class="num ${cls(ad.delta.cobertura_pp, true)}">${PP(ad.delta.cobertura_pp)}</td>
     <td class="num">${PCT(ad.antes.pct_risco)}</td><td class="num">${PCT(ad.depois.pct_risco)}</td>
     <td class="num ${cls(ad.delta.pct_risco_pp, false)}">${PP(ad.delta.pct_risco_pp)}</td>
-    <td class="num">${NUM1(ad.antes.saldo_medio)}</td>
-    <td class="num ${cls(ad.depois.saldo_medio, true)}">${NUM1(ad.depois.saldo_medio)}</td></tr>`;
+    <td class="num">${fmtSaldo(saldoMedio(ad.antes))}</td>
+    <td class="num ${cls(saldoMedio(ad.depois), true)}">${fmtSaldo(saldoMedio(ad.depois))}</td></tr>`;
 }
 
 function renderTabela() {

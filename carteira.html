@@ -495,6 +495,7 @@
             <option value="">Todas</option>
             <option value="sem">Sem tratativa</option>
             <option value="com">Com tratativa</option>
+            <option value="aguardando">🧾 Pedido feito · aguardando faturar</option>
           </select>
         </div>
         <button class="btn-sm" onclick="limparProximo()">Limpar</button>
@@ -1265,9 +1266,14 @@ function renderPpCards(c) {
   if (c.na_janela != null) cards.push({ l: 'Com tratativa', v: `${NUM.format(c.com_tratativa || 0)} de ${NUM.format(c.na_janela)}`,
                                         cor: 'var(--accent)', trat: 'sem' });
   if (c.retornos_hoje) cards.push({ l: '⏰ Retornos p/ hoje', v: NUM.format(c.retornos_hoje), cor: 'var(--orange)', jan: 'hoje' });
+  // Pedido feito (08/10/2026): quem aguarda a NF saiu das janelas — o card mostra onde estão;
+  // quem passou do prazo sem faturar volta no topo de "A ligar hoje"
+  if (c.aguardando_faturar) cards.push({ l: '🧾 Aguardando faturar', v: NUM.format(c.aguardando_faturar), cor: 'var(--accent)', trat: 'aguardando',
+                                         tip: 'Pedido feito, ainda sem nota — fora da lista até faturar' });
+  if (c.pedido_nao_faturou) cards.push({ l: '🧾 Pedido não faturou', v: NUM.format(c.pedido_nao_faturou), cor: 'var(--red)', jan: 'hoje' });
   let html = cards.map(k => {
     const cls = (k.jan || k.trat) ? ('pp-card pp-click' + (k.jan === jan ? ' pp-active' : '')) : 'pp-card';
-    const onclick = k.jan ? `onclick="filtrarCard('${k.jan}')"` : (k.trat ? `onclick="filtrarTratativa('${k.trat}')" title="Ver só os clientes sem tratativa"` : '');
+    const onclick = k.jan ? `onclick="filtrarCard('${k.jan}')"` : (k.trat ? `onclick="filtrarTratativa('${k.trat}')" title="${k.tip || 'Ver só os clientes sem tratativa'}"` : '');
     return `<div class="${cls}" ${onclick}><div class="l">${k.l}</div><div class="v" style="color:${k.cor};">${k.v}</div></div>`;
   }).join('');
   const op = c.maior_oportunidade;

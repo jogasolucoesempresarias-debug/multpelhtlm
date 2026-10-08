@@ -18,9 +18,9 @@ HOJE = date(2026, 9, 29)
 
 
 # ══════════════ motor puro ══════════════
-def test_os_seis_status_do_joao():
+def test_os_status_do_joao():
     assert [s for s, _ in pc.STATUS] == ['ligacao_feita', 'sem_contato', 'retorno_agendado',
-                                          'pedido_prometido', 'nao_compra_mais', 'transferir']
+                                          'pedido_prometido', 'pedido_feito', 'nao_compra_mais', 'transferir']
     assert dict(pc.STATUS)['retorno_agendado'] == 'Retorno agendado'
 
 
@@ -58,7 +58,8 @@ def test_acompanhamento_zera_quando_o_cliente_compra():
 
 def test_resumo_da_linha_e_o_retorno_em_destaque():
     r = pc.resumo([], HOJE)
-    assert r == {'n': 0, 'ultimo': None, 'retorno': None, 'retorno_situacao': None, 'destaque': False}
+    assert r == {'n': 0, 'ultimo': None, 'retorno': None, 'retorno_situacao': None, 'pedido': None,
+                 'aguardando': False, 'destaque': False}
     hoje = pc.resumo([_reg(29, 'retorno_agendado', HOJE)], HOJE)
     assert hoje['retorno'] == '2026-09-29' and hoje['retorno_situacao'] == 'hoje' and hoje['destaque']
     atras = pc.resumo([_reg(20, 'retorno_agendado', date(2026, 9, 25))], HOJE)
@@ -69,6 +70,22 @@ def test_resumo_da_linha_e_o_retorno_em_destaque():
     feito = pc.resumo([_reg(29, 'ligacao_feita'), _reg(20, 'retorno_agendado', date(2026, 9, 25))], HOJE)
     assert feito['retorno'] is None and not feito['destaque'] and feito['n'] == 2
     assert feito['ultimo']['status'] == 'ligacao_feita' and feito['ultimo']['rotulo'] == 'Ligação feita'
+
+
+def test_pedido_feito_aguarda_faturar_e_volta_em_destaque_se_nao_faturar():
+    # João 08/10/2026: rota leva ~3 dias para faturar. Até PRAZO_FATURAR dias o cliente AGUARDA
+    # (sai da lista); passou disso sem NF, volta em destaque — pedido travado não pode sumir.
+    assert pc.PRAZO_FATURAR == 5
+    ag = pc.resumo([_reg(29, 'pedido_feito', date(2026, 9, 26))], HOJE)
+    assert ag['aguardando'] and not ag['destaque'] and ag['pedido'] == {'dias': 3, 'situacao': 'aguardando'}
+    limite = pc.resumo([_reg(29, 'pedido_feito', date(2026, 9, 24))], HOJE)
+    assert limite['aguardando'] and limite['pedido']['dias'] == 5
+    travado = pc.resumo([_reg(29, 'pedido_feito', date(2026, 9, 23))], HOJE)
+    assert not travado['aguardando'] and travado['destaque'] and travado['pedido']['situacao'] == 'nao_faturou'
+    # o pedido só vale se é o ÚLTIMO registro; "prometido" não tira ninguém da lista
+    depois = pc.resumo([_reg(29, 'sem_contato'), _reg(20, 'pedido_feito', date(2026, 9, 26))], HOJE)
+    assert depois['pedido'] is None and not depois['aguardando']
+    assert not pc.resumo([_reg(29, 'pedido_prometido')], HOJE)['aguardando']
 
 
 # ══════════════ servidor (modo postgres = base da demo) ══════════════
@@ -174,6 +191,35 @@ def test_lista_do_dia_traz_o_plano_o_card_o_filtro_e_o_retorno_em_destaque(clien
         assert {r['codcli'] for r in com['rows']} == {r['codcli'] for r in j['rows'] if r['plano']['n']}
     finally:
         _limpar(server, [fora['codcli']])
+
+
+def test_pedido_feito_sai_da_lista_entra_no_card_e_no_filtro(client, supervisor12, pg):
+    server = pg
+    hoje = server._hoje_ref()
+    j0 = client.get('/api/carteira/proximo-pedido?janela=vencido15&limit=500').get_json()
+    alvo = j0['rows'][0]['codcli']
+    _limpar(server, [alvo])
+    try:
+        assert client.post(f"/api/plano/{alvo}", json={'status': 'pedido_feito'}).status_code == 200
+        j = client.get('/api/carteira/proximo-pedido?janela=vencido15&limit=500').get_json()
+        assert alvo not in {r['codcli'] for r in j['rows']}
+        assert j['cards']['aguardando_faturar'] >= 1
+        assert j['cards']['vencido15'] + j['cards']['hoje'] < j0['cards']['vencido15'] + j0['cards']['hoje']
+        ag = client.get('/api/carteira/proximo-pedido?janela=vencido15&limit=500&tratativa=aguardando').get_json()
+        assert alvo in {r['codcli'] for r in ag['rows']} and all(r['plano']['aguardando'] for r in ag['rows'])
+        # o CSV segue a tela (antes ignorava o plano)
+        csv = client.get('/api/carteira/proximo-pedido/csv?janela=vencido15').get_data(as_text=True)
+        assert not any(l.split(';')[0].split(',')[0] == str(alvo) for l in csv.splitlines())
+        # pedido de 6 dias sem NF volta em destaque no topo de "A ligar hoje"
+        conn = server.get_db()
+        with conn, conn.cursor() as cur:
+            cur.execute("UPDATE cliente_plano SET data_acao = %s WHERE codcli = %s", (hoje - timedelta(days=6), alvo))
+        conn.close()
+        h = client.get('/api/carteira/proximo-pedido?janela=hoje&limit=500').get_json()
+        assert h['rows'][0]['codcli'] == alvo and h['rows'][0]['plano']['pedido']['situacao'] == 'nao_faturou'
+        assert h['cards']['pedido_nao_faturou'] >= 1 and h['cards']['aguardando_faturar'] == 0
+    finally:
+        _limpar(server, [alvo])
 
 
 def test_listas_da_recuperacao_trazem_o_plano(client, supervisor12, pg):

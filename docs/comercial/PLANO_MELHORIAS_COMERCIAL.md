@@ -1,5 +1,8 @@
 # Plano — Melhorias do Comercial (set/2026)
 
+> **▶ RETOMAR PELO §13** (rodada 05–06/10/2026: estado de produção, o que está local sem commit, o
+> pedido pendente do João e o backlog). §0–§12 são o histórico das decisões.
+
 > **Handoff. Leia inteiro antes de retomar.** Todos os números foram MEDIDOS no BI real em
 > 24/09/2026. A extração foi conferida no centavo contra `[VENDA LIQUIDA]` de jul/26
 > (R$ 8.022.966) e ago/26 (R$ 6.625.712). As decisões marcadas **✅ João** vieram do João Victor
@@ -602,3 +605,105 @@ vendedor, janela móvel · Vendedores = base ativa 12m, atendidos POR ELE no mê
 - Testes: `tests/test_saldo_recuperacao.py` (4). Motor: `recuperacao.placar_de` ganhou entraram,
   rec_risco_da_base, saldo e valor_saldo.
 
+
+---
+
+## 13. Rodada 05–06/10/2026 — ONDE PARAMOS (handoff para o próximo chat)
+
+> **Estado:** tudo abaixo está na `main` e **em produção** até `7b23034` (o deploy foi confirmado
+> pelo print do Gabriel: clique no vendedor funcionando na Evolução). **Única coisa local, não
+> commitada:** a correção do "saldo zero" (item 13.3). Tudo tem teste; suíte completa em
+> 06/10/2026: **1.246 passam, 3 falham** (as 3 de sempre: radar CSV, mix, cohort — fixture de data).
+
+### 13.1 O que entrou (commits na `main`)
+| Commit | O quê |
+|---|---|
+| `1926a70` | Carteira: coluna **Margem 12m** (lucro÷venda líquida 12m; sem venda = "—", fim da ordenação; CSV/PDF). Recuperação: leitura (colunas Entraram em risco, Por outros, "do risco + da perdida", R$ rotulado "venda no mês", datas da ponte e da lista). Plano: **fuso** (`criado_em` TIMESTAMPTZ, hora de Brasília) e **✕ excluir** (autor 24 h, admin sempre, exclusão lógica + log). |
+| `9cd5599` / `ef3175a` | Aba **Evolução da carteira** (`/evolucao`, `evolucao_carteira.py`) + fotos `vendedor_foto` e `uso_mensal` no job das 23h50; gráfico da Recuperação vira **entraram × recuperados** (Clientes / R$/mês). `ef3175a` é commit vazio para redisparar o Actions (incidente do GitHub). |
+| `1257811` | **Saldo de recuperação = recuperados − entraram** (positivo = bom; pedido do João: "na nossa cabeça + é bom"). Evolução: `variacao` → `saldo`/`saldo_medio`; caches `recuperacao:resumo:v4`, `evolucao:…:v2`. Coluna/filtro/card "usa × não usa" **fora da tela**. |
+| `7b23034` | Estoque › Evolução: **⬇ Excel** da "Foto dia a dia" (`/estoque/api/evolucao.xlsx`, ADM-only, `_evolucao_serie` = fonte única). Evolução da carteira: **clique no vendedor** troca cards e gráficos. Recuperação: **filtro Plano** nas listas (sem/com/último status), no SERVIDOR antes do corte de 300; CSV com o filtro + colunas do plano. **Manuais** `docs/MANUAL_COMERCIAL.md` v4.0 (reescrito) e `docs/MANUAL_COMPRAS.md` v5.0. |
+
+### 13.2 Pedido PENDENTE do João (Gabriel decidiu juntar pedidos antes de mexer)
+**Botão Clientes | R$/mês no gráfico "Saldo de recuperação" da Evolução** (print 06/10 17:19).
+Análise crítica já feita e combinada como desenho (não implementado):
+- o dado já existe (`valor_saldo` por mês) — zero query;
+- o botão troca **gráfico + card de saldo + coluna de saldo da tabela antes×depois** (senão a tela
+  se contradiz) → `evolucao_carteira._periodo` precisa da média em R$ (`saldo_medio_valor`);
+- **cor pelo PRÓPRIO sinal** (clientes e R$ discordam no mesmo mês — lição `clsSinal` da Recuperação);
+- balão mostra **os dois** números (em carteira pequena um cliente grande pinta o mês inteiro);
+- **o gráfico de cobertura NÃO ganha o botão** (cobertura em R$ = outra métrica, a "cobertura por
+  valor" do Gerencial; o João circulou só o de saldo).
+O Gabriel vai esperar o João olhar a aba e juntar com o que mais ele pedir.
+
+### 13.3 Local, NÃO commitado
+**Saldo zero vira traço cinza** no gráfico de saldo da Evolução (`minBarLength:3`, cinza quando
+`x.saldo === 0`). Origem: IGOR #? em 12/25 (8−8) e 08/26 (13−13) aparecia como buraco e parecia dado
+faltando. Arquivos: `evolucao.html` + `test_saldo_zero_aparece_no_grafico` em
+`tests/test_evolucao_carteira.py`. Commitar junto com o 13.2.
+
+### 13.8 Lote de 08/10/2026 — implementado LOCAL (não commitado), junto com o 13.2 e o 13.3
+1. **Botão Clientes | R$/mês na Evolução** (o 13.2, João reforçou: *"o de receita é tão ou mais
+   importante"*). Troca gráfico + card + coluna de saldo da tabela; `saldo_medio_valor` no
+   `_periodo`/`delta`; cache `evolucao:…:v3`; `?modo=valor` na URL; balão traz os dois números; a
+   régua avisa que R$ é **valor mensal**, não faturamento. Cobertura não ganha o botão.
+2. **"Pedido feito" no Plano de ação** (João: *"tem rota que leva tipo 3 dias para ser faturada"*).
+   7º status. Até `PRAZO_FATURAR` = **5 dias** o cliente sai de TODAS as janelas e dos cards
+   ("aguardando faturar" — card próprio e opção no filtro Tratativa); passou disso sem NF, volta **em
+   destaque** no topo de "A ligar hoje" (card "Pedido não faturou"): pedido travado em crédito/corte
+   não pode sumir. Quando a NF sai, o `separar` arquiva sozinho. `_proximo_elegiveis` virou fonte
+   única da tela, CSV e PDF (os exports ignoravam retorno/tratativa e saíam diferentes da tela).
+   Recuperação: "Pedido feito" no filtro Plano. ⚠️ Não usamos o `PCPEDC` do dataset META para
+   detectar sozinho porque ele esvazia na virada do mês (pedido do dia 30 faturado no dia 2 sumiria).
+3. **Estoque › Parado sem barra lateral** (a pedido do Gabriel, conforme combinado com o João):
+   sem coluna Faixa; Última venda virou tooltip do Dias parado; Disp. e Disp. cx numa célula
+   (`236 · 20 cx`); fornecedor sem LTDA/S.A./EIRELI/EPP/"INDUSTRIA E COMERCIO DE" e com 200 px
+   (nome completo no title); produto em 280 px. Medido a 1450 px de largura: sem rolagem lateral.
+Testes: `test_plano_cliente.py` (+2), `test_evolucao_carteira.py` (+2).
+
+### 13.4 Backlog da Evolução da carteira (medido, não pedido ainda)
+1. **Classificação "usa × não usa" está CONTAMINADA** — por isso saiu da tela. Em produção, 10 times
+   com exatamente "11 dias em 09/26": um usuário supervisor com quase todas as áreas marca todos.
+   Para voltar: usuário com ≥ 4 áreas = gestão (não marca time); amostra mínima de base (~50); canais
+   (DIRETORIA, BIMBO, E-COMMERCE, E COMMERCE MARTINS, PROSPECÇÃO) fora do universo campo. Antes de
+   mexer, rodar no servidor a consulta de `uso_mensal` por usuário × nº de áreas (está no chat de
+   06/10; o backend segue gravando `uso_mensal` e aceitando `?uso=`).
+2. **Sazonalidade** (medido no BI, régua da tela, empresa): cobertura cai de mai–jul para ago–set
+   TODO ano — 2025: 68,2% → 66,2% (−2,0 p.p.); 2026: 60,7% → 59,4% (−1,4 p.p.). Nível 2026 ~7 p.p.
+   abaixo de 2025; recuperados ago–set/26 = 384/410 × 435/489 em 2025. Próximo passo: série de 24
+   meses e coluna "Δ no mesmo período do ano anterior".
+3. Fase 2: receita/margem e nota da Performance mês a mês (query nova por mês).
+
+### 13.5 Concorrente Systock (pesquisa de 06/10) — o que absorver
+Resumo na memória `joga_concorrente_systock`. Medido no BI da Multpel (Atacado, régua oficial lead 10
++ cobertura 30 = 40 dias para todo item):
+- itens Z: 22,5% ruptura **e** 48,6% excesso; curva C: 42,5% dos itens > 120 dias (R$ 810 mil de
+  R$ 1,0 mi); fornecedor com lead real > 21 d: 21% de ruptura;
+- **lead real por fornecedor** na sugestão: +3,8% de capital, resolve os 62 itens de lead longo →
+  **absorver** (já medimos o lead na aba Lead time);
+- estoque de segurança estatístico ("IA" deles): +85% de capital → **não absorver**;
+- transferência entre filiais: só R$ 19 mil (1,6% da compra) → **não construir para a Multpel**;
+- popularidade: 97% dos itens mais populares já são A/B → absorver só **ruptura ranqueada por
+  clientes atingidos** (40 itens populares em ruptura, 3.321 relações cliente-produto em 90 d);
+- **o excesso não vem da fórmula:** 508 itens C em excesso (R$ 752 mil), só 11 com pedido aberto →
+  é liquidação/processo, não parâmetro.
+Scripts da análise (só leitura) ficaram no scratchpad do chat de 06/10 (não versionados).
+
+### 13.6 Relatório de performance do estoque do João (análise de 05/10)
+Os números batiam com a foto (unidade **Atacado**), mas o dia escolhido inflava 3 claims. Versão
+defensável (média de período, dias úteis): ruptura geral 11,0% → 10,0% (−9%, não −37%: os ~16% de
+maio não foram medidos); curva A 9,3% → 7,7% (set) → 6,8% (out); capital parado set **subiu 2%**
+(170,3 mil × 166,9 mil) — queda só de 29→30/09; pedidos abertos −46% é efeito de fim de mês (fim×fim
+= −11,6%; o número bom é atrasados 34,9 → 23,9); "0 vencidos em setembro" = nenhuma baixa LANÇADA
+(junho R$ 360, agosto R$ 8.078) e o valor A VENCER subiu 2,28 → 2,90 mi. História forte e verdadeira:
+estoque +R$ 600 mil com ruptura caindo e parado estável (2,7% → 2,2%). Comprador 47 (João): curva A
+3,4% → 1,3%, parado −12%; 101 e 100 aumentaram o parado.
+
+### 13.7 Lições operacionais da rodada
+- **GitHub Actions travou (incidente do GitHub, 05/10):** job cancelado sem runner → `:latest` não
+  mudou e o deploy subiu a imagem antiga. Diagnóstico em 30 s: `/evolucao` 404 com `/admin` 401 =
+  imagem velha. Conferir o Actions verde ANTES do `service update`. Plano B: build no servidor
+  (como o Tabela Auditoria) ou local + push (o push ao GHCR pela sessão do Claude é bloqueado pelo
+  classificador — o Gabriel roda o `docker push`).
+- **Docker Desktop local desligado = Redis fora** → todo request local espera ~27 s. Scripts de
+  análise contra o BI: trocar `server._R`/`_R_LOGIN` por `fakeredis` no topo (padrão do conftest).
+- Respostas ao João: o Gabriel prefere que o João **pense** — mandar a pista, não a resposta inteira.

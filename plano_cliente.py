@@ -5,7 +5,7 @@ Para o gestor, é saber quais clientes receberam tratativa; para o vendedor, o h
 A loja da Matriz já usa o painel no dia a dia — o registro acontece onde eles já trabalham.
 
 Regras (decididas por ele):
-- 6 status de um toque; descrição opcional;
+- 7 status de um toque (o 7º, PEDIDO FEITO, em 08/10/2026); descrição opcional;
 - só o RETORNO AGENDADO aceita data futura (e exige data); o retorno de hoje (ou atrasado) aparece
   EM DESTAQUE na lista do dia;
 - quem tem acesso à lista registra (a porta de escopo é a das telas — `_carteira_no_escopo`);
@@ -25,11 +25,19 @@ STATUS = [
     ('sem_contato', 'Sem contato'),
     ('retorno_agendado', 'Retorno agendado'),
     ('pedido_prometido', 'Pedido prometido'),
+    ('pedido_feito', 'Pedido feito'),
     ('nao_compra_mais', 'Não compra mais'),
     ('transferir', 'Transferir'),
 ]
 ROTULO = dict(STATUS)
 RETORNO = 'retorno_agendado'
+# PEDIDO FEITO (João, 08/10/2026): o pedido já foi digitado, mas tem rota que leva ~3 dias para
+# faturar — e a "última compra" da lista é o FATURAMENTO, então o cliente seguia em "a ligar".
+# Até PRAZO_FATURAR dias ele sai da lista ("aguardando faturamento"); passou disso sem faturar,
+# volta EM DESTAQUE: pedido travado (crédito, corte, cancelado) é justamente o que não pode sumir.
+# Quando a NF sai, o `separar` arquiva o registro sozinho (a última compra passa a data dele).
+PEDIDO_FEITO = 'pedido_feito'
+PRAZO_FATURAR = 5
 MAX_DESCRICAO = 500
 MAX_DIAS_ATRAS = 60          # registrar ação de até 2 meses atrás (esqueceu de anotar); além disso é erro
 
@@ -113,17 +121,23 @@ def resumo(atual, hoje):
     para o mais antigo. O retorno só vale se o ÚLTIMO registro é o agendamento — qualquer registro
     depois dele (ligou, não atendeu…) resolve o retorno."""
     if not atual:
-        return {'n': 0, 'ultimo': None, 'retorno': None, 'retorno_situacao': None, 'destaque': False}
+        return {'n': 0, 'ultimo': None, 'retorno': None, 'retorno_situacao': None, 'pedido': None,
+                'aguardando': False, 'destaque': False}
     u = atual[0]
     ultimo = {'status': u['status'], 'rotulo': ROTULO.get(u['status'], u['status']),
               'data_acao': _data(u['data_acao']).isoformat(), 'autor_nome': u.get('autor_nome')}
-    retorno = situacao = None
+    retorno = situacao = pedido = None
     if u['status'] == RETORNO:
         d = _data(u['data_acao'])
         retorno = d.isoformat()
         situacao = 'hoje' if d == hoje else ('atrasado' if d < hoje else 'futuro')
+    elif u['status'] == PEDIDO_FEITO:
+        dias = (hoje - _data(u['data_acao'])).days
+        pedido = {'dias': dias, 'situacao': 'nao_faturou' if dias > PRAZO_FATURAR else 'aguardando'}
     return {'n': len(atual), 'ultimo': ultimo, 'retorno': retorno, 'retorno_situacao': situacao,
-            'destaque': situacao in ('hoje', 'atrasado')}
+            'pedido': pedido,
+            'aguardando': bool(pedido and pedido['situacao'] == 'aguardando'),
+            'destaque': situacao in ('hoje', 'atrasado') or bool(pedido and pedido['situacao'] == 'nao_faturou')}
 
 
 def serializar(r):
