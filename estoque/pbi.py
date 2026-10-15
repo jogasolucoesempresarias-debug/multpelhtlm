@@ -50,9 +50,12 @@ CONFIG = {
 class TTLCache:
     """Cache simples thread-safe com expiração por chave."""
 
+    _VARRER_A_CADA = 60  # segundos
+
     def __init__(self):
         self._store = {}
         self._lock = threading.Lock()
+        self._varrido_em = time.time()
 
     def get(self, key):
         with self._lock:
@@ -67,7 +70,16 @@ class TTLCache:
 
     def set(self, key, value, ttl):
         with self._lock:
-            self._store[key] = (value, time.time() + ttl)
+            agora = time.time()
+            self._store[key] = (value, agora + ttl)
+            # O get só apaga o vencido quando a MESMA chave é pedida de novo, e muitas chaves
+            # levam a data do dia (leadtime:raw:2026-10-15): a de ontem nunca mais é pedida e
+            # ficava na memória até o container reiniciar (produção: +~120 MB/dia em 10/2026).
+            # Varre no set, no máximo 1×/min, para o custo não cair em toda gravação.
+            if agora - self._varrido_em >= self._VARRER_A_CADA:
+                self._varrido_em = agora
+                for k in [k for k, (_, exp) in self._store.items() if agora > exp]:
+                    del self._store[k]
 
     def clear(self):
         with self._lock:
