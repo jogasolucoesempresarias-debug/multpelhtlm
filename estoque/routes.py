@@ -1912,6 +1912,8 @@ def _evolucao_serie():
                            curva=curva, xyz=xyz)
     log = historico.dias_com_foto(unidade, ini, fim)
     _juntar_vencidos(dias, _filiais_estoque(), comprador, fornec, curva, xyz)
+    # risco de vencimento: lotes gravados × giro/custo da foto do dia, no MESMO recorte
+    historico.juntar_risco_validade(dias, unidade, ini, fim, comprador, fornec, curva, xyz)
     return unidade, dias, log, {"comprador": comprador, "fornec": fornec, "curva": curva, "xyz": xyz}
 
 
@@ -1950,6 +1952,14 @@ _EVO_XLSX_COLS = [
     ("Posições total", lambda d: _g(d, "ocupacao", "posicoes")),
     ("A vencer R$", lambda d: _g(d, "validade", "valor")),
     ("A vencer itens", lambda d: _g(d, "validade", "itens")),
+    # risco = a parte do lote que não vende até vencer (régua da aba Validade), até 90 dias
+    ("Risco ≤90d R$", lambda d: _g(d, "risco_validade", "risco_90")),
+    ("Risco 0-15d R$", lambda d: _g(d, "risco_validade", "faixas", "0-15", "risco")),
+    ("Risco 16-30d R$", lambda d: _g(d, "risco_validade", "faixas", "16-30", "risco")),
+    ("Risco 31-60d R$", lambda d: _g(d, "risco_validade", "faixas", "31-60", "risco")),
+    ("Risco 61-90d R$", lambda d: _g(d, "risco_validade", "faixas", "61-90", "risco")),
+    ("Estoque ≤90d R$", lambda d: _g(d, "risco_validade", "estoque_90")),
+    ("Lotes ≤90d", lambda d: _g(d, "risco_validade", "lotes_90")),
     ("Vencido no dia R$", lambda d: d.get("vencido_dia")),
     ("Vencido no mês R$", lambda d: d.get("vencido_mes")),
     ("Pedidos abertos R$", lambda d: _g(d, "pedidos", "valor_aberto")),
@@ -2070,6 +2080,12 @@ _EVO_DIRECAO = {"valor_parado": "menor_melhor", "n_ruptura": "menor_melhor",
                 # afirmar uma direção que o número sozinho não tem — quem dá o sentido é ela ao
                 # lado do valor de estoque e da ruptura, que é o motivo de estarem na mesma aba.
                 "ocupacao_pct": None,
+                # ⚠️ Risco de vencimento SEM cor, embora "menos risco" pareça sempre bom: lote que
+                # VENCE sem vender sai da janela (validade >= hoje) e lote levado para a rua 99
+                # sai do endereçado — nos dois casos o risco cai porque a perda se CONSUMOU ou
+                # mudou de lugar. Verde ali comemoraria exatamente isso. Quem dá o sentido é a
+                # coluna Vencido (livro) e a Avaria, ao lado.
+                "risco_90": None,
                 "pct_ideal": "maior_melhor", "valor_estoque": None}
 
 
@@ -2087,14 +2103,19 @@ def _resumo_evolucao(dias, log):
     # "nao mudou nada", quando o certo e "ainda nao da para comparar": afirma uma medicao que
     # nao foi feita. `None` cai no `—` que o front ja sabe renderizar (`evoDelta`), na mesma
     # politica do resto da aba (o aviso de maturidade ja dizia que faltavam 27 dias).
-    um_ponto = len(dias) == 1
     var = {}
     for k in _EVO_DIRECAO:
-        ini_v, fim_v = a.get(k), b.get(k)
-        if um_ponto or ini_v is None or fim_v is None:
+        # 1º e último dia em que a métrica foi MEDIDA, não o 1º e o último da janela: métrica que
+        # nasce no meio da série (ocupação, risco de vencimento) daria "—" até a janela inteira
+        # ser posterior a ela — 90 dias de KPI mudo. `de` vai junto para a tela dizer "desde".
+        med = [d for d in dias if d.get(k) is not None]
+        # ⚠️ um ponto medido só = a e b são o MESMO ponto: delta zero afirmaria "não mudou".
+        if len(med) < 2:
             var[k] = None
             continue
-        var[k] = {"ini": ini_v, "fim": fim_v, "delta": core._round(fim_v - ini_v, 4),
+        ini_v, fim_v = med[0][k], med[-1][k]
+        var[k] = {"ini": ini_v, "fim": fim_v, "de": med[0]["data"],
+                  "delta": core._round(fim_v - ini_v, 4),
                   "delta_pct": core._round((fim_v - ini_v) / ini_v * 100, 1) if ini_v else None}
     n = len(dias)
     return {
@@ -2473,7 +2494,11 @@ def api_vencidos():
         for p in em:  # mesmas refs de res['produtos'] → atualiza os dois
             dtv = pvmap.get(p["codprod"])
             p["prox_venc"] = (str(dtv)[:10] if dtv else None)
-    return jsonify({"ok": True, **res})
+    # `hoje` e `venda_mes` (TODOS os meses, não só os com perda): o front monta o período pelo
+    # CALENDÁRIO para o mês sem baixa aparecer como zero (pedido do João, 10/2026: "um traço em
+    # setembro"). Sem a venda dele, o "% da venda" do período dividiria só pelos meses COM perda e
+    # sairia inflado — setembro zerado sumiria do denominador justamente por ter ido bem.
+    return jsonify({"ok": True, **res, "hoje": _hoje().isoformat(), "venda_mes": venda_mes})
 
 
 @bp.route("/api/resumos")

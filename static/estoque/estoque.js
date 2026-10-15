@@ -486,6 +486,8 @@ const EVO_JANELAS={'30d':30,'90d':90,'12m':365,'tudo':null};
 const EVO_JAN_LBL={'30d':'30 dias','90d':'90 dias','12m':'12 meses','tudo':'Tudo'};
 const EVO_FX=[['0-30',C.red],['31-60',C.green],['61-90',C.yellow],['91-120',C.orange],['121+',C.purple]];
 const EVO_CV=[['A',C.red],['B',C.orange],['C',C.accent]];   // ruptura por curva: A é a que dói
+// risco a vencer: as faixas e as cores dos cards da aba Validade (`historico.FAIXAS_RISCO`)
+const EVO_RISCO_FX=[['0-15',C.red],['16-30',C.orange],['31-60',C.yellow],['61-90',C.accent]];
 const dLbl=iso=>{const p=String(iso||'').split('-');return p.length===3?p[2]+'/'+p[1]:String(iso||'');};
 
 function evoQS(){
@@ -611,6 +613,9 @@ async function renderEvolucao(){
         <div class="chart-box" style="height:230px"><canvas id="ch-evo-cob"></canvas></div></div>
       ${dias.some(d=>d.ocupacao_pct!=null)?`<div class="panel"><h3><span>Ocupação do depósito (%)${tipT('Percentual de posições ocupadas no WMS (PCENDERECO), na foto do dia. Sem cor de propósito: subir pode ser depósito enchendo ou giro entrando — quem dá o sentido é a linha ao lado do valor de estoque e da ruptura. Picking e pulmão viajam no tooltip: encher o pulmão é normal, encher o picking trava a separação.')}</span></h3>
         <div class="chart-box sm" style="height:150px"><canvas id="ch-evo-ocup"></canvas></div></div>`:''}
+      ${dias.some(d=>d.risco_validade)?`<div class="panel"><h3><span>Risco a vencer — até 90 dias${tipT('Risco = a parte do lote que NÃO deve vender até vencer (régua da aba Validade: saldo − giro × dias, a custo), por faixa de dias. Recalculado dos lotes gravados na foto com o giro e o custo daquele dia — mexer na régua não cria degrau. Sem cor de propósito: lote que vence sem vender SAI desta conta, então o risco também cai quando a perda se consuma. Leia ao lado da coluna Vencido e da Avaria.')}</span>
+          <small class="muted">${u.risco_90!=null?`hoje ${money(u.risco_90)} · `:''}${v.risco_90?`${evoDelta(v.risco_90,dir.risco_90,moneyK)} desde ${dLbl(v.risco_90.de)}`:'medido desde a 1ª foto com lotes'}</small></h3>
+        <div class="chart-box" style="height:200px"><canvas id="ch-evo-risco"></canvas></div></div>`:''}
       <div class="panel"><h3><span>Itens em ruptura${tipT('O CONTRAPESO: estoque caindo só é boa notícia se a ruptura não subir junto. Sem esta linha, um desabastecimento pareceria eficiência.')}</span></h3>
         <div class="chart-box sm" style="height:150px"><canvas id="ch-evo-rup"></canvas></div></div>
       <div class="panel"><h3><span>Ruptura por curva (%)${tipT('% de itens zerados com giro sobre o TOTAL de itens da curva, na foto do dia. Em % porque a curva C tem muito mais itens que a A — na contagem crua ela pareceria sempre a pior.')}</span></h3>
@@ -674,6 +679,18 @@ async function renderEvolucao(){
       plugins:{tooltip:{callbacks:{label:it=>{
         const r=((dias[it.dataIndex]||{}).ruptura_curva||{})[EVO_CV[it.datasetIndex][0]]||{};
         return `${it.dataset.label}: ${dec(r.pct,1)}% (${int(r.n)} de ${int(r.skus)})`;}}}}}});
+  /* Barras empilhadas por faixa, nas MESMAS cores dos cards da aba Validade (0-15 vermelho …).
+     Barra e não linha: o histórico do risco nasce depois do resto da série, e barra se desenha
+     por ponto — os dias sem lote gravado ficam vazios em vez de uma reta inventada até zero. */
+  if(dias.some(d=>d.risco_validade))
+    chart('ch-evo-risco',{type:'bar',data:{labels:lbls,datasets:EVO_RISCO_FX.map(f=>({
+        label:f[0]+' dias',data:dias.map(d=>{const r=d.risco_validade;return r?((r.faixas||{})[f[0]]||{}).risco:null;}),
+        backgroundColor:f[1],borderWidth:0}))},
+      options:{maintainAspectRatio:false,scales:{x:{stacked:true,ticks:{maxTicksLimit:15,autoSkip:true}},
+        y:{stacked:true,beginAtZero:true,ticks:{callback:x=>moneyK(x)}}},
+        plugins:{tooltip:{callbacks:{label:it=>`${it.dataset.label}: ${money(it.raw||0)}`,
+          footer:its=>{const r=(dias[(its[0]||{}).dataIndex]||{}).risco_validade;
+            return r?`Total ≤90d: ${money(r.risco_90)} · ${int(r.lotes_90)} lotes · estoque ${moneyK(r.estoque_90)}`:'';}}}}}});
   chart('ch-evo-rup',{type:'line',data:{labels:lbls,datasets:[{label:'Em ruptura',
       data:dias.map(d=>d.n_ruptura),borderColor:C.red,backgroundColor:C.red+'22',
       fill:true,tension:.25,pointRadius:_pr,borderWidth:2}]},
@@ -701,6 +718,11 @@ async function renderEvolucao(){
       `${pct(x)} <small class="muted">(${int((d.ocupacao||{}).ocupadas)}/${int((d.ocupacao||{}).posicoes)})</small>`},
     {k:'_venc',label:'A vencer R$',num:1,fmt:(_v,d)=>{const t=d.validade;return !t?'—':
       `${money(t.valor)} <small class="muted">(${int(t.itens)})</small>`;}},
+    /* "A vencer" acima é ESTOQUE (qt × custo, todas as validades); "Risco ≤90d" é a parte dele
+       que não deve vender a tempo (régua da aba Validade). Os dois juntos de propósito: lado a
+       lado, um não é lido como o outro — na mesma janela de 90 dias o estoque era ~4,5× o risco. */
+    {k:'risco_90',label:'Risco ≤90d R$',num:1,fmt:(x,d)=>x==null?'—':
+      `${money(x)} <small class="muted">(${int((d.risco_validade||{}).lotes_90)})</small>`},
     /* ⚠️ VENCIDO não sai da foto — vem do LIVRO (conta 200042), e por isso nasce com anos de
        histórico em vez dos dias que temos de foto. É o par da coluna acima e o exemplo inteiro
        do critério: "a vencer" é ESTADO (some se ninguém guardar), "vencido" é EVENTO (fica).
@@ -1386,23 +1408,40 @@ function renderValidade(){
   const fd=faixas.map(([n,lo,hi])=>{const it=L.filter(l=>l.dias_para_vencer>=lo&&l.dias_para_vencer<=hi);
     return{n,qt:it.length,valor:it.reduce((s,l)=>s+(l.valor_risco||0),0),
       bruto:it.reduce((s,l)=>s+(l.qt||0)*(l.custo_unit||0),0)};});
-  // filtro pelo gráfico/cards: clicar numa faixa filtra a tabela por aquela faixa de dias
-  const Lf=S.valFaixa?L.filter(l=>l.dias_para_vencer>=S.valFaixa[0]&&l.dias_para_vencer<=S.valFaixa[1]):L;
+  /* ⚠️ UM recorte de dias por vez (pedido do João, 10/2026: "quando filtro aqui, não muda ali.
+     Preciso enxergar o total de risco acumulado do período"). Eram DOIS filtros no mesmo eixo:
+     o card recortava a tabela por comprador e a lista; o "≤ N dias" só a lista — e os dois se
+     SOMAVAM nela (card 0-15 + "≤ 90" mostrava só 0-15, sem aviso). Agora o card OU o "≤ N" define
+     o intervalo, um limpa o outro, e tabela por comprador, total e lista seguem o mesmo. */
+  const R=S.valFaixa?{lo:S.valFaixa[0],hi:S.valFaixa[1],lbl:`faixa ${S.valFaixa[2]} dias`}
+    :(S.cli.valDias?{lo:-1e9,hi:+S.cli.valDias,lbl:`até ${int(S.cli.valDias)} dias`}:null);
+  const Lf=R?L.filter(l=>l.dias_para_vencer>=R.lo&&l.dias_para_vencer<=R.hi):L;
+  const dentro=i=>!R||(faixas[i][1]<=R.hi&&faixas[i][2]>=R.lo);   // a faixa cruza o intervalo
   const baseCols=[C.red,C.orange,C.yellow,C.accent,C.dim];
-  const barCols=baseCols.map((c,i)=>(!S.valFaixa||S.valFaixa[2]===faixas[i][0])?c:'rgba(100,116,139,.28)');
-  const cards=fd.map((f,i)=>`<div class="vfx ${S.valFaixa&&S.valFaixa[2]===f.n?'on':''}" data-i="${i}" style="--c:${baseCols[i]}">
+  const barCols=baseCols.map((c,i)=>dentro(i)?c:'rgba(100,116,139,.28)');
+  const cards=fd.map((f,i)=>`<div class="vfx ${R&&dentro(i)?'on':''}" data-i="${i}" style="--c:${baseCols[i]}">
       <div class="vfx-h">${f.n} dias</div>
       <div class="vfx-v">${money(f.valor)}</div>
       <div class="vfx-s">risco · ${int(f.qt)} lotes · estoque ${moneyK(f.bruto)}</div></div>`).join('');
-  // vencimento por comprador (respeita a faixa selecionada) — clicável p/ filtrar
+  // vencimento por comprador (respeita o intervalo de dias ativo) — clicável p/ filtrar
   const compMap={}; (S.produtosAll||[]).forEach(p=>{if(p.comprador&&p.codcomprador!=null)compMap[p.comprador]=p.codcomprador;});
   const cg={}; Lf.forEach(l=>{const nome=l.comprador||'Sem comprador';const g=cg[nome]=cg[nome]||{nome,bruto:0,risco:0,n:0};
     g.bruto+=(l.qt||0)*(l.custo_unit||0); g.risco+=(l.valor_risco||0); g.n++;});
   const compRows=Object.values(cg).sort((a,b)=>b.bruto-a.bruto);
-  const compTbl=`<h3><span>Vencimento por comprador${tipT('Valor de estoque e valor em risco de vencimento, por comprador.')}</span></h3>
+  const tot=compRows.reduce((s,g)=>({bruto:s.bruto+g.bruto,risco:s.risco+g.risco,n:s.n+g.n}),{bruto:0,risco:0,n:0});
+  // o "≤ N" acima do horizonte carregado somaria só até o horizonte — e diria "até 90 dias" sobre
+  // 30 dias de lotes. Filtro que responde pela metade em silêncio é a falha clássica do módulo:
+  // o aviso vai na linha do filtro E o rótulo do total diz o que de fato somou (print recortado
+  // só da tabela não pode mentir).
+  const alemHor=R&&!S.valFaixa&&R.hi>S.params.hor;
+  const totLbl=!R?'de todas as faixas':(alemHor?`até ${int(S.params.hor)} dias ⚠ horizonte`:esc(R.lbl));
+  // ⚠️ Risco em CENTAVOS (era `moneyK`): esta tabela é onde se confere soma — "R$ 1,9k" não fecha
+  // com o card de R$ 1.871,15 ao lado, e o total acumulado é justamente a soma que foi pedida.
+  const compTbl=`<h3><span>Vencimento por comprador${tipT('Valor de estoque e valor em risco de vencimento, por comprador, no intervalo de dias ativo (card ou "Dias para vencer").')}</span></h3>
     <div class="tbl-wrap"><table><thead><tr><th>Comprador</th><th class="num">Estoque${tip('validade','Estoque')}</th><th class="num">Risco${tip('validade','Risco')}</th><th class="num">Lotes</th></tr></thead>
     <tbody>${compRows.map(g=>{const cod=compMap[g.nome],sel=cod!=null&&String(cod)===S.cli.comprador;
-      return `<tr data-comp="${cod!=null?cod:''}" style="${cod!=null?'cursor:pointer;':'opacity:.65;'}${sel?'background:var(--surface3);':''}"><td><span class="prod">${esc(g.nome)}</span></td><td class="num">${money(g.bruto)}</td><td class="num">${moneyK(g.risco)}</td><td class="num">${int(g.n)}</td></tr>`;}).join('')||'<tr><td colspan="4" class="muted">—</td></tr>'}</tbody></table></div>`;
+      return `<tr data-comp="${cod!=null?cod:''}" style="${cod!=null?'cursor:pointer;':'opacity:.65;'}${sel?'background:var(--surface3);':''}"><td><span class="prod">${esc(g.nome)}</span></td><td class="num">${money(g.bruto)}</td><td class="num">${money(g.risco)}</td><td class="num">${int(g.n)}</td></tr>`;}).join('')||'<tr><td colspan="4" class="muted">—</td></tr>'}</tbody>
+    ${compRows.length?`<tfoot><tr style="font-weight:600"><td>Total ${totLbl}</td><td class="num">${money(tot.bruto)}</td><td class="num">${money(tot.risco)}</td><td class="num">${int(tot.n)}</td></tr></tfoot>`:''}</table></div>`;
   const el=$('#v-validade');
   el.innerHTML=head(`Validade / FEFO — próximos ${S.params.hor} dias`,'validade')
     +`<div class="panel"><h3><span>Por faixa de validade${tipT('Lotes por dias até vencer — separa estoque parado de risco real. Clique para filtrar.')}</span> <small class="muted">· estoque parado vs. risco · clique p/ filtrar</small></h3>
@@ -1412,20 +1451,22 @@ function renderValidade(){
           <div class="grow">${compTbl}</div>
         </div></div>
       <div class="panel" id="val-tbl"></div>`;
-  const Ld=S.cli.valDias?Lf.filter(l=>l.dias_para_vencer<=S.cli.valDias):Lf;
   $('#val-tbl').innerHTML=
     `<div class="row" style="gap:14px;margin:0 0 8px;align-items:flex-end">
        <div class="fb-group"><label>Dias para vencer (≤)</label><input type="number" id="val-dias" value="${S.cli.valDias||''}" min="0" step="5" placeholder="todos" style="width:120px"></div>
-       ${S.valFaixa?`<div class="count-line" style="margin:0">Filtrando faixa <b>${S.valFaixa[2]} dias</b> · <a href="#" id="val-clear">limpar</a></div>`:''}
+       ${R?`<div class="count-line" style="margin:0">Filtrando <b>${esc(R.lbl)}</b> · risco <b>${money(tot.risco)}</b> em ${int(tot.n)} lotes · <a href="#" id="val-clear">limpar</a>
+         ${alemHor?`<br><span style="color:${C.orange}">⚠ A aba carrega lotes só até <b>${int(S.params.hor)} dias</b> — o total acima não chega a ${int(R.hi)}. Aumente o horizonte de validade em ⚙ Parâmetros.</span>`:''}</div>`:''}
      </div>`
-    +renderTableInline(Ld,cols,'validade');
-  const vd=$('#val-dias'); if(vd) vd.onchange=e=>{ S.cli.valDias=e.target.value!==''?Math.max(0,+e.target.value):''; render(); };
-  if(S.valFaixa){const c=$('#val-clear'); if(c)c.onclick=e=>{e.preventDefault();S.valFaixa=null;render();};}
-  el.querySelectorAll('.vfx').forEach(d=>d.onclick=()=>{const i=+d.dataset.i,f=faixas[i];S.valFaixa=(S.valFaixa&&S.valFaixa[2]===f[0])?null:[f[1],f[2],f[0]];render();});
+    +renderTableInline(Lf,cols,'validade');
+  // card e "≤ N" são o MESMO eixo: definir um limpa o outro (senão voltariam a se somar)
+  const valFx=i=>{const f=faixas[i];S.valFaixa=(S.valFaixa&&S.valFaixa[2]===f[0])?null:[f[1],f[2],f[0]];if(S.valFaixa)S.cli.valDias='';render();};
+  const vd=$('#val-dias'); if(vd) vd.onchange=e=>{ S.cli.valDias=e.target.value!==''?Math.max(0,+e.target.value):''; if(S.cli.valDias)S.valFaixa=null; render(); };
+  if(R){const c=$('#val-clear'); if(c)c.onclick=e=>{e.preventDefault();S.valFaixa=null;S.cli.valDias='';render();};}
+  el.querySelectorAll('.vfx').forEach(d=>d.onclick=()=>valFx(+d.dataset.i));
   el.querySelectorAll('tr[data-comp]').forEach(tr=>{const cod=tr.dataset.comp; if(!cod)return;
     tr.onclick=()=>{ S.cli.comprador=(S.cli.comprador===cod)?'':cod; const sel=$('#f-comprador'); if(sel){sel.value=S.cli.comprador; S.compradorNome=S.cli.comprador?(sel.selectedOptions[0]?.textContent||''):'';} render(); };});
   chart('ch-val',{type:'bar',data:{labels:fd.map(f=>f.n),datasets:[{data:fd.map(f=>f.valor),backgroundColor:barCols,borderRadius:6}]},options:{
-    onClick:(ev,els)=>{if(!els||!els.length)return;const i=els[0].index,f=faixas[i];S.valFaixa=(S.valFaixa&&S.valFaixa[2]===f[0])?null:[f[1],f[2],f[0]];render();},
+    onClick:(ev,els)=>{if(!els||!els.length)return;valFx(els[0].index);},
     plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>'risco '+money(c.raw)+' · '+fd[c.dataIndex].qt+' lotes'}}},scales:{y:{ticks:{callback:v=>moneyK(v)}}}}});
   wirePlanoCells();
 }
@@ -1446,10 +1487,19 @@ async function renderVencidos(){
   // (é risco atual, precisa do histórico completo p/ a reincidência).
   const per=S.venPer||'2026';
   const allMonths=[...new Set((J.itens||[]).map(i=>i.mes).filter(Boolean))].sort();
-  const perMonths = per==='tudo' ? null
-    : per==='2026' ? new Set(allMonths.filter(m=>m.startsWith('2026')))
-    : new Set(allMonths.slice(-12));
-  const perOK=m=>!perMonths||perMonths.has(m);
+  /* ⚠️ O período sai do CALENDÁRIO, não dos meses que têm baixa (pedido do João, 10/2026: "um
+     traço no gráfico em setembro para sinalizar zero perda"). Antes, mês sem baixa simplesmente
+     NÃO EXISTIA: sumia do gráfico e da tabela, o "12 meses" eram os últimos 12 meses COM perda
+     (podiam ir a 2 anos atrás) e a venda dele ficava fora do "% da venda". `J.hoje` é o "hoje"
+     do módulo (ancorado no dado em modo BD); o mês dele é o EM CURSO e nunca vale como zero. */
+  const mesAtual=String(J.hoje||new Date().toISOString()).slice(0,7);
+  const addMes=(m,k)=>{let[a,b]=m.split('-').map(Number);b+=k;while(b>12){b-=12;a++;}while(b<1){b+=12;a--;}return a+'-'+String(b).padStart(2,'0');};
+  const faixaMeses=(de,ate)=>{const o=[];for(let m=de;m<=ate;m=addMes(m,1))o.push(m);return o;};
+  const calMeses = per==='2026' ? faixaMeses('2026-01', mesAtual<'2026-12'?mesAtual:'2026-12')
+    : per==='12m' ? faixaMeses(addMes(mesAtual,-11), mesAtual)
+    : (allMonths.length ? faixaMeses(allMonths[0]<mesAtual?allMonths[0]:mesAtual, mesAtual) : []);
+  const perMonths=new Set(calMeses);
+  const perOK=m=>perMonths.has(m);
   const perTudo=per==='tudo';
   const keep=r=>(!fc||String(r.codcomprador)===fc) && (!ff||String(r.codfornec)===ff) && perOK(r.mes);
   let itens=(J.itens||[]).filter(keep);
@@ -1462,16 +1512,30 @@ async function renderVencidos(){
   // de % sumia do gráfico e o card caía no % all-time, ignorando o seletor de período em silêncio.
   const jm={}; (J.meses||[]).forEach(m=>{jm[m.mes]={venda:m.venda,pct:m.pct};});
   const vcm=J.venda_comp_mes||{};
-  const vendaDoMes=mes=>fc?(vcm[fc+'|'+mes]??null):(jm[mes]?.venda??null);
+  // sem filtro: `J.venda_mes` traz TODOS os meses (o `J.meses` só os com perda — mês zerado
+  // ficaria sem denominador); `jm` fica de reserva para servidor antigo em cache
+  const vendaDoMes=mes=>fc?(vcm[fc+'|'+mes]??null):((J.venda_mes||{})[mes]??jm[mes]?.venda??null);
   const _r3=v=>Math.round(v*1000)/1000;   // mesma precisão do _round(...,3) do servidor
   // meses recalculados a partir das linhas visíveis → respeitam o filtro de comprador
-  const mm={}; (J.itens||[]).filter(keep).forEach(i=>{ if(!i.mes)return;
-    const g=mm[i.mes]=mm[i.mes]||{mes:i.mes,itens:0,qt:0,valor:0}; g.itens++; g.qt+=i.qt||0; g.valor+=i.total||0; });
+  // todo mês do período nasce ZERADO e as baixas somam por cima: mês sem baixa é medição ("não
+  // lançamos perda"), não ausência de dado — mesma leitura do "Vencido R$ = 0" da Evolução
+  const mm={}; calMeses.forEach(m=>{mm[m]={mes:m,itens:0,qt:0,valor:0};});
+  (J.itens||[]).filter(keep).forEach(i=>{ const g=mm[i.mes]; if(!g)return;
+    g.itens++; g.qt+=i.qt||0; g.valor+=i.total||0; });
+  // `semPerda` só em mês FECHADO: o em curso com zero até agora é parcial, não conquista
+  // ⚠️ Mês EM CURSO sem baixa fica SEM % (e fora do card de %): a venda dele já entrou, a baixa
+  // ainda não — sai em lote. Dividir zero de perda pela venda de meio mês puxaria o % para baixo
+  // sem nada ter acontecido na operação. Com baixa, o em curso entra como sempre entrou.
   const meses=Object.values(mm).map(g=>{const v=vendaDoMes(g.mes);
-    return {...g, venda:v, pct:(v?_r3(g.valor/v*100):null)};}).sort((a,b)=>a.mes<b.mes?1:-1);
+    const emCurso=g.mes===mesAtual, aberto=emCurso&&g.itens===0;
+    return {...g, venda:aberto?null:v, pct:(v&&!aberto?_r3(g.valor/v*100):null),
+            emCurso, semPerda:g.itens===0&&g.mes<mesAtual};}).sort((a,b)=>a.mes<b.mes?1:-1);
+  const nComPerda=meses.filter(m=>m.itens>0).length;
   const tot=(k)=>itens.reduce((s,i)=>s+(i[k]||0),0);
   const emEst=(J.em_estoque||[]).filter(p=>(!fc||String(p.codcomprador)===fc)&&(!ff||String(p.codfornec)===ff));
-  const pior=meses.length?meses.reduce((a,b)=>b.valor>a.valor?b:a):null;
+  // "pior mês" entre os que TÊM perda — com tudo zerado ele seria um mês de R$ 0,00
+  const comPerda=meses.filter(m=>m.valor>0);
+  const pior=comPerda.length?comPerda.reduce((a,b)=>b.valor>a.valor?b:a):null;
   const mesLbl=m=>{const[a,b]=m.split('-');return ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][+b-1]+'/'+a.slice(2);};
   // % global do PERÍODO: perda ÷ venda líquida dos meses visíveis que têm venda (RCA ≥2024).
   // Agora vale TAMBÉM com comprador filtrado — antes caía no % all-time daquele comprador, então
@@ -1494,11 +1558,11 @@ async function renderVencidos(){
         ${kpi('% da venda',pctGlobal!=null?pctGlobal.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%':'—',
               'perda ÷ venda líquida'+(S.venMes?' · '+mesLbl(S.venMes):''),C.accent)}
         ${kpi('Produtos afetados',int(new Set(itens.map(i=>i.codprod)).size),
-              S.venMes?`em ${mesLbl(S.venMes)}`:`em ${int(meses.length)} meses`,C.orange)}
+              S.venMes?`em ${mesLbl(S.venMes)}`:`em ${int(nComPerda)} de ${int(meses.length)} meses`,C.orange)}
         ${kpi('Pior mês',pior?mesLbl(pior.mes):'—',pior?money(pior.valor):'',C.yellow)}
         ${kpi('Ainda em estoque',int(emEst.length),`${money(emEst.reduce((s,p)=>s+(p.valor||0),0))} já perdidos · histórico`,C.purple)}
       </div>
-      <div class="panel"><h3><span>Por mês${tipT('Perda por validade em cada mês. Clique num mês para filtrar o detalhe abaixo.')}</span> <small class="muted">· clique num mês p/ filtrar o detalhe</small></h3>
+      <div class="panel"><h3><span>Por mês${tipT('Perda por validade LANÇADA em cada mês (baixa na conta 200042). 🏆 = mês fechado sem nenhuma baixa por validade (a rua 99 — divergência e avaria — não conta até a contagem de janeiro). O mês em curso (*) é parcial e não recebe o troféu. Clique num mês para filtrar o detalhe abaixo.')}</span> <small class="muted">· clique num mês p/ filtrar o detalhe${meses.some(m=>m.emCurso)?' · * mês em curso':''}</small></h3>
         <div class="row" style="align-items:flex-start">
           <div class="grow"><div class="chart-box sm" style="height:190px"><canvas id="ch-ven"></canvas></div></div>
           <div style="flex:0 0 300px;max-width:300px" id="ven-meses"></div>
@@ -1518,7 +1582,8 @@ async function renderVencidos(){
   $('#ven-meses').innerHTML=`<div class="tbl-wrap" style="max-height:190px;overflow:auto"><table>
     <thead><tr><th>Mês</th><th class="num">Itens</th><th class="num">Valor</th></tr></thead>
     <tbody>${mrows.map(m=>`<tr data-mes="${m.mes}" style="cursor:pointer;${S.venMes===m.mes?'background:var(--surface3);':''}">
-      <td>${mesLbl(m.mes)}</td><td class="num">${int(m.itens)}</td><td class="num">${money(m.valor)}</td></tr>`).join('')
+      <td>${mesLbl(m.mes)}${m.emCurso?'*':''}</td><td class="num">${int(m.itens)}</td>
+      <td class="num">${m.semPerda?`<span style="color:${C.green};font-weight:600" title="Nenhuma baixa por validade lançada no mês">🏆 sem perda</span>`:money(m.valor)}</td></tr>`).join('')
       ||'<tr><td colspan="3" class="muted">—</td></tr>'}</tbody></table></div>`;
   el.querySelectorAll('tr[data-mes]').forEach(tr=>tr.onclick=()=>{
     S.venMes=(S.venMes===tr.dataset.mes)?null:tr.dataset.mes; render(); });
@@ -1602,7 +1667,7 @@ async function renderVencidos(){
   const vc=$('#ven-clear'); if(vc) vc.onclick=e=>{e.preventDefault();S.venMes=null;render();};
 
   // ── gráfico: últimos 18 meses, mês selecionado destacado ──
-  // TODOS os meses com perda (não só 18) — senão o card "N meses / R$ total" não bate com o
+  // TODOS os meses do período, com e sem perda (não só 18) — senão o card "N meses / R$ total" não bate com o
   // gráfico e parece contradição (o diretor reparou). Cap em 48m só p/ não explodir no futuro.
   const g18=[...meses].sort((a,b)=>a.mes<b.mes?-1:1).slice(-48);
   // combo: barras = R$ perdido (eixo esq) · linha = % da venda (eixo dir próprio, senão some no zero)
@@ -1611,13 +1676,30 @@ async function renderVencidos(){
     backgroundColor:g18.map(m=>(!S.venMes||S.venMes===m.mes)?C.red:'rgba(100,116,139,.28)'),borderRadius:6};
   const dsLine={type:'line',label:'% da venda',yAxisID:'y1',data:g18.map(m=>m.pct),
     borderColor:C.accent,backgroundColor:C.accent,borderWidth:2,pointRadius:2,tension:.35,spanGaps:true};
-  chart('ch-ven',{data:{labels:g18.map(m=>mesLbl(m.mes)),datasets:temPct?[dsBar,dsLine]:[dsBar]},
+  /* 🏆 no mês FECHADO sem perda (pedido do João, 10/2026). Barra de R$ 0 não se desenha, então o
+     mês zerado ficaria igual a um mês sem dado. O troféu vale porque a régua de perda foi DEFINIDA
+     pela Multpel: perda = baixa LANÇADA (conta 200042) e a rua 99 (divergência/avaria) fica fora
+     até a contagem de janeiro. O tooltip diz exatamente isso — o troféu é "nenhuma baixa
+     lançada", não "nada venceu".
+     ⚠️ Ponto em ZERO, nada de altura fictícia: o emoji é desenhado na METADE DE CIMA de um canvas
+     2× mais alto, e o Chart.js centra a imagem no ponto — ele fica em pé na linha de base, onde o
+     valor de fato está, sem cobrir os rótulos do eixo. */
+  const temZero=g18.some(m=>m.semPerda);
+  const trofeu=(()=>{const c=document.createElement('canvas');c.width=26;c.height=52;
+    const x=c.getContext('2d');x.font='20px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
+    x.textAlign='center';x.textBaseline='middle';x.fillText('🏆',13,13);return c;})();
+  const dsZero={type:'line',label:'🏆 Mês sem perda lançada',yAxisID:'y',data:g18.map(m=>m.semPerda?0:null),
+    showLine:false,pointStyle:trofeu,pointHitRadius:16,borderColor:C.yellow,backgroundColor:C.yellow,clip:false};
+  const dsVen=[dsBar].concat(temPct?[dsLine]:[]).concat(temZero?[dsZero]:[]);
+  chart('ch-ven',{data:{labels:g18.map(m=>mesLbl(m.mes)+(m.emCurso?'*':'')),datasets:dsVen},
     options:{maintainAspectRatio:false,   // sem isso o Chart.js trava em 2:1 e sobra vão à direita
       onClick:(ev,els)=>{if(!els||!els.length)return;const m=g18[els[0].index].mes;S.venMes=(S.venMes===m)?null:m;render();},
-      plugins:{legend:{display:temPct,labels:{boxWidth:12,font:{size:10}}},
-        tooltip:{callbacks:{label:c=>c.dataset.yAxisID==='y1'
+      plugins:{legend:{display:temPct||temZero,labels:{boxWidth:12,font:{size:10}}},
+        tooltip:{callbacks:{label:c=>c.dataset===dsZero
+          ?'🏆 Nenhuma baixa por validade lançada no mês'
+          :(c.dataset.yAxisID==='y1'
           ?'% da venda: '+(c.raw!=null?c.raw.toLocaleString('pt-BR',{maximumFractionDigits:3})+'%':'—')
-          :money(c.raw)+' · '+g18[c.dataIndex].itens+' itens'}}},
+          :money(c.raw)+' · '+g18[c.dataIndex].itens+' itens'+(g18[c.dataIndex].emCurso?' (mês em curso)':''))}}},
       scales:{y:{ticks:{callback:v=>moneyK(v)}},
         y1:{display:temPct,position:'right',grid:{drawOnChartArea:false},
           ticks:{callback:v=>v.toLocaleString('pt-BR',{maximumFractionDigits:2})+'%'}}}}});

@@ -181,6 +181,8 @@ thead th:hover { color: var(--accent); }
 .vfx-s { font-size: .68rem; color: var(--text-dim); margin-top: 1px; }
 thead th.num, td.num { text-align: right; font-family: 'JetBrains Mono', monospace; }
 tbody td { padding: 9px 9px; border-top: 1px solid var(--border); white-space: nowrap; }
+/* linha de total (1º uso: "Total até N dias" da Validade) — mesmo recuo do corpo, borda dupla */
+tfoot td { padding: 9px 9px; border-top: 2px solid var(--border); white-space: nowrap; }
 tbody tr { cursor: pointer; transition: background .1s; }
 tbody tr:hover { background: var(--surface2); }
 /* nome do produto/fornecedor: teto folgado (~46 char) mostra o nome inteiro em ~100% dos casos

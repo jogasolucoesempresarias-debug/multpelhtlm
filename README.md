@@ -551,11 +551,12 @@ prontos, então capacidade não é o gargalo. Medido no BI real: **~US$ 0,0014 p
   (mercadoria × NF), o parado que exclui os "novos", e o sem-giro fora do % ideal.
 - 🩹 **Achado no 1º ensaio com dado REAL** (e a razão de esse ensaio existir): o modelo leu o
   último ponto da série de Evolução como "o valor de hoje" e anunciou que o capital parado
-  subira de R$ 181 mil para R$ 486 mil. **Os dois números estavam certos** — o placar
-  (`core.eh_parado`) conta parado a partir de **60 dias**, a série (`parado_faixa_de`) a partir
-  de **15**. Duas réguas com o mesmo rótulo, cada uma correta na sua aba. O prompt agora rotula
-  a série de `parado-15d` e proíbe a comparação. ⚠️ **A divergência entre as duas telas é real e
-  continua** — decidir se unifica é outra tarefa.
+  subira de R$ 181 mil para R$ 486 mil. **Os dois números estavam certos** — na época o placar
+  (`core.eh_parado`) contava parado a partir de **60 dias** e a série (`parado_faixa_de`) a partir
+  de **15**. Duas réguas com o mesmo rótulo, cada uma correta na sua aba. ✅ **Unificado depois**
+  (ver "Capital parado: a série passou a usar a régua do Cockpit" na aba Evolução): hoje as duas
+  contam 60+, e o prompt (`ia.py`, "MESMA RÉGUA, MOMENTOS DIFERENTES") proíbe ler o último ponto
+  da série como o valor de agora — a diferença que sobrou é de horário, não de régua.
 - ⚠️ **A série pode estar VAZIA ou quase** — em produção a foto começou em 19/08/2026 (**1 dia**)
   e todo cliente novo entra com **zero**. O agente checa a `maturidade_serie` com as MESMAS
   faixas da aba (0 = vazia, <28 enchendo, 28+ útil, 90+ tendência): abaixo de 28 dias ele é
@@ -709,6 +710,29 @@ série não amadurece.
 - **⬇ Excel da "Foto dia a dia"** (06/10/2026): `/estoque/api/evolucao.xlsx`, ADM-only, a MESMA
   série da tela (`_evolucao_serie`, fonte única) pela mesma querystring (`S.evoQS`); números puros,
   recorte no topo do arquivo. Gate: `tests/test_evolucao_export.py`. Ainda fora do catálogo de e-mail.
+- **Risco a vencer até 90 dias** (10/2026, pedido do João: "o histórico seria top"). Barras por
+  faixa (0-15/16-30/31-60/61-90) + coluna e Excel. É a **régua da aba Validade** —
+  `max(0, qt − giro × dias) × custo` — e a série **chama o próprio `core.validade_fefo`**
+  (`historico.risco_validade`), com "hoje" = o dia da foto; nada de 2ª fórmula.
+  - **Grava-se o LOTE, não o risco** (`estoque_foto_lote`: data × unidade × produto × validade →
+    qt; ~1.100 linhas/dia no Atacado). Giro e custo já estão na `estoque_foto_item` do mesmo dia,
+    e o INNER JOIN dos dois recalcula o risco com qualquer régua e honra comprador/fornecedor/
+    curva/XYZ **do dia** — um "risco = R$ X" gravado não honraria nenhum recorte. INNER e não LEFT
+    porque a aba só mostra lote de produto que está no snapshot (`lotesFiltrados`).
+  - ⚠️ **Tabela própria, não o payload do `estoque_foto_estado`** — que é a regra para estado
+    novo. O `_com_estado` copia TODAS as chaves do payload para cada dia da série: a lista de lotes
+    iria parar na resposta da API, vezes os dias da janela.
+  - ⚠️ **Sem cor** (`_EVO_DIRECAO["risco_90"] = None`): lote que vence sem vender sai da janela
+    (validade ≥ hoje) e lote levado para a rua 99 sai do endereçado — o risco cai justamente
+    quando a perda se consuma ou muda de lugar. Medido em 10/2026: a **avaria do Atacado subiu
+    perto de 40%** num período em que não houve nenhuma baixa por validade.
+  - O **"90+" fica de fora**: na aba ele vai até o `horizonte_val`, aqui iria até onde o lote foi
+    gravado — mesmo rótulo, dois números.
+  - **Costurado na rota** (`juntar_risco_validade` no `_evolucao_serie`), como os vencidos, e não
+    no `serie()`: a Nota do comprador também chama o `serie()` e não deve pagar a consulta.
+  - Para o KPI não ficar mudo, o `_resumo_evolucao` passou a medir a variação do **1º ao último
+    dia em que a métrica existe** (com `de` para a tela dizer "desde"), não do 1º dia da janela.
+  - **Só existe a partir do deploy.** Gate: `tests/test_risco_validade_historico.py`.
 
 **Aba Fornecedores — ciclo de compras + lucro com verba** (07/2026). Quatro colunas novas:
 `Compras` (quantas vezes compramos no período), `Ciclo 12m` (de quanto em quanto tempo),
@@ -2050,6 +2074,11 @@ Devolução por **DTENT** (dia que entrou no estoque). Validado: Sup AFONSO ES-S
     movimento, ou seja, o fechamento de ontem com a data de hoje. **Não devolva para a manhã** sem
     remedir o refresh history. A janela de 5 passagens não é redundância inútil: perder um dia é
     irrecuperável, e um deploy no minuto exato custaria a foto.
+23. **Estado com grão de ITEM não vai no payload do estado** — vai em tabela própria, como os
+    lotes (`estoque_foto_lote`). A regra 18 vale para ESCALAR por dia × unidade: o `_com_estado`
+    despeja o payload inteiro em cada dia da série, e uma lista de 1.100 lotes no payload viraria
+    megabytes na API da Evolução sem erro nenhum. Tabela própria também é dado PRIMÁRIO: o
+    `rebuild_rollup` nunca a toca.
 
 ---
 

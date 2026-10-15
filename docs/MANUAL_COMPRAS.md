@@ -654,6 +654,15 @@ em **20/08/2026**. Primeira leitura útil em ~4 semanas; tendência firme em ~90
   (valor, atrasados, chegando em 7 dias) e **avaria**. Cada um tem coleta própria — uma fonte fora do
   ar não custa a foto do estoque. Com recorte ativo (comprador, curva…) a ocupação **não** aparece:
   é do depósito inteiro e não se decompõe.
+- **Risco a vencer até 90 dias** (10/2026, pedido do João): barras empilhadas por faixa (0-15,
+  16-30, 31-60, 61-90, as cores dos cards da Validade) + coluna "Risco ≤90d" na tabela e no Excel.
+  É a **mesma régua da aba Validade** (`saldo − giro × dias`, a custo), recalculada dos **lotes**
+  que a foto passou a gravar (`estoque_foto_lote`) com o giro e o custo **daquele dia** — mudar a
+  régua não cria degrau, e o recorte (comprador, curva…) é honrado. ⚠️ **Só existe a partir do
+  deploy**: saldo de lote é estado, o de ontem não fica em lugar nenhum. ⚠️ **Sem cor**: lote que
+  vence sem vender sai da conta, então o risco também cai quando a perda se consuma — leia ao lado
+  de "Vencido R$" e "Avaria R$". Não confundir com **"A vencer R$"** (estoque de todas as
+  validades, `qt × custo`): o risco é a parte dele que não deve vender a tempo.
 - **Recorte:** unidade · comprador · fornecedor · curva · XYZ. **Depto e Buscar produto a aba NÃO
   honra**, e avisa na tela.
 
@@ -808,6 +817,15 @@ saldo projetado = quantidade do lote − (giro diário × dias até vencer)
 valor em risco  = max(0, saldo projetado) × custo
 ```
 - **Cards por faixa** (0-15, 16-30, 31-60, 61-90, 90+) + gráfico + "vencimento por comprador".
+- **Um intervalo de dias por vez** (10/2026, pedido do João: *"quando filtro aqui, não muda ali"*):
+  clicar num card **ou** digitar "Dias para vencer (≤ N)" define o intervalo — um limpa o outro — e a
+  **tabela por comprador, a linha de total e a lista** seguem o mesmo. A linha **"Total até N
+  dias"** é o **risco acumulado** do período (antes era preciso somar os cards à mão). Antes os
+  dois filtros se somavam na lista (card 0-15 + "≤ 90" mostrava só 0-15) e a tabela por comprador
+  ignorava o "≤ N". ⚠️ A aba só carrega lotes até o **horizonte de validade** do ⚙ Parâmetros
+  (padrão 30 dias): um "≤ 90" com horizonte 30 somaria só 30 dias, e a tela **avisa** em vez de
+  mostrar o total pela metade. A coluna Risco da tabela por comprador sai em centavos, para fechar
+  com os cards.
 - **Colunas:** Cód · Produto · ABC · **XYZ** · Lote · Validade · Dias · Qtd · Saldo proj. ·
   Valor risco · Classe · Ação. **Classes:** crítico (≤7d) · atenção (≤15d) · planejar.
 - ⚠️ **A coluna XYZ (19/08/2026) é o qualificador da própria estimativa desta tela.** O
@@ -830,6 +848,20 @@ do Winthor), mês a mês.
   Part. · **% venda** (perda ÷ venda líquida do comprador, all-time, só na visão "Tudo").
 - ⚠️ **Join por `NUMTRANSVENDA`, NUNCA por `NUMNOTA`.** O `NUMNOTA` repete ao longo dos anos e
   infla o resultado **~3,5×** — e o `SELECT DISTINCT` **não** corrige.
+- **Perda = baixa LANÇADA** (conta 200042). Decisão da Multpel (10/2026): o que está na **rua 99**
+  (divergência de estoque aguardando tratativa e avaria que volta ao fornecedor) **não** conta como
+  perda até a contagem de estoque de janeiro corrigir. Vencer não gera baixa sozinho no Winthor —
+  o lançamento é manual e sai em lote.
+- **Mês sem perda** (10/2026, pedido do João: "um traço ou um troféu em setembro"): o período sai
+  do **calendário**, então todo mês aparece — o mês **fechado** sem baixa ganha um **🏆** em pé na
+  linha de base do gráfico e "🏆 sem perda" na tabela. O troféu vale porque a régua de perda foi
+  definida pela Multpel (baixa lançada; rua 99 fora até janeiro) — o tooltip diz "nenhuma baixa
+  por validade lançada", não "nada venceu". Antes ele simplesmente sumia (igual a mês sem dado), o
+  "12 meses" eram os últimos 12 **com perda** e a venda do mês zerado ficava fora do **% da venda**
+  — que saía inflado justamente quando um mês ia bem. O **mês em curso** (*) nunca recebe o troféu e,
+  enquanto não tem baixa, fica fora do % (venda de meio mês contra baixa que ainda não saiu).
+  ⚠️ Muda o "% da venda" do período **uma vez, sem mudar a operação** (o mês zerado entra no
+  denominador): comparar antes×depois uma vez. Gate: `tests/test_vencidos_pct_comprador.py`.
 
 ### 7.13 Ruptura por comprador (Estoque)
 Ruptura agregada em **duas tabelas**: **por comprador** e **por curva ABC**.
@@ -1122,10 +1154,10 @@ eram de outro recorte.
 ⚠️ **Ele não calcula nada** — narra números que o painel já produziu. É por isso que bate com a
 tela sempre: se somasse por conta própria, divergiria no primeiro arredondamento.
 
-⚠️ **A série da Evolução tem régua própria.** Ela conta como parado o item sem venda há **15 dias
-ou mais**; o placar conta a partir de **60**. Por isso o valor da série é sempre bem maior — são
-medições diferentes, não uma variação. O agente é instruído a comparar pontos da série entre si e
-nunca com o placar. *(A divergência entre as duas telas é anterior ao agente.)*
+⚠️ **A série da Evolução e o placar usam a MESMA régua de parado (60+ dias)** desde 08/2026 —
+antes a série contava a partir de 15 dias e dizia o dobro do Cockpit no mesmo dia (§7.4). O que
+ainda difere é o **momento**: o placar é a posição de agora, a série é a foto de cada dia às 18h40.
+O agente é instruído a não tratar o último ponto da série como "o valor de hoje".
 
 **Três estados por instância** (08/2026 — o que muda é configuração, não código):
 - **desligado** (sem `ia` no `MODULOS`) — o botão **não aparece** e nenhuma requisição é feita. É o

@@ -189,6 +189,30 @@ CREATE TABLE IF NOT EXISTS estoque_foto_estado (
     payload  JSONB NOT NULL,
     PRIMARY KEY (data, unidade)
 );
+-- ───────────────── lotes do dia (histórico do RISCO de vencimento) ─────────────────
+-- Pedido do João (10/2026): ver o risco a vencer ao longo do tempo. O saldo de LOTE é estado
+-- sobrescrito — quanto vencia em 30 dias numa data passada não existe em lugar nenhum — então só
+-- existe a partir do dia em que se começa a gravar.
+--
+-- ⚠️ Grava-se o INGREDIENTE (lote × validade × quantidade), não "risco = R$ X". O risco é
+-- `max(0, qt − giro × dias) × custo` (`core.validade_fefo`): gravar o resultado congelaria a régua
+-- do dia, e mexer no giro ou no horizonte desenharia degrau no gráfico. Giro e custo já estão na
+-- `estoque_foto_item` do mesmo dia — o join dos dois reconstrói o risco com a régua de hoje e
+-- honra comprador/fornecedor/curva/XYZ, que um escalar gravado não honraria.
+--
+-- ⚠️ **Por que não no `payload` do `estoque_foto_estado`**, que é a regra para estado novo: o
+-- grão aqui é LOTE (~1.100 linhas/dia no Atacado), não escalar, e o `_com_estado` copia TODAS as
+-- chaves do payload para cada dia da série — a lista de lotes iria parar na resposta da API,
+-- multiplicada pelos dias da janela. Dado PRIMÁRIO e irrecuperável, como o estado: o
+-- `rebuild_rollup` nunca toca aqui.
+CREATE TABLE IF NOT EXISTS estoque_foto_lote (
+    data     DATE    NOT NULL,
+    unidade  TEXT    NOT NULL,
+    codprod  INTEGER NOT NULL,
+    dtval    DATE    NOT NULL,
+    qt       NUMERIC NOT NULL,
+    PRIMARY KEY (data, unidade, codprod, dtval)
+);
 -- ───────────────────── pesquisa de preço (captura em campo) ─────────────────────
 -- Pedido do diretor 08/2026: preencher o preço pesquisado direto no item, durante a visita.
 -- É a 1ª vez que a ferramenta vira FONTE de um dado que o Winthor não tem.

@@ -81,20 +81,27 @@ def test_vencidos_sem_o_cruzado_nao_quebra():
 
 
 # ─────────────────── a regra que o front aplica ───────────────────
-def _pct_do_periodo(itens_por_mes, venda_por_mes):
-    """Espelha o cálculo do card no estoque.js: soma perda e venda só dos meses VISÍVEIS que
-    têm denominador, e divide no fim. Somar percentuais de meses daria outro número."""
-    pares = [(v, venda_por_mes[m]) for m, v in itens_por_mes.items() if venda_por_mes.get(m)]
-    perda, venda = sum(p for p, _ in pares), sum(v for _, v in pares)
+def _pct_do_periodo(perda_por_mes, venda_por_mes, periodo, em_curso=None):
+    """Espelha o cálculo do card no estoque.js: soma perda e venda dos meses DO PERÍODO que têm
+    denominador, e divide no fim. Somar percentuais de meses daria outro número.
+
+    ⚠️ (10/2026) O período é o CALENDÁRIO, não os meses que têm baixa: mês FECHADO sem perda
+    entra com perda 0 e a venda dele inteira. Antes ele simplesmente não existia no front, e o %
+    dividia só pelos meses COM perda — inflado justamente quando um mês ia bem. O mês EM CURSO
+    sem baixa fica fora: venda de meio mês contra uma baixa que ainda não saiu."""
+    meses = [m for m in periodo if venda_por_mes.get(m)
+             and not (m == em_curso and not perda_por_mes.get(m))]
+    perda = sum(perda_por_mes.get(m, 0.0) for m in meses)
+    venda = sum(venda_por_mes[m] for m in meses)
     return (perda / venda * 100) if venda else None
 
 
 def test_card_do_periodo_ignora_meses_fora_do_recorte():
     """O bug real: com comprador filtrado o card mostrava o all-time. Aqui, período = só 2026-01,
     então 2025 não pode entrar em nenhum dos dois lados da divisão."""
-    perda_visivel = {"2026-01": 50.0}                      # jan/26 é o único mês do período
+    perda = {"2026-01": 50.0, "2025-12": 777.0}
     venda = {"2026-01": 1000.0, "2025-12": 999999.0}
-    assert _pct_do_periodo(perda_visivel, venda) == pytest.approx(5.0)
+    assert _pct_do_periodo(perda, venda, ["2026-01"]) == pytest.approx(5.0)
 
 
 def test_mes_sem_denominador_fica_fora_dos_DOIS_lados():
@@ -102,4 +109,50 @@ def test_mes_sem_denominador_fica_fora_dos_DOIS_lados():
     perda cujo denominador não existe."""
     perda = {"2023-05": 400.0, "2026-01": 50.0}
     venda = {"2026-01": 1000.0}
-    assert _pct_do_periodo(perda, venda) == pytest.approx(5.0)
+    assert _pct_do_periodo(perda, venda, ["2023-05", "2026-01"]) == pytest.approx(5.0)
+
+
+def test_mes_sem_perda_entra_no_denominador():
+    """Setembro/26 sem nenhuma baixa: a venda dele CONTA. Fora do denominador, o % do período
+    sairia 8% em vez de 4% — o mês bom piorando o indicador."""
+    perda = {"2026-08": 80.0}                              # setembro: nenhuma baixa
+    venda = {"2026-08": 1000.0, "2026-09": 1000.0}
+    assert _pct_do_periodo(perda, venda, ["2026-08", "2026-09"]) == pytest.approx(4.0)
+
+
+def test_mes_em_curso_sem_baixa_fica_fora_do_percentual():
+    """Outubro pela metade, nenhuma baixa AINDA (elas saem em lote): a venda dele não entra, senão
+    o % cairia só porque o mês não acabou. Com baixa, entra como sempre entrou."""
+    venda = {"2026-09": 1000.0, "2026-10": 500.0}
+    per = ["2026-09", "2026-10"]
+    assert _pct_do_periodo({"2026-09": 40.0}, venda, per, em_curso="2026-10") == pytest.approx(4.0)
+    assert _pct_do_periodo({"2026-09": 40.0, "2026-10": 20.0}, venda, per,
+                           em_curso="2026-10") == pytest.approx(4.0)   # 60 / 1500
+
+
+def test_tela_tira_o_mes_em_curso_sem_baixa_do_percentual():
+    from pathlib import Path
+    js = Path("static/estoque/estoque.js").read_text(encoding="utf-8")
+    assert "aberto=emCurso&&g.itens===0" in js and "venda:aberto?null:v" in js
+
+
+# ─────────────────── mês sem perda (o "traço" do João, 10/2026) ───────────────────
+def test_vencidos_entrega_hoje_e_a_venda_de_TODOS_os_meses():
+    """O front monta o período pelo calendário — precisa do "hoje" do módulo (ancorado no dado
+    em modo BD) e da venda dos meses sem perda, que o `meses` do core não traz."""
+    import inspect
+    fonte = inspect.getsource(routes.api_vencidos)
+    assert '"hoje": _hoje().isoformat()' in fonte and '"venda_mes": venda_mes' in fonte
+
+
+def test_tela_monta_o_periodo_pelo_calendario_e_marca_so_mes_fechado():
+    from pathlib import Path
+    js = Path("static/estoque/estoque.js").read_text(encoding="utf-8")
+    ini = js.index("async function renderVencidos")
+    corpo = js[ini:js.index("\nfunction renderTableInline", ini)]
+    assert "calMeses.forEach(m=>{mm[m]=" in corpo          # todo mês do período nasce zerado
+    assert "semPerda:g.itens===0&&g.mes<mesAtual" in corpo   # o mês EM CURSO nunca é "sem perda"
+    assert "J.venda_mes" in corpo                            # denominador do mês zerado
+    assert "pointStyle:trofeu" in corpo and "Mês sem perda lançada" in corpo
+    assert "Nenhuma baixa por validade lançada no mês" in corpo   # o troféu diz o que mediu
+    assert "comPerda.reduce" in corpo                        # "pior mês" nunca é um mês de R$ 0

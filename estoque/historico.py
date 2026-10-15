@@ -192,6 +192,12 @@ def fotografar(app, hoje=None, unidades=None, refazer=False):
                 gravar_estado(hoje, uid, {chave: fn(app, uid)})
             except Exception as e:                                # noqa: BLE001
                 erros.append(f"{uid} (estado/{chave}): {e}")
+        # lotes do dia (histórico do risco de vencimento) — try PRÓPRIO pelo mesmo motivo: lote
+        # vem do WMS (PCESTENDERECO) e uma falha dele não pode custar a foto do estoque
+        try:
+            gravar_lotes(hoje, uid, _lotes_do_dia(app, uid))
+        except Exception as e:                                    # noqa: BLE001
+            erros.append(f"{uid} (lotes): {e}")
     return feitas, erros
 
 
@@ -357,6 +363,150 @@ def gravar_estado(dia, unidade, payload):
                         (dia, unidade, _json(payload)))
     finally:
         conn.close()
+
+
+# ───────────────────── lotes do dia → histórico do RISCO de vencimento ─────────────────────
+# Pedido do João (10/2026): "o histórico seria top". O risco é a parte do lote que NÃO vende até
+# vencer — `core.validade_fefo`, a mesma função da aba Validade. Aqui se grava só o lote; giro e
+# custo vêm da `estoque_foto_item` do mesmo dia (ver o comentário da tabela em `store.py`).
+
+# Faixas da aba Validade (`renderValidade`), até 90 dias. ⚠️ O "90+" fica de fora de propósito:
+# na aba ele vai até o horizonte do ⚙ Parâmetros (`horizonte_val`), e aqui iria até onde o lote
+# foi gravado — o mesmo rótulo com dois números, que é o defeito que a aba existe para não ter.
+FAIXAS_RISCO = (("0-15", 0, 15), ("16-30", 16, 30), ("31-60", 31, 60), ("61-90", 61, 90))
+
+
+def lotes_por_validade(rows):
+    """[(codprod, dtval, qt)] somando lotes do MESMO produto + validade — o mesmo agrupamento do
+    `validade_fefo` (o consumo projetado incide sobre o total, não por lote). Lote sem validade
+    ou sem saldo não entra: não tem risco a projetar."""
+    agg = {}
+    for r in rows or []:
+        cod, dtval, qt = r.get("CODPROD"), core._parse_dt(r.get("DTVAL")), core._n(r.get("qt"))
+        if cod in (None, "") or not dtval or qt <= 0:
+            continue
+        k = (int(core._n(cod)), dtval)
+        agg[k] = agg.get(k, 0.0) + qt
+    return [(cod, dtval, qt) for (cod, dtval), qt in sorted(agg.items())]
+
+
+def _lotes_do_dia(app, uid):
+    """Lotes endereçados com validade de hoje em diante — a MESMA consulta e a MESMA janela do
+    `_validade_do_dia` (fora da rua 99, que é avaria)."""
+    from . import routes as R
+    from datetime import timedelta
+    with app.test_request_context(f"/estoque/api/resumos?unidade={uid}"):
+        hoje = R._hoje()
+        filiais = R._filiais_estoque()
+        _jan = (hoje, hoje + timedelta(days=3650))
+        rows = (R.PS.validade(*_jan, filiais) if R._pg()
+                else pbi.run_dax(R.Q.q_validade(*_jan, filiais)))
+    return lotes_por_validade(rows)
+
+
+def gravar_lotes(dia, unidade, lotes):
+    """Regrava os lotes de UMA unidade num dia. DELETE + INSERT, como o `gravar`: lote que saiu
+    do WMS entre duas passagens do mesmo dia não pode ficar preso na foto com o saldo velho."""
+    from psycopg2.extras import execute_values
+    conn = store.get_db()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM estoque_foto_lote WHERE data=%s AND unidade=%s", (dia, unidade))
+            if lotes:
+                execute_values(
+                    cur, "INSERT INTO estoque_foto_lote (data, unidade, codprod, dtval, qt) VALUES %s",
+                    [(dia, unidade, cod, dtval, qt) for cod, dtval, qt in lotes], page_size=1000)
+    finally:
+        conn.close()
+    return len(lotes or [])
+
+
+def risco_validade(linhas):
+    """{data_iso: risco por faixa} a partir dos lotes gravados — função PURA, sem I/O.
+
+    `linhas`: (data, codprod, dtval, qt, giro_dia, custo_unit) — lote do dia + giro/custo do
+    MESMO dia na foto do item.
+
+    ⚠️ Não reimplementa a conta: monta os lotes e o índice de produtos no formato que a aba
+    Validade usa e chama o próprio `core.validade_fefo`, com "hoje" = o dia da foto. Uma segunda
+    fórmula de risco seria a 4ª implementação de uma régua neste módulo, e a primeira a divergir.
+    `estoque` é `qt × custo` da linha, a mesma conta dos cards da aba ("estoque R$ …")."""
+    por_dia = {}
+    for dia, cod, dtval, qt, giro, custo in linhas:
+        b = por_dia.setdefault(dia, ([], {}))
+        b[0].append({"CODPROD": cod, "DTVAL": dtval, "qt": qt})
+        b[1][int(cod)] = {"giro_dia": core._n(giro), "custo_unit": core._n(custo)}
+    out = {}
+    for dia, (lotes, idx) in por_dia.items():
+        fx = {n: {"risco": 0.0, "estoque": 0.0, "lotes": 0} for n, _lo, _hi in FAIXAS_RISCO}
+        for l in core.validade_fefo(lotes, idx, {}, hoje=dia):
+            for n, lo, hi in FAIXAS_RISCO:
+                if lo <= l["dias_para_vencer"] <= hi:
+                    f = fx[n]
+                    f["risco"] += l["valor_risco"] or 0.0
+                    f["estoque"] += (l["qt"] or 0.0) * (l["custo_unit"] or 0.0)
+                    f["lotes"] += 1
+                    break
+        for f in fx.values():
+            f["risco"], f["estoque"] = core._round(f["risco"]), core._round(f["estoque"])
+        out[dia.isoformat()] = {
+            "faixas": fx,
+            "risco_90": core._round(sum(f["risco"] for f in fx.values())),
+            "estoque_90": core._round(sum(f["estoque"] for f in fx.values())),
+            "lotes_90": sum(f["lotes"] for f in fx.values()),
+        }
+    return out
+
+
+# ⚠️ INNER JOIN com a foto do item, não LEFT: a aba Validade só mostra lote de produto que está no
+# snapshot da unidade (`lotesFiltrados` recorta pelos produtos visíveis). E é o join que dá
+# comprador/fornecedor/curva/XYZ DO DIA — remanejar um comprador amanhã não reescreve o risco
+# que ele tinha.
+_SQL_LOTES = """
+    SELECT l.data, l.codprod, l.dtval, l.qt, i.giro_dia, i.custo_unit
+      FROM estoque_foto_lote l
+      JOIN estoque_foto_item i
+        ON i.data=l.data AND i.unidade=l.unidade AND i.codprod=l.codprod
+     WHERE l.unidade=%s
+       AND (%s::date IS NULL OR l.data>=%s) AND (%s::date IS NULL OR l.data<=%s)
+       AND (%s::int  IS NULL OR i.codcomprador=%s)
+       AND (%s::int  IS NULL OR i.codfornec=%s)
+       AND (%s::text IS NULL OR i.curva_abc=%s)
+       AND (%s::text IS NULL OR i.xyz=%s)
+"""
+
+
+def juntar_risco_validade(dias, unidade, ini=None, fim=None, comprador=None, fornecedor=None,
+                          curva=None, xyz=None):
+    """Costura o risco de vencimento nos dias da série da Evolução, NO RECORTE da tela.
+
+    Fica fora do `serie()` de propósito, como os vencidos (`routes._juntar_vencidos`): o `serie`
+    também alimenta a Nota do comprador, que não usa risco e não deve pagar a consulta.
+
+    Dia sem lote gravado fica SEM a chave — "não medido", nunca zero. O histórico só começa no
+    dia em que esta gravação foi ao ar; antes disso o risco não existe em lugar nenhum."""
+    if not dias or not store.ensure():
+        return
+    args = [unidade, ini, ini, fim, fim, comprador, comprador, fornecedor, fornecedor,
+            curva, curva, xyz, xyz]
+    try:
+        conn = store.get_db()
+        try:
+            with conn, conn.cursor() as cur:
+                cur.execute(_SQL_LOTES, args)
+                rows = cur.fetchall()
+        finally:
+            conn.close()
+    except Exception as e:                                        # noqa: BLE001
+        # degrada para ausente: uma métrica a mais não pode derrubar a série do estoque
+        print(f"[historico] risco de validade indisponivel ({e}).")
+        return
+    mapa = risco_validade(rows)
+    for d in dias:
+        r = mapa.get(d.get("data"))
+        if r is not None:
+            d["risco_validade"] = r
+            d["risco_90"] = r["risco_90"]      # chave plana: é o que o resumo/variação lê
 
 
 # ───────────────────────── leitura (alimenta a aba) ─────────────────────────
