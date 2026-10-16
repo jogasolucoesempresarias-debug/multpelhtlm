@@ -816,6 +816,32 @@ anterior sobreposto**, ciclo × lead, pedidos em aberto, a comprar (c/ impostos)
 - `lead_confiavel=False` → a tela mostra `~26d (amostra fraca)`, não o número seco. Gate:
   `tests/test_fornecedor_360.py`.
 
+**Drawer 360° do PRODUTO — Estoque por filial** (10/2026, pedido do João Victor: *"preciso saber se
+alguma filial tem o produto, pois na filial atacado está zerado, aí tenho que entrar filial por
+filial"*). Bloco logo abaixo dos KPIs: **disponível · giro · cobertura** de cada filial, com a da
+unidade selecionada marcada. Motor puro `core.estoque_por_filial`; endpoint `/api/produto/<cod>`
+(campo `por_filial`).
+- ⚠️ **O giro vai junto do saldo de propósito.** Medido em 16/10/2026 no caso dele (58389): as
+  lojas somavam 7 un, uns 5 dias do Atacado, e as duas ficariam zeradas — 4 un numa loja que gira
+  12/mês não são sobra. Na base: dos 364 itens em ruptura no Atacado, 159 tinham saldo em outra
+  filial e, na mediana, o excedente cobria 7,8 dias. Se a filial cede ou não é decisão do cliente.
+- ⚠️ **Sem recorte de filial na consulta**, ao contrário de todo o resto do módulo: a pergunta é o
+  que está FORA da unidade. Duas consultas POR PRODUTO, só ao abrir o drawer (posição + consumo de
+  produção), cache 15 min — o corte transversal produto × filial são ~10 mil linhas e pesaria em
+  toda tela que carrega o snapshot.
+- ⚠️ **Mesmas réguas do card, filial a filial**: disponível = gerencial − avaria − reserva; giro
+  com o consumo de produção (rotina 1122) somado; na filial industrial, consumo de 12m ÷ 12. Numa
+  unidade de uma filial só a linha **repete o KPI** — conferido no BI em Atacado/A&M/AC. O giro é
+  sempre a média oficial (forecast/sazonal vêm do RCA, sem grão de filial de estoque).
+- ⚠️ **Filial de faturamento não entra só por ter giro** (a 8 tem QTVENDMES em 1.528 itens sem ter
+  estoque). Filial com saldo entra mesmo fora de toda unidade: a 10 tinha 12 itens e não aparece em
+  nenhuma tela — sai como "Filial 10".
+- 🩹 De quebra, o card **Cobertura** de item em ruptura dizia **"∞"**: o servidor manda
+  `cobertura=None` sem giro **e** sem estoque, e o `cob()` não distinguia. Card e linhas passam pelo
+  mesmo `cobQt` (zerado com giro = `0d`).
+- Fica **fora da ficha Excel/PDF**, como os lotes e os endereços: a ficha é uma linha de campos
+  fixos. Gate: `tests/test_estoque_por_filial.py`.
+
 **Aba Verbas — a página inteira fala UMA janela** (08/2026). O rodapé da aba sempre prometeu
 "negociado/aplicado = últimos 12 meses · saldo = posição atual", mas dois elementos não cumpriam.
 Hoje vale a **invariante**: `KPI Negociado 12m` = Σ coluna Negociado da tabela = Σ barras azuis do

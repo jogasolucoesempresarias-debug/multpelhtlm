@@ -732,6 +732,51 @@ FILTER(
 )"""
 
 
+# ───────────────────────── estoque de UM produto em cada filial (drawer 360°) ─────────
+def q_estoque_filiais_produto(codprod):
+    """Posição de UM produto em TODAS as filiais — o bloco "Estoque por filial" do drawer.
+
+    Pedido do comprador (10/2026): o item zera no Atacado e, para saber se alguma filial tem,
+    ele trocava a unidade do topo uma por uma. ⚠️ **Sem recorte de filial, de propósito**: a
+    pergunta é justamente o que está FORA da unidade selecionada.
+
+    Filtra por CODPROD antes de agrupar (uma linha por filial, ~15). As colunas são as do
+    `q_snapshot_estoque`, para disponível e giro saírem na mesma régua do card."""
+    return f"""EVALUATE
+CALCULATETABLE(
+    ADDCOLUMNS(
+        SUMMARIZE(PCEST, PCEST[CODFILIAL]),
+        "qtestger", CALCULATE(SUM(PCEST[QTESTGER])),
+        "qtreserv", CALCULATE(SUM(PCEST[QTRESERV])),
+        "qtbloq",   CALCULATE(SUM(PCEST[QTBLOQUEADA])),
+        "giro_m1",  CALCULATE(SUM(PCEST[QTVENDMES1])),
+        "giro_m2",  CALCULATE(SUM(PCEST[QTVENDMES2])),
+        "giro_m3",  CALCULATE(SUM(PCEST[QTVENDMES3]))
+    ),
+    PCEST[CODPROD] = {int(codprod)}
+)"""
+
+
+def q_consumo_filiais_produto(codprod, meses, oper="SP"):
+    """Consumo de PRODUÇÃO (rotina 1122) de UM produto por filial × mês — o pedaço do giro que
+    não passa por venda (ver `q_consumo_producao`). Sem ele, a linha da Matriz de um item de kit
+    e a da JID (matéria-prima, que só consome) sairiam com giro menor que o do card."""
+    datas = ", ".join(f"DATE({int(m)//100}, {int(m)%100}, 1)" for m in meses)
+    return f"""EVALUATE
+SELECTCOLUMNS(
+    SUMMARIZECOLUMNS(
+        CONSUMO_PRODUCAO[CODFILIAL],
+        CONSUMO_PRODUCAO[MES],
+        FILTER(ALL(CONSUMO_PRODUCAO),
+            CONSUMO_PRODUCAO[CODPROD] = {int(codprod)}
+            && CONSUMO_PRODUCAO[CODOPER] = "{oper}"
+            && CONSUMO_PRODUCAO[MES] IN {{{datas}}}),
+        "qt", SUM(CONSUMO_PRODUCAO[QT])
+    ),
+    "codfilial", [CODFILIAL], "mes", [MES], "qt", [qt]
+)"""
+
+
 # ───────────────────────── estoque endereçado (QTDISP oficial) ─────────────────
 def q_estoque_endereco(filiais=None):
     """SUM(PCESTENDERECO[QT]) por CODPROD, RUA<>99, filiais dadas (= ESTQ_ENDEREÇO do TI)."""

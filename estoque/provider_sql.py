@@ -86,6 +86,29 @@ def bloqueio_filial(filiais=None):
                 for (cod, fil, qb, qu, dte) in cur.fetchall()]
 
 
+# ───────────────────────── estoque de UM produto em cada filial (drawer 360°) ─────────
+def estoque_filiais_produto(codprod):
+    """Espelha q_estoque_filiais_produto: PCEST de um produto, uma linha por filial, SEM recorte
+    de filial (a pergunta é o que está fora da unidade). Aliases do snapshot (qtbloq, giro_m1..3)."""
+    with analytics_conn() as c:
+        cur = c.cursor()
+        cur.execute("""
+            SELECT codfilial, sum(qtestger), sum(qtreserv), sum(qtbloqueada),
+                   sum(qtvendmes1), sum(qtvendmes2), sum(qtvendmes3)
+            FROM pcest WHERE codprod = %s
+            GROUP BY codfilial
+        """, (int(codprod),))
+        return [{"CODFILIAL": fil, "qtestger": _f(qeg), "qtreserv": _f(qr), "qtbloq": _f(qb),
+                 "giro_m1": _f(g1), "giro_m2": _f(g2), "giro_m3": _f(g3)}
+                for (fil, qeg, qr, qb, g1, g2, g3) in cur.fetchall()]
+
+
+def consumo_filiais_produto(codprod, meses=None, oper="SP"):
+    """Espelha q_consumo_filiais_produto. A base sintética não tem produção — mesmo vazio
+    declarado do `consumo_producao`."""
+    return []
+
+
 # ───────────────────────── estoque endereçado (QTDISP oficial) ─────────────────────────
 def estoque_endereco(filiais=None):
     """Espelha q_estoque_endereco: SUM(PCESTENDERECO[QT]) por CODPROD, RUA<>99, filiais."""

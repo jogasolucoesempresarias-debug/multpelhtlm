@@ -2791,6 +2791,54 @@ def _top_vendedores_fornecedor(codfornec, periodo, filiais_venda, hoje, n=3):
     return saida
 
 
+def _estoque_por_filial(codprod, params, filiais_unidade):
+    """Bloco "Estoque por filial" do drawer 360° — ver `core.estoque_por_filial`.
+
+    Duas consultas POR PRODUTO (posição em todas as filiais + consumo de produção de 12 meses),
+    feitas só quando o drawer abre: o corte transversal produto × filial são ~10 mil linhas e
+    pagaria por isso toda tela que carrega o snapshot.
+
+    ⚠️ Degrada em dois níveis: sem a `CONSUMO_PRODUCAO` o giro sai só de venda (como na unidade
+    sem a tabela); sem o PCEST o bloco some e o resto do drawer abre normal."""
+    hoje = _hoje()
+    meses = core._meses_anteriores(hoje, 12)          # mais recente 1º: meses[:3] = QTVENDMES1..3
+    key = f"estfil:{codprod}:{meses[0]}"
+    hit = pbi._CACHE.get(key)
+    if hit is None:
+        try:
+            linhas = (PS.estoque_filiais_produto(codprod) if _pg()
+                      else pbi.run_dax(Q.q_estoque_filiais_produto(codprod)))
+        except Exception as e:                                    # noqa: BLE001
+            print(f"[estoque-filial] PCEST indisponível p/ {codprod} ({e}).")
+            return []
+        cons_rows = []
+        try:
+            cons_rows = (PS.consumo_filiais_produto(codprod, meses) if _pg()
+                         else pbi.run_dax(Q.q_consumo_filiais_produto(codprod, meses)))
+        except Exception as e:                                    # noqa: BLE001
+            print(f"[estoque-filial] CONSUMO_PRODUCAO indisponível ({e}). Giro só por venda.")
+        hit = (linhas, cons_rows)
+        pbi._CACHE.set(key, hit, 900)
+    linhas, cons_rows = hit
+    pos = {int(m): f"m{i + 1}" for i, m in enumerate(meses[:3])}
+    consumo, consumo_12m = {}, {}
+    for r in cons_rows:
+        fil = core.cod_str(r.get("codfilial"))
+        dt = core._parse_dt(r.get("mes"))
+        if not fil or not dt:
+            continue
+        qt = core._n(r.get("qt"))
+        consumo_12m[fil] = consumo_12m.get(fil, 0.0) + qt
+        slot = pos.get(dt.year * 100 + dt.month)
+        if slot:
+            consumo.setdefault(fil, {})[slot] = qt
+    de_estoque = {f for u in UNIDADES.values() for f in u["estoque"]}
+    return core.estoque_por_filial(linhas, params, nomes=NOMES_FILIAL,
+                                   filiais_unidade=filiais_unidade, filiais_estoque=de_estoque,
+                                   consumo=consumo, consumo_12m=consumo_12m,
+                                   filiais_industria=FILIAIS_INDUSTRIA)
+
+
 @bp.route("/api/produto/<int:codprod>")
 def api_produto(codprod):
     produtos, params, filiais = _build_produtos()
@@ -2828,8 +2876,9 @@ def api_produto(codprod):
     except Exception as e:                                    # noqa: BLE001
         print(f"[pesquisa] histórico indisponível ({e}).")
         _pesq = []
+    por_filial = _estoque_por_filial(codprod, params, filiais) if p else []
     return jsonify({"ok": bool(p), "produto": p, "pesquisas": _pesq, "lotes": lotes, "enderecos": enderecos,
-                    "top_vendedores": top_vend})
+                    "top_vendedores": top_vend, "por_filial": por_filial})
 
 
 def _rua_conferencia(rua):

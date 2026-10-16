@@ -3458,6 +3458,33 @@ function topVendedoresRow(tops,opt){
     <span class="lr-r" style="text-align:right">${tops.map(linha).join('')}</span></div>`;
 }
 
+/* Cobertura de UM saldo no drawer — card de cima e linhas por filial passam por aqui.
+   O `cobertura` do servidor é `null` tanto sem giro quanto sem estoque, e o `cob()` sozinho
+   pintava "∞" nos dois: o card de um item em RUPTURA dizia cobertura infinita. */
+const cobQt=(qt,giro,c)=> giro>0 ? (qt>0 ? cob(c) : '0d') : (qt>0 ? '∞' : '—');
+
+/* Estoque por filial no 360° (pedido do comprador 10/2026: "preciso saber se alguma filial tem
+   o produto, pois na filial atacado está zerado, aí tenho que entrar filial por filial").
+   As linhas vêm prontas do `core.estoque_por_filial`, que já descarta filial sem saldo e sem
+   giro — e filial de faturamento, que tem giro sem ter estoque.
+   ⚠️ Mesmas réguas do card: numa unidade de uma filial só (A&M, AC) a linha REPETE o KPI. Se
+   não repetir, alguém mudou uma régua de um lado só.
+   O giro de quem tem o saldo vai junto de propósito: 4 un numa loja que gira 12/mês não são
+   sobra. "nesta unidade" só marca quando há contraste — na unidade Todas marcaria tudo. */
+function filiaisDrawer(fils){
+  if(!fils||!fils.length) return '';
+  const contraste=fils.some(f=>f.na_unidade)&&fils.some(f=>!f.na_unidade);
+  const linha=f=>{
+    const marca=f.na_unidade&&contraste;
+    const extra=[f.avaria>0?int(f.avaria)+' em avaria':'', f.reserva>0?int(f.reserva)+' reservado':'']
+      .filter(Boolean).join(' · ');
+    return `<div class="lote-row"><span>${marca?'<b>'+esc(f.nome)+'</b> <small class="muted">· nesta unidade</small>':esc(f.nome)}${extra?`<br><small class="muted">${extra}</small>`:''}</span>
+      <span class="lr-r"><b>${int(f.disponivel)} un</b><br><small class="muted">giro ${int(f.giro_mes)}/mês · cob. ${cobQt(f.disponivel,f.giro_mes,f.cobertura)}</small></span></div>`;
+  };
+  return `<div class="d-sec">Estoque por filial</div>${fils.map(linha).join('')}
+    <div class="count-line" style="margin:4px 2px 0">Disponível = gerencial − avaria − reserva, a régua do card. Giro = média dos 3 meses fechados da própria filial. Filial sem estoque e sem giro não aparece.</div>`;
+}
+
 /* ───────── produto 360 ───────── */
 async function openProduto(cod){
   const ov=$('#overlay'),dr=$('#drawer'); ov.classList.add('on'); dr.classList.add('on'); dr.innerHTML='<div class="loader"><div class="spinner"></div></div>';
@@ -3475,13 +3502,14 @@ async function openProduto(cod){
         <div class="d-kpi"><div class="l">Disponível</div><div class="v">${int(p.qtdisp)}</div></div>
         <div class="d-kpi"><div class="l">Valor</div><div class="v">${money(p.valor)}</div></div>
         <div class="d-kpi"><div class="l">Giro/mês ${spark((p.serie_mensal&&p.serie_mensal.length?p.serie_mensal:p.serie_giro))}</div><div class="v">${giroKpi(p)}</div></div>
-        <div class="d-kpi"><div class="l">Cobertura</div><div class="v">${cob(p.cobertura)}</div></div>
+        <div class="d-kpi"><div class="l">Cobertura</div><div class="v">${cobQt(p.qtdisp,p.giro_mes,p.cobertura)}</div></div>
       </div>
       <div class="bar"><i style="width:${cobPct}%"></i></div>
       ${p.giro_fonte==='forecast'?`<div class="count-line">Giro por <b>forecast (RCA, ${S.params.fcmeses}m)</b>: ${int(p.giro_forecast)}/mês · média 3m (oficial): ${int(p.giro_media3)}/mês</div>`:''}
       ${p.giro_fonte==='sazonal'?`<div class="count-line">Giro por <b>forecast sazonal (RCA, 24m)</b>: ${int(p.giro_mes)}/mês${p.fatores_sazonais?` · fator do mês ${dec(p.fatores_sazonais[new Date().getMonth()+1]||1,2)}×`:''} · média 3m (oficial): ${int(p.giro_media3)}/mês</div>`:''}
       ${p.giro_fonte==='novo_item'?`<div class="count-line">Giro por <b>item novo</b>: ${int(p.giro_mes)}/mês — média da venda real (RCA) desde o lançamento. Os 3 meses fechados do giro oficial ainda estão zerados (produto com menos de 3 meses de casa).</div>`:''}
       ${p.giro_fonte==='mes_corrente'?`<div class="count-line">Giro pela <b>venda do mês corrente</b>: ${int(p.giro_mes)}/mês — o produto só começou a vender agora, então os 3 meses fechados do giro oficial estão zerados. Usa a venda crua do mês (sobe conforme o mês avança) p/ o item não sumir do abastecimento.</div>`:''}
+      ${filiaisDrawer(j.por_filial)}
       <div class="d-sec">Venda no período</div>
       <div class="lote-row"><span>Venda</span><span>${money(p.venda)}</span></div>
       <div class="lote-row"><span>Lucro</span><span>${money(p.lucro)} ${p.margem!=null?`<small class="muted">(${dec(p.margem,1)}%)</small>`:''}</span></div>

@@ -1180,6 +1180,12 @@ Ficha completa do item:
 - **Cabeçalho:** descrição · cód · fornecedor · badges **ABC** e **XYZ** · comprador.
 - **KPIs:** Disponível · Valor em estoque · Giro/mês (com mini-gráfico) · Cobertura (+ barra).
 - **Fonte do giro:** informa se é média 3m, forecast, sazonal, item novo ou mês corrente (§5.2).
+- **Estoque por filial** (10/2026): disponível · giro · cobertura do item em **cada filial**, a da
+  unidade selecionada marcada como "nesta unidade". Responde "alguma filial tem?" sem trocar a
+  unidade do topo. As réguas são as do card (disponível = gerencial − avaria − reserva; giro =
+  média dos 3 meses fechados da própria filial, com o consumo de produção); numa unidade de uma
+  filial só, a linha repete o card. O giro vem junto porque saldo de loja que gira não é sobra.
+  Filial sem estoque e sem giro não aparece; filial de faturamento (sem estoque) também não.
 - **Venda no período:** Venda · Lucro (com margem) · Qtd vendida · gráfico de venda 12m em R$
   (com o mês corrente marcado como parcial).
 - **Situação:** Abastecimento · Ruptura · Parado · **Última saída** e **última entrada** (datas +

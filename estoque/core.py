@@ -470,6 +470,68 @@ def cobertura_faixa_de(cob_dias):
     return "121+"
 
 
+def estoque_por_filial(linhas, params, nomes=None, filiais_unidade=None, filiais_estoque=None,
+                       consumo=None, consumo_12m=None, filiais_industria=None):
+    """Disponível · giro · cobertura de UM produto em cada filial — bloco "Estoque por filial" do
+    drawer 360° (pedido do comprador, 10/2026: "preciso saber se alguma filial tem o produto,
+    pois na filial atacado está zerado, aí tenho que entrar filial por filial").
+
+    `linhas`: PCEST do produto, uma por filial (`queries.q_estoque_filiais_produto`).
+    `consumo`: {filial: {m1, m2, m3}} — produção nos 3 meses fechados do QTVENDMES.
+    `consumo_12m`: {filial: qt} — produção de 12 meses (régua da matéria-prima).
+
+    ⚠️ **As réguas são as do card, filial a filial** — numa unidade de uma filial só (A&M, AC)
+    a linha tem de repetir o KPI:
+      · disponível = gerencial − avaria − reserva, sem piso (negativo é erro de saldo e fica à vista);
+      · giro = `_giro_mensal` com o consumo de produção somado; na filial INDUSTRIAL com consumo
+        ele é substituído pelo consumo de 12m ÷ 12, como no `construir_produtos`;
+      · cobertura = disponível ÷ giro diário, `None` sem giro ou sem estoque — o mesmo campo do
+        card (`p["cobertura"]`), e o front formata os dois pela mesma função.
+    O giro é sempre a média oficial: forecast/sazonal/item novo vêm do RCA, que não tem grão de
+    filial de estoque.
+
+    ⚠️ **Filial de faturamento não entra só por ter giro.** Na Multpel as filiais 7 e 8 faturam
+    sem ter estoque e carregam QTVENDMES no PCEST (1.528 itens na 8, medido em 10/2026): sem esta
+    regra o bloco listaria "Atacado 0 un · giro 30/mês" em quase todo item. Filial entra se tem
+    saldo, ou se tem giro E é filial de estoque de alguma unidade (`filiais_estoque`). Filial com
+    saldo entra mesmo fora de toda unidade — a 10 tinha 12 itens em 10/2026 e não aparece em
+    nenhuma tela; é exatamente o que o comprador está procurando.
+    """
+    nomes = nomes or {}
+    consumo = consumo or {}
+    consumo_12m = consumo_12m or {}
+    unidade = {cod_str(f) for f in (filiais_unidade or [])}
+    de_estoque = {cod_str(f) for f in (filiais_estoque or [])}
+    industria = {cod_str(f) for f in (filiais_industria or [])}
+    base = (params or {}).get("giro_base", DEFAULTS["giro_base"])
+    out = []
+    for r in linhas or []:
+        fil = cod_str(r.get("CODFILIAL"))
+        if not fil:
+            continue
+        ger, bloq, res = _n(r.get("qtestger")), _n(r.get("qtbloq")), _n(r.get("qtreserv"))
+        c12 = _n(consumo_12m.get(fil))
+        if fil in industria and c12 > 0:
+            giro = round(c12 / 12.0)
+        else:
+            giro = _giro_mensal(r, base, consumo.get(fil))
+        if ger == 0 and not (giro > 0 and fil in de_estoque):
+            continue
+        disp = ger - bloq - res
+        giro_dia = giro / 30.0
+        cobertura = disp / giro_dia if giro_dia > 0 and disp > 0 else None
+        out.append({
+            "codfilial": fil, "nome": nomes.get(fil) or f"Filial {fil}",
+            "na_unidade": fil in unidade,
+            "disponivel": _round(disp), "gerencial": _round(ger),
+            "avaria": _round(bloq), "reserva": _round(res),
+            "giro_mes": _round(giro, 1),
+            "cobertura": _round(cobertura, 1) if cobertura is not None else None,
+        })
+    out.sort(key=lambda x: (int(x["codfilial"]) if x["codfilial"].isdigit() else 10**9, x["codfilial"]))
+    return out
+
+
 # Status/faixa de "produto novo": item que NUNCA vendeu e acabou de chegar. Vale nos dois eixos
 # (`parado_faixa`, da aba Estoque parado, e `status_parado`, do Cockpit) — é o mesmo conceito, e
 # duas grafias diferentes era como a Ruptura acabou com três implementações fora de sincronia.
