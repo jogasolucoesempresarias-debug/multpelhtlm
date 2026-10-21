@@ -2930,15 +2930,78 @@ def _clientes_genericos():
     return {int(c) for c in cached}
 
 
+def _clientes_excluidos():
+    """{codcli: (data da exclusão, codusur do cadastro)} — cadastro EXCLUÍDO no Winthor
+    (`PCCLIENT[DTEXCLUSAO]`).
+
+    Pedido do João (20/10/2026): o JULIANO #29 tinha 46 na Carteira e 41 na força de vendas — os 5
+    a mais foram excluídos em 26/06 como "CLIENTE NAO COMPRA MAIS". Medido: 16.795 excluídos no
+    cadastro, 223 na carteira de 24 meses, 39 na base de cobertura. A RÉGUA NÃO MUDA (dono =
+    CODUSUR1); o excluído só sai da base, e pela DATA (ver `_dono_em`).
+
+    ⚠️ Consulta à parte, não coluna nova na `meta` da carteira: aquela já está no limite em que o
+    executeQueries trunca a resposta. ⚠️ Falha degrada para {} (o excluído volta a aparecer) e NÃO
+    é cacheada — a próxima carga tenta de novo."""
+    from datetime import date as _date
+    key = 'multpel:clientes_excluidos:v1'
+    cached = _cache_get(key)
+    if cached is None:
+        try:
+            if CONFIG['data_source'] == 'postgres':
+                rows = provider_sql.clientes_excluidos()
+            else:
+                payload = retry_dax(execute_dax)(get_token_cached(), """EVALUATE
+SELECTCOLUMNS(FILTER(PCCLIENT, NOT ISBLANK(PCCLIENT[DTEXCLUSAO])),
+    "CODCLI", PCCLIENT[CODCLI], "CODUSUR1", PCCLIENT[CODUSUR1], "DTEXCLUSAO", PCCLIENT[DTEXCLUSAO])""")
+                erro = (payload.get('results') or [{}])[0].get('error')
+                if erro:            # o Power BI devolve 200 com o erro dentro (e às vezes meia resposta)
+                    raise RuntimeError(erro)
+                rows = clean_rows(_todas_linhas(payload))
+        except Exception as e:
+            print(f'[CARTEIRA] clientes excluídos indisponíveis: {e}')
+            return {}
+        cached = [[int(r['CODCLI']), str(r['DTEXCLUSAO'])[:10],
+                   int(r['CODUSUR1']) if r.get('CODUSUR1') is not None else None]
+                  for r in rows if r.get('CODCLI') is not None and r.get('DTEXCLUSAO')]
+        _cache_set(key, cached, 'metadata')
+    return {int(c): (_date.fromisoformat(d), u) for c, d, u in cached}
+
+
+def _dono_em(fim, dono_atual):
+    """Dono (cadastro) de cada cliente no dia `fim`, para as contas de MÊS PASSADO.
+
+    `dono_atual` vem da carteira, que já não tem os excluídos. Aqui eles voltam enquanto ainda
+    não tinham sido excluídos: o JULIANO carregou os 5 na base até 26/06/2026, e a Evolução tem
+    de mostrar a cobertura dele subindo quando ele limpou a carteira — não reescrever o passado
+    como se ele nunca os tivesse tido."""
+    out = dict(dono_atual)
+    gen = _clientes_genericos()
+    for c, (dt, u) in _clientes_excluidos().items():
+        if dt > fim and c not in out and c not in gen:
+            out[c] = u
+    return out
+
+
+def _sem_excluidos_ate(dono, fim):
+    """Tira de um mapa {codcli: dono} quem já estava excluído no dia `fim` — para a foto mensal
+    do cadastro (`carteira_foto`), que até 10/2026 gravou os excluídos junto."""
+    excl = _clientes_excluidos()
+    return {c: u for c, u in dono.items() if not (c in excl and excl[c][0] <= fim)}
+
+
 def _finalizar_carteira(clientes, key):
     """Enriquece a carteira (vendedor/time), normaliza cidades, cacheia e devolve.
     Compartilhado pelos caminhos DAX e postgres.
     ⚠️ Tira os cadastros genéricos (CONSUMIDOR FINAL): a carteira é análise POR CLIENTE. A
-    VENDA deles segue nos totais (Dashboard, Categorias, Curva ABC de produtos)."""
+    VENDA deles segue nos totais (Dashboard, Categorias, Curva ABC de produtos).
+    ⚠️ Tira também os EXCLUÍDOS no Winthor (`_clientes_excluidos`), pelo mesmo motivo e com a
+    mesma consequência: somem da carteira de HOJE e de tudo que lê dela (Carteira, Gerencial,
+    Próximo Pedido, busca), a venda deles segue nos totais. Contas de mês passado os trazem de
+    volta até a data da exclusão (`_dono_em`)."""
     genericos = [c.get('codcli') for c in clientes if _eh_cliente_generico(c.get('cliente'))]
     _cache_set('multpel:clientes_genericos:v1', [g for g in genericos if g is not None], 'metadata')  # TTL > carteira: a lista nunca some antes dela
-    if genericos:
-        fora = set(genericos)
+    fora = set(genericos) | set(_clientes_excluidos())
+    if fora:
         clientes = [c for c in clientes if c.get('codcli') not in fora]
     vendedores = _carregar_vendedores_map()
     supervisores = _carregar_supervisores_map()
@@ -2976,7 +3039,7 @@ def _carregar_carteira_full():
     O recorte por usuário NÃO é feito aqui: use sempre _carteira_no_escopo(), que filtra
     pelo CADASTRO (CODUSUR1 → vendedor → supervisor). Cache compartilhado entre todos os
     usuários (1 entrada global). NÃO expor esta função direto nos endpoints."""
-    key = 'multpel:carteira:full:global:v3'  # v3: sem cadastros genéricos (CONSUMIDOR FINAL)
+    key = 'multpel:carteira:full:global:v4'  # v3: sem cadastros genéricos (CONSUMIDOR FINAL) · v4: sem os excluídos
     cached = _cache_get(key)
     if cached:
         return cached
@@ -5502,7 +5565,8 @@ def _recup_base():
     hoje = _hoje_ref()
     atual = positivacao.anomes_de(hoje)
     ref = positivacao.mes_fechado(hoje)
-    chave = (len(compras), tuple(compras[-1]) if compras else None, ina, per, atual)
+    excl = _clientes_excluidos()
+    chave = (len(compras), tuple(compras[-1]) if compras else None, ina, per, atual, len(excl))
     memo = _RECUP_MEMO
     if memo['chave'] == chave and time.time() - memo['em'] < 3600:
         return memo['base']
@@ -5512,7 +5576,10 @@ def _recup_base():
             return memo['base']
         gen = _clientes_genericos()
         hist = recup.indexar([x for x in compras if x[0] not in gen])
-        meses = [positivacao.mes_add(ref, -i) for i in range(12, -1, -1)] + [atual]
+        # excluído no Winthor = PERDIDO a partir da data (ver recup.estado_em): sai da lista de
+        # risco e, no mês da exclusão, pelo "viraram perdidos" — a ponte segue fechando no zero.
+        recup.marcar_excluidos(hist, {c: dt for c, (dt, _u) in excl.items()})
+        meses =[positivacao.mes_add(ref, -i) for i in range(12, -1, -1)] + [atual]
         movs = {am: recup.movimentos(hist, am, ina, per) for am in meses}
         base = {'hist': hist, 'movs': movs, 'ref': ref, 'atual': atual, 'meses': meses,
                 'ina': ina, 'per': per, 'hoje': hoje, 'potencial': {}}
@@ -5525,6 +5592,10 @@ def _recup_potencial(base, am, dono_de, vmap):
     Classe ABC do cliente = Pareto da venda dos 12 meses ANTERIORES ao mês (sem olhar o futuro)."""
     if am in base['potencial']:
         return base['potencial'][am]
+    # excluído não é dinheiro na mesa: quem comprou nos 12 meses e foi excluído não vai voltar
+    # (e o que só pula de ATIVO para excluído nem passa pelos movimentos, então o `excluir` de
+    # baixo não o pega).
+    dono_de = _sem_excluidos_ate(dono_de, evol.fim_do_mes(am))
     vm = _carregar_venda_mensal_por_cliente()
     ant = {positivacao.mes_add(am, -i) for i in range(1, 13)}
     venda12, meses_compra = {}, {}
@@ -5592,10 +5663,14 @@ def _recup_mes_arg(base):
 
 def _recup_mapas():
     """dono_de {codcli: codusur do cadastro}, time_de {codusur: codsupervisor}, nomes."""
+    from datetime import date as _date
     carteira = _carregar_carteira_full()
     vmap = _carregar_vendedores_map()
     smap = _carregar_supervisores_map()
-    dono_de = {c['codcli']: c.get('codusur') for c in carteira if c.get('codcli') is not None}
+    # Com os excluídos, para atribuir ao dono os meses ANTERIORES à exclusão (a tela navega por
+    # `?mes=`). Depois da data eles são PERDIDOS (recup.estado_em) e não contam no risco.
+    dono_de = _dono_em(_date.min, {c['codcli']: c.get('codusur') for c in carteira
+                                   if c.get('codcli') is not None})
     time_de = {}
     for k, v in vmap.items():
         try:
@@ -5621,7 +5696,8 @@ def api_recuperacao():
     # serviu a resposta antiga do cache por até 1 h depois do deploy e a tela mostrou saldo 0.
     # v3 (05/10/2026): placar ganhou rec_perdido_da_base e rec_por_outros.
     # v4 (06/10/2026): o saldo INVERTEU o sinal (recuperados − entraram, positivo = bom).
-    key = cache_key_for_user('recuperacao:resumo:v4', {
+    # v5 (21/10/2026): excluído no Winthor vira perdido na data da exclusão.
+    key = cache_key_for_user('recuperacao:resumo:v5', {
         'mes': am, 'sup': request.args.get('supervisor', ''), 'vend': request.args.get('vendedor', ''),
         'p': f"{base['ina']}:{base['per']}:{base['atual']}"})
     cached = _cache_get(key)
@@ -5850,7 +5926,9 @@ def _performance_dados():
     o ranking é do universo inteiro, a pessoa vê a própria posição nele)."""
     ins = _positivacao_insumos()
     ref = ins['ref']
-    key = f'multpel:performance:{ref}:v{performance_comercial.NOTA_VERSAO}'
+    # `:b2` = base de cobertura sem os excluídos (21/10/2026) — não é mudança de escala da nota,
+    # por isso não sobe o NOTA_VERSAO.
+    key = f'multpel:performance:{ref}:v{performance_comercial.NOTA_VERSAO}:b2'
     cached = _cache_get(key)
     hist_pesos = _perf_pesos_historico()
     pesos, comp_pesos = performance_comercial.pesos_vigentes(hist_pesos, ref)
@@ -6174,8 +6252,8 @@ def _positivacao_insumos():
     from datetime import date as _date
     hoje = provider_sql.hoje_analitico() if CONFIG['data_source'] == 'postgres' else _date.today()
     ref = positivacao.mes_fechado(hoje)
-    codusur_de = {c['codcli']: c.get('codusur') for c in _carregar_carteira_full()
-                  if c.get('codcli') is not None}
+    codusur_de = _dono_em(evol.fim_do_mes(ref), {c['codcli']: c.get('codusur') for c in _carregar_carteira_full()
+                                                if c.get('codcli') is not None})
     bases = positivacao.base_ativa(_carregar_venda_mensal_por_cliente(), codusur_de, ref)
     atend = _carregar_atendimentos_rca(positivacao.mes_add(ref, -2), ref)
     mes = atend.get(ref, {})
@@ -6207,7 +6285,8 @@ def _cobertura_mes_fechado():
     hoje = provider_sql.hoje_analitico() if CONFIG['data_source'] == 'postgres' else _date.today()
     ref = positivacao.mes_fechado(hoje)
     fim = _date(ref // 100, ref % 100, calendar.monthrange(ref // 100, ref % 100)[1])
-    dono_de = {c['codcli']: c.get('codusur') for c in _carregar_carteira_full() if c.get('codcli') is not None}
+    dono_de = _dono_em(fim, {c['codcli']: c.get('codusur') for c in _carregar_carteira_full()
+                             if c.get('codcli') is not None})
     ultima = _carregar_ultima_compra_antes(positivacao.mes_add(ref, 1))
     return {'ref': ref, 'fim': fim, 'dono_de': dono_de, 'ultima': ultima,
             'por_dono': cob.cobertura_por_dono(ultima, dono_de, fim)}
@@ -6320,7 +6399,7 @@ def _carregar_ranking_vendedores(role=None, codusur=None, codsupervisor=None):
         rbac_sups = _como_lista_supervisores(codsupervisor)
 
     key = ':'.join([
-        'multpel', 'vendedores:ranking:v3',  # v3: cobertura = régua única (29/09/2026); v2: régua de cadastro
+        'multpel', 'vendedores:ranking:v4',  # v4: base sem os excluídos (21/10/2026); v3: cobertura = régua única (29/09/2026); v2: régua de cadastro
         f"role={role or 'anon'}",
         f"usur={codusur if codusur is not None else '-'}",
         f"supv={','.join(str(s) for s in rbac_sups) if rbac_sups else '-'}",
@@ -6521,7 +6600,7 @@ def api_vendedor(codusur):
     if not pode_acessar_vendedor(codusur):
         return jsonify({'ok': False, 'error': 'Sem permissão'}), 403
 
-    key = cache_key_for_user(f'vendedor:full:v3:{codusur}')  # v3: régua única de cobertura (29/09/2026)
+    key = cache_key_for_user(f'vendedor:full:v4:{codusur}')  # v4: base sem os excluídos (21/10/2026); v3: régua única de cobertura (29/09/2026)
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)
@@ -11093,7 +11172,7 @@ def _evolucao_dados(limiar):
     RBAC e filtros é do endpoint. Cache por mês de referência e limiar."""
     base = _recup_base()
     ref = base['ref']
-    key = f'multpel:evolucao:{ref}:{limiar}:v3'   # v2: saldo com sinal invertido · v3: saldo_medio_valor
+    key = f'multpel:evolucao:{ref}:{limiar}:v4'   # v2: saldo com sinal invertido · v3: saldo_medio_valor · v4: excluídos pela data
     cached = _cache_get(key)
     if cached is not None:
         return cached
@@ -11112,7 +11191,10 @@ def _evolucao_dados(limiar):
     cob_m, rec_m = {}, {}
     for am in meses:
         rows = _evol_foto("SELECT codcli, codusur FROM carteira_foto WHERE anomes=%s", am)
-        dono = {c: u for c, u in rows} if rows else dono_atual
+        # Excluído no Winthor conta até a data da exclusão (ver _dono_em) — a foto de set–out/26
+        # gravou os excluídos junto, e o mês sem foto usa a carteira de hoje, que já não os tem.
+        fim = evol.fim_do_mes(am)
+        dono = _sem_excluidos_ate({c: u for c, u in rows}, fim) if rows else _dono_em(fim, dono_atual)
         dono_fonte[str(am)] = 'foto' if rows else 'atual'
         rows = _evol_foto("SELECT codusur, codsupervisor FROM vendedor_foto WHERE anomes=%s", am)
         tm = {u: t for u, t in rows} if rows else time_atual

@@ -293,6 +293,32 @@ def _snapshot_rows(filiais):
     return rows
 
 
+def _snapshot_com_venda_no_mes(snap, filiais, prod_map, venda_mensal, hoje):
+    """O snapshot + o item ZERADO que vendeu no mês corrente (ver `core.zerados_com_venda_no_mes`).
+
+    Uma consulta pequena só para esses códigos (6 no Atacado em 20/10/2026), não o corte de
+    atividade afrouxado: soltar o filtro do snapshot traria ~1.600 itens mortos para o Python a
+    cada carga.
+
+    ⚠️ Degrada para o snapshot de sempre se a consulta falhar — o item volta a sumir, mas a tela
+    não cai por causa de meia dúzia de linhas."""
+    faltam = core.zerados_com_venda_no_mes(snap, prod_map, venda_mensal, hoje)
+    if not faltam:
+        return snap
+    key = f"snapz:{_filiais_key(filiais)}:{hash(tuple(faltam))}"
+    extra = pbi._CACHE.get(key)
+    if extra is None:
+        try:
+            extra = (PS.snapshot_estoque(filiais, codprods=faltam)
+                     if pbi.CONFIG["data_source"] == "postgres"
+                     else pbi.run_dax(Q.q_snapshot_estoque(filiais, codprods=faltam)))
+        except Exception as e:                                # noqa: BLE001
+            print(f"[snapshot] zerados com venda no mês indisponíveis ({e}).")
+            extra = []
+        pbi._CACHE.set(key, extra, 1800)
+    return snap + extra
+
+
 def _bloqueio_map(filiais):
     """{cod: [{qtbloq, dtultent, qtultent}, ...]} — bloqueio POR FILIAL (ver core.qt_em_transicao).
 
@@ -1015,6 +1041,9 @@ def _build_produtos(venda_periodo=None):
                                           profundo=bool(params.get("forecast_sazonal")), filiais=filiais_v)
     else:
         venda_mensal = _vendas_mensal_map(12, _hoje(), filiais=filiais_v)
+    # item zerado e sem venda nos 3 meses fechados, mas que vendeu NESTE mês: o snapshot o cortou
+    # e ele é uma ruptura (caso 56664, 20/10/2026). Precisa da série mensal, por isso fica aqui.
+    snap = _snapshot_com_venda_no_mes(snap, filiais_e, prod_map, venda_mensal, _hoje())
     _peddata = _pedidos_data(filiais_e, _hoje())
     ja_pedida = _peddata["ja_pedida"]
     embalagem = _embalagem_map()

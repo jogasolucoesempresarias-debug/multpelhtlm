@@ -39,9 +39,12 @@ def _f(v):
 
 
 # ───────────────────────── snapshot PCEST (giro/gerencial/custo/datas) ─────────────────────────
-def snapshot_estoque(filiais=None):
+def snapshot_estoque(filiais=None, codprods=None):
     """Espelha q_snapshot_estoque: PCEST agregado por CODPROD. Aliases IDÊNTICOS aos do clean_rows
-    (qtbloqueada→qtbloq, qtpendente→qtpend, qtvendmes1..3→giro_m1..3)."""
+    (qtbloqueada→qtbloq, qtpendente→qtpend, qtvendmes1..3→giro_m1..3).
+
+    `codprods`: só esses códigos e SEM o corte de atividade (o item zerado que vendeu no mês
+    corrente — ver `q_snapshot_estoque`)."""
     with analytics_conn() as c:
         cur = c.cursor()
         # `custoultent` entrou em 09/2026. Base sintética antiga não tem a coluna, e referenciá-la
@@ -49,15 +52,21 @@ def snapshot_estoque(filiais=None):
         cur.execute("""SELECT 1 FROM information_schema.columns
                        WHERE table_name='pcest' AND column_name='custoultent'""")
         col_cue = "max(custoultent)" if cur.fetchone() else "NULL::numeric"
+        if codprods is not None:       # lista vazia = nenhuma linha (ver q_snapshot_estoque)
+            recorte, having, args = " AND codprod = ANY(%s)", "", ([int(c) for c in codprods],)
+        else:
+            recorte, args = "", None
+            having = ("HAVING sum(qtestger)<>0 OR sum(qtvendmes1)<>0 OR sum(qtvendmes2)<>0 "
+                      "OR sum(qtvendmes3)<>0")
         cur.execute(f"""
             SELECT codprod,
                    sum(qtestger), sum(qtreserv), sum(qtbloqueada), sum(qtpendente), sum(qttransito),
                    max(custofin), sum(qtvendmes1), sum(qtvendmes2), sum(qtvendmes3),
                    max(dtultsaida), max(dtultent), {col_cue}
-            FROM pcest WHERE 1=1{_fil(filiais)}
+            FROM pcest WHERE 1=1{_fil(filiais)}{recorte}
             GROUP BY codprod
-            HAVING sum(qtestger)<>0 OR sum(qtvendmes1)<>0 OR sum(qtvendmes2)<>0 OR sum(qtvendmes3)<>0
-        """)
+            {having}
+        """, args)
         return [{"CODPROD": cod, "qtestger": _f(qeg), "qtreserv": _f(qr), "qtbloq": _f(qb),
                  "qtpend": _f(qp), "qttransito": _f(qt), "custofin": _f(cf),
                  "giro_m1": _f(g1), "giro_m2": _f(g2), "giro_m3": _f(g3),

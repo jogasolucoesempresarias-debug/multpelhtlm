@@ -101,7 +101,7 @@ def test_rota_devolve_os_campos_novos(client, usuario_admin, monkeypatch):
 
 def test_cache_da_resposta_subiu_de_versao():
     fonte = Path('server.py').read_text(encoding='utf-8')
-    assert "'recuperacao:resumo:v4'" in fonte and "'recuperacao:resumo:v3'" not in fonte
+    assert "'recuperacao:resumo:v5'" in fonte and "'recuperacao:resumo:v4'" not in fonte
 
 
 # ───────────────────────── tela ─────────────────────────

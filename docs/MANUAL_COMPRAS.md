@@ -160,6 +160,14 @@ O app tenta, **nesta ordem**:
 
 O **360° do produto informa qual fonte está sendo usada.**
 
+**Quais itens entram no painel.** Revenda que não está fora de linha **e** com estoque ou venda nos
+3 meses fechados — o resto é catálogo morto (~1.600 itens zerados e parados no Atacado). **Exceção
+(10/2026):** o item **zerado que vendeu no mês corrente** também entra, e entra como **ruptura**
+(giro pelos caminhos 2 ou 3 acima). Sem ela, o item que ficou 3 meses sem estoque — e por isso sem
+venda — sumia do painel justamente quando voltava a vender (caso do 56664). Só o mês corrente, de
+propósito: "vendeu nos últimos 6 meses" traria item de pico pontual ou que saiu de linha, com
+sugestão de compra. Item zerado que só tem **pedido em aberto** continua fora (aparece no Orçamento).
+
 **Consumo de PRODUÇÃO (rotina 1122 — Montar Produtos), desde 08/2026.** A 1122 dá baixa no
 componente como movimento interno (`PCMOV` com `NUMNOTA = 0`): o Winthor atualiza a última saída mas
 **não soma em `QTVENDMES1..3`**, então o item consumia e o painel enxergava giro zero. A tabela
@@ -1332,9 +1340,12 @@ trava contra valores absurdos (zero ou negativo apenas esvaziariam um card — e
   endereçado por lote (§5.1).
 - **"Por que a cobertura deste item é '∞' / não calculável?"** Giro 0. Sem demanda não há dias de
   cobertura; o item cai na faixa 121+ (§5.3).
-- **"O item vende, mas o giro está 0."** Provável item novo: os campos `QTVENDMES1..3` são os 3
-  meses **fechados** anteriores e ainda estão zerados. O app cobre isso com o giro de item novo e,
-  em último caso, com a venda do mês corrente (§5.2). O 360° informa a fonte usada.
+- **"O item vende, mas o giro está 0."** Item novo, ou item que ficou sem vender (por exemplo, sem
+  estoque) nos 3 meses **fechados** de `QTVENDMES1..3`. O app cobre isso com a média da venda real
+  dos últimos 6 meses e, em último caso, com a venda do mês corrente (§5.2). O 360° informa a fonte.
+- **"O item está ativo no Winthor mas não aparece no painel."** Estoque zero e nenhuma venda nos 3
+  meses fechados nem no mês corrente: é catálogo parado e fica fora de propósito (§5.2). Se vendeu
+  neste mês, ele aparece como ruptura.
 - **"A curva ABC muda quando troco o período de venda?"** Sim — é o ABC do faturamento do período
   (§5.10). Já a **venda perdida não muda** (janela fixa de 3m, §5.11).
 

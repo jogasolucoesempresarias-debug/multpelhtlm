@@ -528,6 +528,21 @@ def carteira_dados():
     return snapshot, datas, meta
 
 
+def clientes_excluidos():
+    """Espelha a consulta de excluídos do `server._clientes_excluidos`: cadastro com DTEXCLUSAO.
+    A base sintética não tem a coluna — devolve [] em vez de derrubar a Carteira com
+    `column does not exist` (mesma defesa do `custoultent` no Compras)."""
+    with analytics_conn() as c:
+        cur = c.cursor()
+        cur.execute("""SELECT 1 FROM information_schema.columns
+                       WHERE table_name='pcclient' AND column_name='dtexclusao'""")
+        if not cur.fetchone():
+            return []
+        cur.execute("SELECT codcli, codusur1, dtexclusao FROM pcclient WHERE dtexclusao IS NOT NULL")
+        return [{"CODCLI": cc, "CODUSUR1": u, "DTEXCLUSAO": d.isoformat() if d else None}
+                for cc, u, d in cur.fetchall()]
+
+
 # ───────────────────────── mapas de dimensão (PCUSUARI / PCSUPERV) ─────────────────────────
 def supervisores_map():
     with analytics_conn() as c:

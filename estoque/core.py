@@ -271,6 +271,28 @@ def giro_mes_corrente(serie_am, hoje):
     return round(q) if q > 0 else None
 
 
+def zerados_com_venda_no_mes(snapshot, prod_map, venda_mensal_map, hoje):
+    """Códigos do universo que ficaram FORA do snapshot e venderam no mês corrente (RCA).
+
+    O snapshot do PCEST corta quem tem estoque zero E venda zero nos 3 meses fechados — certo
+    para o catálogo morto (~1.600 itens no Atacado), errado para o item que ficou sem estoque por
+    3 meses e voltou a vender: ele some do painel justamente quando é uma ruptura. Caso que
+    originou isto (João Victor, 20/10/2026): o 56664 vendeu em abr–jun, nada em jul–set, 8 un em
+    10/10, zerado em todas as filiais — e não aparecia em tela nenhuma.
+
+    ⚠️ **Só o mês corrente, de propósito** (opção estreita, decisão do Gabriel). Abrir para "vendeu
+    nos últimos 6 meses" traria ~60 itens, muitos de pico pontual ou fora de linha — o 55465
+    vendeu 2.209 un em abril e quase nada depois, e o `giro_novo_item` projetaria 414/mês com
+    sugestão de compra. O critério é o MESMO do `giro_mes_corrente`, então todo item que volta
+    tem giro > 0 (o `giro_novo_item` ou, na falta dele, a venda do mês) e entra como ruptura,
+    nunca como "sem giro" de estoque zero.
+
+    Item zerado com pedido em aberto e sem venda no mês continua fora (ver README)."""
+    no_snap = {int(_n(r.get("CODPROD"))) for r in snapshot}
+    return sorted(c for c, serie in (venda_mensal_map or {}).items()
+                  if c in prod_map and c not in no_snap and giro_mes_corrente(serie, hoje))
+
+
 def fatores_sazonais(serie_am, hoje, janela=24, min_meses=12):
     """Índices sazonais ano-a-ano a partir da venda mensal (RCA).
     media_mensal = média dos últimos `janela` meses (naturalmente dessazonalizada);

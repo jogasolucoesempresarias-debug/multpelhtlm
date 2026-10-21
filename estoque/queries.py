@@ -636,8 +636,16 @@ FILTER(
 
 
 # ───────────────────────── snapshot PCEST (giro, gerencial, custo, datas) ───────
-def q_snapshot_estoque(filiais=None):
-    """Agrega PCEST por CODPROD nas filiais dadas. Giro = média 3 meses; custo = CUSTOFIN."""
+def q_snapshot_estoque(filiais=None, codprods=None):
+    """Agrega PCEST por CODPROD nas filiais dadas. Giro = média 3 meses; custo = CUSTOFIN.
+
+    Sem `codprods`: só item com estoque OU venda nos 3 meses fechados — corta o catálogo morto
+    (~1.600 itens de revenda zerados e parados no Atacado, 10/2026).
+
+    `codprods`: a MESMA linha para uma lista de códigos, sem o corte de atividade. É por aqui que
+    volta o item zerado que vendeu no mês corrente (ver `core.zerados_com_venda_no_mes`): o corte
+    acima o descartava, e ele é justamente uma ruptura. Mesmas colunas de propósito — as duas
+    respostas são concatenadas e o `construir_produtos` não pode distinguir uma da outra."""
     inner = """ADDCOLUMNS(
         SUMMARIZE(PCEST, PCEST[CODPROD]),
         "qtestger",   CALCULATE(SUM(PCEST[QTESTGER])),
@@ -655,6 +663,16 @@ def q_snapshot_estoque(filiais=None):
     )"""
     lista = _lista_filiais_dax(filiais)
     tabela = f"CALCULATETABLE({inner}, PCEST[CODFILIAL] IN {lista})" if lista else inner
+    if codprods is not None:
+        # lista vazia = nenhuma linha (DAX não aceita `IN {}`). Cair no corte de atividade aqui
+        # devolveria o snapshot inteiro, e quem concatena as duas respostas duplicaria tudo.
+        cods = ", ".join(str(int(c)) for c in codprods)
+        cond = f"PCEST[CODPROD] IN {{{cods}}}" if cods else "FALSE()"
+        return f"""EVALUATE
+FILTER(
+    {tabela},
+    {cond}
+)"""
     return f"""EVALUATE
 FILTER(
     {tabela},

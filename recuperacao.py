@@ -75,9 +75,26 @@ def indexar(eventos):
     return out
 
 
+def marcar_excluidos(historico, excluidos):
+    """Grava a data de EXCLUSÃO do cadastro (`PCCLIENT.DTEXCLUSAO`) em cada histórico.
+    `excluidos` = {codcli: date}. Ver `estado_em`."""
+    for c, d in (excluidos or {}).items():
+        h = historico.get(c)
+        if h is not None:
+            h['excluido'] = d
+    return historico
+
+
 def estado_em(h, t, inativo_dias=INATIVO_DIAS, perdido_dias=PERDIDO_DIAS):
     """Estado do cliente no INÍCIO do dia `t` (só compras anteriores a `t` contam).
-    Devolve dict {estado, ultima, dias, ciclo, valor_mensal} ou None se ele nunca comprou."""
+    Devolve dict {estado, ultima, dias, ciclo, valor_mensal} ou None se ele nunca comprou.
+
+    Cliente EXCLUÍDO no Winthor (`h['excluido']`, ver `marcar_excluidos`) é PERDIDO a partir do
+    dia seguinte à exclusão — a empresa declarou que ele não compra mais (João, 20/10/2026: os 5
+    do JULIANO foram excluídos em 26/06 como "CLIENTE NAO COMPRA MAIS"). Antes da data ele segue
+    a régua normal, então o passado não se reescreve; e no mês da exclusão quem estava em risco
+    sai pelo "viraram perdidos", o que mantém a ponte fechando no zero. Se ele comprar DEPOIS da
+    exclusão, a régua normal volta a valer a partir dessa compra."""
     i = bisect_left(h['datas'], t)
     if i == 0:
         return None
@@ -87,7 +104,8 @@ def estado_em(h, t, inativo_dias=INATIVO_DIAS, perdido_dias=PERDIDO_DIAS):
     janela = [d for d in h['datas'][:i] if d > desde]
     ciclo = rfm.ciclo_pessoal(janela)
     valor = sum(sum(h['dia'][d].values()) for d in janela) / 12
-    if dias > perdido_dias:
+    excluido = h.get('excluido')
+    if dias > perdido_dias or (excluido is not None and excluido < t and ultima <= excluido):
         est = PERDIDO
     elif dias > inativo_dias and (ciclo is None or dias > ciclo):
         est = RISCO
@@ -130,7 +148,10 @@ def movimento_cliente(h, anomes, inativo_dias=INATIVO_DIAS, perdido_dias=PERDIDO
         'dias_parado': antes_da_compra['dias'] if recuperado else None,
         'valor_mensal_rec': antes_da_compra['valor_mensal'] if recuperado else 0.0,
         'vendas': vendas,                      # {codusur: R$ no mês} — o crédito é de quem vendeu
-        'virou_perdido': e_ini == RISCO and e_fim == PERDIDO,
+        # `not recuperado`: quem saiu do risco por compra já saiu pela linha dos recuperados. Sem
+        # exclusão os dois nunca coincidem; com ela sim — comprou e foi excluído no mesmo mês
+        # (4 casos no BI, out/25–abr/26) — e contaria duas vezes, quebrando a ponte.
+        'virou_perdido': e_ini == RISCO and e_fim == PERDIDO and not recuperado,
     }
 
 

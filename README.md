@@ -367,6 +367,31 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
     - **Filtro de Time** e **cabeçalho fixo** (28/09/2026). O filtro é no cliente (o payload já traz
       o time e o RBAC já recortou); com time escolhido a posição é **dentro do time** e a geral vai
       embaixo. Aparece só com 2+ times na aba.
+- 🩹 **Cliente EXCLUÍDO no Winthor seguia na carteira** (10/2026, João Victor: *"no sistema de força de
+  vendas do Juliano tem 41 clientes ativos, na JOGA tem 46; tirando os 5 citados, bate certinho"*). Os
+  5 foram excluídos em 26/06/2026 ("CLIENTE NAO COMPRA MAIS") com o `CODUSUR1` intacto, e nada no
+  Comercial lia o `PCCLIENT[DTEXCLUSAO]`. Medido: 16.795 excluídos no cadastro, 223 na carteira de 24
+  meses; no mês fechado de set/26 a base de cobertura cai de 6.828 para 6.785, e o JULIANO de 45
+  (77,8%) para 40 (87,5%) — 5 clientes que nunca iam comprar punham teto na meta de 100%.
+  - **A régua NÃO muda** (decisão do Gabriel): dono = cadastro. O João chegou a pedir "trazer na
+    carteira de quem vendeu" e foi recusado — é o defeito de réguas misturadas do Radar.
+  - **Sai pela DATA**, não de uma vez: `_finalizar_carteira` tira os excluídos da carteira de HOJE
+    (mesmo lugar e mesma consequência do CONSUMIDOR FINAL — a venda segue nos totais), e as contas
+    de mês passado os devolvem até o dia da exclusão (`_dono_em`; a foto de set–out/26 gravou os
+    excluídos e passa pelo `_sem_excluidos_ate`). Assim a Evolução mostra a cobertura subindo quando
+    o vendedor limpou a carteira, em vez de reescrever o passado.
+  - **Na Recuperação o excluído vira PERDIDO na data** (`recup.marcar_excluidos` + `estado_em`): sai
+    da lista de risco e, no mês da exclusão, pelo "viraram perdidos" — a ponte segue fechando no
+    zero (conferido nos 14 meses no BI). ⚠️ Quem COMPROU e foi excluído no mesmo mês (4 casos) saía
+    pelos recuperados **e** pelos viraram perdidos: o `virou_perdido` passou a exigir `not
+    recuperado`. Também sai do "dinheiro na mesa" (`_recup_potencial`). Comprou depois da exclusão
+    (2 casos em 2025, loja e e-commerce) → régua normal a partir da compra.
+  - ⚠️ Consulta à parte (`_clientes_excluidos`), **não** coluna na `meta` da carteira, que já está no
+    limite em que o executeQueries trunca. Erro do Power BI dentro do 200 levanta e não é cacheado.
+    Demo: a base sintética não tem a coluna → nada muda lá.
+  - ⚠️ **A cobertura sobe sem ninguém mexer na operação** (20 vendedores com a base alterada), uma
+    vez. Chaves subidas: carteira v4, recuperação v5, ranking/vendedor v4, evolução v4, performance `:b2`.
+    Gate: `tests/test_clientes_excluidos.py`.
 - **Evolução da carteira** (`/evolucao`, `evolucao_carteira.py`, 10/2026, pedido do Gabriel: *"um
   histórico de performance na gestão de carteira, igual temos na gestão de estoque… quem usa a
   plataforma versus quem não usa"*). 12 meses fechados por empresa → time → vendedor: **cobertura**
@@ -841,6 +866,33 @@ unidade selecionada marcada. Motor puro `core.estoque_por_filial`; endpoint `/ap
   mesmo `cobQt` (zerado com giro = `0d`).
 - Fica **fora da ficha Excel/PDF**, como os lotes e os endereços: a ficha é uma linha de campos
   fixos. Gate: `tests/test_estoque_por_filial.py`.
+
+🩹 **Item zerado que vendeu no mês sumia do painel** (10/2026, achado pelo João Victor: *"o item
+56664 não aparece na JOGA, porém está ativo no Winthor"*). O `q_snapshot_estoque` corta quem tem
+estoque zero **e** venda zero nos 3 meses fechados — certo para o catálogo morto (**1.607** itens
+de revenda no Atacado), errado para o 56664: vendeu em abr–jun, nada em jul–set (provavelmente
+sem estoque), 8 un em 10/10, zerado em todas as filiais. A ruptura que dura 3 meses apagava o
+item da tela que mede ruptura — e os fallbacks de giro do `core` (`giro_novo_item`,
+`giro_mes_corrente`) existiam para isso, mas o DAX cortava o item antes de eles rodarem.
+- Volta o item do universo **fora do snapshot que vendeu no mês corrente** (RCA, filiais de venda
+  — a mesma série dos fallbacks). `core.zerados_com_venda_no_mes` escolhe os códigos e uma consulta
+  pequena (`q_snapshot_estoque(codprods=…)`, mesmas colunas) traz as linhas — soltar o corte do
+  snapshot traria os 1.600 mortos a cada carga. O critério é o do `giro_mes_corrente`, então todo
+  item que volta tem giro > 0 e entra como **ruptura**, nunca como "sem giro" de estoque zero.
+  Medido em 20/10/2026: **6 itens** no Atacado.
+- ⚠️ **Só o mês corrente, de propósito** (opção estreita). "Vendeu nos últimos 6 meses" traria
+  **60** itens, muitos de pico pontual ou fora de linha: o 55465 vendeu 2.209 un em abril e quase
+  nada depois, e o `giro_novo_item` projetaria 414/mês com sugestão de compra. O painel não
+  distingue ruptura longa de item que saiu de linha — quem distingue é o `OBS2='FL'` no Winthor.
+- ⚠️ **Fica de fora o zerado que só tem pedido em aberto** (19 em 20/10/2026, quase todos códigos
+  novos): entraria como "sem giro" de estoque zero e inflaria o card. Ele aparece no Orçamento.
+- ⚠️ **A ruptura sobe sem ninguém mexer na operação**, uma vez: placar da Meta de ruptura, nota do
+  comprador e a série da Evolução (um degrau pequeno no dia do deploy — o passado não se refaz,
+  porque o item não estava na foto). A meta do Orçamento (`_venda_comprador_30d`) segue no
+  snapshot de sempre.
+- O texto do 360° dizia "item novo, menos de 3 meses de casa" para todo giro do fallback; agora
+  não afirma o motivo (pode ser item novo ou que ficou sem vender).
+  Gate: `tests/test_snapshot_venda_no_mes.py`.
 
 **Aba Verbas — a página inteira fala UMA janela** (08/2026). O rodapé da aba sempre prometeu
 "negociado/aplicado = últimos 12 meses · saldo = posição atual", mas dois elementos não cumpriam.

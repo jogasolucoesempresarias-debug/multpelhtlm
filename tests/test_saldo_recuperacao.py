@@ -85,7 +85,7 @@ def test_versao_do_cache_sobe_quando_a_resposta_muda():
     """Produção, 29/09/2026: depois do deploy a Recuperação mostrou "Saldo do mês 0" — o Redis serviu a
     resposta ANTIGA (sem o campo) com a mesma chave. A chave tem de mudar junto com o conteúdo."""
     fonte = Path('server.py').read_text(encoding='utf-8')
-    assert "'recuperacao:resumo:v4'" in fonte and "'recuperacao:resumo:v3'" not in fonte
-    assert "'vendedores:ranking:v3'" in fonte and "vendedor:full:v3:" in fonte
+    assert "'recuperacao:resumo:v5'" in fonte and "'recuperacao:resumo:v4'" not in fonte
+    assert "'vendedores:ranking:v4'" in fonte and "vendedor:full:v4:" in fonte
     assert "classList.toggle('hidden', c.saldo == null)" in Path('recuperacao.html').read_text(encoding='utf-8')
 

@@ -64,6 +64,7 @@
 | Tema | Decisão | Origem |
 |---|---|---|
 | Base da carteira | cadastro (`PCCLIENT.CODUSUR1`) com compra em 12m; sem filtro de bloqueio | ✅ João |
+| Cliente excluído (`DTEXCLUSAO`) | sai da base **a partir da data**; na Recuperação vira perdido; a régua (cadastro) não muda. "Carteira de quem vendeu" foi pedida e **recusada** (20–21/10/2026): contraria a base por cadastro | ✅ João + Gabriel |
 | Cobertura da base | base atendida **por ele** no mês fechado ÷ base; 0–100%; entra na nota | ✅ João ("vou tentar assim") |
 | Fora da base / alcance | informativos; fora da base em 4 tipos (colega · liberado · fictício · RCA inativo) | ✅ João + regra dos 60 dias |
 | Base pequena | base ativa < 5 → sem %, fora da média do time (caixa/balcão) | ✅ João (LARISSA/WAGNER) |

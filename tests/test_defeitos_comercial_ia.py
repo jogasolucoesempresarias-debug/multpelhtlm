@@ -92,6 +92,8 @@ def test_carteira_tira_o_generico_e_guarda_a_lista(monkeypatch, clean_redis):
     monkeypatch.setattr(server, '_carregar_vendedores_map', lambda: {})
     monkeypatch.setattr(server, '_carregar_supervisores_map', lambda: {})
     monkeypatch.setattr(server, '_normalizar_cidades', lambda cs: {})
+    # sem isto a lista de excluídos vem do Power BI REAL — e o codcli 7 é um excluído de verdade
+    monkeypatch.setattr(server, '_clientes_excluidos', lambda: {})
     clientes = [{'codcli': 1, 'cliente': 'CONSUMIDOR FINAL', 'codusur': 4},
                 {'codcli': 7, 'cliente': 'MERCADO BOM', 'codusur': 10}]
     out = server._finalizar_carteira(clientes, 'teste:carteira')

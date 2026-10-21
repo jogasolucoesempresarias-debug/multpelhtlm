@@ -3507,8 +3507,8 @@ async function openProduto(cod){
       <div class="bar"><i style="width:${cobPct}%"></i></div>
       ${p.giro_fonte==='forecast'?`<div class="count-line">Giro por <b>forecast (RCA, ${S.params.fcmeses}m)</b>: ${int(p.giro_forecast)}/mês · média 3m (oficial): ${int(p.giro_media3)}/mês</div>`:''}
       ${p.giro_fonte==='sazonal'?`<div class="count-line">Giro por <b>forecast sazonal (RCA, 24m)</b>: ${int(p.giro_mes)}/mês${p.fatores_sazonais?` · fator do mês ${dec(p.fatores_sazonais[new Date().getMonth()+1]||1,2)}×`:''} · média 3m (oficial): ${int(p.giro_media3)}/mês</div>`:''}
-      ${p.giro_fonte==='novo_item'?`<div class="count-line">Giro por <b>item novo</b>: ${int(p.giro_mes)}/mês — média da venda real (RCA) desde o lançamento. Os 3 meses fechados do giro oficial ainda estão zerados (produto com menos de 3 meses de casa).</div>`:''}
-      ${p.giro_fonte==='mes_corrente'?`<div class="count-line">Giro pela <b>venda do mês corrente</b>: ${int(p.giro_mes)}/mês — o produto só começou a vender agora, então os 3 meses fechados do giro oficial estão zerados. Usa a venda crua do mês (sobe conforme o mês avança) p/ o item não sumir do abastecimento.</div>`:''}
+      ${p.giro_fonte==='novo_item'?`<div class="count-line">Giro pela <b>venda real recente</b>: ${int(p.giro_mes)}/mês — média da venda (RCA) desde a 1ª venda dos últimos 6 meses. Os 3 meses fechados do giro oficial estão zerados: produto novo ou que ficou sem vender nesse período (ex.: sem estoque).</div>`:''}
+      ${p.giro_fonte==='mes_corrente'?`<div class="count-line">Giro pela <b>venda do mês corrente</b>: ${int(p.giro_mes)}/mês — sem venda nos 6 meses fechados anteriores (produto novo ou que voltou a vender agora), então o giro oficial está zerado. Usa a venda crua do mês (sobe conforme o mês avança) p/ o item não sumir do abastecimento.</div>`:''}
       ${filiaisDrawer(j.por_filial)}
       <div class="d-sec">Venda no período</div>
       <div class="lote-row"><span>Venda</span><span>${money(p.venda)}</span></div>

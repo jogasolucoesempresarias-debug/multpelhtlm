@@ -191,6 +191,15 @@ Radar, Evolução. A **venda** dele continua nos totais (Dashboard, Categorias, 
 produtos). Motivo (09/2026): eram R$ 2,2 mi/12m em 26 mil notas de 29 vendedores e ele aparecia
 como "Campeão classe A" na Carteira.
 
+**Cliente EXCLUÍDO no Winthor** (`PCCLIENT.DTEXCLUSAO`, desde 10/2026) sai da mesma forma, mas
+**pela data**: até o dia da exclusão ele conta na base do dono do cadastro; dali em diante sai da
+Carteira, da base de cobertura e das listas, e na Recuperação vira **perdido** (no mês da exclusão,
+quem estava em risco sai pelo "viraram perdidos"). A régua não muda — o dono continua sendo o
+cadastro (`CODUSUR1`). Se ele comprar depois da exclusão, volta a valer a régua normal a partir
+dessa compra. A venda segue nos totais. Caso que originou (João): o JULIANO #29 tinha 46 clientes
+na Carteira e 41 na força de vendas — os 5 a mais foram excluídos em 26/06/2026 como "CLIENTE NAO
+COMPRA MAIS".
+
 ### 3.5 Cobertura da carteira — a RÉGUA ÚNICA (desde 29/09/2026)
 
 Até setembro havia três contas diferentes com o mesmo nome nas telas Gerencial, Vendedores e
