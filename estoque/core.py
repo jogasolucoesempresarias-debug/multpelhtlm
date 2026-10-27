@@ -1964,6 +1964,42 @@ def mes_anterior(mes):
     return f"{a - 1}-12" if m == 1 else f"{a}-{m - 1:02d}"
 
 
+def validar_pedidos(cab, itens, limite_linhas=100000):
+    """O que É pedido, e se está em aberto, decidido pelos ITENS — não pelo cabeçalho (10/2026).
+
+    Achado do pedido 565975 ("tá garrado aí há um tempo", João Victor): o Winthor deixa no banco
+    CABEÇALHO SEM ITEM — importação de XML que falhou e foi refeita (o válido era o 565977), ou
+    itens apagados — e as telas dele escondem esse pedido. Conferido no Oracle (MULTPEL.PCPEDIDO):
+    o cabeçalho existe com 0 linhas em PCITEM; o BI é fiel. Com VLTOTAL = 0 o `recebido` do
+    Orçamento nunca virava verdade e ele ficava "atrasado" para sempre.
+
+    A régua é a do próprio Winthor: o pendente que ele mantém em `PCEST[QTPEDIDA]` (e usa na
+    sugestão de compra) é Σ(QTPEDIDA − QTENTREGUE) dos itens — bate em 744 de 747 produto×filial
+    (27/10/2026). E concorda com o cabeçalho em 1.241 de 1.241 pedidos reais desde 30/04; a única
+    divergência era o órfão. Nenhum campo do cabeçalho separa válido de órfão (CONFIRMADO,
+    DTLIBERA, ORCAMENTO, DTENTRADAESTOQUE iguais nos dois) — por isso não é "VLTOTAL = 0".
+
+    · pedido SEM item → fora (não é pedido: sai da lista, do comprado e do a entregar);
+    · com item → leva `_itens_em_aberto` (algum item com saldo a entregar), que o
+      `orcamento_winthor` usa no lugar da conta do cabeçalho. O VALOR segue o do cabeçalho
+      (régua da NF, a que o Orçamento mede) — os itens só dizem se existe e se está aberto.
+
+    ⚠️ Sem itens (Winthor fora, base sem PCITEM) ou com a lista no teto do executeQueries, que
+    corta em 100 mil linhas SEM AVISAR, devolve o cabeçalho intacto (régua antiga): validar contra
+    uma lista truncada tiraria pedidos de verdade do Orçamento, calado."""
+    if not itens or len(itens) >= limite_linhas:
+        if itens:
+            print(f"[pedidos] {len(itens)} linhas de PCITEM — no teto do executeQueries; "
+                  "cabeçalhos NÃO validados pelos itens.")
+        return cab
+    em_aberto = {}
+    for r in itens:
+        n = int(_n(r.get("NUMPED")))
+        em_aberto[n] = em_aberto.get(n, False) or (_n(r.get("qtped")) - _n(r.get("qtentregue")) > 0)
+    return [{**r, "_itens_em_aberto": em_aberto[n]} for r in cab
+            if (n := int(_n(r.get("NUMPED")))) in em_aberto]
+
+
 def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS",
                       pct=0.65, hoje=None, meta_override=None, lead_padrao=10,
                       cnpj_empresa=None, venda_comp_ant=None, arrastar=False):
@@ -2023,8 +2059,13 @@ def orcamento_winthor(cab, venda_comp, comp_map, forn_map, mes, comprador="TODOS
         vlt = _n(r.get("VLTOTAL"))
         vle = _n(r.get("VLENTREGUE"))            # valor já entregue (DTENTRADAESTOQUE é vazio aqui)
         aberto_val = max(0.0, vlt - vle)
-        # recebido se o que falta entregar é desprezível (tolera resíduo de centavos)
-        recebido = vlt > 0 and aberto_val <= max(1.0, vlt * 0.005)
+        # aberto = algum ITEM com saldo a entregar (`validar_pedidos`, régua do Winthor). Sem a
+        # marca (itens indisponíveis) cai na conta do cabeçalho: recebido se o que falta entregar
+        # é desprezível (tolera resíduo de centavos).
+        if "_itens_em_aberto" in r:
+            recebido = not r["_itens_em_aberto"]
+        else:
+            recebido = vlt > 0 and aberto_val <= max(1.0, vlt * 0.005)
         if recebido:
             aberto_val = 0.0
         mes_do_pedido = dtem.strftime("%Y-%m") if dtem else None

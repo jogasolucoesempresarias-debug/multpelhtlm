@@ -949,6 +949,27 @@ gravava como comprador **o que estava no FILTRO na hora de lançar** — lançad
 - Fornecedor digitado sem cadastro cai no nome gravado; `TODOS` nunca é nome (só aparece em
   "Empresa toda"). Gate: `tests/test_orcamento_manuais_comprador.py`.
 
+🩹 **Pedido válido e "em aberto" são decididos pelos ITENS, não pelo cabeçalho** (10/2026, João
+Victor: *"esse pedido tá garrado aí há um tempo"* — o 565975, R$ 0,00, "atrasado" desde 24/08).
+- **O Winthor deixa CABEÇALHO SEM ITEM no banco e as telas dele o escondem** — o João "não achava"
+  o pedido. Conferido no Oracle (`MULTPEL.PCPEDIDO`): 565975 e 564011 existem com **0 linhas em
+  PCITEM**; o BI é fiel. O 565975 foi a 1ª importação de XML que falhou (o válido é o 565977). São
+  19 em 45 mil cabeçalhos desde 2007. Com `VLTOTAL = 0` o `recebido` nunca virava verdade.
+- **A régua é a do próprio Winthor**: o pendente da `PCEST[QTPEDIDA]` (o que ele usa na sugestão
+  de compra) é Σ(QTPEDIDA − QTENTREGUE) dos itens — **744 de 747** produto×filial batendo — e o
+  "aberto pelos itens" concorda com o do cabeçalho em **1.241 de 1.241** pedidos reais desde 30/04.
+  ⚠️ **Não é "valor zero"** (recusado): nenhum campo do cabeçalho separa válido de órfão
+  (`CONFIRMADO`, `DTLIBERA`, `ORCAMENTO`, `DTENTRADAESTOQUE` iguais nos dois), e o 564011 tem
+  R$ 24.666,90.
+- `core.validar_pedidos`, chamado **uma vez** em `_pedidos_data` (os 5 chamadores do
+  `orcamento_winthor` herdam): sem item → fora (lista, comprado, a entregar); com item → marca
+  `_itens_em_aberto`. O **valor** segue o cabeçalho (régua da NF). Sem itens ou com a lista no
+  teto do executeQueries (100 mil, corte calado) passa o cabeçalho intacto. Cache `peddata:v2`.
+- Medido no BI (27/10/2026): só o 565975 sai — empresa 87 → 86 abertos, João 48 → 47; valor a
+  entregar, comprado e aberto **idênticos ao centavo**. Gate: `tests/test_pedido_valido_pelos_itens.py`.
+- ⚠️ Para conferir no Oracle pela consulta nativa do Power BI: **um comando, sem `;`**, com o schema
+  (`MULTPEL.` ou `AMEMBALAGENS.`) — sem ele dá ORA-00942.
+
 **Qualidade da base — 2 blocos, 2 universos, cada um declarado** (08/2026, pedido do diretor:
 "a lista dos itens com erro de cadastro não dá para deixar numa aba, para consultar tudo que
 está errado no sistema?"). Substitui o CSV gerado à mão: duas fontes da mesma lista divergem no

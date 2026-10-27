@@ -389,7 +389,7 @@ def _pedidos_data(filiais, hoje):
     """{'cab': [...PCPEDIDO], 'ja_pedida': {cod: qt_aberta}} — pedido de compra REAL (Winthor).
     Reutilizado pelo abastecimento (já-pedido) e pelo orçamento/acompanhamento (cabeçalho).
     Degrada p/ vazio se indisponível. Cache 30min por filial-set + data."""
-    key = f"peddata:{_filiais_key(filiais)}:{hoje.isoformat()}"
+    key = f"peddata:v2:{_filiais_key(filiais)}:{hoje.isoformat()}"   # v2: cabeçalho validado pelos itens
     hit = pbi._CACHE.get(key)
     if hit is not None:
         return hit
@@ -402,6 +402,9 @@ def _pedidos_data(filiais, hoje):
             numped_min = min(int(core._n(r["NUMPED"])) for r in cab)
             itens = (PS.pedido_itens(numped_min) if _pg
                      else pbi.run_dax(Q.q_pedido_itens(numped_min)))
+            # cabeçalho sem item não é pedido (o 565975) e o aberto sai dos itens — ver
+            # core.validar_pedidos. Aqui, uma vez, para os 5 chamadores do orcamento_winthor.
+            cab = core.validar_pedidos(cab, itens)
             data = {"cab": cab, "itens": itens,
                     "ja_pedida": core.montar_ja_pedida(cab, itens, hoje=hoje, dias=180),
                     # IPI/ST efetivos praticados por (fornecedor, produto) — mesma matéria-prima
