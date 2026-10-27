@@ -1523,6 +1523,11 @@ Doc completa das fórmulas em **`docs/estoque/planilha_v3.md`**.
   em caixa) é só uma **view**: ele escreve `qtd = caixas × QTUNITCX` e **a unidade continua a única
   fonte de verdade** no modelo e no payload. **Nada em caixa sai para o backend** — se sair, cai
   exatamente nesta armadilha. Item sem fator de caixa mostra "—" e só aceita unidade.
+- **"Deseja sair sem salvar?"** no modal de pedido (10/2026 — compradores clicavam fora e perdiam o
+  pedido editado). Clique no fundo, Esc e F5/fechar aba passam por `fecharModalAcidental`; só
+  pergunta se o CONTEÚDO mudou desde a abertura (`_modalSujo`, assinatura de itens + cabeçalho —
+  ordenar não conta). Cancelar e Lançar fecham direto. Esc fecha só o modal, não o drawer atrás.
+  Gate: `tests/test_modal_sair_sem_salvar.py`.
 - ⚠️ **Cobertura ideal:** fronteira **inclusiva** (`core.resumo_estoque_ideal`) — o item que pousa
   exatamente no limiar já é "ideal". Desde 07/2026 o limiar e a meta são **parâmetros**
   (`ideal_dias`=45 / `ideal_meta_pct`=90, ⚙ Parâmetros → "Estoque ideal") para o diretor calibrar

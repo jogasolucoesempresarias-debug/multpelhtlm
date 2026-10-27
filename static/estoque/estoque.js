@@ -2979,8 +2979,20 @@ function planoCell(tipo,chave,cod,desc,dtval){
 function wirePlanoCells(){ document.querySelectorAll('.plano-set').forEach(b=>b.onclick=e=>{e.stopPropagation();modalPlano({cod:+b.dataset.cod,desc:b.dataset.desc,tipo:b.dataset.tipo,chave:b.dataset.chave,dtval:b.dataset.dtval||null});}); }
 
 /* ───────── modais ───────── */
-function openModal(html,wide){ $('#modal').innerHTML=html; $('#modal').classList.toggle('wide',!!wide); $('#modal-bg').classList.add('on'); }
-function closeModal(){ $('#modal-bg').classList.remove('on'); }
+function openModal(html,wide){ _modalSujo=null; $('#modal').innerHTML=html; $('#modal').classList.toggle('wide',!!wide); $('#modal-bg').classList.add('on'); }
+function closeModal(){ _modalSujo=null; $('#modal-bg').classList.remove('on'); }
+/* Fechamento ACIDENTAL (clique no fundo, Esc, F5) pergunta antes de descartar — os compradores
+   perdiam o pedido inteiro editado ao clicar fora do modal (10/2026). O modal que tem o que perder
+   registra `_modalSujo` (função → true se mudou desde a abertura). Cancelar e Lançar seguem
+   fechando direto: são intenção explícita, não acidente. */
+let _modalSujo=null;
+const _modalAberto=()=>$('#modal-bg').classList.contains('on');
+function fecharModalAcidental(){
+  if(!_modalAberto()) return;
+  if(_modalSujo&&_modalSujo()&&!confirm('Deseja sair sem salvar? As alterações deste pedido serão perdidas.')) return;
+  closeModal();
+}
+window.addEventListener('beforeunload',e=>{ if(_modalAberto()&&_modalSujo&&_modalSujo()){ e.preventDefault(); e.returnValue=''; } });
 function modalMeta(r){ openModal(`<h3>Meta de compras — ${r.mes}</h3>
   <label>Valor da meta (R$)</label><input type="number" id="m-meta" value="${r.meta||''}" step="1000">
   <div class="m-acts"><button class="btn" id="m-cancel">Cancelar</button><button class="btn primary" id="m-ok">Salvar</button></div>`);
@@ -3247,6 +3259,15 @@ function modalPedido(opts){
     $('#pd-itens').querySelectorAll('[data-ri]').forEach(b=>b.onclick=()=>{ itens.splice(+b.dataset.ri,1); draw(); });
   }
   draw();
+  // "Sujo" = mudou algo desde a abertura. Compara o CONTEÚDO, não "houve digitação": quem abre a
+  // sugestão e clica fora sem mexer não perde nada (reabrir traz a mesma), e não deve ser
+  // interrompido. Ordenar a tabela não é alteração — por isso os itens vão ordenados por código.
+  const _assinatura=()=>JSON.stringify([
+    itens.map(x=>[x.codprod,+x.qtd||0,+x.custo_unit||0,+x.perc_ipi||0]).sort((a,b)=>a[0]-b[0]),
+    ...['#pd-data','#pd-forn','#pd-num','#pd-prazo'].map(s=>$(s).value),
+    itens.length?'':$('#pd-valor').value]);
+  const _inicial=_assinatura();
+  _modalSujo=()=>!!$('#pd-itens')&&_assinatura()!==_inicial;
   // busca as pesquisas DEPOIS da 1ª pintura e repinta: o modal não pode esperar rede para abrir
   carregarPesquisas().then(()=>{ if($('#pd-itens')) draw(); });
   $('#pd-additem').onclick=()=>{
@@ -4178,8 +4199,8 @@ async function init(){
   if(bReset) bReset.onclick=()=>{ if(!S.oficial) return; aplicarOficial(); escreverParamsNoForm(); pintarAvisoParams(); loadData(); };
   document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{S.view=t.dataset.view;S.cli.parado='';S.cli.ruptura='';S.cli.cobFaixa=[];S.cli.cobSub='';render();});
   document.querySelectorAll('.navgroup').forEach(x=>x.onclick=()=>{ const g=x.dataset.group; if(GROUP_OF(S.view)!==g){ S.view=NAV[g][0]; S.cli.parado='';S.cli.ruptura='';S.cli.cobFaixa=[];S.cli.cobSub=''; render(); }});
-  $('#overlay').onclick=closeDrawer; $('#modal-bg').onclick=e=>{if(e.target===$('#modal-bg'))closeModal();};
-  document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDrawer();closeModal();}});
+  $('#overlay').onclick=closeDrawer; $('#modal-bg').onclick=e=>{if(e.target===$('#modal-bg'))fecharModalAcidental();};
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'){ if(_modalAberto()) fecharModalAcidental(); else closeDrawer(); }});
   setStickTop(); window.addEventListener('resize', setStickTop); window.addEventListener('load', setStickTop);
   startProdTitles();   // tooltip da descrição completa na coluna Produto (todas as abas)
   setupTips();         // tooltip de ajuda (ⓘ) nos títulos e cabeçalhos calculados
