@@ -9691,6 +9691,43 @@ def uso_page():
     return send_from_directory('.', 'uso.html')
 
 
+# Supervisor com tantas áreas assim é GESTÃO, não time. Na Evolução da carteira um único supervisor
+# com quase todas as áreas marcava todos os times como "usa" e a comparação deixou de medir (06/10).
+USO_GESTAO_MIN_AREAS = 4
+
+
+def _uso_grupos(role, areas, codusur, codsupervisores, codsupervisor, vmap, smap):
+    """Grupo(s) da pessoa no filtro de Time da /uso (10/2026) — [(chave, nome)]. Time de HOJE.
+
+    · sem a área Comercial → Compras (não tem time comercial);
+    · admin/viewer, ou supervisor com ≥ USO_GESTAO_MIN_AREAS áreas → Gestão;
+    · supervisor → cada time que ele cobre (1 a 3); vendedor → o time do cadastro do RCA;
+    · o resto (vendedor sem código, RCA fora do cadastro) → Sem time. Nunca some do filtro."""
+    if 'comercial' not in (areas or []):
+        return [('compras', 'Compras')]
+    if role in ('admin', 'viewer'):
+        return [('gestao', 'Gestão')]
+    sups = []
+    if role == 'supervisor':
+        for s in (codsupervisores or []) or ([codsupervisor] if codsupervisor is not None else []):
+            try:
+                sups.append(int(s))
+            except (TypeError, ValueError):
+                pass
+        sups = sorted(set(sups))
+        if len(sups) >= USO_GESTAO_MIN_AREAS:
+            return [('gestao', 'Gestão')]
+    elif role == 'vendedor' and codusur is not None:
+        cs = (vmap.get(str(codusur)) or {}).get('codsupervisor')
+        try:
+            sups = [int(cs)] if cs is not None else []
+        except (TypeError, ValueError):
+            sups = []
+    if not sups:
+        return [('sem', 'Sem time')]
+    return [(f't{s}', (smap.get(str(s)) or {}).get('nome') or f'Time {s}') for s in sups]
+
+
 @app.route('/api/admin/uso')
 @admin_required
 def api_admin_uso():
@@ -9715,6 +9752,7 @@ def api_admin_uso():
     cur.execute(f"""
         WITH base AS (
             SELECT u.id, u.nome, u.email, u.role, u.ativo, u.areas,
+                   u.codusur, u.codsupervisores, u.codsupervisor,
                    MAX(l.acessado_em) FILTER (WHERE l.rota = 'login:sucesso') AS ultimo_acesso,
                    COUNT(*) FILTER (WHERE l.rota = 'login:sucesso'
                                       AND l.acessado_em >= NOW() - make_interval(days => %s)) AS acessos,
@@ -9729,7 +9767,8 @@ def api_admin_uso():
               FROM multpel_users u
               LEFT JOIN multpel_log l ON l.usuario_id = u.id
              WHERE {ignora}
-             GROUP BY u.id, u.nome, u.email, u.role, u.ativo, u.areas
+             GROUP BY u.id, u.nome, u.email, u.role, u.ativo, u.areas,
+                      u.codusur, u.codsupervisores, u.codsupervisor
         )
         SELECT *,
                -- ⚠️ DIA DE CALENDÁRIO, não bloco de 24h. A 1ª versão dividia os segundos decorridos
@@ -9744,11 +9783,25 @@ def api_admin_uso():
           FROM base
          ORDER BY ultimo_acesso ASC NULLS FIRST, nome
     """, (dias, TZ_APP, dias, dias) + _USO_EMAILS_IGNORADOS + (TZ_APP, TZ_APP))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    # Nome dos times e time do RCA vêm do BI (cache 24h). Falhar aqui NÃO derruba a tela de
+    # adoção: os times saem como "Time N" e o vendedor como "Sem time", e a tela avisa.
+    times_ok = True
+    try:
+        vmap, smap = _carregar_vendedores_map(), _carregar_supervisores_map()
+    except Exception as e:
+        print(f'[USO] times indisponiveis ({e})')
+        vmap, smap, times_ok = {}, {}, False
     linhas = []
-    for (uid, nome, email, role, ativo, areas, ult, ac, da, dl, ultdl, dsa) in cur.fetchall():
+    for (uid, nome, email, role, ativo, areas, codusur, csups, csup,
+         ult, ac, da, dl, ultdl, dsa) in rows:
         linhas.append({
             'id': uid, 'nome': nome, 'email': email, 'role': role, 'ativo': ativo,
             'areas': areas or [],
+            'times': [{'chave': k, 'nome': n} for k, n in
+                      _uso_grupos(role, areas or [], codusur, csups or [], csup, vmap, smap)],
             # com a coluna em TIMESTAMPTZ o isoformat() sai COM offset (…-03:00), então o navegador
             # converte certo em vez de adivinhar que a string é hora local
             'ultimo_acesso': ult.isoformat() if ult else None,
@@ -9757,8 +9810,6 @@ def api_admin_uso():
             'downloads': dl or 0,
             'ultimo_download': ultdl.isoformat() if ultdl else None,
         })
-    cur.close()
-    conn.close()
     ativos = sum(1 for r in linhas if r['acessos'] > 0)
     nunca = sum(1 for r in linhas if not r['ultimo_acesso'])
     # Os três se SOMAM ao total, sem sobreposição. A 1ª versão calculava "sem acesso no período"
@@ -9767,7 +9818,7 @@ def api_admin_uso():
     # entrado (visto em produção). Separar importa porque são problemas diferentes: quem nunca
     # começou pede treinamento; quem usou e parou pede resgate.
     return jsonify({
-        'ok': True, 'periodo': periodo, 'dias': dias, 'usuarios': linhas,
+        'ok': True, 'periodo': periodo, 'dias': dias, 'usuarios': linhas, 'times_ok': times_ok,
         'resumo': {
             'total': len(linhas),
             'ativos_periodo': ativos,

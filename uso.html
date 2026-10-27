@@ -90,7 +90,12 @@
           <option value="12m">Últimos 12 meses</option>
         </select>
       </div>
+      <div>
+        <label>Time</label>
+        <select id="time"><option value="">Todos</option></select>
+      </div>
     </div>
+    <div id="aviso-times" class="nota" style="display:none;margin:8px 0 0"></div>
     <div id="tabela"><div class="vazio">Carregando…</div></div>
   </div>
 
@@ -133,6 +138,45 @@ function selo(u) {
   return `<span class="badge ok">há ${d} dias</span>`;
 }
 
+// ─── Filtro de Time (10/2026) ───
+// O grupo de cada pessoa vem do servidor (`_uso_grupos`): time do RCA, time(s) do supervisor,
+// Gestão (admin/viewer e supervisor com 4+ áreas) ou Compras (sem a área Comercial). Supervisor
+// com 2–3 áreas aparece em cada time que cobre. O recorte é aqui no navegador: a lista inteira
+// já veio, e trocar de time não deve custar outra ida ao servidor.
+const GRUPOS_FIM = ['gestao', 'compras', 'sem'];   // depois dos times, nesta ordem
+let ULTIMO = null;
+
+function opcoesTime(us) {
+  const cont = {}, nome = {};
+  us.forEach(u => (u.times || []).forEach(t => { cont[t.chave] = (cont[t.chave] || 0) + 1; nome[t.chave] = t.nome; }));
+  const chaves = Object.keys(cont).sort((a, b) => {
+    const fa = GRUPOS_FIM.indexOf(a), fb = GRUPOS_FIM.indexOf(b);
+    if (fa !== fb) return (fa < 0 ? -1 : fa) - (fb < 0 ? -1 : fb);
+    return nome[a].localeCompare(nome[b], 'pt-BR');
+  });
+  const sel = $('#time'), atual = sel.value;
+  sel.innerHTML = '<option value="">Todos</option>' +
+    chaves.map(k => `<option value="${esc(k)}">${esc(nome[k])} (${cont[k]})</option>`).join('');
+  sel.value = cont[atual] ? atual : '';   // o time escolhido sobrevive à troca de período
+}
+
+// Mesmas regras do servidor (api_admin_uso): os três últimos somam o total, sem sobreposição.
+// Recalculado sobre o RECORTE — card com 30 cadastrados ao lado de uma tabela com 5 é o defeito
+// de dois universos.
+function resumoDe(us) {
+  const ativos = us.filter(u => u.acessos > 0).length;
+  const nunca = us.filter(u => !u.ultimo_acesso).length;
+  return {total: us.length, ativos_periodo: ativos, nunca_acessaram: nunca,
+          pararam_de_usar: us.length - ativos - nunca};
+}
+
+function aplicarFiltro() {
+  if (!ULTIMO) return;
+  const t = $('#time').value;
+  const us = (ULTIMO.usuarios || []).filter(u => !t || (u.times || []).some(x => x.chave === t));
+  pintar({...ULTIMO, usuarios: us, resumo: t ? resumoDe(us) : ULTIMO.resumo});
+}
+
 function pintar(j) {
   const r = j.resumo;
   // Os três últimos SOMAM o total, sem sobreposição — dá para conferir de cabeça olhando a tela.
@@ -155,7 +199,7 @@ function pintar(j) {
     </tr></thead>
     <tbody>${us.map(u => `<tr class="${u.acessos ? '' : 'frio'}">
       <td><b>${esc(u.nome)}</b><br><span style="font-size:.75rem;color:var(--text-dim)">${esc(u.email)}${u.ativo ? '' : ' · inativo'}</span></td>
-      <td>${esc(u.role || '—')}</td>
+      <td>${esc(u.role || '—')}<br><span style="font-size:.75rem;color:var(--text-dim)">${esc((u.times || []).map(t => t.nome).join(' · '))}</span></td>
       <td>${selo(u)}</td>
       <td>${fmtData(u.ultimo_acesso) || '—'}</td>
       <td class="num">${u.acessos}</td>
@@ -171,12 +215,18 @@ async function carregar() {
     const r = await fetch('/api/admin/uso?periodo=' + $('#periodo').value);
     const j = await r.json();
     if (!j.ok) throw new Error(j.error || 'falhou');
-    pintar(j);
+    ULTIMO = j;
+    opcoesTime(j.usuarios || []);
+    const av = $('#aviso-times');
+    av.style.display = j.times_ok === false ? '' : 'none';
+    av.textContent = 'Não foi possível ler os times no Power BI agora: os nomes saem como "Time N" e os vendedores aparecem em "Sem time".';
+    aplicarFiltro();
   } catch (e) {
     $('#tabela').innerHTML = `<div class="vazio">Não foi possível carregar: ${esc(e.message)}</div>`;
   }
 }
 $('#periodo').onchange = carregar;
+$('#time').onchange = aplicarFiltro;
 carregar();
 </script>
 </body>

@@ -426,6 +426,12 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
   - 🚧 Fase 2: receita/margem e nota da Performance mês a mês (cada uma é query nova por mês).
     Gate: `tests/test_evolucao_carteira.py`.
 - **Admin** — CRUD usuários, cron de email, multi-CC, segmento RFM, editor de metas. **+ acesso por área, comprador vinculado e relatórios de Compras** (ver abaixo).
+- **Uso da ferramenta** (`/uso`, admin, fora de todo menu) — **filtro de Time** (10/2026, pedido do
+  Gabriel). `server._uso_grupos`, time de HOJE: vendedor → time do cadastro do RCA; supervisor →
+  cada time que cobre, mas com **≥ 4 áreas vira Gestão** (`USO_GESTAO_MIN_AREAS` — o supervisor de
+  quase todas as áreas que tirou o "usa × não usa" da Evolução); admin/viewer → Gestão; sem a área
+  Comercial → Compras; o resto → Sem time (ninguém some). Recorte no navegador, **cards recalculados
+  sobre o time**. BI fora → "Time N" e aviso, a tela abre. Gate: `tests/test_uso_time.py`.
 
 ## 🤖 Agente de IA (chat do Compras) — **módulo opcional, venda adicional**
 
