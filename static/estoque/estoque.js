@@ -1329,8 +1329,8 @@ function renderReposicao(P){
         ${corpo}
       </div>`;}).join('')+
     (suspensos.length?`<div class="panel" style="border-color:var(--orange)">
-      <h3><span>⚠ Rever antes de comprar — pararam de vender (${suspensos.length})${tipT('Itens com giro na média de 3 meses mas sem venda há 60 dias ou mais — confira antes de pedir (o giro pode estar “preso” no histórico).')}</span></h3>
-      <div class="count-line">Têm giro na média de 3 meses, mas <b>sem venda há ≥60 dias</b> → a sugestão pode estar comprando estoque que travou. Confira antes de pedir.</div>
+      <h3><span>⚠ Rever antes de comprar — pararam de vender (${suspensos.length})${tipT('Itens com giro na média de 3 meses mas sem venda há 60 dias ou mais — confira antes de pedir (o giro pode estar “preso” no histórico).')}</span>${exportBtns('rever_compra')}</h3>
+      <div class="count-line">Têm giro na média de 3 meses, mas <b>sem venda há ≥60 dias</b> → a sugestão pode estar comprando estoque que travou. Confira antes de pedir. O <b>Excel/PDF</b> sai enxuto para o time de vendas (dias sem venda e estoque em caixas). Os parados <b>sem giro</b> não estão aqui — estão na aba Estoque → Parado.${suspensos.length>100?` <b>Mostrando 100 de ${int(suspensos.length)}</b> — o Excel/PDF leva todos.`:''}</div>
       <div class="tbl-wrap"><table><thead><tr><th>Cód</th><th>Produto</th><th>Fornecedor</th><th class="num">Disp.${tip('reposicao','Disp.')}</th><th class="num">Dias s/ venda${tip('reposicao','Dias s/ venda')}</th><th class="num">Giro/mês${tip('reposicao','Giro/mês')}</th><th class="num">Sugeria${tip('reposicao','Sugeria')}</th></tr></thead>
       <tbody>${suspensos.slice(0,100).map(p=>`<tr data-cod="${p.codprod}"><td class="num">${p.codprod}</td><td><span class="prod">${esc(p.descricao)}</span></td><td><span class="prod">${esc(p.fornecedor||'—')}</span></td><td class="num">${int(p.qtdisp)}</td><td class="num">${p.dias_sem_venda==null?'—':int(p.dias_sem_venda)}</td><td class="num">${int(p.giro_mes)}</td><td class="num">${int(p.sugestao_compra)}</td></tr>`).join('')}</tbody></table></div>
     </div>`:'');
@@ -1828,6 +1828,9 @@ function renderParado(P){
   const nRec=faixas.find(f=>f.key==='recem_chegado')||{qt:0,valor:0};
   const el=$('#v-parado');
   el.innerHTML=head('Estoque parado — o que liquidar','parado')
+    // relatório ENXUTO para o time de vendas (10/2026, pedido do João): a mesma seleção do Excel/PDF
+    // acima (faixas marcadas inclusive), só com dias sem venda e estoque em caixas
+    +`<div class="count-line">Para o time de vendas — só dias sem venda e estoque em caixas, mesma seleção da tela: ${exportBtns('parado_vendas')}</div>`
     +resumoFaixasBlock('Valor parado por faixa (dias sem venda)'+tipT(`Valor de estoque parado em cada faixa de dias sem venda. Clique para filtrar. As duas primeiras caixas não são faixas de dias — elas TIRAM itens da conta: "Novos" = nunca venderam e entraram há até ${int(S.params.novoDias)} dias (não tiveram chance); "Recém-chegados s/ giro" = já venderam, estão há 60+ dias sem vender e acabaram de receber mercadoria — o dinheiro é novo, a ociosidade é que é velha. Nenhum dos dois conta como capital parado. A janela é editável em ⚙ Parâmetros.`),faixas,par,p=>p.valor,pf,'ch-parado')
     +`<div class="row" style="gap:14px;margin:6px 0;align-items:flex-end">
         <div class="fb-group"><label>Faixa <small class="muted">(marque várias)</small></label>
@@ -3142,10 +3145,19 @@ function modalPedido(opts){
     const av=sem?` <span style="color:${C.orange}" title="${sem} item(ns) sem cadastro confiável de peso/volume no Winthor entram como ZERO — o total acima é um PISO, não a medida da carga.">⚠ ${sem} sem cadastro</span>`:'';
     return ` · <b>${dec(kg,0)} kg</b>${m3>0?` · <b>${dec(m3,2)} m³</b>`:''}${av}`;
   };
+  // Total de CAIXAS (10/2026, pedido do João): a soma do que a coluna "Caixas" mostra, item a item
+  // (ceil de qtd ÷ fator). Item SEM fator não tem caixa — as unidades dele saem à parte, nunca
+  // somadas como se fossem caixa (a mesma política do campo, que mostra "—").
+  const caixas=()=>{
+    let cx=0, un=0;
+    itens.forEach(x=>{ if(x.qtunitcx>1) cx+=Math.ceil((+x.qtd||0)/x.qtunitcx); else un+=(+x.qtd||0); });
+    if(!cx&&!un) return '';
+    return ` · <b>${int(cx)} cx</b>`+(un?` <span class="muted" title="Itens sem fator de caixa cadastrado entram em unidades — não dá para convertê-los em caixas.">+ ${int(un)} un sem fator</span>`:'');
+  };
   const rodape=()=>{const t=total(),nf=totalNF(),inc=incertoNF();
     return (nf>t+0.005
       ? `Mercadoria: <b>${money(t)}</b> · impostos ${money(nf-t)} · <b>Total da NF previsto ${money(nf)}</b> · ${itens.length} itens${notaIncerteza(nf,inc)}`
-      : `Total: <b>${money(t)}</b> · ${itens.length} itens`) + carga();};
+      : `Total: <b>${money(t)}</b> · ${itens.length} itens`) + caixas() + carga();};
   // atualiza só o rodapé + o campo Valor (sem reconstruir a tabela → não rouba o foco do input)
   function refreshTotals(){
     const cl=$('#pd-itens .count-line'); if(cl) cl.innerHTML=rodape();

@@ -2778,19 +2778,23 @@ def resumo_validade(lotes, produtos_idx, hoje=None):
 def resumo_cobertura(produtos):
     """Bloco 'Cobertura de estoque por faixa de dias' (RELATORIO GERENCIAL do diretor).
     Cobertura no critério dele: giro<=0 → 9999; senão ceil(qtdisp/giro_dia); qtdisp<=0 → 0.
-    valor = p['valor'] (já com piso zero). Devolve {faixas:[...], total:{...}}."""
+    valor = p['valor'] (já com piso zero). Devolve {faixas:[...], total:{...}}.
+
+    ⚠️ Lê o `cobertura_dias` do produto — NÃO refaz a conta. O dict guarda o `giro_dia` já
+    arredondado a 3 casas, e refazer `ceil(qtdisp ÷ giro_dia)` com ele empurra uma faixa acima o
+    item que pousa exatamente em 30/60/90/120 dias (estoque 3 ÷ 0,0333 = 90 → ÷ 0,033 = 91). Medido
+    no BI em 28/10/2026 (comprador 47): 74 itens trocavam de faixa e o 121+ dizia R$ 1.309.238,90
+    aqui contra R$ 1.304.903,82 na aba Cobertura (achado do João). Mesma correção do card "Em risco"
+    (`resumo_estoque_ideal`, 789 × 791)."""
     buckets = {nome: [0, 0.0] for nome, *_ in _FX_COBERTURA}
     tot_prod = 0
     tot_valor = 0.0
     for p in produtos:
-        giro_dia = p.get("giro_dia") or 0
-        qtdisp = p.get("qtdisp") or 0
-        if giro_dia <= 0:
-            cob = 9999
-        elif qtdisp <= 0:
-            cob = 0
-        else:
-            cob = math.ceil(qtdisp / giro_dia)
+        cob = p.get("cobertura_dias")
+        if cob is None:   # produto montado fora do construir_produtos (teste/fixture antiga)
+            giro_dia = p.get("giro_dia") or 0
+            qtdisp = p.get("qtdisp") or 0
+            cob = cobertura_dias_oficial(qtdisp, giro_dia)
         for nome, lo, hi, _status in _FX_COBERTURA:
             if lo <= cob <= hi:
                 buckets[nome][0] += 1

@@ -754,6 +754,12 @@ A tela principal de compra: itens com sugestão > 0, **agrupados por fornecedor*
   Status.
 - Itens com alíquota estimada saem marcados com **`≈`**, e o rodapé informa quanto do valor está
   apoiado em estimativa.
+- **Bloco "Rever antes de comprar — pararam de vender"** (compra suspensa: ainda tem giro na média de
+  3 meses, sem venda há 60+ dias). Tem **Excel/PDF enxuto para o time de vendas** (10/2026, pedido do
+  João): Cód · Produto · Fornecedor · Dias s/ venda · Estoque (cx) · Sem fator (un). A tela mostra até
+  100 linhas e **avisa** quando corta; o export leva todas. ⚠️ Não é a lista de parados do fornecedor:
+  os parados **sem giro** (os mais encalhados) não entram aqui — estão na aba Parado, que tem o mesmo
+  relatório enxuto (medido na GALVANOTEK: 24 no bloco × 38 parados há 60+ dias).
 
 ### 7.6 Estoque zerado (Comprar)
 Todos os produtos com estoque gerencial ≤ 0 (inclusive negativos).
@@ -811,6 +817,11 @@ Itens com estoque e **≥15 dias** parados. **Reconciliado com a Cobertura:** as
   por isso entra na mesma soma. *Medido na virada:* 18 itens saíram do 121+ (10 para Novos, 8 para
   a faixa real), total da aba intacto. Consequência: o **121+ e o capital parado afrouxam sem
   ninguém mexer na operação** — comparar antes×depois uma vez, senão parece ganho de gestão.
+- **Relatório para o time de vendas** (10/2026): botão "Para o time de vendas" com Excel/PDF enxuto
+  (Cód · Produto · Fornecedor · Dias s/ venda · Estoque em caixas), **a mesma seleção da tela**. A aba
+  lista a partir de 15 dias; para mandar só o capital parado, marque as faixas 61–90, 91–120 e 121+
+  antes de exportar. Estoque em caixas = disponível ÷ fator (a régua do "Disp. cx"); item sem fator
+  sai em unidades, numa coluna à parte.
 - **Colunas:** Cód · Produto · Fornecedor · ABC · Última venda · **Dias parado** · **Chegou há** ·
   Disp. · Disp. cx · Valor · Saída (recente ≤30d / média ≤90d / antiga >90d) · Faixa ·
   **Ação** (plano).
@@ -1217,6 +1228,8 @@ Modal para montar um pedido **da plataforma** (pendente de envio ao Winthor).
   uma carga"): mostra `15 → 56d` — onde a cobertura projetada está e onde ela **fica** com a
   quantidade digitada. Mesma régua da Cob.proj da Abastecimento (disponível + já pedido +
   pré-entrada). Sem cor de propósito.
+- **Total de caixas no rodapé** (10/2026, pedido do João): a soma do que a coluna "Caixas" mostra.
+  Item sem fator de caixa entra à parte, em unidades ("+ N un sem fator") — nunca somado como caixa.
 - **Peso e cubagem no rodapé, somando a cada tecla**, ao lado de mercadoria, impostos e total da NF
   — na régua do PDF (unidades × unitário, §5.16). Item sem cadastro ou reprovado pela guarda entra
   como zero e o rodapé avisa.

@@ -170,3 +170,28 @@ def test_fallback_para_quem_nao_tem_cobertura_dias():
     é o que os demais testes deste arquivo montam."""
     r = core.resumo_estoque_ideal([_p(20), _p(60)], 45, 0.90)
     assert r["em_risco"]["n"] == 1 and r["ideal"]["n"] == 1
+
+
+# ───────────────────────── 7. tabela "Cobertura de estoque" do mesmo painel ─────────────────────────
+
+def test_painel_gerencial_usa_a_cobertura_do_produto():
+    """10/2026, achado pelo João: o 121+ dizia R$ 1.309.238,90 no Painel e R$ 1.304.903,82 na aba
+    Cobertura. O Painel refazia ceil(qtdisp ÷ giro_dia) com o giro JÁ ARREDONDADO a 3 casas, e o
+    item que pousa em 90 dias (3 un ÷ 1/mês) virava 91 — 74 itens subiam uma faixa."""
+    construido = core.construir_produtos(
+        [{"CODPROD": 1, "qtestger": 3, "giro_m1": 1, "giro_m2": 1, "giro_m3": 1, "custofin": 10}],
+        {}, {1: {"DESCRICAO": "X"}}, {}, {}, {}, core.merge_params({}))
+    p = construido[0]
+    assert p["cobertura_dias"] == 90 and p["giro_dia"] == 0.033      # o arredondado que enganava
+    faixas = {f["faixa"]: f["produtos"] for f in core.resumo_cobertura(construido)["faixas"]}
+    assert faixas["61 a 90 dias"] == 1 and faixas["91 a 120 dias"] == 0
+    aba = {"0 a 30 dias": "0-30", "31 a 60 dias": "31-60", "61 a 90 dias": "61-90",
+           "91 a 120 dias": "91-120", "Acima de 120 dias": "121+"}
+    assert faixas == {f: sum(1 for x in construido if x["cobertura_faixa"] == aba[f]) for f in faixas}, \
+        "a tabela do Painel e a aba Cobertura contam o mesmo item na mesma faixa"
+
+
+def test_painel_sem_cobertura_dias_ainda_calcula():
+    """Fixture antiga (sem `cobertura_dias`) cai na régua oficial em vez de quebrar."""
+    faixas = {f["faixa"]: f["produtos"] for f in core.resumo_cobertura([_p(10), _sem_giro()])["faixas"]}
+    assert faixas["0 a 30 dias"] == 1 and faixas["Acima de 120 dias"] == 1

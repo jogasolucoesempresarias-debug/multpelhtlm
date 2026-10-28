@@ -3137,6 +3137,29 @@ _CSV_COLS = {
                      "qtd_ja_pedida", "qt_transicao", "giro_mes", "sugestao_cx", "status_exec"],
 }
 
+# Relatório ENXUTO para o time de VENDAS (10/2026, pedido do João: "esses itens parados do
+# fornecedor, já enviamos direto para o time de vendas… pode sair apenas dias sem vendas e o total
+# de estoque em caixa"). Dois botões, cada um exporta o que a SUA tela lista: o bloco "Rever antes
+# de comprar" da Abastecimento (`rever_compra` = compra suspensa: ainda tem giro na média de 3
+# meses, sem venda há 60+ dias) e a aba Parado (`parado_vendas`, a mesma seleção do export
+# "parado"). Medido na GALVANOTEK em 28/10: 24 no bloco × 38 parados — os 15 sem giro, os mais
+# encalhados, só saem pela aba Parado.
+_COLS_VENDAS = ["codprod", "descricao", "fornecedor", "dias_sem_venda", "estoque_cx", "estoque_un_sem_fator"]
+_CSV_COLS["rever_compra"] = _COLS_VENDAS
+_CSV_COLS["parado_vendas"] = _COLS_VENDAS
+
+
+def _com_estoque_cx(p):
+    """Estoque em CAIXAS na régua da coluna "Disp. cx" das abas (disponível ÷ `caixa`, arredondado).
+    Item sem fator de caixa não tem caixa: sai em `estoque_un_sem_fator`, nunca somado como se
+    fosse caixa (é a mesma política do campo "Caixas" do pedido)."""
+    cx = p.get("caixa") or 0
+    disp = p.get("qtdisp") or 0
+    return {**p,
+            "estoque_cx": round(disp / cx) if cx > 1 else None,
+            "estoque_un_sem_fator": None if cx > 1 else disp}
+
+
 # O Excel/CSV da aba Produtos leva TODOS os escalares do 360° (07/2026): o diretor pediu a ficha
 # "em horizontal", e no Excel não há limite de largura que justifique escolher. O PDF da lista
 # NÃO recebe o mesmo tratamento de propósito — 34 colunas em A4 paisagem dão ~0,8cm cada e viram
@@ -3482,6 +3505,16 @@ def _export_data(view):
             faixas_sel = {x for x in _pf.split(",") if x} if _pf else None
             linhas = sorted((p for p in produtos if p.get("parado_faixa") and (faixas_sel is None or p["parado_faixa"] in faixas_sel)),
                             key=lambda p: ((p.get("fornecedor") or "").upper(), p.get("codprod") or 0))
+        elif view == "rever_compra":
+            linhas = sorted((_com_estoque_cx(p) for p in produtos if p.get("compra_suspensa")),
+                            key=lambda p: ((p.get("fornecedor") or "").upper(), -(p.get("dias_sem_venda") or 0)))
+        elif view == "parado_vendas":
+            # a MESMA seleção do export "parado" (ver acima) — o botão mora na aba Parado
+            _pf = request.args.get("par_faixa")
+            faixas_sel = {x for x in _pf.split(",") if x} if _pf else None
+            linhas = sorted((_com_estoque_cx(p) for p in produtos if p.get("parado_faixa")
+                             and (faixas_sel is None or p["parado_faixa"] in faixas_sel)),
+                            key=lambda p: ((p.get("fornecedor") or "").upper(), -(p.get("dias_sem_venda") or 0)))
         elif view == "ruptura":
             # cobertura de estoque por faixa (base inteira, métrica da planilha) — maior valor 1º
             linhas = sorted(produtos, key=lambda p: -(p.get("valor") or 0))
@@ -3753,7 +3786,14 @@ _PDF_COLS["pesquisa"] = [
 _PDF_COLS["pesquisa_custo"] = (_PDF_COLS["pesquisa"][:5]
                                + [("custo_ult_ent", "Custo últ.ent.", "money")]
                                + _PDF_COLS["pesquisa"][5:])
-_PDF_TITULO = {"pesquisa": "Pesquisa de preço", "produtos": "Produtos", "comprasvendas": "Compras × Vendas", "reposicao": "Reposição",
+_PDF_COLS["rever_compra"] = _PDF_COLS["parado_vendas"] = [
+    ("codprod", "Cód", "text"), ("descricao", "Produto", "text", 46), ("fornecedor", "Fornecedor", "text", 28),
+    ("dias_sem_venda", "Dias s/ venda", "int"), ("estoque_cx", "Estoque (cx)", "int"),
+    ("estoque_un_sem_fator", "Sem fator (un)", "int")]
+
+_PDF_TITULO = {"rever_compra": "Pararam de vender — itens com giro e sem venda há 60+ dias",
+               "parado_vendas": "Estoque parado — para o time de vendas",
+               "pesquisa": "Pesquisa de preço", "produtos": "Produtos", "comprasvendas": "Compras × Vendas", "reposicao": "Reposição",
                "parado": "Estoque parado", "ruptura": "Cobertura de estoque", "validade": "Validade / FEFO",
                "fornecedores": "Fornecedores", "compradores": "Compradores", "estoque_zero": "Estoque zerado",
                "ruptura_comprador": "Ruptura por comprador", "desempenho": "Desempenho comercial",

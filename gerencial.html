@@ -13,6 +13,7 @@
 <link rel="stylesheet" href="/static/tema.css">
 <script>try{var t=localStorage.getItem("joga:tema");if(t==="claro")document.documentElement.dataset.tema=t;}catch(e){}</script>
 <script src="/static/chart-tema.js"></script>
+<script src="/static/plano-cliente.js"></script>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
@@ -75,6 +76,7 @@
   td { padding:9px 10px; border-bottom:1px solid var(--border); }
   tbody tr.click { cursor:pointer; }
   tbody tr.click:hover { background:rgba(var(--accent-rgb), .05); }
+  tbody tr.sel { outline:2px solid var(--accent); outline-offset:-2px; }
   td.num, td.ctr { font-family:'JetBrains Mono',monospace; }
   .rowflag { color:var(--red); font-weight:700; }
   .pill { padding:2px 8px; border-radius:10px; font-size:.68rem; font-weight:700; font-family:'JetBrains Mono',monospace; }
@@ -135,7 +137,24 @@
         <tbody id="faixaBody"></tbody>
       </table>
     </div>
-    <p class="small" style="margin-top:10px;">Clique numa faixa para abrir a lista acionável na Carteira.</p>
+    <p class="small" style="margin-top:10px;" id="faixaHint">Clique numa faixa para abrir a lista acionável na Carteira.</p>
+  </div>
+
+  <!-- Clientes do escopo (time/RCA), filtrados pela faixa clicada acima — pedido do João 10/2026:
+       dar a tratativa sem sair da tela. Na Empresa não aparece: seriam milhares de linhas sem dono. -->
+  <div class="card hidden" id="cliCard">
+    <h3 id="cliTitulo">Clientes</h3>
+    <div class="small" id="cliResumo" style="margin-bottom:8px;"></div>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr id="cliHead"></tr></thead>
+        <tbody id="cliBody"></tbody>
+      </table>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center; margin-top:10px;">
+      <button class="btn-export hidden" id="cliMais" onclick="carregarClientes(true)">Mostrar mais</button>
+      <a class="small" id="cliCarteira" href="#" style="margin-left:auto;">Abrir na Carteira ↗</a>
+    </div>
   </div>
 
   <!-- Ranking dos filhos -->
@@ -201,6 +220,7 @@ function setCoberto(d) {
   document.querySelectorAll('#segCoberto button').forEach(b => b.classList.toggle('on', +b.dataset.d === d));
   // reset drill (números mudam) e recarrega
   _scope = { level:'empresa', id:null, nome:'Empresa' };
+  _faixaSel = null;
   carregar();
 }
 
@@ -254,6 +274,7 @@ function render() {
   renderKpis();
   renderFaixas();
   renderRanking();
+  renderClientes();
 }
 
 function renderBreadcrumb() {
@@ -277,9 +298,9 @@ function renderBreadcrumb() {
   bc.innerHTML = parts.join(' ');
 }
 
-function irEmpresa(){ _scope = { level:'empresa', id:null, nome:'Empresa' }; render(); }
-function irTime(id){ const t=_data.times.find(x=>x.id===id); _scope={ level:'time', id, nome:t?t.nome:('Time '+id) }; render(); }
-function irVendedor(id){ const v=_data.vendedores.find(x=>x.id===id); _scope={ level:'vendedor', id, nome:v?v.nome:('RCA '+id) }; render(); }
+function irEmpresa(){ _scope = { level:'empresa', id:null, nome:'Empresa' }; _faixaSel = null; render(); }
+function irTime(id){ const t=_data.times.find(x=>x.id===id); _scope={ level:'time', id, nome:t?t.nome:('Time '+id) }; _faixaSel = null; render(); }
+function irVendedor(id){ const v=_data.vendedores.find(x=>x.id===id); _scope={ level:'vendedor', id, nome:v?v.nome:('RCA '+id) }; _faixaSel = null; render(); }
 
 function renderKpis() {
   const g = grupoAtual();
@@ -312,7 +333,7 @@ function renderFaixas() {
 
   // Tabela: 6 faixas + linha rollup 0-30 destacada
   const rows = g.buckets.map(b => `
-    <tr class="click" onclick="drillFaixa('${b.faixa}')">
+    <tr class="click${_faixaSel === b.faixa ? ' sel' : ''}" onclick="drillFaixa('${b.faixa}')">
       <td><i class="dot" style="background:${FAIXA_COR[b.faixa]}"></i> ${FAIXA_LABEL[b.faixa]} dias</td>
       <td class="num">${NUM.format(b.clientes)}</td>
       <td class="num">${PCT(b.pct_clientes)}</td>
@@ -321,7 +342,7 @@ function renderFaixas() {
     </tr>`).join('');
   const r = g.rollup_0_30;
   const rollup = `
-    <tr class="click" onclick="drillRollup0_30()" style="background:rgba(52,211,153,.06); font-weight:600;">
+    <tr class="click${_faixaSel === '0-30' ? ' sel' : ''}" onclick="drillRollup0_30()" style="background:rgba(52,211,153,.06); font-weight:600;">
       <td>✓ 0–30 dias (em dia)</td>
       <td class="num">${NUM.format(r.clientes)}</td>
       <td class="num">${PCT(r.pct_clientes)}</td>
@@ -331,29 +352,111 @@ function renderFaixas() {
   document.getElementById('faixaBody').innerHTML = rollup + rows;
 }
 
-// Deep-link pra Carteira acionável filtrando pela faixa EXATA (dias_min E dias_max).
-// Ex.: 31-45 → dias_min=31&dias_max=45. 91+ → só dias_min=91 (sem topo).
-const FAIXA_RANGE = { '0-15':[0,15], '16-30':[16,30], '31-45':[31,45], '46-60':[46,60], '61-90':[61,90], '91+':[91,null] };
+// Faixa EXATA (dias_min E dias_max). Ex.: 31-45 → dias_min=31&dias_max=45.
+// ⚠️ O 91+ tem TETO de 365: o placar só conta a BASE ATIVA (cobertura.na_base, compra em até
+// 365 d). Sem o teto a lista trazia clientes de até 24 meses — mais do que a linha clicada dizia.
+const BASE_DIAS = 365;
+const FAIXA_RANGE = { '0-15':[0,15], '16-30':[16,30], '31-45':[31,45], '46-60':[46,60], '61-90':[61,90], '91+':[91,BASE_DIAS], '0-30':[0,30] };
+let _faixaSel = null;      // faixa clicada (null = a base inteira do escopo)
+
+// No time/RCA a faixa filtra a lista ABAIXO (pedido do João 10/2026: "temos que ir para outra tela
+// para dar tratativa"); clicar de novo na mesma faixa volta para todas. Na Empresa segue o
+// deep-link para a Carteira — a lista da empresa inteira seriam milhares de linhas sem dono.
 function drillFaixa(faixa) {
-  const [lo, hi] = FAIXA_RANGE[faixa] || [null, null];
-  _drillCarteira(lo, hi);
+  if (_scope.level === 'empresa') {
+    const [lo, hi] = FAIXA_RANGE[faixa] || [null, null];
+    window.location.href = '/carteira?' + _paramsFaixa(lo, hi).toString();
+    return;
+  }
+  _faixaSel = (_faixaSel === faixa) ? null : faixa;
+  renderFaixas();
+  renderClientes();
+  document.getElementById('cliCard').scrollIntoView({ behavior:'smooth', block:'start' });
 }
-function drillRollup0_30() { _drillCarteira(0, 30); }   // linha "0-30 (em dia)"
-function _drillCarteira(lo, hi) {
+function drillRollup0_30() { drillFaixa('0-30'); }   // linha "0-30 (em dia)"
+function _paramsFaixa(lo, hi) {
   const params = new URLSearchParams();
   if (lo != null) params.set('dias_min', lo);
   if (hi != null) params.set('dias_max', hi);
   if (_scope.level === 'time' && _scope.id != null) params.set('time', _scope.id);
   if (_scope.level === 'vendedor' && _scope.id != null) params.set('vendedor', _scope.id);
-  window.location.href = '/carteira?' + params.toString();
+  return params;
+}
+
+// ── Lista de clientes do escopo (mesma API e mesmo RBAC da Carteira) ──
+const CLI_PAGINA = 50;
+let _cli = { rows:[], total:0, chave:null };
+const escH = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const dataBR = iso => iso ? String(iso).slice(0, 10).split('-').reverse().join('/') : '—';
+
+function renderClientes() {
+  const card = document.getElementById('cliCard');
+  const hint = document.getElementById('faixaHint');
+  const naEmpresa = _scope.level === 'empresa';
+  card.classList.toggle('hidden', naEmpresa);
+  hint.textContent = naEmpresa
+    ? 'Clique numa faixa para abrir a lista acionável na Carteira (ou abra um time/RCA para listar os clientes aqui).'
+    : 'Clique numa faixa para filtrar os clientes abaixo; clique de novo para voltar a todos.';
+  if (naEmpresa) return;
+  carregarClientes(false);
+}
+
+async function carregarClientes(mais) {
+  const [lo, hi] = _faixaSel ? FAIXA_RANGE[_faixaSel] : [0, BASE_DIAS];
+  const params = _paramsFaixa(lo, hi);
+  const chave = params.toString();
+  if (!mais || _cli.chave !== chave) _cli = { rows:[], total:0, chave };
+  params.set('sort', 'venda_12m'); params.set('dir', 'desc');
+  params.set('limit', CLI_PAGINA); params.set('offset', _cli.rows.length);
+  const faixaTxt = _faixaSel ? `${(FAIXA_LABEL[_faixaSel] || '0–30')} dias sem comprar` : `toda a base (compra em até ${BASE_DIAS} dias)`;
+  document.getElementById('cliTitulo').textContent = `Clientes — ${_scope.nome} · ${faixaTxt}`;
+  document.getElementById('cliCarteira').href = '/carteira?' + _paramsFaixa(lo, hi).toString();
+  if (!mais) document.getElementById('cliBody').innerHTML = '<tr><td class="small">Carregando…</td></tr>';
+  let j;
+  try { j = await fetchJSON('/api/carteira/clientes?' + params.toString()); }
+  catch (e) { document.getElementById('cliBody').innerHTML = `<tr><td style="color:var(--red)">Erro ao carregar os clientes: ${escH(e)}</td></tr>`; return; }
+  if (_cli.chave !== chave) return;          // o usuário trocou de faixa enquanto carregava
+  _cli.rows = _cli.rows.concat(j.rows || []);
+  _cli.total = j.total || 0;
+  let resumos = {};
+  try { resumos = await PlanoCliente.resumos(_cli.rows.map(c => c.codcli)); } catch (e) {}
+  if (_cli.chave !== chave) return;
+  desenharClientes(resumos);
+}
+
+function desenharClientes(resumos) {
+  const comVendedor = _scope.level === 'time';
+  document.getElementById('cliHead').innerHTML =
+    '<th>Cliente</th>' + (comVendedor ? '<th>Vendedor</th>' : '') +
+    '<th>Cidade</th><th>Telefone</th><th class="num">Última compra</th><th class="num">Dias s/ comprar</th>' +
+    '<th class="num">Ciclo</th><th class="num">Venda 12m</th><th>Plano</th>';
+  const rows = _cli.rows.map(c => `
+    <tr>
+      <td>${escH(c.cliente)} <span class="small">· ${c.codcli}</span></td>
+      ${comVendedor ? `<td class="small">${escH(c.vendedor)}</td>` : ''}
+      <td class="small">${escH(c.cidade)}${c.uf ? ' / ' + escH(c.uf) : ''}</td>
+      <td class="small">${escH(c.telefone || '—')}</td>
+      <td class="num">${dataBR(c.ultima_compra)}</td>
+      <td class="num">${c.recencia_dias == null ? '—' : NUM.format(c.recencia_dias)}</td>
+      <td class="num">${c.ciclo_pessoal == null ? '—' : NUM.format(c.ciclo_pessoal) + 'd'}</td>
+      <td class="num">${BRL.format(c.venda_12m || 0)}</td>
+      <td>${PlanoCliente.selo(c.codcli, resumos[c.codcli], c.cliente)}</td>
+    </tr>`).join('');
+  document.getElementById('cliBody').innerHTML = rows ||
+    `<tr><td class="small" colspan="9">Nenhum cliente nesta faixa.</td></tr>`;
+  document.getElementById('cliResumo').textContent =
+    `${NUM.format(_cli.total)} cliente(s) · mostrando ${NUM.format(_cli.rows.length)} · maior venda 12m primeiro`;
+  document.getElementById('cliMais').classList.toggle('hidden', _cli.rows.length >= _cli.total);
 }
 
 function renderRanking() {
   const { itens, tipo } = filhosAtuais();
   const titEl = document.getElementById('rankTitulo');
   const colNome = document.getElementById('rankColNome');
+  // No RCA não há sub-nível: o card de ranking sumia vazio com "use a Carteira", contradizendo a
+  // lista de clientes que agora fica logo acima.
+  titEl.closest('.card').classList.toggle('hidden', !tipo);
   if (!tipo) {
-    titEl.textContent = 'Este RCA não tem sub-níveis — use a Carteira para os clientes.';
     colNome.textContent = 'Nome';
     document.getElementById('rankBody').innerHTML = '';
     return;

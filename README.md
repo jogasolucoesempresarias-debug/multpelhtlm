@@ -392,6 +392,15 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
   - ⚠️ **A cobertura sobe sem ninguém mexer na operação** (20 vendedores com a base alterada), uma
     vez. Chaves subidas: carteira v4, recuperação v5, ranking/vendedor v4, evolução v4, performance `:b2`.
     Gate: `tests/test_clientes_excluidos.py`.
+- **Gerencial — clientes na própria tela** (10/2026, pedido do João Victor: *"temos que ir para outra
+  tela para dar tratativa… trazer os clientes abaixo dessa tabela e, clicando nas linhas acima,
+  filtrava automaticamente"*). No time ou no RCA, a lista sai abaixo das faixas (`/api/carteira/clientes`,
+  mesmo RBAC da Carteira), filtrada pela faixa clicada, com o selo do plano de ação. Na Empresa segue
+  o deep-link para a Carteira.
+  - 🩹 **O 91+ ganhou teto de 365 dias** (também no deep-link). O placar só conta a base ativa
+    (`cobertura.na_base`), e o link levava `dias_min=91` sem topo: a Carteira abria com clientes de
+    até 24 meses, mais do que a linha clicada dizia. Gate: `tests/test_gerencial_lista_clientes.py`
+    (o total da lista é o da linha, faixa a faixa).
 - **Evolução da carteira** (`/evolucao`, `evolucao_carteira.py`, 10/2026, pedido do Gabriel: *"um
   histórico de performance na gestão de carteira, igual temos na gestão de estoque… quem usa a
   plataforma versus quem não usa"*). 12 meses fechados por empresa → time → vendedor: **cobertura**
@@ -872,6 +881,15 @@ unidade selecionada marcada. Motor puro `core.estoque_por_filial`; endpoint `/ap
   mesmo `cobQt` (zerado com giro = `0d`).
 - Fica **fora da ficha Excel/PDF**, como os lotes e os endereços: a ficha é uma linha de campos
   fixos. Gate: `tests/test_estoque_por_filial.py`.
+
+**Para o time de vendas: relatório enxuto dos parados + total de caixas no pedido** (10/2026, pedidos
+do João). Dois botões, e cada um exporta o que a SUA tela lista (`rever_compra` no bloco "Rever antes
+de comprar" da Abastecimento; `parado_vendas` na aba Parado, com a mesma seleção do export "parado"):
+Cód · Produto · Fornecedor · Dias s/ venda · Estoque (cx) · Sem fator (un). ⚠️ O bloco **não** é a
+lista de parados: só traz a compra suspensa (ainda com giro); medido na GALVANOTEK, 24 × 38 parados
+60+ — os 15 sem giro só saem pela aba Parado. De quebra, o bloco cortava em 100 linhas sem avisar
+(279 na empresa) e passou a avisar. O rodapé do modal de pedido soma as **caixas** como a coluna
+"Caixas" (item sem fator à parte, em un). Gate: `tests/test_export_vendas_parados.py`.
 
 🩹 **Item zerado que vendeu no mês sumia do painel** (10/2026, achado pelo João Victor: *"o item
 56664 não aparece na JOGA, porém está ativo no Winthor"*). O `q_snapshot_estoque` corta quem tem
@@ -1580,9 +1598,13 @@ Doc completa das fórmulas em **`docs/estoque/planilha_v3.md`**.
     24,0018 → 25d. No limiar 45 os dois coincidiam **por sorte**, e foi por isso que passou
     despercebido até o card virar clicável. Conferido depois do fix em 7 limiares (10→90), SKUs e
     valor iguais nos dois lados, e o fechamento ideal+risco+sem giro = universo.
-    ⚠️ **O mesmo recálculo continua no `core.resumo_cobertura`** (tabela "Cobertura de estoque",
-    mesmo painel) — conhecido, **não corrigido** por decisão de escopo; corrigir muda os números
-    daquela tabela. Se for mexer, é a mesma linha.
+    🩹 **O mesmo recálculo estava no `core.resumo_cobertura`** (tabela "Cobertura de estoque" e
+    bloco "Estoque parado" do mesmo painel) e foi corrigido em 10/2026, achado pelo João: o 121+
+    dizia R$ 1.309.238,90 no Painel e R$ 1.304.903,82 na aba Cobertura. Medido no BI (comprador
+    47): **74 itens** subiam uma faixa no Painel — os que pousam exatamente em 30/60/90/120 dias,
+    comuns porque giro e estoque são inteiros pequenos (3 un ÷ 1/mês = 90d → ÷ 0,033 = 91d). Hoje
+    lê o `cobertura_dias`. Os números do Painel mudam uma vez e passam a bater com a aba.
+    Gate: `test_painel_gerencial_usa_a_cobertura_do_produto`.
   - Só o "Em risco" é clicável. "Cobertura ideal" exigiria um filtro `cobertura ≥ X` que não
     existe, e "Sem giro" tem universo próprio: o painel conta **346** (todo item com giro 0) e o
     filtro `status_abast='sem_giro'` conta **303** (só com estoque) — ligar sem resolver isso daria

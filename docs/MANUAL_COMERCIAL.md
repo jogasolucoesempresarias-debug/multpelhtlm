@@ -708,8 +708,15 @@ Base morta         = clientes da base na faixa 91+ dias
 
 ### 14.2 Faixas de recência
 Faixas **fixas** (não mudam com a janela), com nº de clientes e venda 12m:
-`0–15 · 16–30 · 31–45 · 46–60 · 61–90 · 91+` (+ rollup 0–30 "em dia"). Clicar numa faixa abre a
-**lista exata** daqueles clientes na Carteira (deep-link, §6.1).
+`0–15 · 16–30 · 31–45 · 46–60 · 61–90 · 91+` (+ rollup 0–30 "em dia"). O 91+ vai até 365 dias:
+o placar só conta a base ativa.
+
+**Clientes na própria tela (10/2026, pedido do João):** num **time** ou num **RCA**, a lista dos
+clientes aparece abaixo da tabela de faixas — clicar numa faixa filtra a lista (clicar de novo volta
+a todos), maior venda 12m primeiro, 50 por vez, com o **selo do plano de ação** para registrar a
+tratativa sem trocar de tela. Mesma API e mesmo RBAC da Carteira; o total da lista é o da linha
+clicada. Na **Empresa** a lista não aparece (seriam milhares de linhas sem dono) e o clique segue
+abrindo a Carteira (deep-link, §6.1), também com o teto de 365 dias no 91+.
 
 ### 14.3 Layout e drill-down
 - **Banner:** "Hoje N time(s) e M vendedor(es) estão abaixo de X%" — é o que o alerta por e-mail
