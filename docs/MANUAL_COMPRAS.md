@@ -780,6 +780,11 @@ Todos os produtos com estoque gerencial ≤ 0 (inclusive negativos).
   e o filtro de status da aba. *Medido em 30/10/2026 no Atacado:* 384 zerados → **146 no relatório**
   (128 com pedido, 18 só em pré-entrada); 11 com data estimada, **34 atrasados** (mediana 7 dias,
   máx. 81).
+- **Agrupados por fornecedor** (11/2026, pedido do João): os dois relatórios da aba — o Excel/PDF
+  da aba inteira e o do time de vendas — saem ordenados por fornecedor. No PDF cada fornecedor tem
+  uma faixa com o total de itens e quantos têm pedido (aba) ou quantos estão atrasados (vendas), e a
+  coluna Fornecedor sai da tabela, porque o nome já está na faixa. Dentro do fornecedor, a chegada
+  mais próxima vem primeiro.
 
 ### 7.7 Plano reposição / DRP (Comprar)
 Grade **semanal** de um produto: projeta o saldo semana a semana (12 semanas), gera **pedidos

@@ -137,3 +137,50 @@ def test_botao_e_coluna_na_aba_estoque_zerado():
     corpo = JS[JS.index('function renderEstoqueZero('):JS.index('const QUAL_CHK=')]
     assert "${exportBtns('zerado_vendas')}" in corpo
     assert "key:'previsao_entrega'" in corpo
+
+
+# ─────────────── agrupado por fornecedor (João 04/11: "agrupar sempre por fornecedor") ───────────────
+def _tabela_do_pdf(monkeypatch, view, linhas):
+    """Linhas da tabela que o PDF desenha (captura o `Table` do reportlab)."""
+    import reportlab.platypus as rp
+    capt = {}
+
+    class _T(rp.Table):
+        def __init__(self, data, *a, **k):
+            capt["data"] = data
+            super().__init__(data, *a, **k)
+    monkeypatch.setattr(rp, "Table", _T)
+    assert routes._gerar_pdf(view, linhas, group_by="fornecedor")[:4] == b"%PDF"
+    return capt["data"]
+
+
+@pytest.mark.parametrize("view", ["estoque_zero", "zerado_vendas"])
+def test_pdf_dos_zerados_sai_agrupado_por_fornecedor(app_ctx, monkeypatch, view):
+    prods = [_p(1, fornecedor="ZETA", qtd_ja_pedida=24, previsao_entrega="2026-11-05"),
+             _p(2, fornecedor="ALFA", qtd_ja_pedida=24, previsao_entrega="2026-11-09"),
+             _p(3, fornecedor="ZETA", qtd_ja_pedida=24, previsao_entrega="2026-10-22", previsao_atraso=8),
+             _p(4, fornecedor="ALFA", qtd_ja_pedida=24, previsao_entrega="2026-11-01")]
+    monkeypatch.setattr(routes, "_build_produtos", lambda *a, **k: (prods, {}, ["3", "5"]))
+    with app_ctx.test_request_context(f"/estoque/api/export/{view}.pdf"):
+        _, linhas = routes._export_data(view)
+        # a ordem do export (e do Excel) já vem por fornecedor, e a chegada mais próxima 1º
+        assert [l["codprod"] for l in linhas] == [4, 2, 3, 1]
+        data = _tabela_do_pdf(monkeypatch, view, linhas)
+    assert "Fornecedor" not in data[0], "o nome já está no cabeçalho do grupo"
+    grupos = [r[0] for r in data[1:] if r[0] and not str(r[0]).isdigit()]
+    assert grupos[0].startswith("ALFA") and grupos[1].startswith("ZETA") and len(grupos) == 2
+    assert "R$" not in grupos[0], "zerado não tem valor em estoque para somar"
+    if view == "zerado_vendas":
+        assert "1 atrasado" in grupos[1] and "atrasado" not in grupos[0]
+    else:
+        assert "2 com pedido" in grupos[0]
+
+
+def test_endpoint_pdf_agrupa_os_zerados(app_ctx, monkeypatch):
+    chamadas = []
+    monkeypatch.setattr(routes, "_export_data", lambda v: ([], []))
+    monkeypatch.setattr(routes, "_gerar_pdf", lambda v, l, group_by=None, **k: chamadas.append((v, group_by)) or b"%PDF")
+    for v in ("estoque_zero", "zerado_vendas", "parado"):
+        with app_ctx.test_request_context(f"/estoque/api/export/{v}.pdf"):
+            routes.api_export_pdf(v)
+    assert chamadas == [("estoque_zero", "fornecedor"), ("zerado_vendas", "fornecedor"), ("parado", None)]

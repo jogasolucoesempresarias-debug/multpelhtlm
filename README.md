@@ -914,6 +914,11 @@ Previsão · Situação. Motor `core.chegadas_por_produto`, sobre os cabeçalhos
   grupo. Item em vários pedidos: vale o que chega primeiro, com a contagem.
 - Medido no Atacado em 30/10/2026: 384 zerados → **146** no relatório (128 com pedido, 18 só em
   pré-entrada), 11 estimados, **34 atrasados** (mediana 7 d, máx. 81). Gate: `tests/test_zerado_vendas.py`.
+- **Agrupado por fornecedor** (04/11/2026, João: *"consegue agrupar sempre por fornecedor"*): o
+  `estoque_zero` e o `zerado_vendas` saem ordenados por fornecedor → chegada mais próxima, e o PDF
+  agrupa (`_PDF_GRUPO`). O cabeçalho de grupo padrão do `_gerar_pdf` soma valor em estoque, que no
+  zerado é sempre R$ 0, então cada view tem o seu resumo ("N com pedido" / "N atrasados"). Com o
+  grupo, a coluna Fornecedor sai da tabela e a descrição herda a largura.
 
 🩹 **Item zerado que vendeu no mês sumia do painel** (10/2026, achado pelo João Victor: *"o item
 56664 não aparece na JOGA, porém está ativo no Winthor"*). O `q_snapshot_estoque` corta quem tem

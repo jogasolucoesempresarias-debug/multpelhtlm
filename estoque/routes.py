@@ -3563,7 +3563,12 @@ def _export_data(view):
             # cobertura de estoque por faixa (base inteira, métrica da planilha) — maior valor 1º
             linhas = sorted(produtos, key=lambda p: -(p.get("valor") or 0))
         elif view == "estoque_zero":
-            linhas = [p for p in produtos if (p.get("qtdisp") or 0) <= 0]
+            # agrupado por fornecedor (pedido do João 04/11); dentro dele, o que já tem chegada
+            # prevista primeiro (pela data) e o resto pelo nome
+            linhas = sorted((p for p in produtos if (p.get("qtdisp") or 0) <= 0),
+                            key=lambda p: ((p.get("fornecedor") or "").upper(),
+                                           p.get("previsao_entrega") or "9999",
+                                           (p.get("descricao") or "").upper()))
         else:
             linhas = produtos
     return cols, linhas
@@ -3771,7 +3776,8 @@ _PDF_COLS = {
                 ("qtdisp", "Disp.", "int"), ("valor", "Valor", "money"), ("cobertura_dias", "Cob.(d)", "int"),
                 ("cobertura_faixa", "Faixa", "text"), ("qtd_ja_pedida", "Já ped.", "int"), ("giro_mes", "Giro/mês", "int"),
                 ("sugestao_compra", "Sugerido", "int")],
-    "estoque_zero": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 36), ("fornecedor", "Fornecedor", "text", 22),
+    # sai agrupado por fornecedor (`_PDF_GRUPO`), que tira a coluna Fornecedor: a descrição herda a largura
+    "estoque_zero": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 56), ("fornecedor", "Fornecedor", "text", 22),
                      ("qtdisp", "Estoque", "int"), ("dias_sem_venda", "Dias s/ venda", "int"), ("qtd_ja_pedida", "Já ped.", "int"),
                      ("previsao_entrega", "Previsão", "date"),
                      ("giro_mes", "Giro/mês", "int"), ("sugestao_cx", "Sug.(cx)", "int"), ("status_exec", "Status", "text")],
@@ -3853,6 +3859,22 @@ _PDF_TITULO = {"rever_compra": "Pararam de vender — itens com giro e sem venda
                "leadtime": "Lead time por fornecedor",
                "verbas": "Verbas por fornecedor"}
 
+# Relatórios dos zerados saem AGRUPADOS por fornecedor (pedido do João 04/11: "agrupar sempre
+# por fornecedor"). O cabeçalho do grupo do `_gerar_pdf` soma valor em estoque, que num zerado
+# é sempre R$ 0 — por isso cada um tem o seu resumo. A coluna Fornecedor sai da tabela: o nome
+# já está no cabeçalho e a largura vai para a descrição.
+def _resumo_grupo_zerado(grupo):
+    com_ped = sum(1 for r in grupo if (r.get("qtd_ja_pedida") or 0) > 0)
+    return f"{com_ped} com pedido" if com_ped else "nenhum com pedido"
+
+
+def _resumo_grupo_zerado_vendas(grupo):
+    atras = sum(1 for r in grupo if r.get("previsao_atraso"))
+    return f"{atras} atrasado{'s' if atras > 1 else ''}" if atras else ""
+
+
+_PDF_GRUPO = {"estoque_zero": _resumo_grupo_zerado, "zerado_vendas": _resumo_grupo_zerado_vendas}
+
 
 def _fmt_pdf(v, kind, maxlen=None):
     # `bool` antes do teste de vazio: False é informação ("lead NÃO confiável"), não ausência —
@@ -3897,6 +3919,9 @@ def _gerar_pdf(view, linhas, group_by=None, group_valor=None, group_rotulo="Esto
     else:
         view_cols = view
     spec = _PDF_COLS.get(view_cols) or _PDF_COLS["produtos"]
+    resumo_grupo = _PDF_GRUPO.get(view) if group_by else None
+    if resumo_grupo:
+        spec = [c for c in spec if c[0] != group_by]
     titulo = _PDF_TITULO.get(view, view.capitalize())
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=landscape(A4),
@@ -3935,6 +3960,10 @@ def _gerar_pdf(view, linhas, group_by=None, group_valor=None, group_rotulo="Esto
                 sub = sum(core._n(r.get(group_valor)) for r in grupo)
                 gtxt = (f"{gnome}   ·   {len(grupo)} itens   ·   "
                         f"{group_rotulo} {_fmt_pdf(sub, 'money')}")
+            elif resumo_grupo:
+                extra = resumo_grupo(grupo)
+                gtxt = (f"{gnome}   ·   {len(grupo)} ite{'ns' if len(grupo) > 1 else 'm'}"
+                        + (f"   ·   {extra}" if extra else ""))
             else:
                 sub_val = sum(core._n(r.get("valor")) for r in grupo)
                 sub_ped = sum(core._n(r.get("qtd_ja_pedida")) for r in grupo)
@@ -4139,7 +4168,8 @@ def api_export_pdf(view):
         pdf = _gerar_pdf(view, linhas, group_by="fornecedor",
                          group_valor="valor_sugerido_nf", group_rotulo="A comprar")
     else:
-        pdf = _gerar_pdf(view, linhas, group_by="fornecedor" if view == "produtos" else None)
+        pdf = _gerar_pdf(view, linhas,
+                         group_by="fornecedor" if view == "produtos" or view in _PDF_GRUPO else None)
     return Response(pdf, mimetype="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="estoque_{view}.pdf"'})
 
