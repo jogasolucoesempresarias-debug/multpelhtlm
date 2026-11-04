@@ -140,24 +140,8 @@
     <p class="small" style="margin-top:10px;" id="faixaHint">Clique numa faixa para abrir a lista acionável na Carteira.</p>
   </div>
 
-  <!-- Clientes do escopo (time/RCA), filtrados pela faixa clicada acima — pedido do João 10/2026:
-       dar a tratativa sem sair da tela. Na Empresa não aparece: seriam milhares de linhas sem dono. -->
-  <div class="card hidden" id="cliCard">
-    <h3 id="cliTitulo">Clientes</h3>
-    <div class="small" id="cliResumo" style="margin-bottom:8px;"></div>
-    <div style="overflow-x:auto;">
-      <table>
-        <thead><tr id="cliHead"></tr></thead>
-        <tbody id="cliBody"></tbody>
-      </table>
-    </div>
-    <div style="display:flex; gap:10px; align-items:center; margin-top:10px;">
-      <button class="btn-export hidden" id="cliMais" onclick="carregarClientes(true)">Mostrar mais</button>
-      <a class="small" id="cliCarteira" href="#" style="margin-left:auto;">Abrir na Carteira ↗</a>
-    </div>
-  </div>
-
-  <!-- Ranking dos filhos -->
+  <!-- Ranking dos filhos — ACIMA da lista de clientes (João, 04/11/2026: "no fluxo de uso,
+       filtramos primeiro o vendedor e depois olhamos os clientes"). Clicar numa faixa rola até a lista. -->
   <div class="card">
     <h3 id="rankTitulo" data-tip-key="Ranking (pior → melhor)">Ranking (pior → melhor)</h3>
     <div style="overflow-x:auto;">
@@ -174,6 +158,23 @@
         </tr></thead>
         <tbody id="rankBody"></tbody>
       </table>
+    </div>
+  </div>
+
+  <!-- Clientes do escopo (time/RCA), filtrados pela faixa clicada — pedido do João 10/2026:
+       dar a tratativa sem sair da tela. Na Empresa não aparece: seriam milhares de linhas sem dono. -->
+  <div class="card hidden" id="cliCard">
+    <h3 id="cliTitulo">Clientes</h3>
+    <div class="small" id="cliResumo" style="margin-bottom:8px;"></div>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr id="cliHead"></tr></thead>
+        <tbody id="cliBody"></tbody>
+      </table>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center; margin-top:10px;">
+      <button class="btn-export hidden" id="cliMais" onclick="carregarClientes(true)">Mostrar mais</button>
+      <a class="small" id="cliCarteira" href="#" style="margin-left:auto;">Abrir na Carteira ↗</a>
     </div>
   </div>
 </div>
@@ -226,9 +227,10 @@ function setCoberto(d) {
 
 function limiarClasse(cobertura) {
   const p = cobertura * 100;
-  // As mesmas faixas da nota: abaixo do limiar (85) = nota 0 · até 99,9% = 6 a 9 · 100% = 10.
+  // Abaixo do limiar (Admin) = vermelho. Verde a partir de 90% (João, 04/11/2026: "é um bom
+  // número") — é SÓ a cor: a meta da nota segue 100% (90–99,9% = nota 9) e o alerta segue o limiar.
   if (p < _limiar) return 'r';
-  if (p < 100) return 'y';
+  if (p < 90) return 'y';
   return 'g';
 }
 
@@ -454,7 +456,7 @@ function renderRanking() {
   const titEl = document.getElementById('rankTitulo');
   const colNome = document.getElementById('rankColNome');
   // No RCA não há sub-nível: o card de ranking sumia vazio com "use a Carteira", contradizendo a
-  // lista de clientes que agora fica logo acima.
+  // lista de clientes logo abaixo.
   titEl.closest('.card').classList.toggle('hidden', !tipo);
   if (!tipo) {
     colNome.textContent = 'Nome';

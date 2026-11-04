@@ -102,13 +102,13 @@ def test_padroes_do_admin_sao_85_e_60(monkeypatch):
 
 
 def test_tela_gerencial_abre_em_60_dias_e_colore_pelas_faixas_da_nota():
-    """A tela abria FIXA em 30 d (ignorava o Admin). Cor = faixas da nota: < limiar (85) vermelho,
-    até 99,9% amarelo, 100% verde — não mais "limiar + 15"."""
+    """A tela abria FIXA em 30 d (ignorava o Admin). Cor: < limiar vermelho, até 89,9% amarelo,
+    90%+ verde (João, 04/11/2026 — só a cor; a meta da nota segue 100%). Não mais "limiar + 15"."""
     html = Path('gerencial.html').read_text(encoding='utf-8')
     assert 'let _coberto = 60;' in html and 'let _limiar = 85;' in html
     corpo = html[html.index('function limiarClasse('):]
     corpo = corpo[:corpo.index('\n}\n')]
-    assert "if (p < _limiar) return 'r';" in corpo and "if (p < 100) return 'y';" in corpo
+    assert "if (p < _limiar) return 'r';" in corpo and "if (p < 90) return 'y';" in corpo
     assert '_limiar + 15' not in corpo
     assert '<button data-d="60" class="on"' in html or '<button class="on" data-d="60"' in html
 

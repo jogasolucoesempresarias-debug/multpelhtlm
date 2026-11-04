@@ -221,7 +221,9 @@ Cobertura %  = positivados ÷ base ativa
   - **Gerencial** → janela móvel de **hoje** (60 dias por padrão, ajustável).
   - **Vendedores e Performance** → janela de 60 dias que termina no **último dia do mês FECHADO**
     (a nota não "anda" todo dia). Por isso os dois números do mesmo vendedor podem diferir.
-- **Limiar oficial: 85%** (o piso da nota). Cores: vermelho < 85% · amarelo 85–99,9% · verde 100%.
+- **Limiar oficial: 85%** (o piso da nota). Cores no Gerencial: vermelho abaixo do limiar ·
+  amarelo até 89,9% · **verde a partir de 90%** (04/11/2026, pedido do João: "é um bom número").
+  O verde é **só cor**: a meta da nota segue 100% (90–99,9% = nota 9).
 - Medido no BI real em 29/09/2026: empresa **58,4%** (3.977 de 6.815); mediana dos vendedores 63%.
   36% da base não compra em 60 dias por natureza (comprou 1 vez no ano ou tem ciclo > 60 dias) — é
   por isso que a meta exige limpeza de carteira (ver "mês de limpeza", §16.3).
@@ -722,11 +724,14 @@ abrindo a Carteira (deep-link, §6.1), também com o teto de 365 dias no 91+.
 - **Banner:** "Hoje N time(s) e M vendedor(es) estão abaixo de X%" — é o que o alerta por e-mail
   dispara.
 - **Placar do escopo:** Cobertura por clientes · Cobertura por valor · Receita perdida acumulada ·
-  Dentro do ciclo (justo). **Cores por faixa:** vermelho < 85% · amarelo 85–99,9% · verde 100%.
+  Dentro do ciclo (justo). **Cores por faixa:** vermelho abaixo do limiar (⚙ Admin) · amarelo até
+  89,9% · verde a partir de 90% (só cor — a meta segue 100%).
 - **Distribuição por faixa:** barra empilhada + tabela.
 - **Ranking (pior → melhor):** Nome · Positivados / Carteira · Cobertura clientes · Cobertura valor ·
   Dentro do ciclo · Receita perdida acumulada · Base morta · ⚑. Linha de time → drilla nos
   vendedores; linha de vendedor → abre o cockpit.
+- **Ordem:** placar → faixas → ranking → lista de clientes (04/11/2026, pedido do João: primeiro se
+  escolhe o vendedor, depois se olham os clientes). Clicar numa faixa rola a tela até a lista.
 - **Só PESSOAS entram no "abaixo do limiar"** (09/2026): base < 5, códigos fictícios e canais não
   contam (tela e e-mail com a mesma regra).
 - **⬇ Lista de limpeza** (CSV, no drill de time/vendedor): clientes da carteira ativa que **não
