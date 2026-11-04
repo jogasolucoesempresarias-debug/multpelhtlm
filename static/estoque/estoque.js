@@ -1093,6 +1093,10 @@ function renderEstoqueZero(P){
     {key:'qtdisp',label:'Estoque',num:true,html:p=>cxUn(p.qtdisp,p.caixa)},
     {key:'dias_sem_venda',label:'Dias s/ venda',num:true,fmt:v=>v==null?'nunca':int(v)},
     {key:'qtd_ja_pedida',label:'Já ped.',num:true,html:p=>p.qtd_ja_pedida>0?cxUn(p.qtd_ja_pedida,p.caixa):'—'},
+    // chegada do pedido que chega PRIMEIRO (core.chegadas_por_produto). "≈" = o Winthor não tem
+    // promessa (só o emissão+1 automático) e a data saiu do prazo do fornecedor
+    {key:'previsao_entrega',label:'Previsão',html:p=>!p.previsao_entrega?'—'
+      :`<span title="${p.previsao_estimada?'Estimada: data do pedido + prazo do fornecedor (o pedido no Winthor não tem previsão de entrega)':'Previsão de entrega do pedido no Winthor'}${p.pedidos_abertos>1?` · ${p.pedidos_abertos} pedidos em aberto, a data é a do primeiro`:''}"${p.previsao_atraso?` style="color:${C.red}"`:''}>${p.previsao_estimada?'≈ ':''}${dt(p.previsao_entrega)}${p.previsao_atraso?` <small>atrasado ${int(p.previsao_atraso)}d</small>`:''}${p.pedidos_abertos>1?` <small class="muted">+${p.pedidos_abertos-1}</small>`:''}</span>`},
     // mercadoria que JÁ CHEGOU e está em pré-entrada (aguardando liberação) — sem esta coluna o
     // comprador vê "Estoque 0" e não entende por que a sugestão caiu
     {key:'qt_transicao',label:'Recebido',num:true,html:p=>p.qt_transicao>0?`<b title="Chegou e está em pré-entrada, aguardando conferência/liberação. Já conta na projeção — não precisa comprar de novo.">${cxUn(p.qt_transicao,p.caixa)}</b>`:'—'},
@@ -1115,7 +1119,8 @@ function renderEstoqueZero(P){
          <option value="">Todos</option>
          ${statuses.map(s=>`<option value="${s}" ${S.cli.ezStatus===s?'selected':''}>${STAT_EXEC[s]?STAT_EXEC[s][0]:s}</option>`).join('')}
        </select></div>
-     <div class="count-line">Todos os produtos com estoque (gerencial) ≤ 0. "Já ped." = pedido de compra real em aberto (Winthor). <b>"Recebido"</b> = mercadoria que já chegou e está em <b>pré-entrada</b> (bloqueada, aguardando liberação) — ela já entra na projeção, então não aparece mais como compra a fazer.</div>`+
+     <div class="count-line">Todos os produtos com estoque (gerencial) ≤ 0. "Já ped." = pedido de compra real em aberto (Winthor). <b>"Previsão"</b> = chegada do primeiro pedido em aberto; com <b>≈</b> é estimada (data do pedido + prazo do fornecedor), porque o pedido não tem previsão no Winthor. <b>"Recebido"</b> = mercadoria que já chegou e está em <b>pré-entrada</b> (bloqueada, aguardando liberação) — ela já entra na projeção, então não aparece mais como compra a fazer.</div>
+     <div class="count-line">Para o time de vendas — só os zerados <b>já comprados</b> (com pedido ou recebidos), quantidade em caixas e previsão de entrega, mesmo recorte da tela: ${exportBtns('zerado_vendas')}</div>`+
     renderTable(zf,cols,'estoque_zero');
   const sel=$('#ez-status'); if(sel) sel.onchange=e=>{S.cli.ezStatus=e.target.value;render();};
 }

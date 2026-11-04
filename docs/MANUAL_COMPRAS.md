@@ -766,7 +766,20 @@ Todos os produtos com estoque gerencial ≤ 0 (inclusive negativos).
 - **KPIs:** Zerados/negativos · Com giro (ruptura real) · Já com pedido · **Venda perdida** ·
   **Custo de reposição** (régua da NF).
 - **Colunas:** Cód · Produto · Fornecedor · ABC · Comprador · Estoque · **Dias s/ venda** ·
-  Já ped. · Giro/mês · Sugerido (cx) · Status. Filtro por status.
+  Já ped. · **Previsão** · Recebido · Giro/mês · Sugerido (cx) · Status. Filtro por status.
+- **Previsão** (10/2026) = chegada do pedido em aberto que chega **primeiro**. Vale a previsão de
+  entrega do pedido no Winthor quando ela é promessa de verdade (**mais de 1 dia** depois da
+  emissão — o Winthor preenche sozinho o dia seguinte, e isso não é promessa). Sem promessa, a data
+  é a do pedido + prazo do fornecedor e aparece com **`≈`**. Data que já passou sai em vermelho com
+  "atrasado Xd"; "+N" = mais pedidos em aberto do mesmo item.
+- **Relatório para o time de vendas** (10/2026, pedido do João: os vendedores perguntam nos grupos
+  pelos itens zerados que já foram comprados). Excel/PDF com **só os zerados já comprados** — com
+  pedido em aberto ou já recebidos em pré-entrada: Cód · Produto · Fornecedor · Qtd (cx; item sem
+  fator em un) · Previsão · Situação ("atrasado 7 d", "data estimada pelo prazo do fornecedor",
+  "3 cx já chegaram, em conferência", "2 pedidos; a data é a do primeiro"). Segue os filtros do topo
+  e o filtro de status da aba. *Medido em 30/10/2026 no Atacado:* 384 zerados → **146 no relatório**
+  (128 com pedido, 18 só em pré-entrada); 11 com data estimada, **34 atrasados** (mediana 7 dias,
+  máx. 81).
 
 ### 7.7 Plano reposição / DRP (Comprar)
 Grade **semanal** de um produto: projeta o saldo semana a semana (12 semanas), gera **pedidos

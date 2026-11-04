@@ -791,6 +791,56 @@ def montar_ja_pedida(cab_rows, item_rows, hoje=None, dias=180):
     return out
 
 
+def previsao_entrega(cab_row, forn, lead_padrao=10):
+    """(data, estimada) da chegada de UM pedido.
+
+    A `DTPREVENT` só vale quando é promessa de verdade: **mais de 1 dia após a emissão**. Nesta
+    base o Winthor a preenche sozinho com emissão+1 (validado 07/2026, ver `leadtime_*`), e esse
+    "chega amanhã" ia parar no relatório do time de vendas e dali para o cliente. Sem promessa,
+    a data é emissão + prazo do fornecedor (`PRAZOENTREGA`, ou o padrão) e sai marcada `estimada`.
+
+    ⚠️ É mais rígida que o híbrido do `orcamento_winthor` (> emissão), que segue aceitando o
+    emissão+1 — mexer lá muda os cards de prazo do Orçamento e ficou fora deste pedido."""
+    dtem = _parse_dt(cab_row.get("DTEMISSAO"))
+    dtprev = _parse_dt(cab_row.get("DTPREVENT"))
+    if dtprev and dtem and (dtprev - dtem).days > 1:
+        return dtprev, False
+    if dtem:
+        lead = _n((forn or {}).get("PRAZOENTREGA"))
+        return dtem + timedelta(days=int(lead) if lead > 0 else int(lead_padrao)), True
+    return None, None
+
+
+def chegadas_por_produto(cab_rows, item_rows, forn_map, hoje=None, dias=180, lead_padrao=10):
+    """{cod: {previsao_entrega, previsao_estimada, previsao_atraso, pedidos_abertos}} — quando
+    chega o que já foi comprado (pedido do João, 30/10/2026: o time de vendas pergunta no grupo
+    pelos itens zerados que já foram comprados).
+
+    Mesmo universo do `montar_ja_pedida` (emitido nos últimos `dias`, item com QTPEDIDA −
+    QTENTREGUE > 0): todo produto com "Já ped." ganha previsão e nenhum outro. A previsão do
+    produto é a do pedido que chega PRIMEIRO; se ela já passou, `previsao_atraso` diz há quantos
+    dias, porque uma data vencida no relatório só devolve a pergunta ao grupo."""
+    hoje = hoje or date.today()
+    corte = hoje - timedelta(days=int(dias))
+    ativos = {int(_n(r.get("NUMPED"))): r for r in cab_rows
+              if (_parse_dt(r.get("DTEMISSAO")) or date.min) >= corte}
+    out = {}
+    for it in item_rows:
+        r = ativos.get(int(_n(it.get("NUMPED"))))
+        if r is None or _n(it.get("qtped")) - _n(it.get("qtentregue")) <= 0:
+            continue
+        cod = int(_n(it.get("CODPROD")))
+        dt, estimada = previsao_entrega(r, (forn_map or {}).get(int(_n(r.get("CODFORNEC")))), lead_padrao)
+        d = out.setdefault(cod, {"previsao_entrega": None, "previsao_estimada": None,
+                                 "previsao_atraso": None, "pedidos_abertos": 0})
+        d["pedidos_abertos"] += 1
+        if dt and (d["previsao_entrega"] is None or dt.isoformat() < d["previsao_entrega"]):
+            d["previsao_entrega"] = dt.isoformat()
+            d["previsao_estimada"] = estimada
+            d["previsao_atraso"] = (hoje - dt).days if dt < hoje else None
+    return out
+
+
 # ───────────────────────── tributação prevista do pedido ─────────────────────────
 # O Orçamento mede o realizado por PCPEDIDO[VLTOTAL], que é a NF CHEIA (mercadoria + IPI + ST) —
 # validado no pedido 565684: VLTOTAL 44.982,01 = 39.536,28 de mercadoria + 5.445,73 de IPI.

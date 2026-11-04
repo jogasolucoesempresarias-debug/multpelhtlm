@@ -1064,9 +1064,15 @@ def _build_produtos(venda_periodo=None):
                                        # demanda que nao passa por venda (rotina 1122)
                                        consumo_map=_consumo_map(filiais_e, _hoje()),
                                        giro_industria_map=giro_ind)
+    # quando chega o que já foi comprado (coluna "Previsão" do Estoque zerado + `zerado_vendas`):
+    # mesmos cabeçalhos e itens do já-pedido — nenhuma query nova
+    chegadas = core.chegadas_por_produto(_peddata["cab"], _peddata.get("itens") or [], forn_map,
+                                         hoje=_hoje())
     # ocupação WMS: nº de posições por item + volume endereçado (m³) + flag "espaço morto".
     pos_map = _posicoes_map(filiais_e)
     for p in produtos:
+        if p["codprod"] in chegadas:
+            p.update(chegadas[p["codprod"]])
         pe = pos_map.get(p["codprod"], 0)
         p["pos_end"] = pe
         cx = p.get("caixa") or 1
@@ -3134,7 +3140,8 @@ _CSV_COLS = {
                      # `qt_transicao` = chegou e está em pré-entrada (aguardando liberação). Sem
                      # esta coluna o relatório mostra "estoque 0" sem dizer que a mercadoria já
                      # está no armazém — foi o que levou o comprador a pedir de novo.
-                     "qtd_ja_pedida", "qt_transicao", "giro_mes", "sugestao_cx", "status_exec"],
+                     "qtd_ja_pedida", "previsao_entrega", "previsao_estimada", "qt_transicao",
+                     "giro_mes", "sugestao_cx", "status_exec"],
 }
 
 # Relatório ENXUTO para o time de VENDAS (10/2026, pedido do João: "esses itens parados do
@@ -3147,6 +3154,36 @@ _CSV_COLS = {
 _COLS_VENDAS = ["codprod", "descricao", "fornecedor", "dias_sem_venda", "estoque_cx", "estoque_un_sem_fator"]
 _CSV_COLS["rever_compra"] = _COLS_VENDAS
 _CSV_COLS["parado_vendas"] = _COLS_VENDAS
+
+# Zerados que JÁ FORAM COMPRADOS, para o time de vendas (30/10/2026, pedido do João: "eles ficam
+# perguntando nos grupos… iríamos antecipar, informando eles antes deles perguntarem"). Botão na
+# aba Estoque zerado. Entra o item zerado com pedido em aberto OU já recebido em pré-entrada (está
+# no armazém, aguardando liberação — é a resposta mais curta que o vendedor pode receber).
+_CSV_COLS["zerado_vendas"] = ["codprod", "descricao", "fornecedor", "comprado_cx", "comprado_un_sem_fator",
+                              "previsao_entrega", "situacao_entrega"]
+
+
+def _zerado_para_vendas(p):
+    """Quantidade comprada em CAIXAS (mesma régua do `_com_estoque_cx`) e a situação da entrega em
+    texto — o vendedor não abre o painel, lê o PDF no grupo, então a ressalva vai escrita."""
+    cx = p.get("caixa") or 0
+    ped = p.get("qtd_ja_pedida") or 0
+    rec = p.get("qt_transicao") or 0
+    qt = ped + rec
+    sit = []
+    if rec > 0:
+        sit.append(f"{round(rec / cx) if cx > 1 else int(rec)} {'cx' if cx > 1 else 'un'} já chegaram, em conferência")
+    if ped > 0:
+        if p.get("previsao_atraso"):
+            sit.append(f"atrasado {int(p['previsao_atraso'])} d")
+        elif p.get("previsao_estimada"):
+            sit.append("data estimada pelo prazo do fornecedor")
+        if (p.get("pedidos_abertos") or 0) > 1:
+            sit.append(f"{int(p['pedidos_abertos'])} pedidos; a data é a do primeiro")
+    return {**p,
+            "comprado_cx": round(qt / cx) if cx > 1 else None,
+            "comprado_un_sem_fator": None if cx > 1 else qt,
+            "situacao_entrega": " · ".join(sit) or None}
 
 
 def _com_estoque_cx(p):
@@ -3515,6 +3552,13 @@ def _export_data(view):
             linhas = sorted((_com_estoque_cx(p) for p in produtos if p.get("parado_faixa")
                              and (faixas_sel is None or p["parado_faixa"] in faixas_sel)),
                             key=lambda p: ((p.get("fornecedor") or "").upper(), -(p.get("dias_sem_venda") or 0)))
+        elif view == "zerado_vendas":
+            # recorte da aba Estoque zerado (status incluso) ∩ já comprado; a chegada mais próxima 1º
+            linhas = sorted((_zerado_para_vendas(p) for p in produtos
+                             if (p.get("qtdisp") or 0) <= 0
+                             and ((p.get("qtd_ja_pedida") or 0) > 0 or (p.get("qt_transicao") or 0) > 0)),
+                            key=lambda p: ((p.get("fornecedor") or "").upper(),
+                                           p.get("previsao_entrega") or "", p.get("codprod") or 0))
         elif view == "ruptura":
             # cobertura de estoque por faixa (base inteira, métrica da planilha) — maior valor 1º
             linhas = sorted(produtos, key=lambda p: -(p.get("valor") or 0))
@@ -3727,8 +3771,9 @@ _PDF_COLS = {
                 ("qtdisp", "Disp.", "int"), ("valor", "Valor", "money"), ("cobertura_dias", "Cob.(d)", "int"),
                 ("cobertura_faixa", "Faixa", "text"), ("qtd_ja_pedida", "Já ped.", "int"), ("giro_mes", "Giro/mês", "int"),
                 ("sugestao_compra", "Sugerido", "int")],
-    "estoque_zero": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 40), ("fornecedor", "Fornecedor", "text", 26),
+    "estoque_zero": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 36), ("fornecedor", "Fornecedor", "text", 22),
                      ("qtdisp", "Estoque", "int"), ("dias_sem_venda", "Dias s/ venda", "int"), ("qtd_ja_pedida", "Já ped.", "int"),
+                     ("previsao_entrega", "Previsão", "date"),
                      ("giro_mes", "Giro/mês", "int"), ("sugestao_cx", "Sug.(cx)", "int"), ("status_exec", "Status", "text")],
     "validade": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 34), ("curva_abc", "ABC", "text"), ("xyz", "XYZ", "text"), ("comprador", "Comprador", "text", 18),
                  ("fornecedor", "Fornecedor", "text", 22),
@@ -3790,8 +3835,15 @@ _PDF_COLS["rever_compra"] = _PDF_COLS["parado_vendas"] = [
     ("codprod", "Cód", "text"), ("descricao", "Produto", "text", 46), ("fornecedor", "Fornecedor", "text", 28),
     ("dias_sem_venda", "Dias s/ venda", "int"), ("estoque_cx", "Estoque (cx)", "int"),
     ("estoque_un_sem_fator", "Sem fator (un)", "int")]
+_PDF_COLS["zerado_vendas"] = [
+    ("codprod", "Cód", "text"), ("descricao", "Produto", "text", 42), ("fornecedor", "Fornecedor", "text", 24),
+    # rótulos curtos: com 7 colunas as numéricas ficam com ~47pt e "Comprado (cx)" encavalava.
+    # Cada linha preenche só uma das duas (item sem fator de caixa sai em unidades)
+    ("comprado_cx", "Qtd (cx)", "int"), ("comprado_un_sem_fator", "Qtd (un)", "int"),
+    ("previsao_entrega", "Previsão", "date"), ("situacao_entrega", "Situação", "text", 48)]
 
 _PDF_TITULO = {"rever_compra": "Pararam de vender — itens com giro e sem venda há 60+ dias",
+               "zerado_vendas": "Zerados já comprados — previsão de entrega para o time de vendas",
                "parado_vendas": "Estoque parado — para o time de vendas",
                "pesquisa": "Pesquisa de preço", "produtos": "Produtos", "comprasvendas": "Compras × Vendas", "reposicao": "Reposição",
                "parado": "Estoque parado", "ruptura": "Cobertura de estoque", "validade": "Validade / FEFO",

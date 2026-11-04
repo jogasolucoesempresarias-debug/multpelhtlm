@@ -891,6 +891,23 @@ lista de parados: só traz a compra suspensa (ainda com giro); medido na GALVANO
 (279 na empresa) e passou a avisar. O rodapé do modal de pedido soma as **caixas** como a coluna
 "Caixas" (item sem fator à parte, em un). Gate: `tests/test_export_vendas_parados.py`.
 
+**Para o time de vendas: zerados JÁ COMPRADOS + previsão de entrega** (30/10/2026, pedido do João:
+*"eles ficam perguntando nos grupos… iríamos antecipar, informando eles antes deles perguntarem"*).
+Botão `zerado_vendas` na aba Estoque zerado + coluna **Previsão** na própria aba. Entra o zerado
+com pedido em aberto **ou** recebido em pré-entrada; Cód · Produto · Fornecedor · Qtd (cx) ·
+Previsão · Situação. Motor `core.chegadas_por_produto`, sobre os cabeçalhos e itens que o
+`_pedidos_data` já carrega — **nenhuma query nova**; mesmo universo do "Já ped." (gate).
+- ⚠️ **A `DTPREVENT` só vale com MAIS DE 1 DIA após a emissão** (`core.previsao_entrega`): o
+  Winthor carimba emissão+1 sozinho, e esse "chega amanhã" iria do PDF para o cliente. Sem
+  promessa, emissão + `PRAZOENTREGA` (ou 10 d), marcada **`≈` / estimada**. É mais rígida que o
+  híbrido do `orcamento_winthor` (> emissão), que **não foi mexido** — medido em 30/10/2026, nenhum
+  dos 82 pedidos em aberto tinha emissão+1 (62 com promessa real, 19 com a própria emissão), então
+  hoje as duas réguas dão a mesma data.
+- ⚠️ **Data vencida sai como "atrasado X d"**, nunca a data velha seca — senão a pergunta volta ao
+  grupo. Item em vários pedidos: vale o que chega primeiro, com a contagem.
+- Medido no Atacado em 30/10/2026: 384 zerados → **146** no relatório (128 com pedido, 18 só em
+  pré-entrada), 11 estimados, **34 atrasados** (mediana 7 d, máx. 81). Gate: `tests/test_zerado_vendas.py`.
+
 🩹 **Item zerado que vendeu no mês sumia do painel** (10/2026, achado pelo João Victor: *"o item
 56664 não aparece na JOGA, porém está ativo no Winthor"*). O `q_snapshot_estoque` corta quem tem
 estoque zero **e** venda zero nos 3 meses fechados — certo para o catálogo morto (**1.607** itens
