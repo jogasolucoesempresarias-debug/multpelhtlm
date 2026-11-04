@@ -421,6 +421,13 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
     somadas), nunca dia de início contra dia de fim — o relatório de performance do estoque mostrou
     um −46% fabricado pelo dia escolhido. A tela diz que é **evidência, não prova** (seleção: quem
     usa pode ser o time mais organizado).
+  - **Seletor "Comparar": mês anterior (padrão) | antes × depois do uso** (04/11/2026, João: "de um
+    mês para o outro, igual aos cards"). Cards e tabela passam pela MESMA `comparar()` no front, a
+    partir da `serie` que já vem no payload — zero query. ⚠️ Mês a mês oscila 2–4 p.p. sem mudança na
+    operação (RONALDO FEITOSA: −2,6 · +3,8 · +3,3 · −2,9) e a cobertura cai em ago–set; por isso o
+    antes × depois ficou no botão em vez de sair. No período, as duas médias do card vão
+    **tracejadas** nos gráficos (`mediasPlugin`) — antes o card não aparecia em ponto nenhum da linha
+    e "não batia". `?comp=periodo` na URL.
   - ⚠️ **"Usa × não usa" SAIU DA TELA em 06/10/2026** (coluna, filtro, limiar, card e linhas do
     gráfico). Em produção, 10 times apareciam com exatamente "11 dias em 09/26": um único usuário
     supervisor com quase todas as áreas marcava todos como "usa", e o "não usa" sobrou só com

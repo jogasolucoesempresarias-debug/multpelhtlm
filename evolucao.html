@@ -93,6 +93,11 @@
       <option value="">Todos</option><option value="campo">Campo</option>
       <option value="lojas">Lojas</option><option value="telemarketing">Telemarketing</option>
     </select>
+    <span class="ctrl-label" style="margin-left:10px">Comparar</span>
+    <div style="display:flex;gap:6px">
+      <button class="btn-sm on" id="compMes" onclick="setComp('mes')" title="Último mês fechado contra o anterior">Mês anterior</button>
+      <button class="btn-sm" id="compPer" onclick="setComp('periodo')" title="Média dos 3 meses antes do uso registrado × média dos meses desde então">Antes × depois do uso</button>
+    </div>
   </div>
   <p class="regua" id="regua"></p>
   <div class="breadcrumb" id="breadcrumb"></div>
@@ -124,10 +129,10 @@
           <th colspan="2" class="num" id="thSaldo">Saldo de recuperação / mês</th></tr>
         <tr>
           <th id="thNome">Time</th><th>Universo</th>
-          <th class="num">Antes</th><th class="num">Depois</th><th class="num">Δ</th>
-          <th class="num">Antes</th><th class="num">Depois</th><th class="num">Δ</th>
-          <th class="num" title="Média de (recuperados do risco − entraram em risco) por mês. Positivo = recuperou mais do que perdeu">Antes</th>
-          <th class="num">Depois</th>
+          <th class="num thA">Antes</th><th class="num thD">Depois</th><th class="num">Δ</th>
+          <th class="num thA">Antes</th><th class="num thD">Depois</th><th class="num">Δ</th>
+          <th class="num thA" title="Recuperados do risco − entraram em risco (no período, a média por mês). Positivo = recuperou mais do que perdeu">Antes</th>
+          <th class="num thD">Depois</th>
         </tr>
       </thead>
       <tbody id="tabBody"></tbody>
@@ -172,10 +177,41 @@ function setModo(m) {
   render();
 }
 
+// Comparação dos cards e da tabela (João, 04/11/2026: "de um mês para o outro, igual aos cards").
+// Padrão = último mês fechado × o anterior; "antes × depois do uso" (média de período, a régua de
+// origem da tela) segue no seletor — é ela que responde "melhorou desde que começou a usar?".
+// ⚠️ Mês a mês oscila mais que o desempenho: o RONALDO FEITOSA variou −2,6 · +3,8 · +3,3 · −2,9 p.p.
+// sem mudar nada, e a cobertura cai em ago–set todo ano. A régua da tela diz isso.
+let _comp = params.get('comp') === 'periodo' ? 'periodo' : 'mes';
+function setComp(m) {
+  _comp = m;
+  history.replaceState(null, '', '/evolucao' + (qs() ? '?' + qs() : ''));
+  render();
+}
+// {a, d, dCob, dRisco}: os dois lados da comparação na MESMA forma para card e tabela. No mês a
+// mês o saldo é o do mês; no período, a média por mês.
+function comparar(serie, ad) {
+  if (_comp === 'periodo') return {
+    a:{ cobertura:ad.antes.cobertura, pct_risco:ad.antes.pct_risco, saldo:saldoMedio(ad.antes) },
+    d:{ cobertura:ad.depois.cobertura, pct_risco:ad.depois.pct_risco, saldo:saldoMedio(ad.depois) },
+    dCob:ad.delta.cobertura_pp, dRisco:ad.delta.pct_risco_pp };
+  const ult = serie[serie.length - 1] || {}, ant = serie[serie.length - 2] || {};
+  const lado = x => ({ cobertura:x.cobertura, pct_risco:x.pct_risco, saldo:x.anomes == null ? null : saldoMes(x) });
+  const pp = (x, y) => (x == null || y == null) ? null : (y - x) * 100;
+  return { a:lado(ant), d:lado(ult), dCob:pp(ant.cobertura, ult.cobertura), dRisco:pp(ant.pct_risco, ult.pct_risco) };
+}
+// rótulos dos dois lados: "09/26" × "10/26" ou "antes" × "depois"
+function rotComp() {
+  const m = _d.meses || [];
+  return _comp === 'periodo' ? { a:'Antes', d:'Depois' }
+    : { a:m.length > 1 ? MES(m[m.length - 2]) : '—', d:m.length ? MES(m[m.length - 1]) : '—' };
+}
+
 function qs() {
   const p = new URLSearchParams();
   Object.entries(F).forEach(([k, v]) => { if (v) p.set(k, v); });
   if (_modo === 'valor') p.set('modo', 'valor');
+  if (_comp === 'periodo') p.set('comp', 'periodo');
   return p.toString();
 }
 function navegar() { history.replaceState(null, '', '/evolucao' + (qs() ? '?' + qs() : '')); carregar(); }
@@ -215,10 +251,17 @@ function render() {
     `<b>% em risco</b> = clientes da base com mais de 60 dias sem comprar e além do próprio ciclo · ` +
     `<b>saldo de recuperação</b> = recuperados do risco − entraram em risco no mês (positivo = recuperou mais do que perdeu)` +
     (_modo === 'valor' ? `, em <b>R$/mês</b> = valor mensal desses clientes (venda 12m até a última compra ÷ 12) — não é o faturamento do mês; numa carteira pequena um cliente grande decide o mês` : '') + ` · ` +
-    `<b>Antes</b> = ${p.a} · <b>Depois</b> = ${p.d} (uso da plataforma registrado desde ${MES(_d.marco)}). Antes × depois é a <b>média do período</b>, não o primeiro dia contra o último.`;
+    (_comp === 'periodo'
+      ? `<b>Antes</b> = ${p.a} · <b>Depois</b> = ${p.d} (uso da plataforma registrado desde ${MES(_d.marco)}). Antes × depois é a <b>média do período</b>, não o primeiro dia contra o último — as duas médias estão tracejadas nos gráficos.`
+      : `Comparação: <b>${rotComp().a} × ${rotComp().d}</b> (último mês fechado contra o anterior). ⚠️ De um mês para o outro a cobertura oscila 2 a 4 p.p. sem mudança na operação — principalmente em carteira pequena — e cai em ago–set todo ano. Para ver tendência, use <b>Antes × depois do uso</b>.`);
   document.getElementById('modoCli').classList.toggle('on', _modo === 'clientes');
   document.getElementById('modoRs').classList.toggle('on', _modo === 'valor');
-  document.getElementById('thSaldo').textContent = 'Saldo de recuperação / mês' + (_modo === 'valor' ? ' (R$/mês)' : ' (clientes)');
+  document.getElementById('compMes').classList.toggle('on', _comp === 'mes');
+  document.getElementById('compPer').classList.toggle('on', _comp === 'periodo');
+  const rc = rotComp();
+  document.querySelectorAll('.thA').forEach(th => th.textContent = rc.a);
+  document.querySelectorAll('.thD').forEach(th => th.textContent = rc.d);
+  document.getElementById('thSaldo').textContent = 'Saldo de recuperação' + (_comp === 'periodo' ? ' / mês' : '') + (_modo === 'valor' ? ' (R$/mês)' : ' (clientes)');
   renderBreadcrumb(); renderKpis(); renderCharts(); renderTabela(); renderAvisos();
 }
 
@@ -247,14 +290,16 @@ function escopo() {
 }
 
 function renderKpis() {
-  const e = escopo(), ult = e.serie[e.serie.length - 1] || {}, ad = e.ad;
+  const e = escopo(), ult = e.serie[e.serie.length - 1] || {}, cp = comparar(e.serie, e.ad), rc = rotComp();
+  const per = _comp === 'periodo', la = per ? 'antes' : rc.a, ld = per ? 'depois' : rc.d;
   const k = [
     { c:'b', l:'Cobertura · ' + MES(ult.anomes), v:PCT(ult.cobertura),
-      s:`antes ${PCT(ad.antes.cobertura)} → depois ${PCT(ad.depois.cobertura)} · <span class="${cls(ad.delta.cobertura_pp, true)}">${PP(ad.delta.cobertura_pp)}</span>` },
+      s:`${la} ${PCT(cp.a.cobertura)} → ${ld} ${PCT(cp.d.cobertura)} · <span class="${cls(cp.dCob, true)}">${PP(cp.dCob)}</span>` },
     { c:'r', l:'% da base em risco · ' + MES(ult.anomes), v:PCT(ult.pct_risco),
-      s:`antes ${PCT(ad.antes.pct_risco)} → depois ${PCT(ad.depois.pct_risco)} · <span class="${cls(ad.delta.pct_risco_pp, false)}">${PP(ad.delta.pct_risco_pp)}</span>` },
-    { c:'o', l:'Saldo de recuperação / mês' + (_modo === 'valor' ? ' · R$' : ''), v:fmtSaldo(saldoMedio(ad.depois)),
-      s:`média depois · antes ${fmtSaldo(saldoMedio(ad.antes))} ${_modo === 'valor' ? 'em valor mensal' : 'clientes/mês'} (positivo = recuperou mais do que perdeu)` },
+      s:`${la} ${PCT(cp.a.pct_risco)} → ${ld} ${PCT(cp.d.pct_risco)} · <span class="${cls(cp.dRisco, false)}">${PP(cp.dRisco)}</span>` },
+    // no mês a mês o card mostra o saldo do MÊS (como os outros três); no período, a média depois
+    { c:'o', l:'Saldo de recuperação' + (per ? ' / mês' : ' · ' + MES(ult.anomes)) + (_modo === 'valor' ? ' · R$' : ''), v:fmtSaldo(cp.d.saldo),
+      s:`${per ? 'média depois · antes' : rc.a} ${fmtSaldo(cp.a.saldo)} ${_modo === 'valor' ? 'em valor mensal' : (per ? 'clientes/mês' : 'clientes')} (positivo = recuperou mais do que perdeu)` },
     { c:'g', l:'Em risco no fim · ' + MES(ult.anomes), v:NUM.format(ult.em_risco || 0),
       s:`clientes · ${BRL.format(ult.valor_em_risco || 0)}/mês em valor mensal · ${NUM.format(ult.base || 0)} clientes na base` },
   ];
@@ -276,6 +321,31 @@ const marcoPlugin = {
   },
 };
 
+// "Antes × depois do uso": as duas médias tracejadas sobre os meses de cada período — sem isto o
+// card (média de 3 pontos) não aparecia em ponto nenhum do gráfico e parecia não bater (João,
+// 04/11/2026). opts.segs = [{meses:[anomes…], valor, rotulo}].
+const mediasPlugin = {
+  id:'medias',
+  afterDatasetsDraw(ch, _a, opts) {
+    const meses = _d.meses || [], c = ch.ctx, { left, right } = ch.chartArea;
+    (opts.segs || []).forEach(s => {
+      const idx = (s.meses || []).map(m => meses.indexOf(m)).filter(i => i >= 0);
+      if (!idx.length || s.valor == null) return;
+      const passo = meses.length > 1 ? (ch.scales.x.getPixelForValue(1) - ch.scales.x.getPixelForValue(0)) / 2 : 20;
+      const x0 = Math.max(left, ch.scales.x.getPixelForValue(Math.min(...idx)) - passo);
+      const x1 = Math.min(right, ch.scales.x.getPixelForValue(Math.max(...idx)) + passo);
+      const y = ch.scales.y.getPixelForValue(s.valor);
+      c.save(); c.strokeStyle = opts.cor || '#888'; c.lineWidth = 1.5; c.setLineDash([6, 4]);
+      c.beginPath(); c.moveTo(x0, y); c.lineTo(x1, y); c.stroke();
+      // "depois" escrito na ponta DIREITA: na esquerda ele cai em cima do "uso registrado"
+      c.fillStyle = opts.cor || '#888'; c.font = '600 11px DM Sans';
+      if (s.direita) { c.textAlign = 'right'; c.fillText(s.rotulo, x1 - 4, y - 5); }
+      else c.fillText(s.rotulo, x0 + 4, y - 5);
+      c.restore();
+    });
+  },
+};
+
 function renderCharts() {
   const css = getComputedStyle(document.documentElement);
   const cor = n => css.getPropertyValue(n).trim();
@@ -289,23 +359,31 @@ function renderCharts() {
     ds.push({ label:'Cobertura', data:_d.empresa.map(x => x.cobertura == null ? null : x.cobertura * 100), borderColor:acc, backgroundColor:acc, tension:.25 });
   }
   document.getElementById('tituloCob').textContent = 'Cobertura da carteira — mês a mês' + (F.supervisor || F.vendedor ? ' · ' + e.nome : '');
+  // as médias são as MESMAS do card (e.ad), só no modo período
+  const per = _comp === 'periodo', ad = e.ad;
+  const segsCob = per ? [
+    { meses:ad.antes.meses, valor:ad.antes.cobertura == null ? null : ad.antes.cobertura * 100, rotulo:'média antes ' + PCT(ad.antes.cobertura) },
+    { meses:ad.depois.meses, valor:ad.depois.cobertura == null ? null : ad.depois.cobertura * 100, rotulo:'média depois ' + PCT(ad.depois.cobertura), direita:true }] : [];
+  const segsVar = per ? [
+    { meses:ad.antes.meses, valor:saldoMedio(ad.antes), rotulo:'média antes ' + fmtSaldo(saldoMedio(ad.antes)) },
+    { meses:ad.depois.meses, valor:saldoMedio(ad.depois), rotulo:'média depois ' + fmtSaldo(saldoMedio(ad.depois)), direita:true }] : [];
   if (_cCob) _cCob.destroy();
   _cCob = new Chart(document.getElementById('chartCob'), {
-    type:'line', data:{ labels, datasets:ds }, plugins:[marcoPlugin],
+    type:'line', data:{ labels, datasets:ds }, plugins:[marcoPlugin, mediasPlugin],
     options:{ responsive:true, maintainAspectRatio:false, interaction:{ mode:'index', intersect:false },
-      plugins:{ marco:{ cor:dim }, tooltip:{ callbacks:{ label:c => `${c.dataset.label}: ${c.parsed.y == null ? '—' : c.parsed.y.toFixed(1).replace('.', ',') + '%'}` } } },
+      plugins:{ marco:{ cor:dim }, medias:{ cor:dim, segs:segsCob }, tooltip:{ callbacks:{ label:c => `${c.dataset.label}: ${c.parsed.y == null ? '—' : c.parsed.y.toFixed(1).replace('.', ',') + '%'}` } } },
       scales:{ y:{ ticks:{ callback:v => v + '%' } } } },
   });
   if (_cVar) _cVar.destroy();
   _cVar = new Chart(document.getElementById('chartVar'), {
-    type:'bar', plugins:[marcoPlugin],
+    type:'bar', plugins:[marcoPlugin, mediasPlugin],
     data:{ labels, datasets:[{ label:'Saldo de recuperação (' + (_modo === 'valor' ? 'R$/mês' : 'clientes') + ')', data:e.serie.map(saldoMes),
       // saldo 0 (recuperou exatamente o que perdeu) = traço cinza, não buraco: sem isto o mês
       // parecia sem dado (06/10/2026). minBarLength desenha a barra de altura zero.
       minBarLength:3,
       backgroundColor:e.serie.map(x => { const v = saldoMes(x); return (!v ? dim : (v < 0 ? red : green)) + 'cc'; }) }] },
     options:{ responsive:true, maintainAspectRatio:false,
-      plugins:{ marco:{ cor:dim }, legend:{ display:false }, tooltip:{ callbacks:{ label:c => {
+      plugins:{ marco:{ cor:dim }, medias:{ cor:dim, segs:segsVar }, legend:{ display:false }, tooltip:{ callbacks:{ label:c => {
         const x = e.serie[c.dataIndex];
         // os DOIS números sempre: clientes e R$ podem discordar no mesmo mês
         const cli = `${x.saldo > 0 ? '+' : ''}${NUM.format(x.saldo)} clientes (recuperados ${NUM.format(x.recuperados)} − entraram ${NUM.format(x.entraram)})`;
@@ -319,7 +397,7 @@ function renderCharts() {
 function linhaTabela(r, drill) {
   // 06/10/2026: coluna "Uso da plataforma" removida a pedido do Gabriel — a classificação por time
   // ficou contaminada (um usuário com quase todas as áreas marcava todos como "usa").
-  const ad = r.antes_depois;
+  const cp = comparar(r.serie || [], r.antes_depois);
   // nível empresa: a linha é um TIME (abre o time); no drill: a linha é um VENDEDOR (troca os gráficos)
   const vend = r.codusur != null;
   const id = vend ? r.codusur : r.codsupervisor;
@@ -327,17 +405,18 @@ function linhaTabela(r, drill) {
   const sel = vend && String(id) === F.vendedor;
   return `<tr class="${acao ? 'click' : ''}" ${acao} ${sel ? 'style="background:rgba(var(--accent-rgb),.10);font-weight:600"' : ''}>
     <td>${esc(r.nome)}</td><td class="small">${esc(r.universo || '—')}</td>
-    <td class="num">${PCT(ad.antes.cobertura)}</td><td class="num">${PCT(ad.depois.cobertura)}</td>
-    <td class="num ${cls(ad.delta.cobertura_pp, true)}">${PP(ad.delta.cobertura_pp)}</td>
-    <td class="num">${PCT(ad.antes.pct_risco)}</td><td class="num">${PCT(ad.depois.pct_risco)}</td>
-    <td class="num ${cls(ad.delta.pct_risco_pp, false)}">${PP(ad.delta.pct_risco_pp)}</td>
-    <td class="num">${fmtSaldo(saldoMedio(ad.antes))}</td>
-    <td class="num ${cls(saldoMedio(ad.depois), true)}">${fmtSaldo(saldoMedio(ad.depois))}</td></tr>`;
+    <td class="num">${PCT(cp.a.cobertura)}</td><td class="num">${PCT(cp.d.cobertura)}</td>
+    <td class="num ${cls(cp.dCob, true)}">${PP(cp.dCob)}</td>
+    <td class="num">${PCT(cp.a.pct_risco)}</td><td class="num">${PCT(cp.d.pct_risco)}</td>
+    <td class="num ${cls(cp.dRisco, false)}">${PP(cp.dRisco)}</td>
+    <td class="num">${fmtSaldo(cp.a.saldo)}</td>
+    <td class="num ${cls(cp.d.saldo, true)}">${fmtSaldo(cp.d.saldo)}</td></tr>`;
 }
 
 function renderTabela() {
   const drill = !!F.supervisor;
-  document.getElementById('tituloTabela').textContent = drill ? 'Vendedores do time — antes × depois' : 'Times — antes × depois';
+  const rc = rotComp(), comp = _comp === 'periodo' ? 'antes × depois do uso' : `${rc.a} × ${rc.d}`;
+  document.getElementById('tituloTabela').textContent = (drill ? 'Vendedores do time — ' : 'Times — ') + comp;
   document.getElementById('thNome').textContent = drill ? 'Vendedor' : 'Time';
   const linhas = drill ? _d.rcas : _d.times;
   document.getElementById('tabBody').innerHTML = linhas.length ? linhas.map(r => linhaTabela(r, !drill)).join('')

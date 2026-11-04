@@ -921,9 +921,16 @@ cada vendedor?" (10/2026: o histórico de performance que a Gestão de Estoque t
   (clientes e R$/mês).
 - **Gráficos:** cobertura mês a mês e saldo de recuperação mês a mês (verde positivo / vermelho
   negativo), com uma linha marcando **08/2026**, o início do uso registrado da plataforma.
-- **Tabela "antes × depois"** por time (ou por vendedor no drill): cobertura, % em risco e saldo
-  médio, comparando a **média dos 3 meses antes de 08/2026** (mai–jul) com a **média de 08/2026 em
-  diante**. É média do período — nunca o primeiro dia contra o último.
+- **Seletor "Comparar"** (04/11/2026, pedido do João: "de um mês para o outro, igual aos cards"),
+  vale para os cards e a tabela juntos:
+  - **Mês anterior** (padrão): último mês fechado × o anterior (ex.: 09/26 × 10/26). ⚠️ Oscila 2 a 4
+    pontos de um mês para o outro sem mudança na operação (medido: −2,6 · +3,8 · +3,3 · −2,9 num
+    mesmo vendedor), mais em carteira pequena, e a cobertura cai em ago–set todo ano — a tela avisa.
+  - **Antes × depois do uso**: **média dos 3 meses antes de 08/2026** (mai–jul) × **média de
+    08/2026 em diante**. É média do período — nunca o primeiro dia contra o último. Nesse modo as
+    duas médias aparecem **tracejadas nos gráficos**, para o número do card ser visível na linha.
+- **Tabela** por time (ou por vendedor no drill): cobertura, % em risco e saldo, nos dois lados da
+  comparação escolhida.
 - **Filtro de Universo:** campo · lojas · telemarketing.
 - **Clique no vendedor** (no drill do time): cards e os dois gráficos passam a mostrar **só aquele
   vendedor**, e o caminho fica Empresa ▸ Time ▸ Vendedor. Clicar de novo (ou no nome do time) volta

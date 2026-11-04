@@ -303,7 +303,39 @@ def test_botao_clientes_reais_troca_grafico_card_e_tabela():
     assert 'data:e.serie.map(saldoMes)' in h
     kpi = h[h.index('function renderKpis('):h.index('const marcoPlugin')]
     tab = h[h.index('function linhaTabela('):h.index('function renderTabela(')]
-    assert 'saldoMedio(ad.depois)' in kpi and 'saldoMedio(ad.depois)' in tab
+    # desde 04/11/2026 os dois passam pela MESMA `comparar`, que lê o modo nos dois lados
+    assert 'comparar(' in kpi and 'comparar(' in tab
+    cmp = h[h.index('function comparar('):h.index('function rotComp(')]
+    assert 'saldoMedio(ad.depois)' in cmp and 'saldoMes(x)' in cmp
     # o gráfico de cobertura não ganha o botão
     cob = h[h.index('_cCob = new Chart'):h.index('_cVar = new Chart')]
     assert '_modo' not in cob
+
+
+# ───────────────── comparar: mês anterior × antes/depois do uso (João, 04/11/2026) ─────────────────
+def test_comparacao_padrao_e_o_mes_anterior_e_o_periodo_fica_no_seletor():
+    """"Colocar de um mês para o outro, igual aos cards": o padrão passa a ser o último mês fechado
+    contra o anterior, e o antes × depois do uso (média de período) segue num botão — é ele que
+    responde se a carteira melhorou desde que a plataforma passou a ser usada."""
+    h = Path('evolucao.html').read_text(encoding='utf-8')
+    assert "let _comp = params.get('comp') === 'periodo' ? 'periodo' : 'mes';" in h
+    assert 'id="compMes"' in h and 'id="compPer"' in h
+    cmp = h[h.index('function comparar('):h.index('function rotComp(')]
+    # mês a mês = os DOIS últimos pontos da série; período = o antes_depois do servidor
+    assert 'serie[serie.length - 1]' in cmp and 'serie[serie.length - 2]' in cmp
+    assert 'ad.delta.cobertura_pp' in cmp
+    # card e tabela leem a mesma função (senão um diz mês e o outro período)
+    kpi = h[h.index('function renderKpis('):h.index('const marcoPlugin')]
+    tab = h[h.index('function linhaTabela('):h.index('function renderTabela(')]
+    assert 'comparar(e.serie, e.ad)' in kpi and 'comparar(r.serie || [], r.antes_depois)' in tab
+    # a escolha viaja na URL junto com os filtros
+    assert "p.set('comp', 'periodo')" in h[h.index('function qs('):h.index('function navegar(')]
+
+
+def test_no_periodo_as_medias_do_card_aparecem_tracejadas_no_grafico():
+    """O card (média de 3 pontos) não aparecia em ponto nenhum do gráfico e "não batia" (João)."""
+    h = Path('evolucao.html').read_text(encoding='utf-8')
+    assert 'const mediasPlugin' in h
+    graf = h[h.index('function renderCharts('):h.index('function linhaTabela(')]
+    assert "per ? [" in graf and 'ad.antes.cobertura' in graf and 'saldoMedio(ad.depois)' in graf
+    assert graf.count('mediasPlugin') == 2, 'os dois gráficos'
