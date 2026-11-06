@@ -62,8 +62,8 @@ def test_recuperado_da_base_se_abre_em_risco_mais_perdida(pl):
 # ───────────────────────── 2. o saldo se refaz com a linha ─────────────────────────
 def test_variacao_se_refaz_com_as_colunas_da_linha(pl):
     for s in _slots(pl):
-        assert s['saldo'] == s['rec_risco_da_base'] - s['entraram']
-    assert pl['rcas'][29]['saldo'] == 3 - 1
+        assert s['saldo'] == s['rec_da_base'] - s['entraram']      # 06/11/2026: risco + perdida
+    assert pl['rcas'][29]['saldo'] == 4 - 1
 
 
 # ───────────────────────── 4. a volta do "de outra base" ─────────────────────────
@@ -83,7 +83,8 @@ def test_a_linha_fecha_base_igual_proprios_mais_outros(pl):
 
 def test_soma_do_por_outros_nao_muda_a_ponte(pl):
     p = recup.ponte_de(MOVS, 202609)
-    assert sum(s['saldo'] for s in pl['rcas'].values()) == p['clientes']['recuperados'] - p['clientes']['entraram']
+    c = p['clientes']
+    assert sum(s['saldo'] for s in pl['rcas'].values()) == c['recuperados'] + c['resgatados_perdidos'] - c['entraram']
 
 
 # ───────────────────────── endpoint ─────────────────────────
@@ -101,7 +102,7 @@ def test_rota_devolve_os_campos_novos(client, usuario_admin, monkeypatch):
 
 def test_cache_da_resposta_subiu_de_versao():
     fonte = Path('server.py').read_text(encoding='utf-8')
-    assert "'recuperacao:resumo:v5'" in fonte and "'recuperacao:resumo:v4'" not in fonte
+    assert "'recuperacao:resumo:v6'" in fonte and "'recuperacao:resumo:v5'" not in fonte
 
 
 # ───────────────────────── tela ─────────────────────────
@@ -119,7 +120,7 @@ def test_placar_mostra_entraram_por_outros_e_a_variacao():
 
 def test_cada_rs_declara_a_regua():
     h = HTML.read_text(encoding='utf-8')
-    assert h.count('<span class="small">venda no mês</span></th>') >= 4   # recuperado da base / por ele, 2 tabelas
+    assert h.count('<span class="small rotVenda">venda no mês</span></th>') >= 4   # recuperado da base / por ele, 2 tabelas
     assert 'Recuperados do risco' in h                      # caixa da ponte: não é o "recuperados" do card
 
 
@@ -137,7 +138,7 @@ def test_lista_e_ponte_declaram_a_data():
 def test_grafico_mostra_entraram_x_recuperados_e_a_variacao():
     h = HTML.read_text(encoding='utf-8')
     corpo = h[h.index('function renderSerie('):h.index('function linhaPlacar(')]
-    assert "label:'Entraram em risco'" in corpo and "label:'Recuperados do risco'" in corpo
+    assert "label:'Entraram em risco'" in corpo and "label:'Recuperados (risco + perdida)'" in corpo
     assert 'x.clientes.entraram' in corpo and 'x.clientes.recuperados' in corpo
     assert 'x.valor_mensal.entraram' in corpo                  # modo R$/mês, mesma régua do card
     assert 'Saldo (recuperados − entraram)' in corpo         # a linha: acima do zero = bom (06/10)

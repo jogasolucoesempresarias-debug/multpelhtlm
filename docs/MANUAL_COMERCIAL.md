@@ -775,6 +775,21 @@ VALOR MENSAL = venda dos 365 dias que terminam na última compra ÷ 12
 - **Recuperação que ficou** — dos recuperados de 2 meses atrás, quantos voltaram a comprar nos 2
   meses seguintes (medido: só ~53–59% ficam).
 
+**Período (11/2026, pedido do João):** além do seletor de um mês, botões **Mês atual · 3 meses · 6
+meses · Ano**. 3 e 6 meses e Ano contam só meses **fechados** (Ano = janeiro até o último mês fechado);
+o clique no botão ativo volta ao mês único. Num período, **entradas, recuperações e venda somam**, e
+**em risco, valor em risco e dinheiro na mesa são a posição no fim do período**. A ponte continua
+fechando no zero. O mesmo cliente pode voltar mais de uma vez, e o card separa recuperações de
+clientes (12 meses: 5.572 recuperações de 3.549 clientes). A lista "Recuperados" tem uma linha por
+cliente, com ×N quando ele voltou N vezes. Não há seleção livre de meses: com mês salteado a ponte não
+fecharia.
+
+**Mês em curso:** a posição é a de **hoje**, a mesma da lista "em risco hoje". Até 11/2026 ela era
+calculada no dia 1º do mês seguinte, e todo cliente que ainda não tinha comprado já contava como
+atrasado (em 06/11: 729 entradas e 2.948 em risco na tela, contra 100 e 2.457 reais). A parte de
+positivação do "Dinheiro na mesa" usa o **último mês fechado**: com o mês mal começado, quase ninguém
+comprou e todos pareceriam abaixo da referência.
+
 ### 15.4 Ponte do mês e Saldo de recuperação
 ```
 Em risco no início + Entraram em risco − Recuperados do risco − Viraram perdidos = Em risco no fim
@@ -783,10 +798,17 @@ Em risco no início + Entraram em risco − Recuperados do risco − Viraram per
   tooltip).
 - **A ponte fecha no zero** (só a da empresa fecha por construção; no recorte de time/vendedor a
   ponte é da **base** — dono do cadastro).
-- Clientes que voltaram da **base perdida** (+365 dias) não passam pelo estoque em risco: aparecem
-  numa nota à parte. Por isso o card "Venda recuperada" e a coluna "Recuperado da base" contam
-  **recuperados do risco + resgatados da perdida**.
-- **SALDO DE RECUPERAÇÃO = Recuperados do risco − Entraram em risco** (clientes e R$/mês).
+- Clientes que voltaram da **base perdida** (+365 dias) não passam pelo estoque em risco: ficam fora
+  da ponte, numa nota à parte, mas contam no saldo, no card "Venda recuperada" e na coluna "Recuperado
+  da base".
+- **SALDO DE RECUPERAÇÃO = Recuperados (do risco + da base perdida) − Entraram em risco** (clientes e
+  R$/mês).
+  - ⚠️ Incluiu a base perdida em **11/2026** (pergunta do João: "ele recuperou 24, entraram 20, e fica
+    +1 porque 3 estavam como perdidos"). Antes, quem entrou em risco, virou perdido e voltou ficava −1
+    para sempre. Efeito em out/26: empresa de −165 para −138; 17 de 115 vendedores mudam e 4 saem do
+    negativo. A série se recalcula sem degrau.
+  - O saldo **não é a variação do estoque em risco**: quem vira perdido sai do risco sem entrar no
+    saldo (out/26: saldo −138, variação −46). Quem fecha no zero é a ponte.
   - **Positivo (verde) = recuperou mais do que perdeu** (bom). Negativo (vermelho) = perdeu mais do
     que recuperou.
   - ⚠️ Mudou de sinal em **06/10/2026** (pedido do João: "na nossa cabeça + é bom e − é ruim"). Antes
@@ -796,7 +818,7 @@ Em risco no início + Entraram em risco − Recuperados do risco − Viraram per
     mas os 6 valiam mais → +1 cliente e −R$ 818/mês).
 
 ### 15.5 Gráfico "12 meses — entraram em risco × recuperados"
-- **Barra vermelha** = entraram em risco no mês · **barra verde** = recuperados do risco ·
+- **Barra vermelha** = entraram em risco no mês · **barra verde** = recuperados (risco + perdida) ·
   **linha** = saldo de recuperação (recuperados − entraram). **Linha acima do zero = recuperou mais
   do que perdeu.**
 - Botão **Clientes | R$/mês** (mesma régua do card).
@@ -816,10 +838,10 @@ Em risco no início + Entraram em risco − Recuperados do risco − Viraram per
 | **Recuperado pelo time / por ele** · venda no mês | o que os vendedores do time (ou ele) recuperaram, de **qualquer** base — é quem leva o crédito |
 | De outra base | recuperações em clientes da base de **outro** time/vendedor |
 | **Por outros** | clientes **da base** que **outros** recuperaram (ele/o time não vendeu) |
-| **Saldo de recuperação** | recuperados do risco − entraram em risco (clientes · R$/mês) |
+| **Saldo de recuperação** | recuperado da base (risco + perdida) − entraram em risco (clientes · R$/mês) |
 
 **A linha fecha:** `Recuperado da base = (Recuperado por ele − De outra base) + Por outros`.
-O saldo se refaz com a linha: `Saldo = (do risco, na coluna "Recuperado da base") − Entraram`.
+O saldo se refaz com a linha: `Saldo = Recuperado da base − Entraram`.
 ⚠️ Dois R$ diferentes na mesma linha: ao lado de "recuperado" é **venda no mês**; no saldo e na ponte
 é **valor mensal**. A linha **"Sem time (código fictício/sem supervisor)"** fica por último — sem
 ela a soma dos times não fecharia com a empresa.
@@ -916,7 +938,7 @@ cada vendedor?" (10/2026: o histórico de performance que a Gestão de Estoque t
 - **12 meses fechados**, por **Empresa → Time → Vendedor** (clique no time para ver os vendedores).
 - **Cobertura** (régua única, §3.5, no fim de cada mês — o último mês bate com a Performance).
 - **% da base em risco** (em risco no fim do mês ÷ base ativa; menor = melhor).
-- **Saldo de recuperação** (recuperados do risco − entraram em risco; positivo = bom — §15.4).
+- **Saldo de recuperação** (recuperados, do risco + da perdida, − entraram em risco; positivo = bom — §15.4).
 - **Cards:** cobertura do último mês · % em risco · saldo médio por mês · **em risco no fim**
   (clientes e R$/mês).
 - **Gráficos:** cobertura mês a mês e saldo de recuperação mês a mês (verde positivo / vermelho
@@ -1185,7 +1207,7 @@ O app roda de **Power BI OU Postgres** com o **mesmo código**, decidido por var
 | **Valor mensal** | Venda dos 365 dias até a última compra ÷ 12 (não acumula) |
 | **Receita perdida acumulada** | Valor mensal × meses de atraso além do ciclo (acumula) — Gerencial/Próximo Pedido |
 | **"Receita em risco" do Radar** | Venda 12m dos produtos que o cliente parou — 3º sentido; nunca somar com os outros dois |
-| **Saldo de recuperação** | Recuperados do risco − entraram em risco; positivo = bom (§15.4) |
+| **Saldo de recuperação** | Recuperados (risco + perdida) − entraram em risco; positivo = bom (§15.4) |
 | **Dinheiro na mesa** | Valor mensal em risco + potencial de positivação (§15.3) |
 | **Curva ABC de clientes** | Pareto 80/95 da venda 12m dos clientes, no início do mês (Carteira) |
 | **Curva ABC de produtos** | Pareto 80/95 da venda dos produtos na janela escolhida (aba Curva ABC) |

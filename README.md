@@ -317,6 +317,23 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
       traz o saldo, o estoque no fim e a venda aos recuperados. Mesma `serie` (ponte de cada mês),
       zero query. ⚠️ A cor do R$ segue o **próprio** sinal (`clsSinal`): clientes e R$ podem
       discordar (abr/26 do Eliedson: −1 cliente e +R$ 818/mês).
+    - **Período, mês em curso e saldo com a perdida** (06/11/2026, João: *"colocar tipo para puxar: mês
+      atual, 3 meses, 6 meses, ano"* e *"ele recuperou 24, entraram 20, e fica +1 porque 3 estavam como
+      perdidos"*). `?periodo=` em `/api/recuperacao` e nas listas: fluxos somam (`somar_pontes`,
+      `somar_placares`), posição é a do fim, e 3/6 meses e Ano contam só meses fechados. Conferido no
+      BI: a ponte fecha em todos. Eventos × clientes: 12 m são 5.572 recuperações de 3.549 clientes,
+      então o card e a lista (`juntar_recuperados`, ×N) declaram. Sem seleção livre: mês salteado
+      quebra a ponte.
+      - 🩹 **O mês em curso calculava o fim no FUTURO** (dia 1º do mês seguinte): em 06/11 a tela dizia
+        729 entradas e 2.948 em risco, contra 100 e 2.457. `movimentos(..., hoje)` põe o teto; o fim
+        passa a ser a lista "em risco hoje". A camada de positivação do dinheiro na mesa usa o último
+        mês fechado (no mês em curso dava R$ 1,23 mi contra R$ 388 mil de outubro).
+      - 🔄 **Saldo = TODOS os recuperados da base − entraram.** Quem entrou em risco, virou perdido e
+        voltou ficava −1 para sempre. A ponte não muda (a perdida não passa pelo estoque em risco), e o
+        saldo nunca foi a variação do estoque: "viraram perdidos" fica fora dele. Efeito em out/26:
+        −165 → −138, 17 de 115 vendedores mudam, 4 saem do negativo. Vale também na Evolução
+        (`linha_de`), sem degrau. Chaves `recuperacao:resumo:v6`, `evolucao:…:v5`.
+        Gate: `tests/test_recuperacao_periodo.py`.
     - 🔄 **SINAL INVERTIDO: "Saldo de recuperação" = recuperados do risco − entraram**
       (06/10/2026, João: *"na nossa cabeça + é bom e − é ruim… quem fez um bom trabalho fica
       negativo"*). Era entraram − recuperados (positivo = ruim), decisão dele de 29/09 que não

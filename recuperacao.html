@@ -105,6 +105,7 @@
   <div class="controls">
     <span class="ctrl-label">Mês</span>
     <select id="selMes" onchange="setMes(this.value)"></select>
+    <div class="tabs" id="segPeriodo" style="margin:0"></div>
     <span class="small" id="mesInfo"></span>
   </div>
   <p class="regua" id="regua"></p>
@@ -115,7 +116,7 @@
 
   <div class="grid2">
     <div class="card">
-      <h3>Ponte do mês — estoque em risco</h3>
+      <h3 id="ponteTitulo">Ponte do mês — estoque em risco</h3>
       <div class="ponte" id="ponte"></div>
       <div class="saldo-box" id="ponteSaldo"></div>
       <p class="small" id="ponteNota" style="margin-top:10px; line-height:1.5;"></p>
@@ -141,11 +142,11 @@
         <th class="num" title="Valor mensal desses clientes (venda 12m até a última compra ÷ 12)">Valor mensal em risco</th>
         <th class="num" title="Positivação abaixo da referência (p75 dos vendedores do mesmo universo, por classe ABC), só dos clientes que NÃO estão em risco">Potencial de positivação</th>
         <th class="num" title="Clientes da base do time que ENTRARAM em risco no mês · valor mensal deles">Entraram em risco</th>
-        <th class="num" title="Clientes da base do time recuperados no mês, por QUALQUER vendedor — do risco + da base perdida. O R$ é a VENDA feita no mês (não o valor mensal).">Recuperado da base<br><span class="small">venda no mês</span></th>
-        <th class="num" title="O que os vendedores do time recuperaram, de QUALQUER base — é quem leva o crédito. O R$ é a VENDA feita no mês.">Recuperado pelo time<br><span class="small">venda no mês</span></th>
+        <th class="num" title="Clientes da base do time recuperados no mês, por QUALQUER vendedor — do risco + da base perdida. O R$ é a VENDA feita no mês (não o valor mensal).">Recuperado da base<br><span class="small rotVenda">venda no mês</span></th>
+        <th class="num" title="O que os vendedores do time recuperaram, de QUALQUER base — é quem leva o crédito. O R$ é a VENDA feita no mês.">Recuperado pelo time<br><span class="small rotVenda">venda no mês</span></th>
         <th class="num" title="Recuperações do time em clientes da base de OUTRO time">De outra base</th>
         <th class="num" title="Clientes da base do time que OUTROS times recuperaram (o time não vendeu). Recuperado da base = (pelo time − de outra base) + por outros.">Por outros</th>
-        <th class="num" title="Recuperados do risco − entraram em risco (sem os da base perdida), em clientes e em valor mensal. Positivo (verde) = recuperou mais do que perdeu; negativo (vermelho) = perdeu mais do que recuperou.">Saldo de recuperação</th>
+        <th class="num" title="Recuperado da base (risco + perdida) − entraram em risco, em clientes e em valor mensal. Positivo (verde) = recuperou mais do que perdeu; negativo (vermelho) = perdeu mais do que recuperou.">Saldo de recuperação</th>
       </tr></thead>
       <tbody id="timesBody"></tbody>
     </table></div>
@@ -160,11 +161,11 @@
         <th class="num">Valor mensal em risco</th>
         <th class="num">Potencial de positivação</th>
         <th class="num" title="Clientes da carteira dele que ENTRARAM em risco no mês · valor mensal deles">Entraram em risco</th>
-        <th class="num" title="Clientes da carteira dele recuperados no mês, por QUALQUER vendedor — do risco + da base perdida. O R$ é a VENDA feita no mês (não o valor mensal).">Recuperado da base<br><span class="small">venda no mês</span></th>
-        <th class="num" title="O que ele recuperou, de QUALQUER base — é quem leva o crédito. O R$ é a VENDA feita no mês.">Recuperado por ele<br><span class="small">venda no mês</span></th>
+        <th class="num" title="Clientes da carteira dele recuperados no mês, por QUALQUER vendedor — do risco + da base perdida. O R$ é a VENDA feita no mês (não o valor mensal).">Recuperado da base<br><span class="small rotVenda">venda no mês</span></th>
+        <th class="num" title="O que ele recuperou, de QUALQUER base — é quem leva o crédito. O R$ é a VENDA feita no mês.">Recuperado por ele<br><span class="small rotVenda">venda no mês</span></th>
         <th class="num" title="Recuperações dele em clientes da carteira de OUTRO vendedor">De outra base</th>
         <th class="num" title="Clientes da carteira dele que OUTROS vendedores recuperaram (ele não vendeu). Recuperado da base = (por ele − de outra base) + por outros.">Por outros</th>
-        <th class="num" title="Recuperados do risco − entraram em risco (sem os da base perdida), em clientes e em valor mensal. Positivo (verde) = recuperou mais do que perdeu; negativo (vermelho) = perdeu mais do que recuperou.">Saldo de recuperação</th>
+        <th class="num" title="Recuperado da base (risco + perdida) − entraram em risco, em clientes e em valor mensal. Positivo (verde) = recuperou mais do que perdeu; negativo (vermelho) = perdeu mais do que recuperou.">Saldo de recuperação</th>
       </tr></thead>
       <tbody id="rcasBody"></tbody>
     </table></div>
@@ -214,6 +215,7 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;
 
 const params = new URLSearchParams(location.search);
 let _mes = params.get('mes') || '';
+let _periodo = params.get('periodo') || '';   // mes_atual, 3m, 6m, ano (pedido do João, 06/11/2026)
 let _sup = params.get('supervisor') || '';
 let _vend = params.get('vendedor') || '';
 let _lista = 'risco';
@@ -223,7 +225,7 @@ let _chart = null;
 
 function qs(extra) {
   const p = new URLSearchParams();
-  if (_mes) p.set('mes', _mes);
+  if (_periodo) p.set('periodo', _periodo); else if (_mes) p.set('mes', _mes);
   if (_sup) p.set('supervisor', _sup);
   if (_vend) p.set('vendedor', _vend);
   Object.entries(extra || {}).forEach(([k, v]) => p.set(k, v));
@@ -232,14 +234,18 @@ function qs(extra) {
 
 function navegar() {
   const p = new URLSearchParams();
-  if (_mes) p.set('mes', _mes);
+  if (_periodo) p.set('periodo', _periodo); else if (_mes) p.set('mes', _mes);
   if (_sup) p.set('supervisor', _sup);
   if (_vend) p.set('vendedor', _vend);
   history.replaceState(null, '', '/recuperacao' + (p.toString() ? '?' + p : ''));
   carregar();
 }
 
-function setMes(m) { _mes = m; navegar(); }
+function setMes(m) { _mes = m; _periodo = ''; navegar(); }
+// clicar de novo no período ativo volta ao mês único (o último fechado)
+function setPeriodo(p) { _periodo = (_periodo === p) ? '' : p; _mes = ''; navegar(); }
+const variosMeses = () => (_data.periodo_meses || []).length > 1;
+const rotPer = () => variosMeses() ? 'no período' : 'no mês';
 function irEmpresa() { _sup = ''; _vend = ''; navegar(); }
 function irTime(id) { _sup = String(id); _vend = ''; navegar(); }
 function irVendedor(id) { _vend = String(id); navegar(); }
@@ -247,7 +253,8 @@ function irVendedor(id) { _vend = String(id); navegar(); }
 async function carregar() {
   try {
     _data = await fetchJSON('/api/recuperacao?' + qs());
-    _mes = String(_data.mes);
+    _periodo = _data.periodo || '';
+    _mes = _periodo ? '' : String(_data.mes);
     document.getElementById('loading').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
     render();
@@ -259,9 +266,16 @@ async function carregar() {
 
 function render() {
   const d = _data, r = d.regua;
-  document.getElementById('selMes').innerHTML = d.meses.slice().reverse().map(m =>
-    `<option value="${m}" ${String(m) === String(d.mes) ? 'selected' : ''}>${MES(m)}${m === d.mes_atual ? ' (parcial)' : ''}</option>`).join('');
-  document.getElementById('mesInfo').textContent = d.parcial ? 'Mês em curso: os números ainda vão mudar.' : '';
+  document.getElementById('selMes').innerHTML = (d.periodo ? '<option value="" selected>—</option>' : '') + d.meses.slice().reverse().map(m =>
+    `<option value="${m}" ${!d.periodo && String(m) === String(d.mes) ? 'selected' : ''}>${MES(m)}${m === d.mes_atual ? ' (parcial)' : ''}</option>`).join('');
+  document.getElementById('segPeriodo').innerHTML = (d.periodos || []).map(([k, l]) =>
+    `<button class="btn-sm ${d.periodo === k ? 'on' : ''}" onclick="setPeriodo('${k}')">${l}</button>`).join('');
+  const ms = d.periodo_meses || [d.mes], dia = (d.hoje || '').split('-').reverse().slice(0, 2).join('/');
+  document.getElementById('mesInfo').textContent = d.parcial ? `Mês em curso, até ${dia}: os números ainda vão mudar.`
+    : (ms.length > 1 ? `${MES(ms[0])} a ${MES(ms[ms.length - 1])} (meses fechados)` : '');
+  document.getElementById('ponteTitulo').textContent = (variosMeses() ? 'Ponte do período' : 'Ponte do mês') + ' — estoque em risco';
+  document.getElementById('tabRec').textContent = 'Recuperados ' + rotPer();
+  document.querySelectorAll('.rotVenda').forEach(e => { e.textContent = 'venda ' + rotPer(); });
   document.getElementById('regua').innerHTML =
     `<b>Em risco</b> = mais de ${r.inativo_dias} dias sem comprar <b>e</b> além do próprio ciclo de compra do cliente · ` +
     `<b>perdido</b> = mais de ${r.perdido_dias} dias · <b>recuperado</b> = voltou a comprar estando em risco ou perdido; ` +
@@ -294,7 +308,7 @@ function clsSinal(v) { return v > 0 ? 'saldo-pos' : (v < 0 ? 'saldo-neg' : ''); 
 function sinalBRL(v) { return (v > 0 ? '+' : '') + BRL.format(v || 0); }
 function celSaldo(r) {
   const cls = r.saldo > 0 ? 'saldo-pos' : (r.saldo < 0 ? 'saldo-neg' : '');
-  return `<td class="num" title="Recuperados do risco ${NUM.format(r.rec_risco_da_base || 0)} (${BRL.format(r.valor_rec_risco_da_base || 0)}/mês) − entraram em risco ${NUM.format(r.entraram || 0)} (${BRL.format(r.valor_entraram || 0)}/mês)">`
+  return `<td class="num" title="Recuperado da base ${NUM.format(r.rec_da_base || 0)} = ${NUM.format(r.rec_risco_da_base || 0)} do risco + ${NUM.format(r.rec_perdido_da_base || 0)} da perdida (${BRL.format(r.valor_rec_da_base || 0)}/mês) − entraram em risco ${NUM.format(r.entraram || 0)} (${BRL.format(r.valor_entraram || 0)}/mês)">`
     + `<span class="${cls}">${sinal(r.saldo)}</span> <span class="small ${clsSinal(r.valor_saldo)}">· ${sinalBRL(r.valor_saldo)}</span></td>`;
 }
 
@@ -302,11 +316,12 @@ function renderKpis() {
   const c = _data.cards, f = c.ficou;
   const k = [
     { cls:'r', label:'Carteira em risco', value:BRL.format(c.em_risco_valor_mensal),
-      sub:`${NUM.format(c.em_risco_clientes)} clientes no fim do mês · valor mensal que deixou de entrar` },
+      sub:`${NUM.format(c.em_risco_clientes)} clientes ${_data.parcial ? 'hoje' : (variosMeses() ? 'no fim do período' : 'no fim do mês')} · valor mensal que deixou de entrar` },
     { cls:'o', label:'Dinheiro na mesa', value:BRL.format(c.dinheiro_na_mesa),
-      sub:`em risco ${BRL.format(c.camada_a_risco)} + positivação abaixo da referência ${BRL.format(c.camada_b_positivacao)} (clientes ativos, sem contar duas vezes)` },
+      sub:`em risco ${BRL.format(c.camada_a_risco)} + positivação abaixo da referência ${BRL.format(c.camada_b_positivacao)} (clientes ativos, sem contar duas vezes${_data.parcial ? `; positivação de ${MES(_data.mes_fechado)}, o último mês fechado` : ''})` },
     { cls:'g', label:'Venda recuperada', value:BRL.format(c.venda_recuperada),
-      sub:`${NUM.format(c.recuperados)} clientes voltaram a comprar no mês` },
+      sub:variosMeses() ? `${NUM.format(c.recuperados)} recuperações de ${NUM.format(c.clientes_recuperados)} clientes no período`
+                        : `${NUM.format(c.recuperados)} clientes voltaram a comprar no mês` },
     { cls:'b', label:'Recuperação que ficou', value:f && f.taxa != null ? PCT(f.taxa) : '—',
       sub:f ? `dos ${NUM.format(f.recuperados)} recuperados em ${MES(f.anomes)}, ${NUM.format(f.ficaram)} voltaram a comprar nos 2 meses seguintes` : 'sem mês de comparação' },
   ];
@@ -333,10 +348,11 @@ function renderPonte() {
   document.getElementById('ponteSaldo').innerHTML =
     `<b>Saldo de recuperação</b> <span class="n ${cls}">${sinal(c.saldo)} clientes</span>` +
     `<span class="${clsSinal(c.saldo_valor)}">${sinalBRL(c.saldo_valor)}/mês</span>` +
-    `<span class="small">recuperados do risco ${NUM.format(p.recuperados)} − entraram em risco ${NUM.format(p.entraram)} · ${leitura} · positivo = bom</span>`;
+    `<span class="small">recuperados ${NUM.format(p.recuperados + p.resgatados_perdidos)} (${NUM.format(p.recuperados)} do risco + ${NUM.format(p.resgatados_perdidos)} da perdida) − entraram em risco ${NUM.format(p.entraram)} · ${leitura} · positivo = bom</span>`;
   const recortado = _sup || _vend;
   document.getElementById('ponteNota').innerHTML =
-    `Posição no <b>fim de ${MES(_data.mes)}</b>${_data.parcial ? ' (mês em curso)' : ''}. Clientes e, embaixo, o <b>valor mensal</b> deles (R$ por mês; passe o mouse para o valor exato). Também voltaram <b>${NUM.format(p.resgatados_perdidos)}</b> clientes da base perdida (mais de ${_data.regua.perdido_dias} dias), que não passam pelo estoque em risco — por isso o card "Venda recuperada" e a coluna "Recuperado da base" contam ${NUM.format(p.recuperados + p.resgatados_perdidos)}. ` +
+    (_data.parcial ? `Posição de <b>hoje</b> (mês em curso).` : `Posição no <b>fim de ${MES(_data.mes)}</b>${variosMeses() ? `; entradas e recuperações somam os ${_data.periodo_meses.length} meses, e o mesmo cliente pode contar mais de uma vez` : ''}.`) +
+    ` Clientes e, embaixo, o <b>valor mensal</b> deles (R$ por mês; passe o mouse para o valor exato). Também voltaram <b>${NUM.format(p.resgatados_perdidos)}</b> clientes da base perdida (mais de ${_data.regua.perdido_dias} dias), que não passam pelo estoque em risco: ficam fora da ponte, mas contam no <b>saldo</b>, no card "Venda recuperada" e na coluna "Recuperado da base" (${NUM.format(p.recuperados + p.resgatados_perdidos)}). ` +
     (recortado ? 'No recorte de time/vendedor, a ponte é da <b>base</b> (dono do cadastro); o crédito de quem recuperou está no placar.' : '');
 }
 
@@ -358,7 +374,9 @@ function renderSerie() {
   const green = css.getPropertyValue('--green').trim() || '#34d399';
   const acc = css.getPropertyValue('--accent').trim() || '#38bdf8';
   const ent = s.map(x => rs ? x.valor_mensal.entraram : x.clientes.entraram);
-  const rec = s.map(x => rs ? x.valor_mensal.recuperados : x.clientes.recuperados);
+  // todos os recuperados (risco + perdida): a linha do saldo tem de ser a diferença das duas barras
+  const rec = s.map(x => rs ? x.valor_mensal.recuperados + (x.valor_mensal.resgatados_perdidos || 0)
+                            : x.clientes.recuperados + (x.clientes.resgatados_perdidos || 0));
   const fmt = v => rs ? BRL.format(v) : NUM.format(v);
   if (_chart) _chart.destroy();
   _chart = new Chart(document.getElementById('chartSerie'), {
@@ -366,7 +384,7 @@ function renderSerie() {
       labels: s.map(x => MES(x.anomes)),
       datasets: [
         { type:'bar', label:'Entraram em risco', data:ent, backgroundColor:red + 'cc', order:2 },
-        { type:'bar', label:'Recuperados do risco', data:rec, backgroundColor:green + 'cc', order:2 },
+        { type:'bar', label:'Recuperados (risco + perdida)', data:rec, backgroundColor:green + 'cc', order:2 },
         { type:'line', label:'Saldo (recuperados − entraram)', data:rec.map((v, i) => v - ent[i]),
           borderColor:acc, backgroundColor:acc, tension:.25, order:1 },
       ],
@@ -376,9 +394,9 @@ function renderSerie() {
       plugins:{ tooltip:{ callbacks:{
         label:c => `${c.dataset.label}: ${c.datasetIndex === 2 && c.parsed.y > 0 ? '+' : ''}${fmt(c.parsed.y)}${rs ? '/mês' : ''}`,
         footer:items => {
-          const x = s[items[0].dataIndex], v = rs ? x.valor_mensal.recuperados - x.valor_mensal.entraram
-                                                 : x.clientes.recuperados - x.clientes.entraram;
-          return [`Saldo do mês: ${v > 0 ? 'recuperou mais do que perdeu' : (v < 0 ? 'perdeu mais do que recuperou' : 'empatou')}`,
+          const i = items[0].dataIndex, x = s[i], v = rec[i] - ent[i];
+          return [`${NUM.format(x.clientes.recuperados)} do risco + ${NUM.format(x.clientes.resgatados_perdidos || 0)} da perdida`,
+                  `Saldo do mês: ${v > 0 ? 'recuperou mais do que perdeu' : (v < 0 ? 'perdeu mais do que recuperou' : 'empatou')}`,
                   `Em risco no fim: ${NUM.format(x.clientes.risco_fim)} clientes · ${BRL.format(x.valor_mensal.risco_fim)}/mês`,
                   `Venda feita aos recuperados: ${BRL.format(x.venda_recuperada)}`];
         } } } },
@@ -432,7 +450,7 @@ async function carregarLista() {
   const head = document.getElementById('listaHead'), body = document.getElementById('listaBody');
   if (_lista === 'risco') {
     document.getElementById('listaInfo').textContent =
-      `${NUM.format(j.total)} clientes em risco em ${j.hoje.split('-').reverse().join('/')} (hoje — a ponte acima é a posição no fim de ${MES(_data.mes)}) — ordem: valor mensal × chance de voltar no mês (61–90 d: 32,5% · 91–180 d: 15,2% · 181–365 d: 4,6%)` +
+      `${NUM.format(j.total)} clientes em risco em ${j.hoje.split('-').reverse().join('/')} (hoje${_data.parcial ? '' : ` — a ponte acima é a posição no fim de ${MES(_data.mes)}`}) — ordem: valor mensal × chance de voltar no mês (61–90 d: 32,5% · 91–180 d: 15,2% · 181–365 d: 4,6%)` +
       filtroTxt + (j.total > j.rows.length ? ` · mostrando ${j.rows.length}; o CSV traz todos` : '');
     head.innerHTML = `<tr><th>Cliente</th><th>Cidade</th><th>Dono (cadastro)</th><th class="num">Última compra</th><th class="num">Dias</th><th class="num">Ciclo</th><th class="num">Valor mensal</th><th class="num">Chance</th><th>Telefone</th><th>Plano</th></tr>`;
     body.innerHTML = j.rows.map(r => `<tr>
@@ -448,14 +466,14 @@ async function carregarLista() {
       <td>${window.PlanoCliente ? PlanoCliente.selo(r.codcli, r.plano, r.cliente) : ''}</td></tr>`).join('');
   } else {
     document.getElementById('listaInfo').textContent =
-      `${NUM.format(j.total)} clientes recuperados em ${MES(j.mes)}` + filtroTxt + (j.total > j.rows.length ? ` · mostrando ${j.rows.length}; o CSV traz todos` : '');
-    head.innerHTML = `<tr><th>Cliente</th><th>Cidade</th><th>Dono (cadastro)</th><th>Quem vendeu</th><th class="num">Voltou de</th><th class="num">Dias parado</th><th class="num">Valor mensal</th><th class="num">Venda no mês</th><th title="Recuperado: o acompanhamento que levou à compra fica em 'anteriores'">Plano</th></tr>`;
+      `${NUM.format(j.total)} clientes recuperados ${variosMeses() ? `de ${MES(j.periodo_meses[0])} a ${MES(j.mes)} (uma linha por cliente; ×N = voltou N vezes)` : `em ${MES(j.mes)}`}` + filtroTxt + (j.total > j.rows.length ? ` · mostrando ${j.rows.length}; o CSV traz todos` : '');
+    head.innerHTML = `<tr><th>Cliente</th><th>Cidade</th><th>Dono (cadastro)</th><th>Quem vendeu</th><th class="num">Voltou de</th><th class="num">Dias parado</th><th class="num">Valor mensal</th><th class="num">Venda ${rotPer()}</th><th title="Recuperado: o acompanhamento que levou à compra fica em 'anteriores'">Plano</th></tr>`;
     body.innerHTML = j.rows.map(r => `<tr>
       <td>${esc(r.cliente)} <span class="small">#${r.codcli}</span></td>
       <td>${esc(r.cidade || '')}${r.uf ? '/' + esc(r.uf) : ''}</td>
       <td>${esc(r.dono_nome)}</td>
       <td>${esc(r.vendedores_nomes.join(', '))} ${r.de_outra_base ? '<span class="tag" title="Quem vendeu não é o dono do cadastro">outra base</span>' : ''}</td>
-      <td class="num">${r.recuperado_de === 'perdido' ? 'perdido' : 'risco'}</td>
+      <td class="num">${r.recuperado_de === 'perdido' ? 'perdido' : 'risco'}${r.vezes > 1 ? ` <span class="small">×${r.vezes}</span>` : ''}</td>
       <td class="num">${NUM.format(r.dias_parado)}</td>
       <td class="num">${BRL.format(r.valor_mensal)}</td>
       <td class="num">${BRL.format(r.venda_mes)}</td>

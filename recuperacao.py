@@ -120,9 +120,16 @@ def _compras_no_mes(h, t0, t1):
 
 
 # ───────────────────────── o mês de um cliente ─────────────────────────
-def movimento_cliente(h, anomes, inativo_dias=INATIVO_DIAS, perdido_dias=PERDIDO_DIAS):
-    """O que aconteceu com UM cliente no mês. Devolve None se ele não participa da ponte."""
+def movimento_cliente(h, anomes, inativo_dias=INATIVO_DIAS, perdido_dias=PERDIDO_DIAS, hoje=None):
+    """O que aconteceu com UM cliente no mês. Devolve None se ele não participa da ponte.
+
+    `hoje`: teto do "fim" no mês EM CURSO. Sem ele o fim seria o dia 1º do mês seguinte, uma data no
+    futuro em que todo cliente que ainda não comprou já cruzou o limite: em 06/11/2026 a tela dizia
+    729 entradas em risco e 2.948 em risco, quando até o dia eram 100 e 2.457 (a mesma conta da lista
+    "em risco hoje"). Em mês fechado o teto não muda nada."""
     t0, t1 = inicio_mes(anomes), inicio_mes(mes_add(anomes, 1))
+    if hoje is not None:
+        t1 = min(t1, hoje + timedelta(days=1))
     ini = estado_em(h, t0, inativo_dias, perdido_dias)
     fim = estado_em(h, t1, inativo_dias, perdido_dias)
     compras = _compras_no_mes(h, t0, t1)
@@ -155,13 +162,13 @@ def movimento_cliente(h, anomes, inativo_dias=INATIVO_DIAS, perdido_dias=PERDIDO
     }
 
 
-def movimentos(historico, anomes, inativo_dias=INATIVO_DIAS, perdido_dias=PERDIDO_DIAS):
+def movimentos(historico, anomes, inativo_dias=INATIVO_DIAS, perdido_dias=PERDIDO_DIAS, hoje=None):
     """{codcli: movimento} do mês — só dos clientes que PARTICIPAM de algo (em risco no início
     ou no fim, entrou, recuperado, virou perdido). É o insumo caro: calcule UMA vez por mês e
     agregue por escopo com ponte_de/placar_de."""
     out = {}
     for c, h in historico.items():
-        m = movimento_cliente(h, anomes, inativo_dias, perdido_dias)
+        m = movimento_cliente(h, anomes, inativo_dias, perdido_dias, hoje)
         if (m['ini'] == RISCO or m['fim'] == RISCO or m['entrou'] or m['recuperado']
                 or m['virou_perdido']):
             out[c] = m
@@ -180,7 +187,8 @@ def ponte_de(movs, anomes, clientes=None):
     cs = movs.keys() if clientes is None else [c for c in clientes if c in movs]
     p = {k: 0 for k in ('risco_ini', 'entraram', 'recuperados', 'viraram_perdidos', 'risco_fim',
                         'resgatados_perdidos')}
-    v = {k: 0.0 for k in ('risco_ini', 'entraram', 'recuperados', 'viraram_perdidos', 'risco_fim')}
+    v = {k: 0.0 for k in ('risco_ini', 'entraram', 'recuperados', 'viraram_perdidos', 'risco_fim',
+                          'resgatados_perdidos')}
     venda_rec = 0.0
     for c in cs:
         m = movs[c]
@@ -193,13 +201,75 @@ def ponte_de(movs, anomes, clientes=None):
             if m['recuperado_de'] == RISCO:
                 p['recuperados'] += 1; v['recuperados'] += m['valor_mensal_rec']
             else:
-                p['resgatados_perdidos'] += 1
+                p['resgatados_perdidos'] += 1; v['resgatados_perdidos'] += m['valor_mensal_rec']
         if m['virou_perdido']:
             p['viraram_perdidos'] += 1; v['viraram_perdidos'] += m['valor_ini']
         if m['fim'] == RISCO:
             p['risco_fim'] += 1; v['risco_fim'] += m['valor_fim']
     return {'anomes': anomes, 'clientes': p, 'valor_mensal': {k: round(x, 2) for k, x in v.items()},
             'venda_recuperada': round(venda_rec, 2)}
+
+
+# ───────────────────────── período (vários meses) ─────────────────────────
+# Pedido do João (06/11/2026): "colocar tipo para puxar: mês atual, 3 meses, 6 meses, ano".
+PERIODOS = {'mes_atual': 'Mês atual', '3m': '3 meses', '6m': '6 meses', 'ano': 'Ano'}
+
+
+def meses_do_periodo(periodo, ref, atual):
+    """Meses de um período, em ordem. `ref` = último mês fechado; `atual` = mês em curso.
+    3 e 6 meses e Ano contam só meses FECHADOS: o mês em curso tem seu botão, e misturá-lo
+    enviesaria a comparação entre períodos. Ano = de janeiro até o último mês fechado (em janeiro,
+    o ano anterior inteiro). Período desconhecido → None."""
+    if periodo == 'mes_atual':
+        return [atual]
+    if periodo in ('3m', '6m'):
+        n = int(periodo[0])
+        return [mes_add(ref, -i) for i in range(n - 1, -1, -1)]
+    if periodo == 'ano':
+        return [(ref // 100) * 100 + m for m in range(1, ref % 100 + 1)]
+    return None
+
+
+def somar_pontes(pontes):
+    """Ponte de meses CONSECUTIVOS: início do primeiro, fim do último, fluxos somados. Fecha no zero
+    porque o fim de um mês é o início do seguinte (conferido no BI em 3, 6 e 12 meses). Por isso a
+    tela não oferece meses salteados: com um buraco, a ponte deixaria de fechar.
+    ⚠️ Os fluxos contam EVENTOS: em 12 meses foram 5.572 recuperações de 3.549 clientes distintos."""
+    p = {k: sum(x['clientes'][k] for x in pontes) for k in ('entraram', 'recuperados', 'viraram_perdidos',
+                                                            'resgatados_perdidos')}
+    p['risco_ini'], p['risco_fim'] = pontes[0]['clientes']['risco_ini'], pontes[-1]['clientes']['risco_fim']
+    v = {k: round(sum(x['valor_mensal'][k] for x in pontes), 2)
+         for k in ('entraram', 'recuperados', 'viraram_perdidos', 'resgatados_perdidos')}
+    v['risco_ini'], v['risco_fim'] = pontes[0]['valor_mensal']['risco_ini'], pontes[-1]['valor_mensal']['risco_fim']
+    return {'anomes': pontes[-1]['anomes'], 'clientes': p, 'valor_mensal': v,
+            'venda_recuperada': round(sum(x['venda_recuperada'] for x in pontes), 2)}
+
+
+_PLACAR_POSICAO = ('em_risco', 'valor_em_risco')   # estoque: vale o do ÚLTIMO mês, nunca a soma
+_PLACAR_CONTA = ('saldo', 'valor_saldo')           # recalculados do acumulado
+
+
+def somar_placares(placares):
+    """Placar de vários meses: fluxos somados, posição do último mês, saldo recalculado."""
+    out = {}
+    for tab in ('rcas', 'times'):
+        acum = {}
+        for pl in placares:
+            for k, s in pl[tab].items():
+                a = acum.setdefault(k, {})
+                for c, x in s.items():
+                    if c not in _PLACAR_POSICAO and c not in _PLACAR_CONTA:
+                        a[c] = a.get(c, 0) + x
+        for k, a in acum.items():
+            fim = placares[-1][tab].get(k) or {}
+            a['em_risco'], a['valor_em_risco'] = fim.get('em_risco', 0), fim.get('valor_em_risco', 0.0)
+            a['saldo'] = a['rec_da_base'] - a['entraram']
+            a['valor_saldo'] = a['valor_rec_da_base'] - a['valor_entraram']
+            for c, x in a.items():
+                if isinstance(x, float):
+                    a[c] = round(x, 2)
+        out[tab] = acum
+    return out
 
 
 # ───────────────────────── placar por RCA / time ─────────────────────────
@@ -216,7 +286,7 @@ def placar_de(movs, dono_de, time_de):
     Identidades que a tela deixa refazer (05/10/2026):
       rec_da_base = rec_risco_da_base + rec_perdido_da_base
       rec_da_base = (rec_por_ele − rec_de_outra_base) + rec_por_outros
-      saldo       = rec_risco_da_base − entraram   (positivo = bom)
+      saldo       = rec_da_base − entraram         (positivo = bom)
     `dono_de` = {codcli: codusur do cadastro}; `time_de` = {codusur: codsupervisor}.
     Venda recuperada de um cliente com dois vendedores no mês é dividida pelo que cada um vendeu.
     """
@@ -228,6 +298,7 @@ def placar_de(movs, dono_de, time_de):
                                   'venda_rec_por_ele': 0.0, 'rec_de_outra_base': 0,
                                   'entraram': 0, 'valor_entraram': 0.0,
                                   'rec_risco_da_base': 0, 'valor_rec_risco_da_base': 0.0,
+                                  'valor_rec_da_base': 0.0,
                                   'rec_perdido_da_base': 0, 'rec_por_outros': 0})
 
     for c, m in movs.items():
@@ -250,6 +321,7 @@ def placar_de(movs, dono_de, time_de):
         times_que_venderam = {time_de.get(u) for u in m['vendas']}
         for tab, k, vendeu in ((rcas, dono, dono in m['vendas']), (times, t_dono, t_dono in times_que_venderam)):
             s = _slot(tab, k); s['rec_da_base'] += 1; s['venda_rec_da_base'] += total
+            s['valor_rec_da_base'] += m['valor_mensal_rec']
             if m['recuperado_de'] != RISCO:
                 s['rec_perdido_da_base'] += 1
             # A volta do "de outra base" (05/10/2026): cliente DA BASE recuperado só por quem não é
@@ -269,13 +341,17 @@ def placar_de(movs, dono_de, time_de):
                     st['rec_de_outra_base'] += 1
     for tab in (rcas, times):
         for s in tab.values():
-            # SALDO DE RECUPERAÇÃO = recuperados do risco − entraram (06/10/2026). Era o contrário
-            # (entraram − recuperados, positivo = ruim) e o João lia "quem fez um bom trabalho fica
-            # negativo". Positivo agora = recuperou mais do que perdeu. Mesma informação, outro sinal.
-            s['saldo'] = s['rec_risco_da_base'] - s['entraram']
-            s['valor_saldo'] = s['valor_rec_risco_da_base'] - s['valor_entraram']
+            # SALDO DE RECUPERAÇÃO = todos os recuperados da base − entraram. Positivo = recuperou
+            # mais do que perdeu (sinal invertido em 06/10/2026: "quem fez um bom trabalho fica
+            # negativo"). Desde 06/11/2026 conta também quem voltou da base PERDIDA (João: "ele
+            # recuperou 24, entraram 20, e fica +1 porque 3 estavam como perdidos"): sem isso, quem
+            # entrou em risco, virou perdido e voltou ficava −1 para sempre.
+            # ⚠️ NÃO é a variação do estoque em risco, e nunca foi: quem vira perdido sai do risco
+            # sem entrar no saldo (out/26: saldo −165 × variação −46). Quem fecha no zero é a ponte.
+            s['saldo'] = s['rec_da_base'] - s['entraram']
+            s['valor_saldo'] = s['valor_rec_da_base'] - s['valor_entraram']
             for k in ('valor_em_risco', 'venda_rec_da_base', 'venda_rec_por_ele', 'valor_entraram',
-                      'valor_rec_risco_da_base', 'valor_saldo'):
+                      'valor_rec_risco_da_base', 'valor_rec_da_base', 'valor_saldo'):
                 s[k] = round(s[k], 2)
     return {'rcas': rcas, 'times': times}
 
@@ -333,3 +409,20 @@ def recuperados_de(movs, dono_de):
                     'venda_mes': round(sum(m['vendas'].values()), 2)})
     out.sort(key=lambda x: -x['venda_mes'])
     return out
+
+
+def juntar_recuperados(listas):
+    """Lista de recuperados de vários meses (em ordem cronológica), uma linha por cliente: a venda
+    soma, o resto é da recuperação mais recente e `vezes` diz quantas foram."""
+    por = {}
+    for lista in listas:
+        for r in lista:
+            a = por.get(r['codcli'])
+            if a is None:
+                por[r['codcli']] = {**r, 'vezes': 1}
+                continue
+            por[r['codcli']] = {**r, 'vezes': a['vezes'] + 1,
+                                'venda_mes': round(a['venda_mes'] + r['venda_mes'], 2),
+                                'vendedores': sorted(set(a['vendedores']) | set(r['vendedores'])),
+                                'de_outra_base': a['de_outra_base'] or r['de_outra_base']}
+    return sorted(por.values(), key=lambda x: -x['venda_mes'])

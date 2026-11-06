@@ -73,6 +73,8 @@
 | Inativo no ERP | 91+ dias: só uma marca na lista | ✅ João (informação) |
 | Perdido | **mais de 365 dias**: parâmetro, **ainda não confirmado** | aberto |
 | Crédito da recuperação | quem vendeu; dono do cadastro ao lado; coluna "de outra base" | ✅ João |
+| Saldo de recuperação | recuperados da base (risco + perdida) − entraram (06/11/2026; antes só os do risco) | ✅ João + Gabriel |
+| Período da Recuperação | Mês atual · 3 m · 6 m · Ano; 3/6/Ano só meses fechados; Ano = jan até o último fechado; sem meses salteados | ✅ Gabriel |
 | Régua da venda perdida | valor mensal do cliente (venda 12m até a última compra ÷ 12) | ✅ João |
 | Ponte por time | não fecha, por construção; colunas "da sua base" e "por você" | ✅ João |
 | Mês da nota/positivação | mês fechado; o corrente só como informação | nossa (medido) |

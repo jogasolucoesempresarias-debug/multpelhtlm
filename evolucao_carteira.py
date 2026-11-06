@@ -87,7 +87,7 @@ def linha_de(anomes, cob_g, rec_g):
     cob_g, rec_g = cob_g or {}, rec_g or {}
     return linha(anomes, cob_g.get('base', 0), cob_g.get('positivados', 0), rec_g.get('em_risco', 0),
                  rec_g.get('valor_em_risco', 0.0), rec_g.get('entraram', 0),
-                 rec_g.get('rec_risco_da_base', 0), rec_g.get('valor_saldo', 0.0))
+                 rec_g.get('rec_da_base', 0), rec_g.get('valor_saldo', 0.0))
 
 
 def somar(linhas, anomes):

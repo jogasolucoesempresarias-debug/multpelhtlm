@@ -193,7 +193,7 @@ def test_contas_de_mes_passado_usam_a_base_pela_data():
     assert '_dono_em(evol.fim_do_mes(ref)' in inspect.getsource(server._positivacao_insumos)
     src = inspect.getsource(server._evolucao_dados)
     assert '_sem_excluidos_ate(' in src and '_dono_em(fim, dono_atual)' in src
-    assert "'multpel:evolucao:{ref}:{limiar}:v4'" in src.replace("f'", "'")
+    assert "'multpel:evolucao:{ref}:{limiar}:v5'" in src.replace("f'", "'")
 
 
 def test_recuperacao_marca_os_excluidos_e_nao_os_conta_como_dinheiro_na_mesa():

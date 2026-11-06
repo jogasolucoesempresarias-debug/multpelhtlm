@@ -5580,7 +5580,8 @@ def _recup_base():
         # risco e, no mês da exclusão, pelo "viraram perdidos" — a ponte segue fechando no zero.
         recup.marcar_excluidos(hist, {c: dt for c, (dt, _u) in excl.items()})
         meses =[positivacao.mes_add(ref, -i) for i in range(12, -1, -1)] + [atual]
-        movs = {am: recup.movimentos(hist, am, ina, per) for am in meses}
+        # `hoje`: o mês em curso termina hoje, não no dia 1º do mês seguinte (ver movimento_cliente)
+        movs = {am: recup.movimentos(hist, am, ina, per, hoje) for am in meses}
         base = {'hist': hist, 'movs': movs, 'ref': ref, 'atual': atual, 'meses': meses,
                 'ina': ina, 'per': per, 'hoje': hoje, 'potencial': {}}
         memo.update(chave=chave, base=base, em=time.time())
@@ -5661,6 +5662,15 @@ def _recup_mes_arg(base):
     return m if m in base['movs'] else base['ref']
 
 
+def _recup_periodo_arg(base):
+    """(periodo|None, [meses]) da tela: `?periodo=` (mes_atual, 3m, 6m, ano) ou o mês único de sempre."""
+    p = request.args.get('periodo')
+    meses = recup.meses_do_periodo(p, base['ref'], base['atual'])
+    if meses and all(m in base['movs'] for m in meses):
+        return p, meses
+    return None, [_recup_mes_arg(base)]
+
+
 def _recup_mapas():
     """dono_de {codcli: codusur do cadastro}, time_de {codusur: codsupervisor}, nomes."""
     from datetime import date as _date
@@ -5691,14 +5701,16 @@ def recuperacao_page():
 def api_recuperacao():
     """Ponte do mês + cards + placar Time/RCA + série 12m, no escopo do usuário."""
     base = _recup_base()
-    am = _recup_mes_arg(base)
+    periodo, meses_per = _recup_periodo_arg(base)
+    am = meses_per[-1]
     # v2 (29/09/2026): a resposta ganhou o SALDO (cards + placar). Sem subir a versão, a produção
     # serviu a resposta antiga do cache por até 1 h depois do deploy e a tela mostrou saldo 0.
     # v3 (05/10/2026): placar ganhou rec_perdido_da_base e rec_por_outros.
     # v4 (06/10/2026): o saldo INVERTEU o sinal (recuperados − entraram, positivo = bom).
     # v5 (21/10/2026): excluído no Winthor vira perdido na data da exclusão.
-    key = cache_key_for_user('recuperacao:resumo:v5', {
-        'mes': am, 'sup': request.args.get('supervisor', ''), 'vend': request.args.get('vendedor', ''),
+    # v6 (06/11/2026): saldo com os da base perdida, mês em curso até hoje, período.
+    key = cache_key_for_user('recuperacao:resumo:v6', {
+        'mes': am, 'per': periodo or '', 'sup': request.args.get('supervisor', ''), 'vend': request.args.get('vendedor', ''),
         'p': f"{base['ina']}:{base['per']}:{base['atual']}"})
     cached = _cache_get(key)
     if cached:
@@ -5706,15 +5718,20 @@ def api_recuperacao():
 
     carteira, vmap, smap, dono_de, time_de = _recup_mapas()
     base_cli, vends, times = _recup_escopo()
-    movs = base['movs'][am]
-    ponte = recup.ponte_de(movs, am, base_cli)
+    ponte = recup.somar_pontes([recup.ponte_de(base['movs'][m], m, base_cli) for m in meses_per])
     serie = [recup.ponte_de(base['movs'][m], m, base_cli)
              for m in base['meses'] if m != base['atual']][-12:]
     m2 = positivacao.mes_add(am, -2)
     ficou = recup.ficou_de(base['hist'], base['movs'][m2], m2, base_cli) if m2 in base['movs'] else None
 
-    pl = recup.placar_de(movs, dono_de, time_de)
-    pot = _recup_potencial(base, am, dono_de, vmap)
+    pl = recup.somar_placares([recup.placar_de(base['movs'][m], dono_de, time_de) for m in meses_per])
+    # Posição: a do fim do período. No mês em curso vale o último mês FECHADO: com o mês mal começado
+    # quase ninguém comprou e todo mundo parece abaixo da referência (06/11/2026: R$ 1,23 mi contra
+    # R$ 388 mil de outubro), o mesmo vício de medir um mês que ainda não acabou.
+    pot = _recup_potencial(base, base['ref'] if am == base['atual'] else am, dono_de, vmap)
+    # eventos × clientes: num período o mesmo cliente pode voltar mais de uma vez
+    distintos = {c for m in meses_per for c, x in base['movs'][m].items()
+                 if x['recuperado'] and (base_cli is None or c in base_cli)}
 
     def _ok_rca(u):
         return vends is None or u in vends
@@ -5751,7 +5768,8 @@ def api_recuperacao():
 
     resp = {
         'ok': True, 'mes': am, 'mes_fechado': base['ref'], 'mes_atual': base['atual'],
-        'parcial': am == base['atual'], 'meses': base['meses'],
+        'parcial': am == base['atual'], 'meses': base['meses'], 'hoje': base['hoje'].isoformat(),
+        'periodo': periodo, 'periodo_meses': meses_per, 'periodos': list(recup.PERIODOS.items()),   # lista: o JSON ordena chaves
         'regua': {'inativo_dias': base['ina'], 'perdido_dias': base['per'],
                   'erp_inativo_dias': recup.ERP_INATIVO_DIAS,
                   'potencial_percentil': potencial.PERCENTIL_REF},
@@ -5761,10 +5779,13 @@ def api_recuperacao():
             'em_risco_valor_mensal': ponte['valor_mensal']['risco_fim'],
             'venda_recuperada': ponte['venda_recuperada'],
             'recuperados': ponte['clientes']['recuperados'] + ponte['clientes']['resgatados_perdidos'],
+            'clientes_recuperados': len(distintos),
             'dinheiro_na_mesa': round(ponte['valor_mensal']['risco_fim'] + camada_b, 2),
-            # saldo de recuperação (06/10/2026): recuperados do risco − entraram (> 0 = melhorou)
-            'saldo': ponte['clientes']['recuperados'] - ponte['clientes']['entraram'],
-            'saldo_valor': round(ponte['valor_mensal']['recuperados'] - ponte['valor_mensal']['entraram'], 2),
+            # saldo de recuperação: todos os recuperados (risco + perdida) − entraram (> 0 = melhorou)
+            'saldo': (ponte['clientes']['recuperados'] + ponte['clientes']['resgatados_perdidos']
+                      - ponte['clientes']['entraram']),
+            'saldo_valor': round(ponte['valor_mensal']['recuperados'] + ponte['valor_mensal']['resgatados_perdidos']
+                                 - ponte['valor_mensal']['entraram'], 2),
             'camada_a_risco': ponte['valor_mensal']['risco_fim'],
             'camada_b_positivacao': camada_b,
             'ficou': ficou,
@@ -5798,10 +5819,9 @@ def _recup_linhas(tipo):
         from datetime import timedelta as _td
         rows = recup.em_risco_em(hist, base['hoje'] + _td(days=1), base['ina'], base['per'])
         return base, [{**r, **_cadastro(r['codcli'])} for r in rows]
-    am = _recup_mes_arg(base)
-    movs = base['movs'][am]
+    _p, meses_per = _recup_periodo_arg(base)
     rows = []
-    for r in recup.recuperados_de(movs, dono_de):
+    for r in recup.juntar_recuperados([recup.recuperados_de(base['movs'][m], dono_de) for m in meses_per]):
         c = r['codcli']
         if base_cli is not None and c not in base_cli and not (set(r['vendedores']) & (vends or set())):
             continue
@@ -5838,9 +5858,11 @@ def api_recuperacao_listas():
     except (TypeError, ValueError):
         limit = 300
     rows = _recup_com_plano(rows, request.args.get('plano'))
+    periodo, meses_per = _recup_periodo_arg(base)
     return jsonify({'ok': True, 'tipo': tipo, 'total': len(rows), 'rows': rows[:limit],
                     'plano': request.args.get('plano') or '',
-                    'mes': _recup_mes_arg(base), 'hoje': base['hoje'].isoformat()})
+                    'mes': meses_per[-1], 'periodo': periodo, 'periodo_meses': meses_per,
+                    'hoje': base['hoje'].isoformat()})
 
 
 @app.route('/api/recuperacao/listas/csv')
@@ -5866,12 +5888,13 @@ def api_recuperacao_listas_csv():
         nome = f"carteira_em_risco_{base['hoje'].isoformat()}{'_' + filtro if filtro else ''}.csv"
     else:
         cab = ['CodCli', 'Cliente', 'Cidade', 'UF', 'Dono (cadastro)', 'Quem vendeu', 'De outra base',
-               'Voltou de', 'Dias parado', 'Valor mensal', 'Venda no mês', 'Plano (último)', 'Data do plano']
+               'Voltou de', 'Dias parado', 'Valor mensal', 'Recuperações', 'Venda no período', 'Plano (último)', 'Data do plano']
         campos = lambda r: [r['codcli'], r['cliente'], r.get('cidade'), r.get('uf'), r['dono_nome'],
                             ', '.join(r['vendedores_nomes']), 'sim' if r['de_outra_base'] else 'não',
-                            r['recuperado_de'], r['dias_parado'], r['valor_mensal'], r['venda_mes'],
+                            r['recuperado_de'], r['dias_parado'], r['valor_mensal'], r.get('vezes', 1), r['venda_mes'],
                             *_plano_cols(r)]
-        nome = f"recuperados_{_recup_mes_arg(base)}{'_' + filtro if filtro else ''}.csv"
+        _per, _ms = _recup_periodo_arg(base)
+        nome = f"recuperados_{_per or _ms[-1]}{'_' + filtro if filtro else ''}.csv"
 
     def gerar():
         yield CSV_PREAMBULO + _csv_linha(cab)
@@ -11223,7 +11246,7 @@ def _evolucao_dados(limiar):
     RBAC e filtros é do endpoint. Cache por mês de referência e limiar."""
     base = _recup_base()
     ref = base['ref']
-    key = f'multpel:evolucao:{ref}:{limiar}:v4'   # v2: saldo com sinal invertido · v3: saldo_medio_valor · v4: excluídos pela data
+    key = f'multpel:evolucao:{ref}:{limiar}:v5'   # v2: saldo com sinal invertido · v3: saldo_medio_valor · v4: excluídos pela data · v5: saldo com os da perdida
     cached = _cache_get(key)
     if cached is not None:
         return cached

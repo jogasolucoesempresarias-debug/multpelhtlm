@@ -110,7 +110,7 @@
     </div>
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-        <h3 style="margin:0">Saldo de recuperação — recuperados do risco − entraram</h3>
+        <h3 style="margin:0">Saldo de recuperação — recuperados (risco + perdida) − entraram</h3>
         <div style="display:flex;gap:6px">
           <button class="btn-sm on" id="modoCli" onclick="setModo('clientes')">Clientes</button>
           <button class="btn-sm" id="modoRs" onclick="setModo('valor')" title="Valor mensal dos clientes (venda 12m até a última compra ÷ 12) — não é o faturamento do mês">R$/mês</button>
@@ -131,7 +131,7 @@
           <th id="thNome">Time</th><th>Universo</th>
           <th class="num thA">Antes</th><th class="num thD">Depois</th><th class="num">Δ</th>
           <th class="num thA">Antes</th><th class="num thD">Depois</th><th class="num">Δ</th>
-          <th class="num thA" title="Recuperados do risco − entraram em risco (no período, a média por mês). Positivo = recuperou mais do que perdeu">Antes</th>
+          <th class="num thA" title="Recuperados (risco + perdida) − entraram em risco (no período, a média por mês). Positivo = recuperou mais do que perdeu">Antes</th>
           <th class="num thD">Depois</th>
         </tr>
       </thead>
@@ -249,7 +249,7 @@ function render() {
   document.getElementById('regua').innerHTML =
     `<b>Cobertura</b> = % da carteira ativa (clientes cadastrados no vendedor que compraram em 365 dias) que comprou nos últimos 60 dias, no fim de cada mês — a mesma régua do Gerencial e da Performance · ` +
     `<b>% em risco</b> = clientes da base com mais de 60 dias sem comprar e além do próprio ciclo · ` +
-    `<b>saldo de recuperação</b> = recuperados do risco − entraram em risco no mês (positivo = recuperou mais do que perdeu)` +
+    `<b>saldo de recuperação</b> = recuperados (do risco + da base perdida) − entraram em risco no mês (positivo = recuperou mais do que perdeu)` +
     (_modo === 'valor' ? `, em <b>R$/mês</b> = valor mensal desses clientes (venda 12m até a última compra ÷ 12) — não é o faturamento do mês; numa carteira pequena um cliente grande decide o mês` : '') + ` · ` +
     (_comp === 'periodo'
       ? `<b>Antes</b> = ${p.a} · <b>Depois</b> = ${p.d} (uso da plataforma registrado desde ${MES(_d.marco)}). Antes × depois é a <b>média do período</b>, não o primeiro dia contra o último — as duas médias estão tracejadas nos gráficos.`

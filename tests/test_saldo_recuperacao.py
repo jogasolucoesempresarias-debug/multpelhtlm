@@ -27,7 +27,7 @@ MOVS = {
     1: _m(fim=RISCO, entrou=True, vfim=100.0),                                  # entrou (dono 29)
     2: _m(fim=RISCO, entrou=True, vfim=50.0),                                   # entrou (dono 29)
     3: _m(ini=RISCO, recuperado=True, de=RISCO, vrec=70.0, vendas={29: 500.0}),  # recuperado do risco (dono 29)
-    4: _m(ini=PERDIDO, recuperado=True, de=PERDIDO, vrec=10.0, vendas={29: 90.0}),  # resgatado de perdido: fora
+    4: _m(ini=PERDIDO, recuperado=True, de=PERDIDO, vrec=10.0, vendas={29: 90.0}),  # resgatado de perdido: conta
     5: _m(ini=RISCO, fim=PERDIDO, perdido=True),                                 # virou perdido: fora
     6: _m(fim=RISCO, entrou=True, vfim=40.0),                                   # entrou (dono 30, outro time)
     7: _m(ini=RISCO, recuperado=True, de=RISCO, vrec=25.0, vendas={29: 300.0}),  # recuperado do risco (dono 30) por 29
@@ -39,23 +39,24 @@ TIME = {29: 17, 30: 19}
 def test_saldo_por_vendedor_e_da_carteira_do_dono():
     pl = recup.placar_de(MOVS, DONO, TIME)
     a, b = pl['rcas'][29], pl['rcas'][30]
-    assert (a['entraram'], a['rec_risco_da_base'], a['saldo']) == (2, 1, -1)         # 1 recuperado − 2 entraram
-    assert a['valor_saldo'] == pytest.approx(70.0 - 150.0)
+    # 06/11/2026: conta também quem voltou da PERDIDA (cliente 4): 1 do risco + 1 da perdida − 2 entraram
+    assert (a['entraram'], a['rec_risco_da_base'], a['rec_perdido_da_base'], a['saldo']) == (2, 1, 1, 0)
+    assert a['valor_saldo'] == pytest.approx(70.0 + 10.0 - 150.0)
     assert (b['entraram'], b['rec_risco_da_base'], b['saldo']) == (1, 1, 0)
     assert b['valor_saldo'] == pytest.approx(25.0 - 40.0)
     # a recuperação do cliente 7 conta na BASE do dono (30), não em quem vendeu (29) — é a carteira dele
     t = pl['times']
-    assert (t[17]['saldo'], t[19]['saldo']) == (-1, 0)
+    assert (t[17]['saldo'], t[19]['saldo']) == (0, 0)
 
 
 def test_soma_dos_saldos_fecha_com_a_ponte_da_empresa():
     pl = recup.placar_de(MOVS, DONO, TIME)
     p = recup.ponte_de(MOVS, 202608)
-    saldo_emp = p['clientes']['recuperados'] - p['clientes']['entraram']
-    assert sum(r['saldo'] for r in pl['rcas'].values()) == saldo_emp == -1
+    saldo_emp = p['clientes']['recuperados'] + p['clientes']['resgatados_perdidos'] - p['clientes']['entraram']
+    assert sum(r['saldo'] for r in pl['rcas'].values()) == saldo_emp == 0
     assert sum(r['saldo'] for r in pl['times'].values()) == saldo_emp
     assert sum(r['valor_saldo'] for r in pl['rcas'].values()) == pytest.approx(
-        p['valor_mensal']['recuperados'] - p['valor_mensal']['entraram'])
+        p['valor_mensal']['recuperados'] + p['valor_mensal']['resgatados_perdidos'] - p['valor_mensal']['entraram'])
 
 
 def test_rota_devolve_card_e_coluna_de_saldo(client, usuario_admin, monkeypatch):
@@ -66,8 +67,9 @@ def test_rota_devolve_card_e_coluna_de_saldo(client, usuario_admin, monkeypatch)
     login_as(client, usuario_admin['email'], usuario_admin['senha'])
     j = client.get('/api/recuperacao').get_json()
     p = j['ponte']
-    assert j['cards']['saldo'] == p['clientes']['recuperados'] - p['clientes']['entraram']
-    assert j['cards']['saldo_valor'] == pytest.approx(p['valor_mensal']['recuperados'] - p['valor_mensal']['entraram'], abs=0.02)
+    assert j['cards']['saldo'] == p['clientes']['recuperados'] + p['clientes']['resgatados_perdidos'] - p['clientes']['entraram']
+    assert j['cards']['saldo_valor'] == pytest.approx(
+        p['valor_mensal']['recuperados'] + p['valor_mensal']['resgatados_perdidos'] - p['valor_mensal']['entraram'], abs=0.02)
     assert all('saldo' in t and 'valor_saldo' in t for t in j['times'])
     assert all('saldo' in r for r in j['rcas'])
     assert sum(t['saldo'] for t in j['times']) == j['cards']['saldo']
@@ -85,7 +87,7 @@ def test_versao_do_cache_sobe_quando_a_resposta_muda():
     """Produção, 29/09/2026: depois do deploy a Recuperação mostrou "Saldo do mês 0" — o Redis serviu a
     resposta ANTIGA (sem o campo) com a mesma chave. A chave tem de mudar junto com o conteúdo."""
     fonte = Path('server.py').read_text(encoding='utf-8')
-    assert "'recuperacao:resumo:v5'" in fonte and "'recuperacao:resumo:v4'" not in fonte
+    assert "'recuperacao:resumo:v6'" in fonte and "'recuperacao:resumo:v5'" not in fonte
     assert "'vendedores:ranking:v4'" in fonte and "vendedor:full:v4:" in fonte
     assert "classList.toggle('hidden', c.saldo == null)" in Path('recuperacao.html').read_text(encoding='utf-8')
 
