@@ -28,7 +28,7 @@ JS = Path('static/estoque/estoque.js').read_text(encoding='utf-8')
 # filtros de recorte que o servidor aplica em QUALQUER view (estoque/routes.py,
 # `_aplicar_filtros_cliente`) e que, por isso, precisam de dono declarado no front.
 LOCAIS_DO_SERVIDOR = {'abast', 'margem', 'cob_max', 'sem_ped', 'a_liberar', 'ez_status',
-                      'cob_faixa', 'cob_sub', 'cob_ped', 'par_faixa', 'par_classe'}
+                      'cob_faixa', 'cob_sub', 'cob_ped', 'entrada_dias', 'par_faixa', 'par_classe'}
 
 # filtros GLOBAIS: a barra do topo vale para o painel inteiro, então viajam sempre.
 GLOBAIS = {'comprador_cod', 'curva', 'xyz', 'fornec', 'depto', 'busca'}

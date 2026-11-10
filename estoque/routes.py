@@ -18,7 +18,7 @@ import time
 from datetime import date, timedelta
 
 from flask import (Blueprint, jsonify, request, send_from_directory, Response, session,
-                   stream_with_context)
+                   stream_with_context, g)
 
 from . import pbi
 from . import queries as Q
@@ -317,6 +317,58 @@ def _snapshot_com_venda_no_mes(snap, filiais, prod_map, venda_mensal, hoje):
             extra = []
         pbi._CACHE.set(key, extra, 1800)
     return snap + extra
+
+
+def _entradas_recentes(filiais, hoje):
+    """{cod: {dtultent, qtultent}} — última entrada dos itens com entrada nos últimos
+    `core.ENTRADA_JANELA_DIAS` dias (ver `queries.q_entradas_recentes`).
+
+    ⚠️ Degrada para `{}` se a query falhar: a coluna "Últ. entrada" cai na data do snapshot (sem
+    quantidade) e o item que chegou e já saiu volta a sumir. A tela não cai por isso."""
+    key = f"entr:{_filiais_key(filiais)}:{hoje.isoformat()}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    desde = hoje - timedelta(days=core.ENTRADA_JANELA_DIAS)
+    try:
+        rows = (PS.entradas_recentes(desde, filiais) if pbi.CONFIG["data_source"] == "postgres"
+                else pbi.run_dax(Q.q_entradas_recentes(desde, filiais)))
+        m = core.ultima_entrada_por_produto(rows)
+    except Exception as e:                                    # noqa: BLE001
+        print(f"[entradas] entradas recentes indisponíveis ({e}).")
+        m = {}
+    pbi._CACHE.set(key, m, 1800)
+    return m
+
+
+def _chegou_e_saiu(snap, filiais, prod_map, entradas):
+    """Linhas de snapshot dos itens com ENTRADA RECENTE que o corte de atividade descartou: estoque
+    zero e sem venda nos 3 meses fechados (70283/70284: chegaram em 06/11 e saíram em bonificação
+    no dia 07/11). Mesma consulta por código do `_snapshot_com_venda_no_mes`."""
+    no_snap = {int(core._n(r.get("CODPROD"))) for r in snap}
+    faltam = sorted(c for c in entradas if c in prod_map and c not in no_snap)
+    if not faltam:
+        return []
+    key = f"snapch:{_filiais_key(filiais)}:{hash(tuple(faltam))}"
+    extra = pbi._CACHE.get(key)
+    if extra is None:
+        try:
+            extra = (PS.snapshot_estoque(filiais, codprods=faltam)
+                     if pbi.CONFIG["data_source"] == "postgres"
+                     else pbi.run_dax(Q.q_snapshot_estoque(filiais, codprods=faltam)))
+        except Exception as e:                                # noqa: BLE001
+            print(f"[snapshot] itens que chegaram e saíram indisponíveis ({e}).")
+            extra = []
+        pbi._CACHE.set(key, extra, 1800)
+    return extra
+
+
+def chegou_e_saiu():
+    """Os itens de `_chegou_e_saiu` já montados, da ÚLTIMA chamada de `_build_produtos` nesta
+    request (o `g` do Flask). Ficam FORA da lista principal de propósito: são estoque zero e sem
+    giro, e entrar nela os colocaria no 121+ como "estoque morto" e no Estoque zerado como
+    "ruptura sem pedido". Só aparecem no filtro "Entrou nos últimos X dias" da Cobertura."""
+    return getattr(g, "chegou_e_saiu", None) or []
 
 
 def _bloqueio_map(filiais):
@@ -1047,6 +1099,12 @@ def _build_produtos(venda_periodo=None):
     # item zerado e sem venda nos 3 meses fechados, mas que vendeu NESTE mês: o snapshot o cortou
     # e ele é uma ruptura (caso 56664, 20/10/2026). Precisa da série mensal, por isso fica aqui.
     snap = _snapshot_com_venda_no_mes(snap, filiais_e, prod_map, venda_mensal, _hoje())
+    # item que CHEGOU nos últimos dias e já saiu (estoque zero, sem venda): o corte o descartou.
+    # Monta junto (mesmas regras) e separa no fim — ver `chegou_e_saiu`.
+    entradas = _entradas_recentes(filiais_e, _hoje())
+    extra_chegada = _chegou_e_saiu(snap, filiais_e, prod_map, entradas)
+    cods_chegada = {int(core._n(r.get("CODPROD"))) for r in extra_chegada}
+    snap = snap + extra_chegada
     _peddata = _pedidos_data(filiais_e, _hoje())
     ja_pedida = _peddata["ja_pedida"]
     embalagem = _embalagem_map()
@@ -1081,6 +1139,15 @@ def _build_produtos(venda_periodo=None):
         # espaço morto: ocupa >=3 posições e praticamente não gira
         dsv = p.get("dias_sem_venda")
         p["espaco_morto"] = pe >= 3 and ((p.get("giro_mes") or 0) <= 0 or (dsv is not None and dsv >= 90))
+        # última entrada com QUANTIDADE (o snapshot só tem a data, e agregada)
+        ent = entradas.get(p["codprod"])
+        p["qtultent"] = ent["qtultent"] if ent else None
+        if ent:
+            p["dtultent"] = ent["dtultent"]
+    g.chegou_e_saiu = [p for p in produtos if p["codprod"] in cods_chegada]
+    for p in g.chegou_e_saiu:
+        p["chegou_e_saiu"] = True
+    produtos = [p for p in produtos if p["codprod"] not in cods_chegada]
     return produtos, params, filiais_e
 
 
@@ -1210,6 +1277,9 @@ def api_snapshot():
         "params": params,
         "n": len(produtos),
         "produtos": produtos,
+        # chegou nos últimos dias e já saiu (estoque zero, sem venda): FORA de `produtos` para
+        # não mexer em contador nenhum; só o filtro "Entrou nos últimos X dias" os mostra
+        "chegou_e_saiu": chegou_e_saiu(),
         # ⚠️ `params` viaja porque a watchlist "Em desaceleração" é parametrizável (janela,
         # cobertura e piso de valor). Sem ele o card sairia sempre nos defaults e os campos de
         # ⚙ Parâmetros não moveriam nada — a mesma falha silenciosa do `novo_dias`.
@@ -3134,8 +3204,9 @@ _CSV_COLS = {
                   "valor_sugerido_liq", "valor_sugerido_nf", "perc_ipi", "trib_fonte", "status_abast"],
     "parado": ["codprod", "descricao", "fornecedor", "comprador", "dtultsaida", "dias_sem_venda", "qtdisp",
                "valor", "cobertura", "parado_faixa"],
-    "ruptura": ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "valor", "cobertura_dias",
-                "cobertura_faixa", "qtd_ja_pedida", "giro_mes", "sugestao_compra"],
+    "ruptura": ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "qt_transicao", "valor",
+                "cobertura_dias", "cobertura_faixa", "qtd_ja_pedida", "dtultent", "qtultent", "giro_mes",
+                "sugestao_compra"],
     "estoque_zero": ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "dias_sem_venda",
                      # `qt_transicao` = chegou e está em pré-entrada (aguardando liberação). Sem
                      # esta coluna o relatório mostra "estoque 0" sem dizer que a mercadoria já
@@ -3252,6 +3323,14 @@ def _aplicar_filtros_cliente(produtos, skip=()):
             _cm = float(g("cob_max"))
             # cobertura_dias oficial: inclui ruptura (0d) e exclui sem-giro (9999) — igual à tela
             out = [p for p in out if p.get("cobertura_dias") is not None and p["cobertura_dias"] <= _cm]
+        except (TypeError, ValueError):
+            pass
+    # "Entrou nos últimos X dias" (aba Cobertura, João Victor 10/11/2026)
+    if g("entrada_dias") is not None:
+        try:
+            _ed = int(float(g("entrada_dias")))
+            out = [p for p in out if p.get("dias_sem_entrada") is not None
+                   and 0 <= p["dias_sem_entrada"] <= _ed]
         except (TypeError, ValueError):
             pass
     if g("sem_ped") in ("1", "true", "sim"):
@@ -3529,6 +3608,9 @@ def _export_data(view):
         cols = ["codprod", "descricao", "fornecedor", "comprador", "qtdisp", "custo_unit", "giro_mes", "problemas"]
     else:
         produtos, _, _ = _build_produtos()
+        if request.args.get("entrada_dias") is not None:
+            # o que chegou e já saiu só existe neste recorte (ver `chegou_e_saiu`)
+            produtos = produtos + chegou_e_saiu()
         produtos = _aplicar_filtros_cliente(produtos)
         cols = _CSV_COLS.get(view, _CSV_COLS["produtos"])
         if view == "reposicao":
@@ -3778,7 +3860,9 @@ _PDF_COLS = {
                ("valor", "Valor", "money"), ("parado_faixa", "Faixa", "text")],
     "ruptura": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 36), ("fornecedor", "Fornecedor", "text", 22),
                 ("qtdisp", "Disp.", "int"), ("valor", "Valor", "money"), ("cobertura_dias", "Cob.(d)", "int"),
-                ("cobertura_faixa", "Faixa", "text"), ("qtd_ja_pedida", "Já ped.", "int"), ("giro_mes", "Giro/mês", "int"),
+                ("cobertura_faixa", "Faixa", "text"), ("qtd_ja_pedida", "Já ped.", "int"),
+                ("dtultent", "Últ. entrada", "date"), ("qtultent", "Qt. entrada", "int"),
+                ("qt_transicao", "A liberar", "int"), ("giro_mes", "Giro/mês", "int"),
                 ("sugestao_compra", "Sugerido", "int")],
     # sai agrupado por fornecedor (`_PDF_GRUPO`), que tira a coluna Fornecedor: a descrição herda a largura
     "estoque_zero": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 56), ("fornecedor", "Fornecedor", "text", 22),

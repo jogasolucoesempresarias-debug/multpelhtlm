@@ -828,7 +828,21 @@ Distribuição do capital por faixa de cobertura (métrica oficial, §5.3).
 - **Filtro de faixa multi-seleção.** No **121+** há sub-filtro **"sem giro × excesso real"** —
   separa estoque morto (liquidar) de cobertura alta (reduzir compra).
 - **Colunas:** Cód · Produto · Fornecedor · ABC · Comprador · Disp. · Disp. cx · Valor estoque ·
-  Cob. · Já ped. · Giro/mês · Giro cx · Sugerido · Faixa.
+  Cob. · **A liberar** · Já ped. · **Últ. entrada** · Giro/mês · Giro cx · Sugerido · Faixa.
+- **"Entrou nos últimos (dias)"** (10/11/2026, pedido do João Victor: "preciso saber todos os
+  itens que chegaram ontem" para avisar vendas). Recorta pela data da última entrada
+  (`dias_sem_entrada ≤ X`; 1 = hoje e ontem), ordena da mais recente e vale no Excel/PDF
+  (`entrada_dias`). **Últ. entrada** mostra data + quantidade: a quantidade soma só as filiais
+  cuja entrada é a mais recente (`core.ultima_entrada_por_produto`, consulta
+  `q_entradas_recentes`, janela de 30 dias).
+  - Entra também o item que **chegou e já saiu** (estoque zero, sem venda — ex.: 70283/70284,
+    1 cx e 10 un em 06/11, bonificação no dia 07/11), marcado "já saiu". Ele fica **fora da
+    lista principal** (`routes.chegou_e_saiu`, campo `chegou_e_saiu` do `/api/snapshot`): lá
+    cairia no 121+ como estoque morto e no Estoque zerado como ruptura sem pedido. Nenhum
+    contador nem faixa muda por causa dele. Eram 16 itens no Atacado em 10/11.
+  - ⚠️ A data é a da última entrada de **qualquer** natureza no Winthor (compra, devolução,
+    transferência). Se aparecer entrada que não é de fornecedor, a troca é pela data de entrada
+    dos pedidos de compra (`PEDIDO_ENTRADA`, a mesma do Lead time).
 
 ### 7.10 Parado (Estoque) — "o que liquidar"
 Itens com estoque e **≥15 dias** parados. **Reconciliado com a Cobertura:** as faixas

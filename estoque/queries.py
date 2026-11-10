@@ -723,6 +723,31 @@ SELECTCOLUMNS(
 
 
 # ───────────────────────── bloqueio POR FILIAL (pré-entrada × avaria) ──────────
+def q_entradas_recentes(desde, filiais=None):
+    """Última entrada por PRODUTO × FILIAL, só das linhas com `DTULTENT >= desde`.
+
+    Serve o filtro "Entrou nos últimos X dias" da aba Cobertura (João Victor, 10/11/2026: avisar
+    o time de vendas do que chegou na semana) e duas coisas que o snapshot não dá:
+    - a QUANTIDADE da última entrada: o snapshot agrega `MAX(DTULTENT)` e não tem `QTULTENT`; somar
+      o `QTULTENT` de todas as filiais misturaria a entrada de hoje de uma com a de meses atrás de
+      outra. No grão por filial dá para somar só as filiais cuja entrada é a mais recente;
+    - o item que CHEGOU E JÁ SAIU (70283/70284: 1 cx e 10 un em 06/11, bonificação em 07/11): estoque
+      zero e sem venda nos 3 meses fechados, o corte de atividade do snapshot o descarta.
+    Barata: só as linhas com entrada na janela (centenas), nunca o catálogo."""
+    inner = """ADDCOLUMNS(
+        SUMMARIZE(PCEST, PCEST[CODPROD], PCEST[CODFILIAL]),
+        "qtultent", CALCULATE(SUM(PCEST[QTULTENT])),
+        "dtultent", CALCULATE(MAX(PCEST[DTULTENT]))
+    )"""
+    lista = _lista_filiais_dax(filiais)
+    tabela = f"CALCULATETABLE({inner}, PCEST[CODFILIAL] IN {lista})" if lista else inner
+    return f"""EVALUATE
+FILTER(
+    {tabela},
+    [dtultent] >= {_d(desde)}
+)"""
+
+
 def q_bloqueio_filial(filiais=None):
     """Posição de bloqueio no grão PRODUTO × FILIAL — a que `core.qt_em_transicao` precisa para
     separar pré-entrada de avaria.

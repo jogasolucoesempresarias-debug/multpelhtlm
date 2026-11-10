@@ -185,6 +185,8 @@ const TIPS = {
     _title:'Distribuição do estoque por dias de cobertura. Cobertura = ARREDONDA.CIMA(estoque ÷ giro diário); giro 0 = não calculável (cai em 121+). Métrica oficial da planilha.',
     'Faixa':'Faixa de cobertura em que o item cai (0-30, 31-60, 61-90, 91-120, 121+).',
     'Tipo':'No 121+, distingue “sem giro” (estoque morto, liquidar) de “excesso real” (cobertura alta, reduzir compra).',
+    'Últ. entrada':'Data e quantidade da última entrada do item na unidade (qualquer entrada no Winthor — compra, devolução ou transferência). Use o filtro “Entrou nos últimos X dias” para a lista do que chegou na semana.',
+    'A liberar':'Chegou e está em pré-entrada, bloqueada aguardando liberação: ainda não pode ser vendida.',
   },
   estoque_zero:{
     _title:'Todos os produtos com estoque gerencial ≤ 0, com e sem pedido de compra em aberto.',
@@ -463,7 +465,7 @@ async function loadData(){
     const qs=serverQS();
     const [snap,val,planos]=await Promise.all([
       getJSON('/estoque/api/snapshot?'+qs), getJSON('/estoque/api/validade?'+qs), getJSON('/estoque/api/planos').catch(()=>({planos:{}}))]);
-    S.produtosAll=snap.produtos; S.meta=snap; S.validade=val; S.planos=planos.planos||{};
+    S.produtosAll=snap.produtos; S.chegouSaiu=snap.chegou_e_saiu||[]; S.meta=snap; S.validade=val; S.planos=planos.planos||{};
     if(snap.unidade_nome) S.unidadeNome=snap.unidade_nome;
     const br=snap.bi_refresh;
     $('#meta-gerado').textContent = (br&&br.end_fmt)
@@ -754,9 +756,9 @@ function wireEvo(el){
 }
 
 /* ───────── filtros client-side ───────── */
-function filtered(skipCurva){
+function filtered(skipCurva,fonte){
   const f=S.cli, b=f.busca.trim().toLowerCase();
-  return S.produtosAll.filter(p=>{
+  return (fonte||S.produtosAll).filter(p=>{
     if(f.comprador && String(p.codcomprador)!==f.comprador) return false;
     if(!skipCurva && f.curva.length && !f.curva.includes(p.curva_abc)) return false;
     if(f.xyz.length && !f.xyz.includes(p.xyz)) return false;
@@ -875,7 +877,7 @@ function filtrosQS(){
 const FILTROS_DA_ABA={
   produtos:     ['abast','margem','cob_max','sem_ped','a_liberar','desacel'],
   estoque_zero: ['ez_status'],
-  ruptura:      ['cob_faixa','cob_sub','cob_ped'],   // aba "Cobertura" (view `ruptura`)
+  ruptura:      ['cob_faixa','cob_sub','cob_ped','entrada_dias'],   // aba "Cobertura" (view `ruptura`)
   parado:       ['par_faixa','par_classe'],
   fornecedores: ['forn_classe'],
   validade:     ['val_dias','val_faixa'],
@@ -903,6 +905,7 @@ function exportQS(){
   if(meu('cob_faixa') && f.cobFaixa && f.cobFaixa.length) p.set('cob_faixa',f.cobFaixa.join(','));
   if(meu('cob_sub') && f.cobSub) p.set('cob_sub',f.cobSub);
   if(meu('cob_ped') && f.cobPed) p.set('cob_ped',f.cobPed);
+  if(meu('entrada_dias') && entradaDias()!=null) p.set('entrada_dias',entradaDias());
   if(meu('par_faixa') && f.parFaixa && f.parFaixa.length) p.set('par_faixa',f.parFaixa.join(','));
   // ⚠️ sai de `f.parado`, NÃO de um `f.parClasse`: o card "Parado 120+ dias" do Cockpit faz
   // drill com {parado:'muito_critico'} e é ESSE campo que o `filtered()` usa p/ recortar a tela.
@@ -1034,7 +1037,11 @@ function renderRuptura(P){
     {key:'_dispCx',label:'Disp. cx',num:true,fmt:v=>v==null?'—':int(v)},
     {key:'valor',label:'Valor estoque',num:true,fmt:money},
     {key:'cobertura_dias',label:'Cob.',num:true,fmt:cobDiasFmt},
+    {key:'qt_transicao',label:'A liberar',num:true,html:p=>p.qt_transicao>0?`<b>${int(p.qt_transicao)}</b>`:'—'},
     {key:'qtd_ja_pedida',label:'Já ped.',num:true,fmt:v=>v>0?int(v):'—'},
+    // última entrada (João Victor 10/11/2026: "o que chegou da Bombril ontem" sem abrir o Winthor)
+    {key:'dtultent',label:'Últ. entrada',html:p=>!p.dtultent?'—'
+      :`${dt(p.dtultent)}${p.qtultent>0?` <small class="muted">${cxUn(p.qtultent,p.caixa)}</small>`:''}${p.chegou_e_saiu?` <small class="muted" title="Chegou e já saiu: estoque zero e sem venda (ex.: bonificação). Só aparece neste filtro.">· já saiu</small>`:''}`},
     colGiroSpark,{key:'_giroCx',label:'Giro cx',num:true,fmt:v=>v==null?'—':int(v)},
     {key:'sugestao_cx',label:'Sugerido',num:true,html:p=>sugCxN(p)},
     {key:'cobertura_faixa',label:'Faixa',badge:true}];
@@ -1050,7 +1057,16 @@ function renderRuptura(P){
   if(is121&&S.cli.cobSub==='excesso') rf=rf.filter(p=>p.excesso_real);
   if(S.cli.cobPed==='com') rf=rf.filter(p=>(p.qtd_ja_pedida||0)>0);
   if(S.cli.cobPed==='sem') rf=rf.filter(p=>(p.qtd_ja_pedida||0)<=0);
-  rf=[...rf].sort((a,b)=>(b.valor||0)-(a.valor||0));  // maior estoque primeiro (P1)
+  // "Entrou nos últimos X dias": lista do que chegou, para avisar vendas. Inclui o que chegou e
+  // JÁ SAIU (estoque zero, sem venda — fora da lista principal para não mexer nas faixas)
+  const entDias=entradaDias();
+  if(entDias!=null){
+    const extra=filtered(false,S.chegouSaiu||[])
+      .filter(p=>(!cf.length||cf.includes(p.cobertura_faixa))
+        &&(S.cli.cobPed!=='com'||(p.qtd_ja_pedida||0)>0)&&(S.cli.cobPed!=='sem'||(p.qtd_ja_pedida||0)<=0));
+    rf=[...rf,...extra].filter(p=>p.dias_sem_entrada!=null&&p.dias_sem_entrada>=0&&p.dias_sem_entrada<=entDias)
+      .sort((a,b)=>(b.dtultent||'').localeCompare(a.dtultent||'')||(b.valor||0)-(a.valor||0));  // mais recente 1º
+  } else rf=[...rf].sort((a,b)=>(b.valor||0)-(a.valor||0));  // maior estoque primeiro (P1)
   const semG=P.filter(p=>p.cobertura_faixa==='121+'&&p.sem_giro), exc=P.filter(p=>p.excesso_real);
   const el=$('#v-ruptura');
   el.innerHTML=head('Cobertura de estoque por faixa','ruptura')+
@@ -1072,7 +1088,10 @@ function renderRuptura(P){
            <option value="sem" ${S.cli.cobPed==='sem'?'selected':''}>Sem pedido (risco real)</option>
            <option value="com" ${S.cli.cobPed==='com'?'selected':''}>Já comprado</option>
          </select></div>
+       <div class="fb-group"><label>Entrou nos últimos (dias)</label>
+         <input type="number" id="cob-ent" class="fb-control" min="0" max="${ENTRADA_JANELA}" placeholder="todos" value="${entDias!=null?entDias:''}" style="width:110px"></div>
      </div>
+     ${entDias!=null?`<div class="count-line">Itens com entrada nos últimos <b>${int(entDias)}</b> dia(s) — ${entDias===0?'hoje':'de hoje até '+int(entDias)+' dia(s) atrás'}, mais recente primeiro. <b>"A liberar"</b> = chegou mas ainda está em pré-entrada (não pode vender). "Já saiu" = chegou e não tem mais estoque. A data é a da última entrada de qualquer tipo no Winthor.</div>`:''}
      <div class="count-line">Cobertura = <b>ARREDONDA.CIMA(estoque ÷ giro diário)</b>; giro 0 → não calculável (cai em 121+). Métrica oficial da planilha. Ordene por <b>Valor estoque</b> p/ atacar maior capital. No <b>121+</b>, "sem giro" é estoque morto (liquidar) e "excesso real" é cobertura alta (reduzir compra).</div>`+renderTable(rf,cols,'ruptura');
   drawFaixaChart('ch-cob',faixas,f=>cobToggle(f.key));
   el.querySelectorAll('.vfx[data-fkey]').forEach(d=>d.onclick=()=>cobToggle(d.dataset.fkey));
@@ -1080,7 +1099,12 @@ function renderRuptura(P){
   const fx=$('#cob-faixa'); if(fx) fx.addEventListener('change',()=>{S.cli.cobFaixa=[...fx.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);S.cli.cobSub='';render();});
   const sb=$('#cob-sub'); if(sb) sb.onchange=e=>{S.cli.cobSub=e.target.value;render();};
   const pd=$('#cob-ped'); if(pd) pd.onchange=e=>{S.cli.cobPed=e.target.value;render();};
+  const en=$('#cob-ent'); if(en) en.onchange=()=>{ const v=en.value.trim(); S.cli.entDias = v===''?'':Math.min(ENTRADA_JANELA,Math.max(0,+v||0)); render(); };
 }
+// janela do servidor (core.ENTRADA_JANELA_DIAS): além dela a quantidade da entrada não vem e o
+// item que chegou e já saiu não é buscado
+const ENTRADA_JANELA=30;
+function entradaDias(){ const v=S.cli.entDias; return (v===''||v==null||isNaN(+v))?null:+v; }
 
 function renderEstoqueZero(P){
   const z=P.filter(p=>(p.qtdisp||0)<=0);

@@ -95,6 +95,22 @@ def bloqueio_filial(filiais=None):
                 for (cod, fil, qb, qu, dte) in cur.fetchall()]
 
 
+def entradas_recentes(desde, filiais=None):
+    """Espelha q_entradas_recentes: última entrada no grão CODPROD × CODFILIAL, só `dtultent >= desde`.
+    Mesma defesa do `bloqueio_filial` para base sintética sem `qtultent`."""
+    with analytics_conn() as c:
+        cur = c.cursor()
+        cur.execute("""SELECT 1 FROM information_schema.columns
+                       WHERE table_name='pcest' AND column_name='qtultent'""")
+        col_qu = "qtultent" if cur.fetchone() else "NULL::numeric"
+        cur.execute(f"""
+            SELECT codprod, codfilial, {col_qu}, dtultent
+            FROM pcest WHERE dtultent >= %s{_fil(filiais)}
+        """, (desde,))
+        return [{"CODPROD": cod, "CODFILIAL": fil, "qtultent": _f(qu), "dtultent": _iso(dte)}
+                for (cod, fil, qu, dte) in cur.fetchall()]
+
+
 # ───────────────────────── estoque de UM produto em cada filial (drawer 360°) ─────────
 def estoque_filiais_produto(codprod):
     """Espelha q_estoque_filiais_produto: PCEST de um produto, uma linha por filial, SEM recorte

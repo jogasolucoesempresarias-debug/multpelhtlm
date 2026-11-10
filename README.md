@@ -960,6 +960,14 @@ item da tela que mede ruptura — e os fallbacks de giro do `core` (`giro_novo_i
   comprador e a série da Evolução (um degrau pequeno no dia do deploy — o passado não se refaz,
   porque o item não estava na foto). A meta do Orçamento (`_venda_comprador_30d`) segue no
   snapshot de sempre.
+- **Item que CHEGOU e já saiu** (10/11/2026, João Victor: *"Pq os itens 70283 e 70284 não aparecem
+  na JOGA? Eles chegaram dia 06/11"*). Itens novos: 1 cx e 10 un entraram em 06/11 e saíram em
+  **bonificação** (SB) no dia 07/11 — estoque zero, nenhuma venda `S`, então nem o resgate acima os
+  traz. `routes._chegou_e_saiu` busca pela entrada dos últimos 30 dias (`q_entradas_recentes`) e
+  eles são montados junto, mas **separados da lista principal** (`routes.chegou_e_saiu`, campo
+  `chegou_e_saiu` do `/api/snapshot`): só aparecem no filtro "Entrou nos últimos X dias" da
+  Cobertura (MANUAL §7.9). Na lista principal virariam "estoque morto" no 121+ e "ruptura sem
+  pedido" no Estoque zerado. Eram 16 no Atacado em 10/11.
 - O texto do 360° dizia "item novo, menos de 3 meses de casa" para todo giro do fallback; agora
   não afirma o motivo (pode ser item novo ou que ficou sem vender).
   Gate: `tests/test_snapshot_venda_no_mes.py`.

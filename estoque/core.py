@@ -400,6 +400,29 @@ def qt_em_transicao(qtbloq, dtultent, hoje=None, dias=DIAS_TRANSICAO, linhas=Non
     return _uma(qtbloq, dtultent)
 
 
+ENTRADA_JANELA_DIAS = 30   # quanto para trás o filtro "Entrou nos últimos X dias" alcança
+
+
+def ultima_entrada_por_produto(linhas):
+    """{cod: {"dtultent": "AAAA-MM-DD", "qtultent": qt}} a partir das linhas POR FILIAL.
+
+    A quantidade soma só as filiais cuja entrada é a MAIS RECENTE do produto: o `QTULTENT` de cada
+    filial é a quantidade da última entrada DELA, e somar todas juntaria a NF de hoje da Matriz com
+    uma de agosto do Depósito."""
+    por_cod = {}
+    for l in linhas or []:
+        dt = _parse_dt(l.get("dtultent"))
+        if dt is None:
+            continue
+        cod = int(_n(l.get("CODPROD")))
+        cur = por_cod.get(cod)
+        if cur is None or dt > cur[0]:
+            por_cod[cod] = [dt, _n(l.get("qtultent"))]
+        elif dt == cur[0]:
+            cur[1] += _n(l.get("qtultent"))
+    return {c: {"dtultent": dt.isoformat(), "qtultent": _round(qt)} for c, (dt, qt) in por_cod.items()}
+
+
 def arredonda_caixa(qt, qtunitcx):
     """Arredonda `qt` PRA CIMA em caixas fechadas. Retorna (qt_arredondado, n_caixas).
     No-op (qt, None) se qtunitcx<=1 ou qt<=0."""
