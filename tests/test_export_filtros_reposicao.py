@@ -131,3 +131,19 @@ def test_agrupamento_sem_group_valor_mantem_ordem_alfabetica():
               {"codprod": 2, "fornecedor": "ALFA", "descricao": "b", "valor": 99}]
     txt = _texto_pdf(routes._gerar_pdf("produtos", linhas, group_by="fornecedor"))
     assert txt.find("ALFA") < txt.find("ZETA")
+
+
+def test_filtro_aguardando_liberacao_chega_ao_export(app_ctx):
+    """"Só aguardando liberação" do Explorador (João Victor 09/11/2026): tudo em pré-entrada,
+    COM ou SEM saldo — o 46459 tinha 8 un livres e 360 esperando liberação."""
+    prods = [_p(1, qt_transicao=360, qtdisp=8), _p(2, qt_transicao=240, qtdisp=0),
+             _p(3, qt_transicao=0, qtdisp=0), _p(4)]
+    assert {p["codprod"] for p in _filtrar(app_ctx, prods, "a_liberar=1")} == {1, 2}
+    assert len(_filtrar(app_ctx, prods, "")) == 4, "sem o parâmetro, nada é recortado"
+
+
+def test_colunas_avaria_e_a_liberar_no_export_do_explorador():
+    assert {"qt_avaria", "qt_transicao"} <= set(routes._CSV_COLS["produtos"])
+    assert "qtbloq" not in routes._CSV_COLS["produtos"], \
+        "o bloqueio cru como 'avaria' somava a pré-entrada"
+    assert "qt_transicao" in {c[0] for c in routes._PDF_COLS["produtos"]}

@@ -68,9 +68,25 @@ def test_bloqueio_maior_que_a_ultima_entrada_e_avaria_no_excedente():
     linhas = [{"qtbloq": 200, "dtultent": "2026-07-27", "qtultent": 12}]
     assert core.qt_em_transicao(200, "2026-07-27", hoje=HOJE, linhas=linhas) == 12
     # entrada maior que o bloqueio não inventa transição além do que está bloqueado
-    assert core.qt_em_transicao(12, "2026-07-27", hoje=HOJE,
-                                linhas=[{"qtbloq": 12, "dtultent": "2026-07-27",
-                                         "qtultent": 500}]) == 12
+    assert core.qt_em_transicao(300, "2026-07-27", hoje=HOJE,
+                                linhas=[{"qtbloq": 300, "dtultent": "2026-07-27",
+                                         "qtultent": 500}]) == 300
+
+
+def test_sobra_de_avaria_depois_da_liberacao_NAO_e_pre_entrada():
+    """46459 (10/11/2026): de manhã 433 bloqueadas = 73 avaria + 360 da NF → 360 a liberar.
+    Liberada a NF, sobram as 73 com a entrada de 360 ainda na janela — e viravam "a liberar".
+    Menos da metade da última entrada bloqueada é sobra, não NF esperando liberação."""
+    manha = [{"qtbloq": 433, "dtultent": "2026-07-26", "qtultent": 360}]
+    tarde = [{"qtbloq": 73, "dtultent": "2026-07-26", "qtultent": 360}]
+    assert core.qt_em_transicao(433, "2026-07-26", hoje=HOJE, linhas=manha) == 360
+    assert core.qt_em_transicao(73, "2026-07-26", hoje=HOJE, linhas=tarde) == 0
+    # pedaço de uma entrada grande (12 de 2.000) também é sobra
+    assert core.qt_em_transicao(12, "2026-07-26", hoje=HOJE,
+                                linhas=[{"qtbloq": 12, "dtultent": "2026-07-26", "qtultent": 2000}]) == 0
+    # liberação parcial com a maior parte ainda presa continua a liberar (66734: 200 de 250)
+    assert core.qt_em_transicao(200, "2026-07-26", hoje=HOJE,
+                                linhas=[{"qtbloq": 200, "dtultent": "2026-07-26", "qtultent": 250}]) == 200
 
 
 def test_sem_qtultent_o_teto_nao_se_aplica():
@@ -212,3 +228,35 @@ def test_cobertura_projetada_reflete_a_mercadoria_que_chegou():
     sem = _produto(240, "2026-01-10")
     assert com["cobertura_proj"] is not None
     assert sem["cobertura_proj"] in (None, 0) or sem["cobertura_proj"] < com["cobertura_proj"]
+
+
+# ─────────── Explorador: Avaria × A liberar (João Victor, 09/11/2026) ───────────
+# O 46459 mostrava "Avaria 433" no Explorador e "Recebido (pré-entrada) 360" na ficha. Os dois
+# vinham do mesmo QTBLOQUEADA: 433 = 73 de avaria + 360 da NF de 06/11 esperando liberação.
+def test_avaria_do_explorador_desconta_a_pre_entrada():
+    linhas = [{"qtbloq": 433, "dtultent": "2026-07-26", "qtultent": 360}]
+    p = _produto(433, "2026-07-26", qtestger=441, bloqueio=linhas)
+    assert p["qt_transicao"] == 360
+    assert p["qt_avaria"] == 73
+    assert p["qtbloq"] == 433, "o bloqueio cru continua disponível para quem o usa"
+    assert p["qtdisp"] == 8
+
+
+def test_avaria_velha_continua_inteira_como_avaria():
+    linhas = [{"qtbloq": 41, "dtultent": "2026-01-15", "qtultent": 41}]
+    p = _produto(41, "2026-01-15", bloqueio=linhas)
+    assert p["qt_transicao"] == 0
+    assert p["qt_avaria"] == 41
+
+
+def test_avaria_nunca_fica_negativa():
+    """O snapshot soma filiais; uma delas pode vir com bloqueio negativo (67264, filial 3)."""
+    p = _produto(-5, None, qtestger=0)
+    assert p["qt_avaria"] == 0
+
+
+def test_46459_depois_da_liberacao_mostra_avaria_e_nada_a_liberar():
+    linhas = [{"qtbloq": 73, "dtultent": "2026-07-26", "qtultent": 360}]
+    p = _produto(73, "2026-07-26", qtestger=441, bloqueio=linhas)
+    assert p["qt_transicao"] == 0
+    assert p["qt_avaria"] == 73

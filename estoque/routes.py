@@ -3117,7 +3117,7 @@ _FICHA_PDF_ROTULO = {
 # ───────────────────────── export CSV ─────────────────────────
 _CSV_COLS = {
     "produtos": ["codprod", "descricao", "fornecedor", "comprador", "curva_abc", "xyz", "abc_xyz",
-                 "qtdisp", "qtd_ja_pedida", "qtbloq", "giro_mes", "cobertura", "dias_sem_venda",
+                 "qtdisp", "qtd_ja_pedida", "qt_avaria", "qt_transicao", "giro_mes", "cobertura", "dias_sem_venda",
                  "valor", "venda", "venda_ano_ant", "crescimento", "lucro", "margem",
                  "status_abast", "status_parado"],
     # ABC-XYZ tinha caído no fallback de "produtos" (21 colunas, a maioria irrelevante aqui).
@@ -3256,6 +3256,9 @@ def _aplicar_filtros_cliente(produtos, skip=()):
             pass
     if g("sem_ped") in ("1", "true", "sim"):
         out = [p for p in out if (p.get("qtd_ja_pedida") or 0) <= 0]
+    # "Só aguardando liberação": tudo em pré-entrada, com ou sem saldo (João Victor 09/11/2026)
+    if g("a_liberar") in ("1", "true", "sim"):
+        out = [p for p in out if (p.get("qt_transicao") or 0) > 0]
     # watchlist "Em desaceleração" (drill do card do Cockpit). Filtro COMPOSTO — janela sem venda
     # + cobertura + piso de valor — e é por isso que ele é um parâmetro próprio em vez de uma
     # combinação de `cob_max`/`par_faixa`: nenhum filtro existente expressa "cobertura MÍNIMA", e
@@ -3753,6 +3756,7 @@ _PDF_COLS = {
                   ("giro_mes", "Giro/mês", "int"), ("problemas", "Problemas", "text", 34)],
     "produtos": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 40), ("fornecedor", "Fornecedor", "text", 26),
                  ("curva_abc", "ABC", "text"), ("qtdisp", "Disp.", "int"), ("qtd_ja_pedida", "Já ped.", "int"),
+                 ("qt_transicao", "A liberar", "int"),
                  ("giro_mes", "Giro/mês", "int"), ("cobertura", "Cob.(d)", "int"), ("valor", "Valor", "money"),
                  ("status_abast", "Abast.", "text")],
     "abcxyz": [("codprod", "Cód", "text"), ("descricao", "Produto", "text", 38), ("fornecedor", "Fornecedor", "text", 24),

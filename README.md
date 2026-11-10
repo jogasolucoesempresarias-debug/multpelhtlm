@@ -1663,7 +1663,11 @@ Doc completa das fórmulas em **`docs/estoque/planilha_v3.md`**.
   como ruptura e fora do valor de estoque. Status próprio `aguardando_liberacao`.
   ⚠️ É **heurística** (bloqueio com entrada ≤7d): o Winthor usa o MESMO `QTBLOQUEADA` p/ avaria
   e pré-entrada e o `MOTIVOBLOQESTOQUE` vem vazio. Validada contra 2ª fonte (`PEDIDO_ENTRADA`):
-  21/21 nos ≤3d, 2/122 no bloqueio >30d. **Trocar por `PCMOVPREENT`** (107.566 linhas no Oracle)
+  21/21 nos ≤3d, 2/122 no bloqueio >30d. **Desde 10/11/2026, só conta bloqueio ≥ metade da última
+  entrada** (`FRACAO_MIN_ENTRADA`): a sobra de avaria depois da liberação da NF virava "a liberar"
+  (46459: 73 de 360). O Explorador separa as colunas **Avaria** (`qt_avaria`) e **A liberar**
+  (`qt_transicao`) e ganhou o filtro "Só aguardando liberação" (`a_liberar`, também no export).
+  **Trocar por `PCMOVPREENT`** (107.566 linhas no Oracle)
   quando publicada — só o corpo da função muda. `PCNFENT.CONFERIDO` é campo morto ('N' em 2.287,
   nulo em 26, nenhum 'S').
   - 🩹 **AVARIA aparecendo como pré-entrada** (08/2026, achado pelo diretor — "na teoria o que é

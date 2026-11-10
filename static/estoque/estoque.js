@@ -330,7 +330,8 @@ const TIPS = {
   },
   produtos:{
     _title:'Tabela completa de produtos com todos os indicadores. Filtre por abastecimento e por margem.',
-    'Avaria':'Quantidade bloqueada/avariada (QTBLOQUEADA) — não entra no disponível para venda.',
+    'Avaria':'Quantidade bloqueada por avaria — não entra no disponível para venda. Não inclui a mercadoria que acabou de chegar e espera liberação (essa está em "A liberar").',
+    'A liberar':'Chegou e está em pré-entrada, bloqueada aguardando conferência/liberação. Ainda não pode ser vendida, mas já conta na projeção — não precisa comprar de novo. É identificada pelo bloqueio que bate com uma entrada dos últimos 7 dias.',
     'Dias s/v':'Dias desde a última venda.',
     'Abast.':'Status de abastecimento: urgente, alta, atenção, OK, excesso ou sem giro.',
   },
@@ -872,7 +873,7 @@ function filtrosQS(){
    Filtro local novo entra AQUI — esta é a única fonte de verdade da propriedade. Espalhar
    `if(S.view===...)` foi o que deixou o `par_faixa` protegido e o `par_classe` ao lado dele não. */
 const FILTROS_DA_ABA={
-  produtos:     ['abast','margem','cob_max','sem_ped','desacel'],
+  produtos:     ['abast','margem','cob_max','sem_ped','a_liberar','desacel'],
   estoque_zero: ['ez_status'],
   ruptura:      ['cob_faixa','cob_sub','cob_ped'],   // aba "Cobertura" (view `ruptura`)
   parado:       ['par_faixa','par_classe'],
@@ -896,6 +897,7 @@ function exportQS(){
   if(meu('margem') && (f.margem||[]).length) p.set('margem',f.margem.join(','));
   if(meu('cob_max') && f.cobMax!==''&&f.cobMax!=null&&!isNaN(+f.cobMax)) p.set('cob_max',f.cobMax);
   if(meu('sem_ped') && f.semPed) p.set('sem_ped','1');
+  if(meu('a_liberar') && f.aLiberar) p.set('a_liberar','1');
   if(meu('desacel') && f.desacel) p.set('desacel','1');   // filtro COMPOSTO: o back o refaz com os mesmos params
   if(meu('ez_status') && f.ezStatus) p.set('ez_status',f.ezStatus);
   if(meu('cob_faixa') && f.cobFaixa && f.cobFaixa.length) p.set('cob_faixa',f.cobFaixa.join(','));
@@ -2224,7 +2226,10 @@ function renderProdutos(P){
   P.forEach(p=>{const cx=p.caixa||1; p._giroCx=cx>1?Math.round((p.giro_mes||0)/cx):(p.giro_mes||0); p._dispCx=cx>1?Math.round((p.qtdisp||0)/cx):(p.qtdisp||0);});
   const cols=[colCod,colProd,colForn,{key:'curva_abc',label:'ABC',badge:true},{key:'xyz',label:'XYZ',badge:true},
     {key:'qtdisp',label:'Disp.',num:true,fmt:int},{key:'_dispCx',label:'Disp. cx',num:true,fmt:v=>v==null?'—':int(v)},
-    {key:'qtbloq',label:'Avaria',num:true,fmt:v=>v?int(v):'—'},
+    // Avaria e A liberar eram UMA coluna (o QTBLOQUEADA cru): no 46459 ela dizia 433 de avaria
+    // quando 360 eram a NF de 06/11 esperando liberação (João Victor, 09/11/2026)
+    {key:'qt_avaria',label:'Avaria',num:true,fmt:v=>v?int(v):'—'},
+    {key:'qt_transicao',label:'A liberar',num:true,html:p=>p.qt_transicao>0?`<b>${int(p.qt_transicao)}</b>`:'—'},
     {key:'qtd_ja_pedida',label:'Já ped.',num:true,fmt:v=>v>0?int(v):'—'},
     colGiroSpark,{key:'_giroCx',label:'Giro cx',num:true,fmt:v=>v==null?'—':int(v)},
     // Cob. = cobertura_dias oficial (igual às outras abas): item em ruptura mostra "0d" (não "∞"),
@@ -2236,13 +2241,16 @@ function renderProdutos(P){
     {key:'valor',label:'Estoque R$',num:true,fmt:money},{key:'status_abast',label:'Abast.',badge:true}];
   // filtros LOCAIS desta aba (não afetam as outras abas)
   const abn=S.cli.abast||[], mgn=S.cli.margem||[];
-  const cobMax=S.cli.cobMax, semPed=!!S.cli.semPed;
+  const cobMax=S.cli.cobMax, semPed=!!S.cli.semPed, aLiberar=!!S.cli.aLiberar;
   let rows=P;
   if(abn.length) rows=rows.filter(p=>abn.includes(p.status_abast));
   if(mgn.length) rows=rows.filter(p=>mgn.includes(margemBucket(p)));
   // cobertura ≤ X dias: usa cobertura_dias oficial → inclui ruptura (0d) e exclui sem-giro (9999)
   if(cobMax!==''&&cobMax!=null&&!isNaN(+cobMax)) rows=rows.filter(p=>p.cobertura_dias!=null&&p.cobertura_dias<=+cobMax);
   if(semPed) rows=rows.filter(p=>(p.qtd_ja_pedida||0)<=0);
+  // a lista de "tudo que está aguardando liberação", com ou sem saldo — o Estoque zerado só
+  // mostra a pré-entrada de quem está zerado
+  if(aLiberar) rows=rows.filter(p=>(p.qt_transicao||0)>0);
   const abastCtl=`<div class="fb-group" style="margin:0"><label>Abastecimento</label>
       <details class="ms" id="pr-abast"><summary class="fb-control">${abastLabel(abn)}</summary>
         <div class="ms-menu">${Object.entries(ABAST_LABELS).map(([v,l])=>`<label><input type="checkbox" value="${v}" ${abn.includes(v)?'checked':''}>${l}</label>`).join('')}</div>
@@ -2255,7 +2263,9 @@ function renderProdutos(P){
       <input type="number" id="pr-cobmax" class="fb-control" min="0" placeholder="todos" value="${cobMax!=null?cobMax:''}" style="width:110px"></div>`;
   const sempedCtl=`<div class="fb-group" style="margin:0"><label>Pedido</label>
       <label style="display:flex;align-items:center;gap:7px;height:32px;cursor:pointer;color:var(--text)"><input type="checkbox" id="pr-semped" ${semPed?'checked':''}> Só sem pedido</label></div>`;
-  $('#v-produtos').innerHTML=head('Explorador de produtos','produtos')+`<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px">${abastCtl}${margemCtl}${cobCtl}${sempedCtl}</div>`+renderTable(rows,cols,'produtos');
+  const liberarCtl=`<div class="fb-group" style="margin:0"><label>Pré-entrada</label>
+      <label style="display:flex;align-items:center;gap:7px;height:32px;cursor:pointer;color:var(--text)"><input type="checkbox" id="pr-aliberar" ${aLiberar?'checked':''}> Só aguardando liberação</label></div>`;
+  $('#v-produtos').innerHTML=head('Explorador de produtos','produtos')+`<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px">${abastCtl}${margemCtl}${cobCtl}${sempedCtl}${liberarCtl}</div>`+renderTable(rows,cols,'produtos');
   const d=$('#pr-abast');
   if(d) d.addEventListener('change',()=>{ S.cli.abast=[...d.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value); render(); });
   const dm=$('#pr-margem');
@@ -2264,6 +2274,8 @@ function renderProdutos(P){
   if(ci) ci.onchange=()=>{ const v=ci.value.trim(); S.cli.cobMax = v===''?'':Math.max(0,+v||0); render(); };
   const sp=$('#pr-semped');
   if(sp) sp.onchange=()=>{ S.cli.semPed=sp.checked; render(); };
+  const al=$('#pr-aliberar');
+  if(al) al.onchange=()=>{ S.cli.aLiberar=al.checked; render(); };
 }
 
 const STAT_LUCRO={alta:['Alta entrega',C.green],boa:['Boa entrega',C.accent],baixa:['Entrega baixa',C.dim],negativo:['Lucro negativo',C.red]};

@@ -215,7 +215,7 @@ estoque-alvo         = giro_diário × (lead + cobertura_alvo)   (10 + 45 = 55 d
 **aberto** entra na projeção — senão contaria em dobro.
 
 ### 5.6 Pré-entrada (mercadoria que chegou e aguarda liberação)
-> **Em transição = QTBLOQUEADA, quando a última entrada foi há ≤ 7 dias.**
+> **Em transição = QTBLOQUEADA, quando a última entrada foi há ≤ 7 dias e o bloqueio é ≥ metade dela.**
 
 **Por que existe:** na pré-entrada o Winthor **baixa o `QTENTREGUE`** (o item sai de "já pedido")
 e lança a quantidade em `QTESTGER` **e** em `QTBLOQUEADA` — o disponível fica 0. Sem tratar isso,
@@ -230,6 +230,11 @@ a sugestão em silêncio).
   `MOTIVOBLOQESTOQUE` vem vazio. Discrimina-se pela **data**: bloqueio recente = transição;
   bloqueio velho = avaria de verdade (e essa deve mesmo continuar sugerindo compra). Validado
   contra 2ª fonte (`PEDIDO_ENTRADA`): **21/21** nos ≤3 dias, **2/122** no bloqueio >30 dias.
+- **Piso de metade da última entrada** (10/11/2026, aprovado pelo João Victor para avaliar): só é
+  pré-entrada o bloqueio de **pelo menos metade** da última entrada (`FRACAO_MIN_ENTRADA`). A
+  pré-entrada bloqueia a NF inteira; o pedaço que sobra depois da liberação é avaria. Caso: 46459,
+  433 bloqueadas (73 avaria + 360 da NF) → liberados os 360, as 73 apareciam como "a liberar".
+  No BI de 09/11 (Atacado): 103 → 19 itens a liberar; sugestão de compra +0,4%.
 
 ### 5.7 Estoque projetado
 > **Projetado = disponível + já pedido + em transição (pré-entrada)**
@@ -1011,10 +1016,17 @@ nada e devolve **zero produtos em silêncio**.
 
 ### 7.21 Produtos (Análise) — o explorador
 Tabela completa de todos os produtos: Cód · Produto · Fornecedor · ABC · XYZ · Disp. · Disp. cx ·
-**Avaria** · Giro/mês · Giro cx · Cob. · Dias s/V · Venda · Lucro · Margem · Estoque · Abast.
+**Avaria** · **A liberar** · Já ped. · Giro/mês · Giro cx · Cob. · Dias s/V · Venda · Lucro · Margem · Estoque · Abast.
+- **Avaria × A liberar** (09/11/2026): o `QTBLOQUEADA` do Winthor guarda as duas coisas. **A liberar**
+  é a pré-entrada (`qt_transicao`, §5.6: bloqueio que bate com uma entrada dos últimos 7 dias) e
+  **Avaria** é o resto (`qt_avaria`). Antes a coluna Avaria mostrava o bloqueio cru: o 46459 dizia
+  433 de avaria quando eram 73 de avaria + 360 da NF de 06/11 esperando liberação.
 - **Colunas Cód + Produto congeladas** ao rolar lateralmente.
 - Filtros locais de **Abastecimento** (status, multi-seleção), **Margem** (Negativa · 0–10% ·
-  10–20% · 20–30% · 30%+ · Sem venda), **Cobertura ≤ (dias)** e **Só sem pedido**.
+  10–20% · 20–30% · 30%+ · Sem venda), **Cobertura ≤ (dias)**, **Só sem pedido** e
+  **Só aguardando liberação** (`a_liberar`). Este último é a lista de tudo o que está em
+  pré-entrada, **com ou sem saldo** — o Estoque zerado (§7.6) só mostra a pré-entrada de quem está
+  zerado. Ordenar por **Cob.** traz primeiro os quase zerados.
 - É o **destino do drill** do card "Em risco" do Painel gerencial (§5.18): ele chega com
   `Cobertura ≤ limiar−1` já preenchido, e o Excel/PDF saem com o mesmo recorte.
 

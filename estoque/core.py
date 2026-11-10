@@ -320,6 +320,7 @@ def previsao_giro_sazonal(saz, mes):
 
 
 DIAS_TRANSICAO = 7        # janela do bloqueio recente (ver qt_em_transicao)
+FRACAO_MIN_ENTRADA = 0.5  # bloqueio < metade da última entrada = sobra de avaria (ver qt_em_transicao)
 
 
 def qt_em_transicao(qtbloq, dtultent, hoje=None, dias=DIAS_TRANSICAO, linhas=None):
@@ -355,6 +356,14 @@ def qt_em_transicao(qtbloq, dtultent, hoje=None, dias=DIAS_TRANSICAO, linhas=Non
        Se há 200 un bloqueadas e a última entrada trouxe 12, no máximo 12 podem ser pré-entrada —
        as outras 188 são avaria e devem continuar contando como ruptura (e sugerindo compra).
        Cap, não filtro: descartar a linha inteira jogaria fora a parte legítima.
+    3. **Piso de METADE da última entrada** (10/11/2026, aprovado pelo João Victor "aplicar e
+       avaliar"). Depois que a NF é liberada, a avaria que sobra continua casando com a entrada
+       recente por até 7 dias: o 46459 tinha 433 bloqueadas (73 avaria + 360 da NF de 06/11);
+       liberados os 360, as 73 viraram "a liberar". A pré-entrada bloqueia a NF inteira — então
+       bloqueio menor que metade da última entrada é sobra (avaria). Medido no BI de 09/11
+       (Atacado): 103 → 19 itens a liberar; sugestão NF +0,4% (erro na direção de comprar).
+       Ainda é estimativa: as últimas 60 de uma entrada de 600, todas bloqueadas, não dá para
+       separar. O dado exato é a `PCMOVPREENT` (abaixo).
 
     Sem `linhas` (fixtures antigas, modo BD sem a query) cai no comportamento anterior — errado
     a favor de comprar de novo, que é o erro que já existia e não uma regressão nova.
@@ -378,7 +387,12 @@ def qt_em_transicao(qtbloq, dtultent, hoje=None, dias=DIAS_TRANSICAO, linhas=Non
         if dt is None or (hoje - dt).days > lim:
             return 0.0
         qu = _n(qult)
-        return min(q, qu) if qu > 0 else q
+        if qu <= 0:
+            return q
+        # 3. menos da METADE da última entrada bloqueada = sobra, não NF esperando liberação
+        if q < FRACAO_MIN_ENTRADA * qu:
+            return 0.0
+        return min(q, qu)
 
     if linhas:
         return float(sum(_uma(l.get("qtbloq"), l.get("dtultent"), l.get("qtultent"))
@@ -1378,6 +1392,11 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
             "qtd_ja_pedida": _round(qtd_ja_pedida),
             "estoque_projetado": _round(estoque_projetado),
             "qt_transicao": _round(qt_transicao),   # pré-entrada: chegou, aguarda liberação
+            # o resto do QTBLOQUEADA, que é avaria de verdade. O Explorador mostrava o `qtbloq`
+            # cru como "Avaria" e somava a pré-entrada: no 46459 (09/11/2026) eram 433 = 73 de
+            # avaria + 360 da NF de 06/11 esperando liberação. Piso em zero porque o snapshot
+            # soma filiais e uma delas pode vir com bloqueio negativo (67264 na filial 3).
+            "qt_avaria": _round(max(0.0, qtbloq - qt_transicao)),
             "cobertura_proj": _round(cobertura_proj, 1) if cobertura_proj is not None else None,
             "valor_sugerido_liq": _round(valor_sugerido_liq),
             # régua da NF — é ESTA que consome a meta do Orçamento (PCPEDIDO[VLTOTAL])
