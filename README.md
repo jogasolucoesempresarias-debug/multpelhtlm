@@ -243,6 +243,31 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
     Validado na demo: BOM PRECO (5043) sai com 235 itens / R$ 23.277 contra 3.659 da empresa; drawer,
     CSV e "Limpar filtros" honram o cliente. Fase 2 (cliente × empresa: o que ele não compra)
     **não** foi pedida — "fase 1 basta".
+  - 🩹 **Totais "errados": venda fora da régua do RCA e cards fora do filtro** (12/11/2026, João
+    Victor: *"esses valores totais estão errados… parece não respeitar o filtro de fornecedor ou do
+    time"*). Dois defeitos, medidos no BI:
+    1. **A venda saía ~1% ACIMA do Dashboard em todo time** (time 17: R$ 28,71 mi × 28,44 mi; 19,
+       15 e 4 idem). A curva usava `[VENDA LIQUIDA]`/`[LUCRO TOTAL]` com `FILTER(FATURAMENTO_VENDAS, …)`
+       e a devolução não saía na régua do RCA — no time 19, R$ 28 mil descontados de R$ 170 mil.
+       Hoje `_abc_medidas_rca` faz a conta do `expr_venda_liquida_rca` (bruta por DTSAIDA −
+       devolução e avulsa por DTENT, escopo nas TRÊS tabelas), agrupando por dimensão comum
+       (`PCPRODUT`, `CALENDARIO`, `PCUSUARI`) — tabela, drawer e "quem vende". Bate no centavo
+       com o RCA. A margem não mudava (o erro era proporcional).
+       ⚠️ **Filtro de COLUNA, não `FILTER(tabela)`**: mesmo número, **124 s × 1 s** na empresa
+       inteira (armadilha nº 24). Cada predicado do `_abc_escopo_frag` é de uma coluna só.
+       ⚠️ Os totais caem ~1% e itens perto dos cortes 80/95 podem trocar de classe, sem ninguém
+       mexer na operação — avisar. Cache `abc:full`/`abc:produto` `v`=4.
+    2. **Os cards eram sempre do escopo inteiro**; fornecedor/depto/busca só recortavam a tabela.
+       Hoje cards e resumo do PDF somam o RECORTE (`resumoDe` no front, espelho de
+       `curva_abc.resumo`), com a classe de cada item ainda vinda da curva do escopo. A classe
+       **não** recorta o resumo (é o que os cards separam). No recorte, "Concentração" vira "Itens
+       A no recorte" — "X% dos itens fazem 80% da venda" não vale para o subconjunto. O Pareto
+       continua sendo a curva inteira, e a tela diz.
+    ⚠️ **A mesma medida nativa segue em ~30 consultas** (Carteira, Categorias, Radar, Mix, top
+    deptos…), aceita como "ranking, não soma" (comentário no `api_dashboard`). Onde virar TOTAL em
+    R$ ao lado de uma tela RCA, vai divergir ~1% do mesmo jeito.
+    ⚠️ Modo postgres (`provider_sql.abc_produtos`) soma só a venda bruta, sem devolução — a demo.
+    Gate: `tests/test_abc_regua_rca_e_recorte.py`.
   - Gate: `tests/test_curva_abc.py` (37 testes: motor, RBAC, cache por escopo, export, amostra,
     drawer, período, margem, estreitamento do supervisor, cliente, modo postgres).
 - **Metas** — réplica das 4 telas META (Venda/Rentab/Clientes/Mix): meta própria (Postgres) × realizado (2º dataset META) × projeção, drill de vendedores, editor admin.

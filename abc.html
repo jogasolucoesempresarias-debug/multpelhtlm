@@ -182,11 +182,12 @@
       <div class="sub" id="k_C_sub">&nbsp;</div>
     </div>
     <div class="kpi-card">
-      <div class="label">Concentração</div>
+      <div class="label" id="k_conc_lbl">Concentração</div>
       <div class="value" id="k_conc">—</div>
       <div class="sub" id="k_conc_sub">dos itens fazem 80% da venda</div>
     </div>
   </div>
+  <div id="kpiRecorte" class="hidden" style="margin:-4px 0 12px;font-size:0.76rem;color:var(--accent);"></div>
 
   <div class="chart-card">
     <h3>Curva de Pareto</h3>
@@ -364,15 +365,19 @@ function filtroQS() {
   return qs;
 }
 function codStr(v) { if (v == null) return ''; const n = Number(v); return Number.isFinite(n) && n === Math.trunc(n) ? String(n) : String(v); }
-function aplicarFiltros(rows) {
+function aplicarFiltros(rows, semClasse) {
   const f = filtrosTela();
   return rows.filter(r =>
-    (!f.classes.size || f.classes.has(r.classe)) &&
+    (semClasse || !f.classes.size || f.classes.has(r.classe)) &&
     (!f.codepto || codStr(r.codepto) === codStr(f.codepto)) &&
     (!f.codfornec || codStr(r.codfornec) === f.codfornec) &&
     (!f.busca || (r.descricao || '').toLowerCase().includes(f.busca) || String(r.codprod) === f.busca));
 }
-function onFiltroTela() { renderTabela(); atualizarBotaoLimpar(); }
+// Linhas do RECORTE dos cards: depto/fornecedor/busca, mas NÃO a classe — é a classe que os cards
+// separam (com "só A" marcado, B e C apareceriam zerados). O servidor faz o mesmo no PDF.
+function rowsRecorte() { return aplicarFiltros(_rows, true); }
+function temRecorte() { const f = filtrosTela(); return !!(f.codepto || f.codfornec || f.busca); }
+function onFiltroTela() { renderKpis(); renderTabela(); atualizarBotaoLimpar(); }
 function toggleClasse(c) {
   if (_classes.has(c)) _classes.delete(c); else _classes.add(c);
   document.querySelectorAll('[data-classe]').forEach(el => el.classList.toggle('active', _classes.has(el.dataset.classe)));
@@ -434,16 +439,53 @@ async function carregar() {
   atualizarBotaoLimpar();
 }
 
+// Espelho de `curva_abc.resumo` (Python) — mesma conta, para os cards seguirem o filtro da tela sem
+// ida ao servidor. Margem = Σ lucro ÷ Σ venda dos itens com venda > 0 (ponderada, nunca média).
+function margemPct(lucro, venda) { return venda > 0 ? Math.round(lucro / venda * 10000) / 100 : null; }
+function resumoDe(rows) {
+  const pos = rows.filter(i => (i.venda || 0) > 0);
+  const totalVenda = pos.reduce((s, i) => s + i.venda, 0);
+  const totalLucro = pos.reduce((s, i) => s + (i.lucro || 0), 0);
+  const classes = {};
+  for (const c of ['A', 'B', 'C']) {
+    const sel = pos.filter(i => i.classe === c);
+    const venda = sel.reduce((s, i) => s + i.venda, 0), lucro = sel.reduce((s, i) => s + (i.lucro || 0), 0);
+    classes[c] = { qt: rows.filter(i => i.classe === c).length, venda,
+                   pct_venda: totalVenda ? Math.round(venda / totalVenda * 1000) / 10 : 0,
+                   lucro, margem: margemPct(lucro, venda) };
+  }
+  const n = rows.length;
+  return { total_produtos: n, total_venda: totalVenda, total_lucro: totalLucro,
+           margem: margemPct(totalLucro, totalVenda), classes,
+           concentracao_pct_itens: n ? Math.round(classes.A.qt / n * 1000) / 10 : 0 };
+}
+
 function renderKpis() {
-  const r = _data.resumo, c = r.classes;
+  // ⚠️ Os cards somam o RECORTE da tela (12/11/2026, João: "não respeita o filtro de fornecedor").
+  // Antes eram sempre o escopo inteiro e só a tabela recortava — card e tabela em universos
+  // diferentes. A CLASSE de cada item continua a da curva do escopo (é ela que diz "este item é
+  // A do time"); só a soma passa a ser do que está filtrado.
+  const recorte = temRecorte();
+  const r = recorte ? resumoDe(rowsRecorte()) : _data.resumo, c = r.classes;
+  const daVenda = recorte ? 'da venda do recorte' : 'da venda';
   for (const k of ['A', 'B', 'C']) {
     document.getElementById('k_' + k).textContent = NUM.format(c[k].qt) + ' itens';
     document.getElementById('k_' + k + '_sub').innerHTML =
-      `${BRL.format(c[k].venda)} · ${PCT1(c[k].pct_venda)} da venda · margem <span class="mg">${PCT1(c[k].margem)}</span>`;
+      `${BRL.format(c[k].venda)} · ${PCT1(c[k].pct_venda)} ${daVenda} · margem <span class="mg">${PCT1(c[k].margem)}</span>`;
   }
+  document.getElementById('k_conc_lbl').textContent = recorte ? 'Itens A no recorte' : 'Concentração';
   document.getElementById('k_conc').textContent = PCT1(r.concentracao_pct_itens);
-  document.getElementById('k_conc_sub').textContent = `${NUM.format(c.A.qt)} de ${NUM.format(r.total_produtos)} itens fazem 80% de ${BRL.format(r.total_venda)}`
-    + (r.margem != null ? ` · margem do escopo ${PCT1(r.margem)}` : '');
+  // No recorte, "X itens fazem 80% da venda" deixa de ser verdade (os A de um fornecedor não fazem
+  // 80% da venda dele) — o card passa a dizer o que mede.
+  document.getElementById('k_conc_sub').textContent = recorte
+    ? `${NUM.format(c.A.qt)} de ${NUM.format(r.total_produtos)} itens são A · total ${BRL.format(r.total_venda)}`
+      + (r.margem != null ? ` · margem ${PCT1(r.margem)}` : '')
+    : `${NUM.format(c.A.qt)} de ${NUM.format(r.total_produtos)} itens fazem 80% de ${BRL.format(r.total_venda)}`
+      + (r.margem != null ? ` · margem do escopo ${PCT1(r.margem)}` : '');
+  const nota = document.getElementById('kpiRecorte');
+  nota.classList.toggle('hidden', !recorte);
+  if (recorte) nota.textContent = `▣ Cards no recorte da tela (${NUM.format(r.total_produtos)} de ${NUM.format(_rows.length)} produtos). `
+    + `A classe A/B/C de cada item é a da curva de ${_data.escopo || 'todo o escopo'} — o gráfico abaixo é essa curva inteira.`;
 }
 
 function popularFiltros() {

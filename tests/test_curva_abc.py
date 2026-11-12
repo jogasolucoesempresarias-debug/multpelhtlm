@@ -159,7 +159,7 @@ def test_api_abc_admin_com_filtro_de_time(client, usuario_admin, mock_dax_captur
             'rank', 'pct', 'pct_acum', 'classe'} <= set(d['rows'][0])
     assert d['regua']['corte_a'] == 80 and d['regua']['meses'] == 12
     assert d['periodo']['tok'] == '12m' and d['periodo']['rotulo'] == 'últimos 12 meses'
-    assert '[LUCRO TOTAL]' in _q_abc(mock_dax_capture)[-1]
+    assert '[CUSTO TOTAL DEVOLUCAO]' in _q_abc(mock_dax_capture)[-1]      # lucro na régua do RCA
     assert d['rows'][0]['rank'] == 1 and d['rows'][0]['classe'] == 'A'
     c = d['resumo']['classes']
     assert c['A']['qt'] + c['B']['qt'] + c['C']['qt'] == 300
@@ -250,8 +250,8 @@ def test_produto_drawer_serie_e_vendedores_sem_tecnicos(client, usuario_admin, m
     mock_dax_capture.routes = [
         ('CALENDARIO[AnoMes]', _payload([{'CALENDARIO[AnoMes]': 202607, '[Venda]': 100.0, '[Qt]': 10.0, '[Clientes]': 4},
                                          {'CALENDARIO[AnoMes]': 202606, '[Venda]': 50.0, '[Qt]': 5.0, '[Clientes]': 2}])),
-        ('FATURAMENTO_VENDAS[CODUSUR],', _payload([{'FATURAMENTO_VENDAS[CODUSUR]': 573.0, '[Venda]': 120.0, '[Qt]': 12.0},
-                                                   {'FATURAMENTO_VENDAS[CODUSUR]': 999.0, '[Venda]': 30.0, '[Qt]': 3.0}])),
+        ('PCUSUARI[CODUSUR],', _payload([{'PCUSUARI[CODUSUR]': 573.0, '[Venda]': 120.0, '[Qt]': 12.0},
+                                                   {'PCUSUARI[CODUSUR]': 999.0, '[Venda]': 30.0, '[Qt]': 3.0}])),
     ] + mock_dax_capture.routes
     login_as(client, usuario_admin['email'], usuario_admin['senha'])
     d = client.get('/api/abc/produto/1000?supervisor=18').get_json()
@@ -356,7 +356,7 @@ def test_drawer_serie_fica_em_12m_e_vendedores_seguem_a_janela(client, usuario_a
     _rotas(mock_dax_capture)
     mock_dax_capture.routes = [
         ('CALENDARIO[AnoMes]', _payload([{'CALENDARIO[AnoMes]': 202607, '[Venda]': 100.0, '[Lucro]': 25.0, '[Qt]': 10.0, '[Clientes]': 4}])),
-        ('FATURAMENTO_VENDAS[CODUSUR],', _payload([{'FATURAMENTO_VENDAS[CODUSUR]': 573.0, '[Venda]': 120.0, '[Qt]': 12.0}])),
+        ('PCUSUARI[CODUSUR],', _payload([{'PCUSUARI[CODUSUR]': 573.0, '[Venda]': 120.0, '[Qt]': 12.0}])),
     ] + mock_dax_capture.routes
     login_as(client, usuario_admin['email'], usuario_admin['senha'])
     d = client.get('/api/abc/produto/1000?periodo=3m').get_json()
@@ -364,8 +364,8 @@ def test_drawer_serie_fica_em_12m_e_vendedores_seguem_a_janela(client, usuario_a
     assert d['serie'][0]['margem'] == 25.0 and d['serie'][0]['lucro'] == 25.0
     qd = [q for q in mock_dax_capture.queries if 'CODPROD] = 1000' in q]
     q_serie = next(q for q in qd if 'CALENDARIO[AnoMes]' in q)
-    q_vend = next(q for q in qd if 'FATURAMENTO_VENDAS[CODUSUR],' in q)
-    assert 'EDATE(TODAY(), -12)' in q_serie and '[LUCRO TOTAL]' in q_serie      # contexto: sempre 12m
+    q_vend = next(q for q in qd if 'PCUSUARI[CODUSUR],' in q)
+    assert 'EDATE(TODAY(), -12)' in q_serie and '[CUSTO TOTAL DEVOLUCAO]' in q_serie      # contexto: sempre 12m
     assert 'EDATE(TODAY(), -3)' in q_vend                                       # quem vende: a janela
 
 
@@ -402,7 +402,11 @@ def test_supervisor_multi_area_escolhe_um_dos_times_dele(client, usuario_supervi
     assert '[CODSUPERVISOR] IN {18, 19}' in _q_abc(mock_dax_capture)[-1]
     client.get('/api/abc?supervisor=19')
     q = _q_abc(mock_dax_capture)[-1]
-    assert q.count('CODSUPERVISOR') == 2 and '[CODSUPERVISOR] IN {19}' in q      # RBAC + estreitamento
+    # RBAC + estreitamento, sempre em PAR (filtros de coluna no mesmo CALCULATE se intersectam),
+    # e nas três tabelas da régua do RCA
+    assert q.count('[CODSUPERVISOR] IN {18, 19}') == q.count('[CODSUPERVISOR] IN {19}') > 0
+    for t in ('FATURAMENTO_VENDAS', 'FATURAMENTO_DEVOLUCAO', 'FATURAMENTO_DEVOLUCAO_AVULSA'):
+        assert f'{t}[CODSUPERVISOR] IN {{18, 19}}' in q and f'{t}[CODSUPERVISOR] IN {{19}}' in q
     client.get('/api/abc?supervisor=99')                                          # de fora: ignorado
     q = _q_abc(mock_dax_capture)[-1]
     assert '99' not in q and '[CODSUPERVISOR] IN {18, 19}' in q
@@ -568,7 +572,7 @@ def test_drawer_e_export_seguem_o_cliente(client, usuario_admin, mock_dax_captur
     _carteira_fake(monkeypatch)
     mock_dax_capture.routes = [
         ('CALENDARIO[AnoMes]', _payload([{'CALENDARIO[AnoMes]': 202607, '[Venda]': 100.0, '[Qt]': 10.0, '[Clientes]': 1}])),
-        ('FATURAMENTO_VENDAS[CODUSUR],', _payload([{'FATURAMENTO_VENDAS[CODUSUR]': 573.0, '[Venda]': 100.0, '[Qt]': 10.0}])),
+        ('PCUSUARI[CODUSUR],', _payload([{'PCUSUARI[CODUSUR]': 573.0, '[Venda]': 100.0, '[Qt]': 10.0}])),
     ] + mock_dax_capture.routes
     login_as(client, usuario_admin['email'], usuario_admin['senha'])
     d = client.get('/api/abc/produto/1000?codcli=4242').get_json()

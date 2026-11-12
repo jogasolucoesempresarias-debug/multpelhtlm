@@ -9204,12 +9204,54 @@ def _abc_periodo():
     return curva_abc.normalizar_periodo(request.args.get('periodo'))
 
 
-def _abc_periodo_dax(tok):
-    """Filtro DAX de DTSAIDA da janela. 12m/6m/3m = EDATE(TODAY(), -n) (o mesmo do Radar);
-    mês atual = do dia 1º até hoje (parcial — a tela declara)."""
+def _abc_periodo_dax(tok, tabela='FATURAMENTO_VENDAS', coluna='DTSAIDA'):
+    """Filtro DAX da janela numa coluna de data. 12m/6m/3m = EDATE(TODAY(), -n) (o mesmo do
+    Radar); mês atual = do dia 1º até hoje (parcial — a tela declara). Venda filtra DTSAIDA; as
+    duas devoluções filtram DTENT (régua do RCA)."""
+    c = f"{tabela}[{coluna}]"
     if tok == 'mes_atual':
-        return "FATURAMENTO_VENDAS[DTSAIDA] >= DATE(YEAR(TODAY()), MONTH(TODAY()), 1)"
-    return f"FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -{curva_abc.PERIODOS[tok]['meses']})"
+        return f"{c} >= DATE(YEAR(TODAY()), MONTH(TODAY()), 1)"
+    return f"{c} >= EDATE(TODAY(), -{curva_abc.PERIODOS[tok]['meses']})"
+
+
+# As três tabelas da venda líquida do RCA e a data que cada uma usa (ver "📐 Alinhamento RCA").
+_ABC_TABELAS_RCA = (('FATURAMENTO_VENDAS', 'DTSAIDA'),
+                    ('FATURAMENTO_DEVOLUCAO', 'DTENT'),
+                    ('FATURAMENTO_DEVOLUCAO_AVULSA', 'DTENT'))
+
+
+def _abc_medidas_rca(janela, codprod=None, clientes=False, qt=False):
+    """Colunas DAX "Venda"/"Lucro" (+ "Clientes"/"Qt") na régua do RCA, para SUMMARIZECOLUMNS
+    agrupado por uma dimensão comum às três tabelas (PCPRODUT, CALENDARIO, PCUSUARI).
+
+    ⚠️ **NÃO volte para `[VENDA LIQUIDA]`/`[LUCRO TOTAL]` com `FILTER(FATURAMENTO_VENDAS, …)`.** Foi
+    assim até 12/11/2026 e a devolução não saía na régua do RCA (DTENT + escopo nas três tabelas):
+    medido no BI, a curva ficava **~1% acima do Dashboard em todo time** (time 17: R$ 28,71 mi ×
+    28,44 mi; time 19: só R$ 28 mil descontados de R$ 170 mil de devolução) — o João achou o total
+    "errado" comparando com a tela do time. Aqui é a mesma conta do `expr_venda_liquida_rca`.
+
+    ⚠️ **Filtro de COLUNA, não `FILTER(tabela)`.** As duas formas dão o mesmo número no centavo, mas
+    `FILTER(FATURAMENTO_VENDAS, …)` dentro de cada CALCULATE, linha a linha, levou **124 s** para a
+    empresa inteira contra **1 s** com os predicados como argumentos de coluna (armadilha nº 24).
+    Por isso o escopo é quebrado em `&&`: cada predicado do `_abc_escopo_frag` é de UMA coluna."""
+    filtros = []
+    for tabela, coluna in _ABC_TABELAS_RCA:
+        preds = [_abc_periodo_dax(janela, tabela, coluna)]
+        if codprod is not None:
+            preds.append(f"{tabela}[CODPROD] = {int(codprod)}")
+        preds += [p.strip() for p in _abc_escopo_frag(tabela).split('&&') if p.strip()]
+        filtros.append(', '.join(preds))
+    fv, fd, fa = filtros
+    vl = (f"(CALCULATE([VENDA BRUTA], {fv}) - CALCULATE([TOTAL DEVOLUCAO], {fd})"
+          f" - CALCULATE([TOTAL DEVOLUCAO AVULSA], {fa}))")
+    custo = (f"(CALCULATE([CUSTO TOTAL], {fv}) - CALCULATE([CUSTO TOTAL DEVOLUCAO], {fd})"
+             f" - CALCULATE([CUSTO TOTAL DEVOLUCAO AVULSA], {fa}))")
+    cols = [f'"Venda", {vl}', f'"Lucro", {vl} - {custo}']
+    if qt:
+        cols.append(f'"Qt", CALCULATE({_ABC_QT}, {fv})')
+    if clientes:
+        cols.append(f'"Clientes", CALCULATE(DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI]), {fv})')
+    return ',\n    '.join(cols)
 
 
 def _abc_periodo_info(tok):
@@ -9292,12 +9334,21 @@ def _abc_cliente_filtro():
         return None
 
 
-def _abc_escopo_frag():
+def _abc_escopo_frag(tabela='FATURAMENTO_VENDAS'):
     """Fragmento DAX ' && …' do escopo por VENDA. Admin/viewer: honra ?vendedor= (precedência)
     ou ?supervisor=. Supervisor: RBAC da sessão E o estreitamento (time dele / RCA do time dele) —
     o RBAC fica sempre no filtro, então um RCA que mudou de time no fato não traz venda de outro
     time. Vendedor: só o RBAC. '' = empresa inteira (admin sem filtro).
-    ?codcli= entra por ÚLTIMO, somado (AND) a tudo isso — cliente restringe, nunca substitui."""
+    ?codcli= entra por ÚLTIMO, somado (AND) a tudo isso — cliente restringe, nunca substitui.
+
+    `tabela`: o mesmo escopo nas devoluções (CODSUPERVISOR/CODUSUR/CODCLI existem nas três) —
+    sem ele a devolução sairia da empresa toda. Cada predicado é de UMA coluna, separados por
+    `&&`: o `_abc_medidas_rca` os quebra em filtros de coluna."""
+    frag = _abc_escopo_frag_vendas()
+    return frag if tabela == 'FATURAMENTO_VENDAS' else frag.replace('FATURAMENTO_VENDAS[', f'{tabela}[')
+
+
+def _abc_escopo_frag_vendas():
     role = session.get('role')
     vend = _abc_vendedor_filtro()
     sup = _abc_supervisores_filtro()
@@ -9356,12 +9407,13 @@ def _abc_full():
     """Curva completa do escopo (lista classificada, ordenada por venda desc). Cache 1h por
     (escopo, período, v). ⚠️ `v` na chave = versão do payload — suba ao mudar forma/significado
     (lição do board do Radar: sem isso um deploy serve o payload velho até o TTL, sem erro).
-    v2 (09/2026): + lucro/margem e janela selecionável. v3: + cliente no escopo."""
+    v2 (09/2026): + lucro/margem e janela selecionável. v3: + cliente no escopo.
+    v4 (12/11/2026): venda/lucro na régua do RCA (devolução por DTENT nas 3 tabelas)."""
     vend = _abc_vendedor_filtro()
     sup = _abc_supervisores_filtro()
     cli = _abc_cliente_filtro()
     periodo = _abc_periodo()
-    key = cache_key_for_user('abc:full', {'v': 3, 'supervisor': _sup_cache_key(sup),
+    key = cache_key_for_user('abc:full', {'v': 4, 'supervisor': _sup_cache_key(sup),
                                           'vendedor': vend if vend is not None else '-',
                                           'codcli': cli if cli is not None else '-',
                                           'periodo': periodo})
@@ -9373,15 +9425,13 @@ def _abc_full():
         rows = provider_sql.abc_produtos(_rbac_sql(), supervisores=sup, vendedor=vend, periodo=periodo,
                                          codcli=cli)
     else:
+        # PCPRODUT e não FATURAMENTO_VENDAS[CODPROD]: a dimensão filtra as TRÊS tabelas (produto
+        # com devolução no período precisa descontá-la), a coluna do fato só filtraria a venda.
         query = f"""EVALUATE
 FILTER(
     SUMMARIZECOLUMNS(
-        FATURAMENTO_VENDAS[CODPROD],
-        FILTER(FATURAMENTO_VENDAS,
-            {_abc_periodo_dax(periodo)}{_abc_escopo_frag()}),
-        "Venda",    [VENDA LIQUIDA],
-        "Lucro",    [LUCRO TOTAL],
-        "Clientes", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI])
+        PCPRODUT[CODPROD],
+        {_abc_medidas_rca(periodo, clientes=True)}
     ),
     [Venda] > 0
 )"""
@@ -9492,8 +9542,11 @@ def api_abc_csv():
                     headers={'Content-Disposition': _content_disposition(_abc_nome_arquivo('csv'))})
 
 
-def _gerar_pdf_abc(rows, resumo, escopo, filtros='', periodo=None):
-    """PDF da curva. Landscape A4, zebra — mesmo molde do board do Radar."""
+def _gerar_pdf_abc(rows, resumo, escopo, filtros='', periodo=None, recorte=False):
+    """PDF da curva. Landscape A4, zebra — mesmo molde do board do Radar.
+    `recorte`: o resumo é de um filtro de tela (fornecedor/depto/busca) — "X% dos itens fazem 80%
+    da venda" deixa de ser verdade ali (os A do fornecedor não fazem 80% da venda DELE), então a
+    frase vira "N de M itens são A"."""
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib import colors
     from reportlab.lib.units import cm
@@ -9528,8 +9581,13 @@ def _gerar_pdf_abc(rows, resumo, escopo, filtros='', periodo=None):
              Paragraph(f"A: {c['A']['qt']} itens · {brl(c['A']['venda'])} ({c['A']['pct_venda']}%) · margem {pct(c['A']['margem'])} &nbsp;&nbsp; "
                        f"B: {c['B']['qt']} itens · {brl(c['B']['venda'])} ({c['B']['pct_venda']}%) · margem {pct(c['B']['margem'])} &nbsp;&nbsp; "
                        f"C: {c['C']['qt']} itens · {brl(c['C']['venda'])} ({c['C']['pct_venda']}%) · margem {pct(c['C']['margem'])} &nbsp;&nbsp; "
-                       f"{resumo['concentracao_pct_itens']}% dos itens fazem {curva_abc.CORTE_A:.0f}% da venda "
-                       f"· margem do escopo {pct(resumo.get('margem'))} (lucro ÷ venda líquida)",
+                       + (f"{c['A']['qt']} de {resumo['total_produtos']} itens do recorte são A "
+                          f"(classe da curva do escopo inteiro) · total do recorte {brl(resumo['total_venda'])} "
+                          f"· margem do recorte {pct(resumo.get('margem'))}"
+                          if recorte else
+                          f"{resumo['concentracao_pct_itens']}% dos itens fazem {curva_abc.CORTE_A:.0f}% da venda "
+                          f"· margem do escopo {pct(resumo.get('margem'))}")
+                       + " (lucro ÷ venda líquida)",
                        sub_style),
              Spacer(1, 0.3*cm)]
 
@@ -9572,7 +9630,12 @@ def _gerar_pdf_abc(rows, resumo, escopo, filtros='', periodo=None):
 def api_abc_pdf():
     full = _abc_full()
     f = _abc_filtros_args()
-    rows = curva_abc.filtrar(full, **f)
+    # O resumo segue o RECORTE da tela (depto/fornecedor/busca), como os cards — mas NÃO a
+    # classe: a classe é o que os cards separam (com "só A" marcado, B e C sairiam zerados). A
+    # classe de cada item continua a da curva do escopo inteiro (`full`); só a soma é do recorte.
+    recorte = curva_abc.filtrar(full, codepto=f['codepto'], codfornec=f['codfornec'], busca=f['busca'])
+    rows = curva_abc.filtrar(recorte, classe=f['classe'])
+    tem_recorte = len(recorte) != len(full)
     partes = []
     if f['classe']:
         partes.append('classe ' + '/'.join(f['classe'].split(',')))
@@ -9582,9 +9645,8 @@ def api_abc_pdf():
         partes.append('fornecedor ' + (_radar_fornec_nome(f['codfornec']) or str(f['codfornec'])))
     if f['busca']:
         partes.append(f'busca "{f["busca"]}"')
-    # O resumo é do ESCOPO INTEIRO (a curva), não do recorte da tabela — a classe é relativa ao todo.
-    pdf = _gerar_pdf_abc(rows, curva_abc.resumo(full), _abc_escopo_nome(), ' · '.join(partes),
-                         periodo=_abc_periodo_info(_abc_periodo()))
+    pdf = _gerar_pdf_abc(rows, curva_abc.resumo(recorte), _abc_escopo_nome(), ' · '.join(partes),
+                         periodo=_abc_periodo_info(_abc_periodo()), recorte=tem_recorte)
     return Response(pdf, mimetype='application/pdf',
                     headers={'Content-Disposition': _content_disposition(_abc_nome_arquivo('pdf'))})
 
@@ -9598,7 +9660,7 @@ def api_abc_produto(codprod):
     sup = _abc_supervisores_filtro()
     cli = _abc_cliente_filtro()      # o drawer segue o cliente da tabela — senão são dois universos
     periodo = _abc_periodo()
-    key = cache_key_for_user('abc:produto', {'v': 3, 'cod': codprod, 'supervisor': _sup_cache_key(sup),
+    key = cache_key_for_user('abc:produto', {'v': 4, 'cod': codprod, 'supervisor': _sup_cache_key(sup),
                                              'vendedor': vend if vend is not None else '-',
                                              'codcli': cli if cli is not None else '-',
                                              'periodo': periodo})
@@ -9613,27 +9675,21 @@ def api_abc_produto(codprod):
                                              periodo=periodo, codcli=cli)
         serie_raw, vend_raw = d['serie'], d['vendedores']
     else:
-        frag = _abc_escopo_frag()
-        base_serie = (f"FATURAMENTO_VENDAS[CODPROD] = {int(codprod)} && "
-                      f"FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -{curva_abc.MESES}){frag}")
-        base_vend = f"FATURAMENTO_VENDAS[CODPROD] = {int(codprod)} && {_abc_periodo_dax(periodo)}{frag}"
+        # Mesma régua da tabela (RCA, `_abc_medidas_rca`) — senão a série do drawer não fecharia
+        # com a venda da linha clicada. Agrupa por dimensão comum às três tabelas: CALENDARIO
+        # (a devolução cai no mês do DTENT) e PCUSUARI (a devolução volta para o RCA dela).
+        janela_serie = f"{curva_abc.MESES}m"
         queries = {
             'serie': f"""EVALUATE
 SUMMARIZECOLUMNS(
     CALENDARIO[AnoMes],
-    FILTER(FATURAMENTO_VENDAS, {base_serie}),
-    "Venda",    [VENDA LIQUIDA],
-    "Lucro",    [LUCRO TOTAL],
-    "Qt",       {_ABC_QT},
-    "Clientes", DISTINCTCOUNT(FATURAMENTO_VENDAS[CODCLI])
+    {_abc_medidas_rca(janela_serie, codprod=codprod, clientes=True, qt=True)}
 )""",
             'vendedores': f"""EVALUATE
 FILTER(
     SUMMARIZECOLUMNS(
-        FATURAMENTO_VENDAS[CODUSUR],
-        FILTER(FATURAMENTO_VENDAS, {base_vend}),
-        "Venda", [VENDA LIQUIDA],
-        "Qt",    {_ABC_QT}
+        PCUSUARI[CODUSUR],
+        {_abc_medidas_rca(periodo, codprod=codprod, qt=True)}
     ),
     [Venda] > 0
 )""",
