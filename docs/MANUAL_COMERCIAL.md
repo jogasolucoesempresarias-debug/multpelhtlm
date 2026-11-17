@@ -26,7 +26,9 @@
 > virou **"Inativo no ERP (91+)"**. "Última compra" é a última **venda** (bonificação não conta).
 > O ciclo da Carteira estava sendo calculado com datas faltando (a consulta era cortada em 100 mil
 > linhas) e foi corrigido — muitos clientes passaram a ter ciclo. Os 60 dias continuam sendo a régua
-> comercial da cobertura, o piso da Recuperação e o período padrão do Mix.
+> comercial da cobertura, o piso da Recuperação e o período padrão do Mix. Os exports (CSV/PDF) do
+> Mix, do Radar e do Próximo Pedido ganharam a **Situação** e o **ciclo**, e no PDF o texto longo
+> (cliente, cidade, departamento) **quebra linha dentro da coluna** em vez de invadir a do lado.
 >
 > **Regra de precedência:** quando o comportamento observado divergir deste manual, **o código
 > manda**. Fontes da verdade: `server.py` (rotas/DAX), e os módulos puros `rfm.py`, `cohort.py`,
@@ -480,7 +482,9 @@ Previsão de recompra = **última compra + ciclo pessoal** (§4.8).
 - **Coluna Plano:** o selo do plano de ação do cliente (§18.1) — clique para registrar a ligação.
 - Quando o cliente compra, ele **sai automaticamente** da lista (a recência muda).
 - Clique na linha → **top produtos a oferecer** àquele cliente.
-- **Export CSV/PDF** em formato de agenda.
+- **Export CSV/PDF** em formato de agenda. A coluna **Status** sai com o nome da régua única
+  (No prazo · Atenção · Atrasado · Parou) — até 11/2026 o CSV mostrava a chave crua (`normal`,
+  `urgente`).
 
 ---
 
@@ -613,8 +617,13 @@ aparece no dia 61 (são as mesmas duas condições da Recuperação: passou da j
   laranja 60–90, vermelho 90+) · **Situação** (régua única + ciclo do cliente no depto) ·
   Venda/Lucro da categoria 12m · Vendedor.
 - **Drills:** clique no cliente → **top 5 departamentos** fora do ciclo; drill de **fornecedores
-  abandonados por cliente** (mesma régua), com export CSV e PDF próprios.
-- **Export** CSV/PDF da lista completa.
+  abandonados por cliente** (mesma régua), com export CSV e PDF próprios (colunas **Situação** e,
+  no CSV, **CicloDias**).
+- **Export** CSV/PDF da lista completa, com os mesmos filtros da tela (inclusive vendedor, time e
+  cliente escolhido). Colunas novas: **Situação** (PDF e CSV) e **CicloDias** (CSV — vazio =
+  esporádico). No PDF, cliente, cidade e departamento longos **quebram linha dentro da coluna**
+  (antes o texto passava por cima da coluna do lado). A lista sem filtro é grande: o PDF demora;
+  para mandar a um vendedor, filtre antes.
 
 Cliente que parou **tudo** não está aqui: está na **Recuperação** (§15).
 
@@ -658,6 +667,13 @@ Compara a **janela recente** com a **janela anterior** do mesmo tamanho (padrão
 - "Última compra" = última **venda**: bonificação e transferência não contam (havia cliente
   aparecendo "Comprando" só por ter recebido bonificação).
 - Drill por produto, por cliente e série produto × cliente. **Exports** CSV/PDF em todos os níveis.
+  - **Clientes do produto / produtos do cliente:** CSV com `CicloDias`, `Compras12m`, `Situacao`
+    (nomes da régua única) e, no drill do produto, `Situacao_Troca` (Trocou / Abandonou); PDF com
+    as colunas **Ciclo** e **Situação**, e **Antes (R$) → Agora (R$)** (era "Comprava").
+  - **Board:** CSV com `QuedaReceita` e `NaoRecompraram` (eram `ReceitaEmRisco` e
+    `ClientesPerdidos`); PDF com "Queda de receita" e "Não recompraram".
+  - No PDF, textos longos (cliente, cidade, produto, vendedor, "Trocou (outro do depto)") quebram
+    linha dentro da coluna.
 - Escopo por **cadastro** (o board e o drill partem do mesmo conjunto de clientes).
 
 ⚠️ O board compara 60 × 60 dias; o drill olha o ciclo de cada cliente em 12 meses — são perguntas
@@ -793,6 +809,10 @@ abrindo a Carteira (deep-link, §6.1), também com o teto de 365 dias no 91+.
   contam (tela e e-mail com a mesma regra).
 - **⬇ Lista de limpeza** (CSV, no drill de time/vendedor): clientes da carteira ativa que **não
   compraram na janela** — para vender ou transferir no "mês de limpeza" (§16.3).
+- **⬇ CSV / 📄 PDF do placar:** empresa, times e vendedores com as faixas. Desde 17/11/2026 as
+  colunas seguem a tela: **EmDiaClientes** (positivados na janela escolhida — era `0-30Clientes`,
+  fixo em 30 dias), **DentroDoCiclo%** (< 1× o ciclo), **ReceitaPerdidaAcumulada** (era
+  `ReceitaEmRisco`) e **InativoERP91+** (era `BaseMorta`); no PDF, "Inativo ERP 91+".
 - **Breadcrumb:** Empresa ▸ Time ▸ Vendedor.
 
 ### 14.4 Limiar e escopo
