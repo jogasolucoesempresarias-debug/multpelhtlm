@@ -7533,7 +7533,7 @@ def api_mix_cliente_fornecedores_pdf(codcli):
     data = [header]
     for c in out:
         data.append([
-            (c.get('fornec_nome') or '')[:36],
+            _pdf_cel(c.get('fornec_nome'), 6.4*cm, 8),
             str(c.get('ultima_compra') or '')[:10],
             c.get('dias_parado') or '',
             rfm.FAIXA_CICLO_PT.get(c.get('status'), ''),
@@ -7714,6 +7714,19 @@ def api_mix_abandonado_csv():
     )
 
 
+def _pdf_cel(texto, largura, tamanho=7, padding=8):
+    """Célula de texto para tabela de PDF que NÃO vaza para a coluna do lado.
+    String pura no reportlab é desenhada inteira, passe ou não da largura: com a coluna mais
+    estreita o "EMBALAGENS P/ PRESENTE" invadia a Última Compra (João, 17/11/2026). Quebra a linha
+    por palavra na largura da coluna (`simpleSplit` + quebra de linha, que a Table desenha nativo) —
+    Paragraph faria o mesmo, mas quase dobrava o tempo do PDF da lista completa. `largura` em pontos (ex.: 3.2*cm); `padding` = esquerdo + direito; a fonte
+    tem de ser a da tabela (Helvetica)."""
+    from reportlab.lib.utils import simpleSplit
+    s = '' if texto is None else str(texto)
+    linhas = simpleSplit(s, 'Helvetica', tamanho, largura - padding)
+    return chr(10).join(linhas) if len(linhas) > 1 else s
+
+
 def _gerar_pdf_mix_abandonado(linhas, filtros_resumo='', dias=60):
     """Gera PDF da lista COMPLETA de mix abandonado (par cliente×departamento). Retorna bytes.
     Mesma estética do PDF da carteira (landscape A4, zebra)."""
@@ -7751,12 +7764,12 @@ def _gerar_pdf_mix_abandonado(linhas, filtros_resumo='', dias=60):
     for c in linhas:
         venda = c.get('venda_cat_12m') or 0
         lucro = c.get('lucro_cat_12m') or 0
-        cidade_uf = f"{(c.get('cidade') or '')[:18]}/{c.get('uf') or ''}"
+        cidade_uf = f"{c.get('cidade') or ''}/{c.get('uf') or ''}"
         data.append([
             c.get('codcli') or '',
-            (c.get('cliente') or '')[:40],
-            cidade_uf,
-            (c.get('depto_nome') or '')[:22],
+            _pdf_cel(c.get('cliente'), 5.2*cm),
+            _pdf_cel(cidade_uf, 3.2*cm),
+            _pdf_cel(c.get('depto_nome'), 3.2*cm),
             str(c.get('ultima_compra') or '')[:10],
             c.get('dias_sem_comprar_categoria') or '',
             rfm.FAIXA_CICLO_PT.get(c.get('status'), ''),
@@ -8855,22 +8868,22 @@ def _gerar_pdf_radar_produto(produto, linhas, dias=60):
     story.append(Spacer(1, 0.3*cm))
 
     header = ['Cliente', 'Cidade/UF', 'Última compra', 'Dias', 'Ciclo', 'Situação', 'Troca/Abandono',
-              'Comprava (R$)', 'Agora (R$)', 'Venda 12m', 'Vendedor', 'Telefone']
+              'Antes (R$)', 'Agora (R$)', 'Venda 12m', 'Vendedor', 'Telefone']
     data = [header]
     for c in linhas:
-        cidade_uf = f"{(c.get('cidade') or '')[:16]}/{c.get('uf') or ''}"
+        cidade_uf = f"{c.get('cidade') or ''}/{c.get('uf') or ''}"
         data.append([
-            (c.get('cliente') or '')[:30],
-            cidade_uf,
+            _pdf_cel(c.get('cliente'), 4.6*cm, 6.5, 6),
+            _pdf_cel(cidade_uf, 3*cm, 6.5, 6),
             str(c.get('ultima_compra') or '')[:10],
             c.get('dias_parado') if c.get('dias_parado') is not None else '',
             f"{c['ciclo']}d" if c.get('ciclo') else '—',
             _RADAR_STATUS_PT.get(c.get('status'), ''),
-            _radar_situacao(c),
+            _pdf_cel(_radar_situacao(c), 2.5*cm, 6.5, 6),
             f"R$ {(c.get('venda_ant') or 0):,.0f}".replace(',', '.'),
             f"R$ {(c.get('venda_rec') or 0):,.0f}".replace(',', '.'),
             f"R$ {(c.get('venda_12m') or 0):,.0f}".replace(',', '.'),
-            (c.get('vendedor') or '')[:18],
+            _pdf_cel(c.get('vendedor'), 3*cm, 6.5, 6),
             c.get('telefone') or '',
         ])
     tbl = Table(data, repeatRows=1,
@@ -9194,13 +9207,13 @@ def api_radar_cliente_pdf(codcli):
     story.append(Spacer(1, 0.3*cm))
 
     header = ['Produto', 'Departamento', 'Fornecedor', 'Última compra', 'Dias', 'Ciclo', 'Situação',
-              'Comprava (R$)', 'Agora (R$)', 'Venda 12m']
+              'Antes (R$)', 'Agora (R$)', 'Venda 12m']
     data = [header]
     for c in linhas:
         data.append([
-            (c.get('descricao') or '')[:32],
-            (c.get('depto_nome') or '')[:16],
-            (c.get('fornec_nome') or '')[:20],
+            _pdf_cel(c.get('descricao'), 5.6*cm, 6.5, 6),
+            _pdf_cel(c.get('depto_nome'), 3*cm, 6.5, 6),
+            _pdf_cel(c.get('fornec_nome'), 3.2*cm, 6.5, 6),
             str(c.get('ultima_compra') or '')[:10],
             c.get('dias_parado') if c.get('dias_parado') is not None else '',
             f"{c['ciclo']}d" if c.get('ciclo') else '—',
