@@ -191,8 +191,13 @@ def _radar_routes():
         {'[CODPROD]': 100, '[DESCRICAO]': 'DETERGENTE 500ML', '[CODEPTO]': 1, '[CODFORNECPRINC]': 10, '[FORNECPRINC]': 'BOMBRIL', '[Venda]': 5000.0},
         {'[CODPROD]': 200, '[DESCRICAO]': 'SACOLA 40X50',     '[CODEPTO]': 2, '[CODFORNECPRINC]': 20, '[FORNECPRINC]': 'RELIX',   '[Venda]': 3000.0},
     ]
+    # Dias com VENDA de cada produto (régua do ciclo, 11/2026): 100 comprava a cada 30 dias e está
+    # há 200 (≥ 3× → Parou); 200 compra toda semana e comprou há 5 dias (No prazo).
+    datas_rows = ([{'[CODPROD]': 100, '[DTSAIDA]': _iso(d)} for d in (200, 230, 260)]
+                  + [{'[CODPROD]': 200, '[DTSAIDA]': _iso(d)} for d in (5, 12, 19)])
     # Ordem: 'Compras12m' (freqmon) antes de 'Venda12m' (query prod). 'DESCRICAO' antes de tudo p/ produtos_map.
     return [
+        ('LinhasDiaVenda', _payload(datas_rows)),
         ('Compras12m', _load('dax_carteira_snapshot_freqmon')),
         ('DESCRICAO',  _payload(prod_map_rows)),
         ('VendaRec',   _payload(rec_rows)),
@@ -219,7 +224,8 @@ def test_radar_cliente_so_produtos_parados(client, usuario_admin, mock_dax_captu
     assert d['cliente']['codcli'] == 1
     codprods = [row['codprod'] for row in d['rows']]
     assert codprods == [100]                      # só o parado/perdido
-    assert d['rows'][0]['status'] in ('parou', 'perdido')
+    assert d['rows'][0]['status'] == 'parou'          # 200 dias com ciclo de 30 = 6,7×
+    assert d['rows'][0]['ciclo'] == 30 and d['rows'][0]['compras_12m'] == 3
     assert d['rows'][0]['descricao'] == 'DETERGENTE 500ML'
     assert d['rows'][0]['fornec_nome'] == 'BOMBRIL'
     assert d['kpis']['produtos_parados'] == 1

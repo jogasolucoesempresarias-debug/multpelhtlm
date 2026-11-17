@@ -57,10 +57,14 @@
   td.num { font-family: 'JetBrains Mono', monospace; }
 
   .badge { padding: 2px 8px; border-radius: 4px; font-size: 0.68rem; font-weight: 600; display: inline-block; background: var(--surface2); }
-  .st-ativo     { background: rgba(var(--green-rgb), 0.15); color: var(--green); }
-  .st-esfriando { background: rgba(var(--yellow-rgb), 0.15); color: var(--yellow); }
-  .st-parou     { background: rgba(var(--orange-rgb), 0.15); color: var(--orange); }
-  .st-perdido   { background: rgba(var(--red-rgb), 0.18); color: var(--red); }
+  /* Régua única do ciclo (mesmas cores do Próximo Pedido da Carteira) */
+  .st-ativo      { background: rgba(var(--green-rgb), 0.15); color: var(--green); }
+  .st-esfriando  { background: rgba(var(--green-rgb), 0.10); color: var(--yellow); }
+  .st-atencao    { background: rgba(var(--yellow-rgb), 0.15); color: var(--yellow); }
+  .st-atrasado   { background: rgba(var(--orange-rgb), 0.15); color: var(--orange); }
+  .st-parou      { background: rgba(var(--red-rgb), 0.18); color: var(--red); }
+  .st-esporadico { background: var(--surface2); color: var(--text-dim); border: 1px solid var(--border); }
+  .ciclo-info    { font-size: 0.66rem; color: var(--text-dim); margin-top: 2px; }
   .tag-troca    { background: rgba(var(--accent2-rgb), 0.16); color: var(--accent2); }
   .tag-aband    { background: rgba(var(--red-rgb), 0.14); color: var(--red); }
 
@@ -239,11 +243,17 @@
       </div>
     </div>
 
+    <div style="margin:-2px 0 10px;color:var(--text-dim);font-size:0.76rem;">
+      A situação de cada cliente é pelo <strong>ciclo dele neste produto</strong> (mediana do intervalo entre as compras do item em 12 meses),
+      a mesma régua da Carteira: <strong>No prazo</strong> antes de 1× o ciclo · <strong>Atenção</strong> 1–2× · <strong>Atrasado</strong> 2–3× · <strong>Parou</strong> 3× ou mais ·
+      <strong>Esporádico</strong> = 1 compra só no ano e não voltou na janela (quem comprou 1 vez dentro da janela está No prazo).
+      A janela escolhida vale para o board, para o Antes → Agora e para quem não tem ciclo.
+    </div>
     <div class="kpi-grid">
       <div class="kpi-card"><div class="label">Clientes do produto</div><div class="value" id="k_clientes">—</div><div class="sub" id="k_clientes_sub">&nbsp;</div></div>
-      <div class="kpi-card"><div class="label">Pararam de comprar</div><div class="value" id="k_parados" style="color:var(--orange);">—</div><div class="sub">parou ou perdido</div></div>
-      <div class="kpi-card"><div class="label">Trocaram (mesmo depto)</div><div class="value" id="k_trocaram" style="color:var(--accent2);">—</div><div class="sub">compraram outro item do depto</div></div>
-      <div class="kpi-card"><div class="label">Receita em risco (12m)</div><div class="value" id="k_risco" style="color:var(--red);">—</div><div class="sub">venda 12m de quem parou</div></div>
+      <div class="kpi-card"><div class="label">Fora do ciclo</div><div class="value" id="k_parados" style="color:var(--orange);">—</div><div class="sub" id="k_parados_sub">atenção, atrasado ou parou</div></div>
+      <div class="kpi-card"><div class="label">Trocaram (mesmo depto)</div><div class="value" id="k_trocaram" style="color:var(--accent2);">—</div><div class="sub">fora do ciclo, mas compraram outro item do depto na janela</div></div>
+      <div class="kpi-card"><div class="label">Venda 12m de quem saiu do ciclo</div><div class="value" id="k_risco" style="color:var(--red);">—</div><div class="sub">o que esses clientes compraram do item em 12 meses</div></div>
     </div>
 
     <div class="filtros-card">
@@ -255,9 +265,11 @@
         <label>Mostrar</label>
         <div class="chips" id="statusChips">
           <span class="chip active" data-st="parou" onclick="toggleStatus(this)">Parou</span>
-          <span class="chip active" data-st="perdido" onclick="toggleStatus(this)">Perdido</span>
+          <span class="chip active" data-st="atrasado" onclick="toggleStatus(this)">Atrasado</span>
+          <span class="chip active" data-st="atencao" onclick="toggleStatus(this)">Atenção</span>
           <span class="chip" data-st="esfriando" onclick="toggleStatus(this)">Esfriando</span>
-          <span class="chip" data-st="ativo" onclick="toggleStatus(this)">Comprando</span>
+          <span class="chip" data-st="ativo" onclick="toggleStatus(this)">No prazo</span>
+          <span class="chip active" data-st="esporadico" onclick="toggleStatus(this)" title="Comprou o item 1 vez só no ano e não voltou na janela">Esporádico</span>
         </div>
       </div>
     </div>
@@ -269,7 +281,7 @@
           <thead><tr>
             <th>Cliente</th><th>Cidade/UF</th>
             <th class="num th-sort" onclick="sortDet('dias_parado')">Dias parado<span class="seta" data-c="dias_parado"></span></th>
-            <th class="num th-sort" onclick="sortDet('venda_ant')">Comprava→Agora<span class="seta" data-c="venda_ant"></span></th>
+            <th class="num th-sort" onclick="sortDet('venda_ant')">Antes → Agora<span class="seta" data-c="venda_ant"></span></th>
             <th class="num th-sort" onclick="sortDet('venda_12m')">Venda 12m<span class="seta" data-c="venda_12m"></span></th>
             <th>Situação</th><th>Vendedor</th><th>Telefone</th>
           </tr></thead>
@@ -297,14 +309,23 @@
     </div>
 
     <div class="kpi-grid" style="grid-template-columns:repeat(2,1fr);">
-      <div class="kpi-card"><div class="label">Produtos que parou de comprar</div><div class="value" id="kc_parados" style="color:var(--orange);">—</div><div class="sub">parou ou perdido (≥ janela)</div></div>
-      <div class="kpi-card"><div class="label">Receita em risco (12m)</div><div class="value" id="kc_risco" style="color:var(--red);">—</div><div class="sub">venda 12m dos produtos parados</div></div>
+      <div class="kpi-card"><div class="label">Produtos fora do ciclo</div><div class="value" id="kc_parados" style="color:var(--orange);">—</div><div class="sub" id="kc_parados_sub">atenção, atrasado ou parou — pelo ciclo dele em cada item</div></div>
+      <div class="kpi-card"><div class="label">Venda 12m desses produtos</div><div class="value" id="kc_risco" style="color:var(--red);">—</div><div class="sub">o que o cliente comprou deles em 12 meses</div></div>
     </div>
 
     <div class="filtros-card">
       <div class="ff" style="flex:1;min-width:220px;">
         <label>Buscar produto na lista</label>
         <input id="filt_prod_cli" placeholder="nome, código, departamento ou fornecedor" oninput="renderCliente()">
+      </div>
+      <div class="ff">
+        <label>Mostrar</label>
+        <div class="chips" id="statusChipsCli">
+          <span class="chip active" data-st="parou" onclick="toggleStatusCli(this)">Parou</span>
+          <span class="chip active" data-st="atrasado" onclick="toggleStatusCli(this)">Atrasado</span>
+          <span class="chip active" data-st="atencao" onclick="toggleStatusCli(this)">Atenção</span>
+          <span class="chip active" data-st="esporadico" onclick="toggleStatusCli(this)" title="Comprou o item 1 vez só no ano e não voltou na janela">Esporádico</span>
+        </div>
       </div>
     </div>
 
@@ -315,7 +336,7 @@
           <thead><tr>
             <th>Produto</th><th>Departamento</th><th>Fornecedor</th>
             <th class="num th-sort" onclick="sortCli('dias_parado')">Dias parado<span class="setac" data-c="dias_parado"></span></th>
-            <th class="num th-sort" onclick="sortCli('venda_ant')">Comprava→Agora<span class="setac" data-c="venda_ant"></span></th>
+            <th class="num th-sort" onclick="sortCli('venda_ant')">Antes → Agora<span class="setac" data-c="venda_ant"></span></th>
             <th class="num th-sort" onclick="sortCli('venda_12m')">Venda 12m<span class="setac" data-c="venda_12m"></span></th>
             <th>Situação</th>
           </tr></thead>
@@ -341,13 +362,17 @@ const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL',
 const NUM = new Intl.NumberFormat('pt-BR');
 const PCT = (v) => (v == null ? '—' : (v * 100).toFixed(0) + '%');
 const MESES = ['','Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
-const ST_LABEL = { ativo: 'Comprando', esfriando: 'Esfriando', parou: 'Parou', perdido: 'Perdido' };
+// Régua única do ciclo (rfm.FAIXA_CICLO_PT no server): o cliente é medido pelo ciclo DELE no item.
+const ST_LABEL = { ativo: 'No prazo', esfriando: 'Esfriando', atencao: 'Atenção', atrasado: 'Atrasado',
+                   parou: 'Parou', esporadico: 'Esporádico' };
+const FORA_DO_CICLO = new Set(['atencao', 'atrasado', 'parou']);
 
 let _role = null;
 let _board = [];           // linhas do board
 let _detalhe = null;       // payload do detalhe atual
 let _detSort = { col: 'venda_12m', dir: 'desc' };
-let _statusFiltro = new Set(['parou', 'perdido']);
+let _statusFiltro = new Set(['parou', 'atrasado', 'atencao', 'esporadico']);
+let _statusFiltroCli = new Set(['parou', 'atrasado', 'atencao', 'esporadico']);
 
 function dias() { return document.getElementById('filt_dias').value; }
 
@@ -503,8 +528,8 @@ const BOARD_LISTAS = {
   queda: {
     vazio: 'Nenhum produto perdendo receita nessa janela / escopo.',
     info: n => `${n} produtos perdendo receita`,
-    metricas: [['queda_receita', 'Receita em risco (R$)'], ['clientes_perdidos', 'Clientes perdidos'], ['pct_queda', '% de queda']],
-    cols: ['Receita em risco', '% queda', 'Clientes perdidos'],
+    metricas: [['queda_receita', 'Queda de receita (R$)'], ['clientes_perdidos', 'Não recompraram'], ['pct_queda', '% de queda']],
+    cols: ['Queda de receita', '% queda', 'Não recompraram'],
     celulas: r => `
       <td class="num" style="color:var(--red);font-weight:600;">${BRL.format(r.queda_receita || 0)}</td>
       <td class="num">${r.pct_queda == null ? '—' : PCT(r.pct_queda)}</td>
@@ -618,9 +643,13 @@ async function abrirProduto(codprod) {
     const p = d.produto, k = d.kpis;
     document.getElementById('p_desc').textContent = p.descricao;
     document.getElementById('p_meta').textContent = `#${p.codprod} · ${p.depto_nome || '—'} · ${p.fornec_nome || ''} · janela ${d.dias}d`;
+    const ps = k.por_status || {};
     document.getElementById('k_clientes').textContent = NUM.format(k.clientes);
-    document.getElementById('k_clientes_sub').textContent = `${NUM.format(k.esfriou_ou_parou)} esfriaram ou pararam`;
+    document.getElementById('k_clientes_sub').textContent =
+      `${NUM.format((ps.ativo || 0) + (ps.esfriando || 0))} no prazo · ${NUM.format(ps.esporadico || 0)} esporádicos sem volta`;
     document.getElementById('k_parados').textContent = NUM.format(k.parados);
+    document.getElementById('k_parados_sub').textContent =
+      `${NUM.format(ps.atencao || 0)} atenção · ${NUM.format(ps.atrasado || 0)} atrasado · ${NUM.format(ps.parou || 0)} parou`;
     document.getElementById('k_trocaram').textContent = NUM.format(k.trocaram);
     document.getElementById('k_risco').textContent = BRL.format(k.receita_em_risco || 0);
     renderDetalhe();
@@ -642,7 +671,11 @@ function sortDet(col) {
   renderDetalhe();
 }
 
+// Venda da janela ANTERIOR → da janela RECENTE. Sem compra nas duas, "R$ 0 → R$ 0" parecia dizer
+// que o cliente não comprava nada; na verdade ele parou ANTES das duas janelas (ver última compra).
 function comprava(r) {
+  if (!(r.venda_ant || 0) && !(r.venda_rec || 0) && !(r.qt_ant || 0) && !(r.qt_rec || 0))
+    return `<span style="color:var(--text-dim)" title="Não comprou o item em nenhuma das duas janelas de ${dias()} dias — parou antes delas (veja a última compra)">sem compra nas 2 janelas</span>`;
   const ant = BRL.format(r.venda_ant || 0), rec = BRL.format(r.venda_rec || 0);
   const cor = (r.venda_rec || 0) < (r.venda_ant || 0) ? 'var(--red)' : 'var(--green)';
   return `<span style="color:var(--text-dim)">${ant}</span> → <span style="color:${cor}">${rec}</span>`
@@ -650,9 +683,18 @@ function comprava(r) {
 }
 
 function situacaoTag(r) {
-  if (r.status === 'parou' || r.status === 'perdido')
+  if (FORA_DO_CICLO.has(r.status))
     return r.trocou ? '<span class="badge tag-troca">🔁 Trocou</span>' : '<span class="badge tag-aband">🚫 Abandonou</span>';
   return '';
+}
+
+// Badge + linha "ciclo ~56d · 6 compras" (o porquê da situação).
+function situacaoCell(r, comTag) {
+  const ciclo = r.ciclo
+    ? `ciclo ~${r.ciclo}d · ${NUM.format(r.compras_12m || 0)} compras em 12m`
+    : `${NUM.format(r.compras_12m || 0)} compra em 12m · sem ciclo`;
+  return `<span class="badge st-${r.status}">${ST_LABEL[r.status] || r.status}</span>${comTag ? ' ' + situacaoTag(r) : ''}`
+       + `<div class="ciclo-info">${ciclo}</div>`;
 }
 
 function renderDetalhe() {
@@ -672,7 +714,7 @@ function renderDetalhe() {
       <td class="num">${r.dias_parado == null ? '—' : r.dias_parado}</td>
       <td class="num">${comprava(r)}</td>
       <td class="num">${BRL.format(r.venda_12m || 0)}</td>
-      <td><span class="badge st-${r.status}">${ST_LABEL[r.status] || r.status}</span> ${situacaoTag(r)}</td>
+      <td>${situacaoCell(r, true)}</td>
       <td>${r.vendedor || '—'}</td>
       <td class="num" style="font-family:'JetBrains Mono'">${r.telefone || '—'}</td>
     </tr>`).join('');
@@ -764,6 +806,8 @@ async function abrirCliente(codcli) {
     document.getElementById('c_meta').textContent =
       `#${c.codcli} · ${c.cidade || '—'}/${c.uf || '—'} · ${c.vendedor || '—'} · ${c.telefone || 's/ tel'} · janela ${d.dias}d`;
     document.getElementById('kc_parados').textContent = NUM.format(k.produtos_parados);
+    document.getElementById('kc_parados_sub').textContent =
+      `atenção, atrasado ou parou — pelo ciclo dele em cada item · +${NUM.format(k.esporadicos || 0)} esporádicos`;
     document.getElementById('kc_risco').textContent = BRL.format(k.receita_em_risco || 0);
     renderCliente();
   } catch (e) {
@@ -777,10 +821,17 @@ function sortCli(col) {
   renderCliente();
 }
 
+function toggleStatusCli(el) {
+  el.classList.toggle('active');
+  const st = el.dataset.st;
+  if (_statusFiltroCli.has(st)) _statusFiltroCli.delete(st); else _statusFiltroCli.add(st);
+  renderCliente();
+}
+
 function renderCliente() {
   if (!_cliente) return;
   const busca = document.getElementById('filt_prod_cli').value.trim().toLowerCase();
-  let rows = (_cliente.rows || []).slice();
+  let rows = (_cliente.rows || []).filter(r => _statusFiltroCli.has(r.status));
   if (busca) rows = rows.filter(r =>
     (r.descricao || '').toLowerCase().includes(busca) || String(r.codprod).includes(busca)
     || (r.depto_nome || '').toLowerCase().includes(busca) || (r.fornec_nome || '').toLowerCase().includes(busca));
@@ -797,11 +848,11 @@ function renderCliente() {
       <td class="num">${r.dias_parado == null ? '—' : r.dias_parado}</td>
       <td class="num">${comprava(r)}</td>
       <td class="num">${BRL.format(r.venda_12m || 0)}</td>
-      <td><span class="badge st-${r.status}">${ST_LABEL[r.status] || r.status}</span></td>
+      <td>${situacaoCell(r, false)}</td>
     </tr>`).join('');
-  if (!rows.length) tb.innerHTML = '<tr><td colspan="7" style="color:var(--text-dim)">Nenhum produto parado nessa janela para este cliente.</td></tr>';
+  if (!rows.length) tb.innerHTML = '<tr><td colspan="7" style="color:var(--text-dim)">Nenhum produto fora do ciclo para este cliente nos filtros escolhidos.</td></tr>';
   document.getElementById('detc_info').textContent =
-    `${NUM.format(rows.length)} produtos exibidos (de ${NUM.format(_cliente.rows.length)} que o cliente parou de comprar)`;
+    `${NUM.format(rows.length)} produtos exibidos (de ${NUM.format(_cliente.rows.length)} fora do ciclo ou esporádicos)`;
 }
 
 function exportarCliente(fmt) {
@@ -833,7 +884,7 @@ function drillHTML(r, serie) {
       <div><div style="font-size:0.66rem;color:var(--text-dim);text-transform:uppercase">Última compra</div><div style="font-weight:600">${r.ultima_compra || '—'}</div></div>
       <div><div style="font-size:0.66rem;color:var(--text-dim);text-transform:uppercase">Dias parado</div><div style="font-weight:600">${r.dias_parado == null ? '—' : r.dias_parado}</div></div>
       <div><div style="font-size:0.66rem;color:var(--text-dim);text-transform:uppercase">Venda 12m</div><div style="font-weight:600">${BRL.format(r.venda_12m || 0)}</div></div>
-      <div><div style="font-size:0.66rem;color:var(--text-dim);text-transform:uppercase">Situação</div><div style="font-weight:600"><span class="badge st-${r.status}">${ST_LABEL[r.status] || r.status}</span> ${situacaoTag(r)}</div></div>
+      <div><div style="font-size:0.66rem;color:var(--text-dim);text-transform:uppercase">Situação</div><div style="font-weight:600">${situacaoCell(r, true)}</div></div>
     </div>`;
   return resumo + '<div style="font-size:0.7rem;color:var(--text-dim);text-transform:uppercase;margin-bottom:6px">Compras do produto (12 meses)</div>' + sparkline(serie);
 }

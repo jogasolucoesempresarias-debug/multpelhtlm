@@ -51,6 +51,13 @@
   .b-60 { background: rgba(var(--orange-rgb), 0.15); color: var(--orange); }
   .b-90 { background: rgba(var(--red-rgb), 0.15); color: var(--red); }
   .b-180 { background: rgba(var(--red-rgb), 0.25); color: var(--red); font-weight: 700; }
+  /* Régua única do ciclo (mesmas cores do Radar e do Próximo Pedido) */
+  .st { padding: 2px 8px; border-radius: 4px; font-size: 0.68rem; font-weight: 600; display: inline-block; }
+  .st-atencao    { background: rgba(var(--yellow-rgb), 0.15); color: var(--yellow); }
+  .st-atrasado   { background: rgba(var(--orange-rgb), 0.15); color: var(--orange); }
+  .st-parou      { background: rgba(var(--red-rgb), 0.18); color: var(--red); }
+  .st-esporadico { background: var(--surface2); color: var(--text-dim); border: 1px solid var(--border); }
+  .ciclo-info    { font-size: 0.66rem; color: var(--text-dim); margin-top: 2px; }
 
   .loading-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; gap: 14px; }
   .spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
@@ -91,7 +98,10 @@
   <script src="/static/joga-header.js"></script>
 
   <div style="margin-bottom:10px;color:var(--text-dim);font-size:0.78rem;">
-    Clientes que compraram um <strong>departamento</strong> nos últimos 12 meses mas NÃO compraram nos últimos <strong id="dias_subt">60</strong> dias. Use pra cobrar oportunidades de cross-sell.
+    Clientes que compraram um <strong>departamento</strong> nos últimos 12 meses, NÃO compraram nos últimos <strong id="dias_subt">60</strong> dias
+    <strong>e já passaram do próprio ciclo</strong> nesse departamento (quem compra a cada 90 dias não aparece no dia 61).
+    Situação pela régua da Carteira: <strong>Atenção</strong> 1–2× o ciclo · <strong>Atrasado</strong> 2–3× · <strong>Parou</strong> 3× ou mais ·
+    <strong>Esporádico</strong> = 1 compra só no ano. Use pra cobrar oportunidades de cross-sell.
   </div>
 
   <div class="filtros-card">
@@ -148,14 +158,14 @@
       <div class="sub" id="k_clientes_distintos">—</div>
     </div>
     <div class="kpi-card">
-      <div class="label">Receita 12m em risco</div>
+      <div class="label">Venda 12m desses pares</div>
       <div class="value" id="k_venda">—</div>
-      <div class="sub">Soma da venda dos pares parados</div>
+      <div class="sub" id="k_venda_sub">o que esses clientes compraram do depto em 12 meses</div>
     </div>
     <div class="kpi-card">
-      <div class="label">Lucro 12m em risco</div>
+      <div class="label">Lucro 12m desses pares</div>
       <div class="value" id="k_lucro">—</div>
-      <div class="sub">Soma do lucro dos pares parados</div>
+      <div class="sub">lucro do depto nesses clientes em 12 meses</div>
     </div>
     <div class="kpi-card">
       <div class="label">Top 5 maiores perdas</div>
@@ -176,6 +186,7 @@
             <th>Departamento</th>
             <th>Última compra</th>
             <th class="num">Dias parado</th>
+            <th>Situação</th>
             <th class="num">Venda Cat 12m</th>
             <th class="num">Lucro Cat 12m</th>
             <th>Vendedor</th>
@@ -217,6 +228,10 @@ const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL',
 const NUM = new Intl.NumberFormat('pt-BR');
 let _rows = [];
 let _totalBackend = 0;
+let _totais = null;        // totais da lista INTEIRA (servidor), não só das 200 linhas da tabela
+const ST_LABEL = { atencao: 'Atenção', atrasado: 'Atrasado', parou: 'Parou', esporadico: 'Esporádico' };
+function stBadge(st) { return st ? `<span class="st st-${st}">${ST_LABEL[st] || st}</span>` : ''; }
+function cicloTxt(r) { return r.ciclo ? `ciclo ~${r.ciclo}d` : 'sem ciclo (1 compra)'; }
 
 // ── Painel por cliente: fornecedores (padrão) ou departamentos que ele parou de comprar ──
 let _drillCodcli = null;
@@ -265,7 +280,7 @@ async function renderDrill() {
         `#${codcli} · ${d.cidade || '—'}/${d.uf || '—'} · ${d.vendedor || '—'} · ${d.total} fornecedor(es) parado(s)`;
       const rows = d.rows || [];
       if (!rows.length) {
-        body.innerHTML = `<div style="color:var(--text-dim)">Nenhum fornecedor parado há ${dias} dias para este cliente.</div>`;
+        body.innerHTML = `<div style="color:var(--text-dim)">Nenhum fornecedor parado há ${dias} dias e fora do ciclo para este cliente.</div>`;
         return;
       }
       body.innerHTML = `
@@ -274,9 +289,10 @@ async function renderDrill() {
           <div style="display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">
             <div>
               <div style="font-weight:600;font-size:0.86rem;">${i+1}. ${r.fornec_nome}</div>
-              <div style="font-size:0.72rem;color:var(--text-dim);">última: ${r.ultima_compra} · ${r.dias_parado}d parado</div>
+              <div style="font-size:0.72rem;color:var(--text-dim);">última: ${r.ultima_compra} · ${r.dias_parado}d parado · ${cicloTxt(r)}</div>
             </div>
             <div style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:0.8rem;">
+              <div>${stBadge(r.status)}</div>
               <div style="color:var(--red);font-weight:700;">${BRL.format(r.lucro_cat_12m || 0)}</div>
               <div style="color:var(--text-dim);font-size:0.72rem;">venda ${BRL.format(r.venda_cat_12m || 0)}</div>
             </div>
@@ -289,7 +305,7 @@ async function renderDrill() {
         `#${codcli} · ${d.cidade || '—'}/${d.uf || '—'} · ${d.vendedor || '—'} · ${d.total} depto(s) parado(s)`;
       const rows = d.rows || [];
       if (!rows.length) {
-        body.innerHTML = `<div style="color:var(--text-dim)">Nenhum departamento parado há ${dias} dias.</div>`;
+        body.innerHTML = `<div style="color:var(--text-dim)">Nenhum departamento parado há ${dias} dias e fora do ciclo.</div>`;
         return;
       }
       body.innerHTML = `
@@ -298,9 +314,10 @@ async function renderDrill() {
           <div style="display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">
             <div>
               <div style="font-weight:600;font-size:0.86rem;">${i+1}. ${r.depto_nome}</div>
-              <div style="font-size:0.72rem;color:var(--text-dim);">última: ${r.ultima_compra} · ${r.dias_parado}d parado</div>
+              <div style="font-size:0.72rem;color:var(--text-dim);">última: ${r.ultima_compra} · ${r.dias_parado}d parado · ${cicloTxt(r)}</div>
             </div>
             <div style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:0.8rem;">
+              <div>${stBadge(r.status)}</div>
               <div style="color:var(--red);font-weight:700;">${BRL.format(r.lucro_cat_12m || 0)}</div>
               <div style="color:var(--text-dim);font-size:0.72rem;">venda ${BRL.format(r.venda_cat_12m || 0)}</div>
             </div>
@@ -383,8 +400,9 @@ async function carregarClienteNoBoard(codcli) {
     const d = await fetchJSON('/api/mix/abandonado?' + params.toString());
     _rows = d.rows || [];
     _totalBackend = d.total;
+    _totais = d.totais || null;
     document.getElementById('dias_subt').textContent = dias;
-    renderKpis(_rows, _totalBackend);
+    renderKpis(_rows, _totalBackend, _totais);
     renderTabela(_rows);
     const nome = _rows.length ? _rows[0].cliente : ('cliente #' + codcli);
     document.getElementById('tabela_info_txt').innerHTML =
@@ -468,7 +486,9 @@ async function loadDeptos() {
 
 async function loadFornecedores() {
   try {
-    const d = await fetchJSON('/api/fornecedores?top=50');
+    // Lista COMPLETA de fornecedores (catálogo de produtos, a mesma do Radar). Até 11/2026 vinha do
+    // ranking top 50 por venda e fornecedor menor não aparecia para filtrar.
+    const d = await fetchJSON('/api/radar/fornecedores');
     _fornecArr = (d.fornecedores || []).map(f => ({ codfornec: f.codfornec, nome: f.nome }));
     const dl = document.getElementById('lista_fornec');
     dl.innerHTML = _fornecArr.map(f => `<option value="${f.nome} (${f.codfornec})">`).join('');
@@ -517,10 +537,11 @@ async function loadMix() {
     const d = await fetchJSON('/api/mix/abandonado?' + params.toString());
     _rows = d.rows || [];
     _totalBackend = d.total;
+    _totais = d.totais || null;
     document.getElementById('dias_subt').textContent = dias;
     document.getElementById('tabela_info_txt').innerHTML =
       '<strong id="tabela_total">0</strong> pares · mostrando primeiros 200';
-    renderKpis(_rows, _totalBackend);
+    renderKpis(_rows, _totalBackend, _totais);
     renderTabela(_rows);
     document.getElementById('loading').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
@@ -529,9 +550,22 @@ async function loadMix() {
   }
 }
 
-function renderKpis(rows, totalBackend) {
-  // rows = lista (filtrada ou completa); totalBackend = total absoluto do backend (804)
-  // Quando filtros locais aplicados, mostra "X (de Y)"
+function renderKpis(rows, totalBackend, totais) {
+  // Sem filtro local: cards = totais da lista INTEIRA (servidor). Com filtro de vendedor/time
+  // (local, sobre as 200 linhas carregadas): soma das linhas filtradas, com "(de Y)".
+  if (totais) {
+    const ps = totais.por_status || {};
+    document.getElementById('k_total').textContent = NUM.format(totais.pares);
+    document.getElementById('k_clientes_distintos').textContent =
+      `${NUM.format(totais.clientes)} clientes · ${NUM.format(ps.atencao || 0)} atenção · ${NUM.format(ps.atrasado || 0)} atrasado · `
+      + `${NUM.format(ps.parou || 0)} parou · ${NUM.format(ps.esporadico || 0)} esporádicos`;
+    document.getElementById('k_venda').textContent = BRL.format(totais.venda || 0);
+    document.getElementById('k_lucro').textContent = BRL.format(totais.lucro || 0);
+    const top5t = [...rows].sort((a, b) => (b.venda_cat_12m || 0) - (a.venda_cat_12m || 0)).slice(0, 5);
+    document.getElementById('k_top5_total').textContent = BRL.format(top5t.reduce((s, r) => s + (r.venda_cat_12m || 0), 0));
+    document.getElementById('k_top5_nomes').textContent = top5t.map(r => r.cliente.slice(0, 18)).join(', ');
+    return;
+  }
   const filtrado = totalBackend != null && rows.length !== totalBackend;
   document.getElementById('k_total').textContent = filtrado
     ? `${NUM.format(rows.length)} (de ${NUM.format(totalBackend)})`
@@ -571,6 +605,7 @@ function renderTabela(rows) {
       <td>${r.depto_nome}</td>
       <td>${r.ultima_compra}</td>
       <td class="num">${badgeDias(r.dias_sem_comprar_categoria)}</td>
+      <td>${stBadge(r.status)}<div class="ciclo-info">${cicloTxt(r)}</div></td>
       <td class="num">${BRL.format(r.venda_cat_12m || 0)}</td>
       <td class="num"><strong style="color:var(--red);">${BRL.format(r.lucro_cat_12m)}</strong></td>
       <td>${r.vendedor || '—'}</td>
@@ -610,7 +645,8 @@ function filtrarTabela() {
     }
     return vendedor_ok && time_ok;
   });
-  renderKpis(filt, _totalBackend);
+  const semFiltro = !vRaw && !tCod;
+  renderKpis(filt, _totalBackend, semFiltro ? _totais : null);
   renderTabela(filt);
 }
 

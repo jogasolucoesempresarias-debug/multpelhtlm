@@ -196,7 +196,8 @@
   .badge { padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; display: inline-block; }
   /* Badges b-ok/b-normal/b-atencao/b-urgente — reintroduzidos pra aba Próximo Pedido */
   .badge.b-ok      { background: rgba(var(--green-rgb), .15); color: var(--green); }
-  .badge.b-normal  { background: rgba(var(--accent-rgb), .15); color: var(--accent); }
+  /* Régua única do ciclo (11/2026): 'normal' = já passou de 1× o ciclo → Atenção (amarelo) */
+  .badge.b-normal  { background: rgba(var(--yellow-rgb), .15); color: var(--yellow); }
   .badge.b-atencao { background: rgba(var(--orange-rgb), .15); color: var(--orange); }
   .badge.b-urgente { background: rgba(var(--red-rgb), .15); color: var(--red); }
   .pp-row:hover { background: var(--surface2, rgba(255,255,255,.03)); }
@@ -1326,7 +1327,9 @@ function limparProximo() {
 }
 function _statusBadge(s) {
   const cls = { ok: 'b-ok', normal: 'b-normal', atencao: 'b-atencao', urgente: 'b-urgente' };
-  const txt = { ok: 'No prazo', normal: 'Normal', atencao: 'Atenção', urgente: 'Urgente' };
+  // Mesmos nomes do Radar, Mix e Gerencial (rfm.STATUS_CICLO_PT). 'Normal' dizia "normal" para quem já
+  // tinha passado do ciclo; a chave da API continua a mesma.
+  const txt = { ok: 'No prazo', normal: 'Atenção', atencao: 'Atrasado', urgente: 'Parou' };
   return `<span class="badge ${cls[s] || ''}">${txt[s] || s || '—'}</span>`;
 }
 function renderProximo() {

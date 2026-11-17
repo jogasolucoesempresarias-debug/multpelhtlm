@@ -37,7 +37,22 @@ BASE_DIAS = 365
 COBERTO_DIAS_PADRAO = 60          # "em dia" default (era 30 até 09/2026)
 LIMIAR_PADRAO = 85.0              # % — o piso das faixas de nota (< 85% = nota 0); era 60
 MIN_AMOSTRA = 5                   # abaixo disso o % é ruído → flag amostra_pequena
-_STATUS_NO_CICLO = ('ok', 'normal')  # dentro do ciclo pessoal do cliente
+
+
+def no_ciclo(c, coberto_dias=COBERTO_DIAS_PADRAO):
+    """Cliente DENTRO do próprio ciclo: última compra há menos de 1× o ciclo pessoal — o mesmo
+    'No prazo' da Carteira e do Próximo Pedido, e o oposto do 'em risco' da Recuperação
+    (que exige passar de 1× o ciclo). Sem ciclo (1 compra) não há como medir: vale a janela "em
+    dia" do toggle.
+    ⚠️ Até 11/2026 contava até 2× o ciclo ('ok' + 'normal'): havia cliente "dentro do ciclo" aqui
+    e "em risco" na Recuperação ao mesmo tempo (medido no BI em 17/11/2026)."""
+    dias = c.get('recencia_dias')
+    if dias is None or dias < 0:
+        return False
+    ciclo = c.get('ciclo_pessoal')
+    if ciclo:
+        return dias < ciclo
+    return dias <= coberto_dias
 
 
 def na_base(recencia_dias, base_dias=BASE_DIAS):
@@ -120,7 +135,7 @@ def agregar_grupo(clientes, coberto_dias=COBERTO_DIAS_PADRAO):
     buckets_idx = {chave: {'clientes': 0, 'valor': 0.0} for chave, _, _ in FAIXAS}
     clientes_cobertos = 0
     valor_coberto = 0.0
-    no_ciclo = 0
+    n_no_ciclo = 0
     receita_em_risco = 0.0
     for c in clientes:
         dias = c.get('recencia_dias')
@@ -133,8 +148,8 @@ def agregar_grupo(clientes, coberto_dias=COBERTO_DIAS_PADRAO):
             clientes_cobertos += 1
             valor_coberto += v
         # Cobertura dentro do ciclo (justa)
-        if c.get('status_personalizada') in _STATUS_NO_CICLO:
-            no_ciclo += 1
+        if no_ciclo(c, coberto_dias):
+            n_no_ciclo += 1
         receita_em_risco += (c.get('receita_perdida_proj') or 0.0)
 
     buckets = [{
@@ -163,7 +178,7 @@ def agregar_grupo(clientes, coberto_dias=COBERTO_DIAS_PADRAO):
         'valor_coberto':      round(valor_coberto, 2),
         'cobertura_clientes': _pct(clientes_cobertos, total),
         'cobertura_valor':    _pct(valor_coberto, valor_total),
-        'cobertura_ciclo':    _pct(no_ciclo, total),
+        'cobertura_ciclo':    _pct(n_no_ciclo, total),
         'receita_em_risco':   round(receita_em_risco, 2),
         'base_morta':         buckets_idx['91+']['clientes'],
         'buckets':            buckets,

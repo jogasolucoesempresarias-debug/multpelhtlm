@@ -92,13 +92,40 @@ def test_toggle_coberto_dias_move_headline_mas_nao_as_faixas():
     assert [b['clientes'] for b in g30['buckets']] == [b['clientes'] for b in g60['buckets']]
 
 
-def test_cobertura_ciclo_conta_ok_e_normal():
+def _com_ciclo(recencia, ciclo):
+    c = _cli(recencia)
+    c['ciclo_pessoal'] = ciclo
+    return c
+
+
+def test_cobertura_ciclo_e_menos_de_1x_o_ciclo():
+    """Dentro do ciclo = recência < 1× o ciclo (o 'No prazo' da Carteira). Até 11/2026 contava
+    até 2× ('ok' + 'normal') e contradizia a Recuperação, que põe em risco acima de 1×."""
     clientes = [
-        _cli(10, status='ok'), _cli(20, status='normal'),
-        _cli(50, status='atencao'), _cli(200, status='urgente'),
+        _com_ciclo(10, 30),    # 0,33× → dentro
+        _com_ciclo(29, 30),    # 0,97× → dentro
+        _com_ciclo(30, 30),    # 1×    → fora (já venceu)
+        _com_ciclo(45, 30),    # 1,5×  → fora — antes contava como dentro
     ]
     g = cob.agregar_grupo(clientes)
-    assert g['cobertura_ciclo'] == 0.5   # ok + normal = 2 de 4
+    assert g['cobertura_ciclo'] == 0.5
+
+
+def test_cobertura_ciclo_sem_ciclo_usa_a_janela_em_dia():
+    """Cliente de 1 compra não tem ciclo: vale a janela do toggle (60 d por padrão)."""
+    clientes = [_com_ciclo(20, None), _com_ciclo(70, None)]
+    assert cob.agregar_grupo(clientes)['cobertura_ciclo'] == 0.5
+    assert cob.agregar_grupo(clientes, coberto_dias=15)['cobertura_ciclo'] == 0.0
+
+
+def test_dentro_do_ciclo_nunca_esta_em_risco_na_recuperacao():
+    """Harmonia Gerencial × Recuperação: quem está dentro do ciclo nunca é 'risco'."""
+    import recuperacao as rec
+    for dias in range(0, 400, 7):
+        for ciclo in (7, 14, 30, 45, 60, 90, 120, None):
+            c = _com_ciclo(dias, ciclo)
+            if cob.no_ciclo(c):
+                assert not (dias > rec.INATIVO_DIAS and (ciclo is None or dias > ciclo)), (dias, ciclo)
 
 
 def test_receita_em_risco_soma():

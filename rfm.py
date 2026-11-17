@@ -72,6 +72,50 @@ def status_regua_personalizada(dias_sem_comprar, ciclo):
     return 'urgente'
 
 
+# ── Régua ÚNICA por ciclo (revisão geral do Comercial, 17/11/2026) ─────────────────────────────
+# Os MESMOS cortes da status_regua_personalizada (1× / 2× / 3× o ciclo) valem no cliente
+# (Carteira, Gerencial), no cliente × departamento (Mix) e no cliente × produto (Radar) — muda só
+# o nível em que as compras são contadas. Até 11/2026 cada tela tinha a sua régua: o Radar e o Mix
+# olhavam só a janela da tela (um cliente de ciclo 90 dias aparecia "Parou" com 61), o Gerencial
+# chamava de "dentro do ciclo" quem estava em até 2× e a Recuperação já punha em risco acima de 1×
+# — o mesmo cliente aparecia "dentro do ciclo" numa tela e "em risco" na outra.
+# As chaves de status_regua_personalizada ficam como estão (a API e os filtros da Carteira usam);
+# o que muda é o NOME exibido: 'normal' já passou do ciclo, então se chama Atenção.
+STATUS_CICLO_PT = {'ok': 'No prazo', 'normal': 'Atenção', 'atencao': 'Atrasado', 'urgente': 'Parou'}
+
+# Chaves "limpas" para os grãos novos (Radar/Mix). 'esporadico' = menos de 2 dias de compra no
+# período: sem intervalo não há ciclo, e a régua fixa de dias (10/30/45) é do CLIENTE, não serve
+# para produto ou departamento — então não se inventa status, se diz que é esporádico.
+FAIXA_CICLO_PT = {'no_prazo': 'No prazo', 'atencao': 'Atenção', 'atrasado': 'Atrasado',
+                  'parou': 'Parou', 'esporadico': 'Esporádico'}
+FORA_DO_CICLO = ('atencao', 'atrasado', 'parou')
+_FAIXA_DE_STATUS = {'ok': 'no_prazo', 'normal': 'atencao', 'atencao': 'atrasado', 'urgente': 'parou'}
+
+
+def faixa_ciclo(dias_sem_comprar, ciclo, janela_sem_ciclo=None):
+    """Posição no PRÓPRIO ciclo: no_prazo (<1×) · atencao (1–2×) · atrasado (2–3×) · parou (≥3×).
+    Mesmos cortes de status_regua_personalizada (fonte única).
+    Sem ciclo (1 dia de compra): com `janela_sem_ciclo`, quem comprou DENTRO dela está no prazo e
+    quem não voltou é 'esporadico' — a mesma saída da Recuperação (sem ciclo = ativo até 60 dias)
+    e do Gerencial (sem ciclo = vale a janela em dia). Sem janela → sempre 'esporadico'."""
+    if ciclo is None or ciclo <= 0:
+        if janela_sem_ciclo is not None and dias_sem_comprar is not None and 0 <= dias_sem_comprar < janela_sem_ciclo:
+            return 'no_prazo'
+        return 'esporadico'
+    return _FAIXA_DE_STATUS[status_regua_personalizada(dias_sem_comprar, ciclo)]
+
+
+def ciclos_por_chave(pares):
+    """[(chave, data)] → {chave: {'ciclo': ciclo_pessoal | None, 'compras': nº de dias distintos}}.
+    `data` pode ser ISO (com ou sem hora) ou date. Linhas sem chave/data são ignoradas."""
+    datas = {}
+    for k, d in pares:
+        if k is None or d is None:
+            continue
+        datas.setdefault(k, set()).add(d if isinstance(d, date) else date.fromisoformat(str(d)[:10]))
+    return {k: {'ciclo': ciclo_pessoal(sorted(v)), 'compras': len(v)} for k, v in datas.items()}
+
+
 def margem(lucro, venda):
     """Margem = lucro ÷ venda líquida (régua do Comercial: Dashboard, Curva ABC). Sem venda
     positiva não há margem (None) — cliente só com devolução daria um % sem sentido."""

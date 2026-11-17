@@ -959,6 +959,29 @@ def _mix_agrupado(group_cols, agg_cols, where_extra, args):
         return cur.fetchall()
 
 
+_DATAS_VENDA_COLS = ('codcli', 'codprod', 'codepto', 'codfornecprinc')
+
+
+def datas_venda_12m(cols, filtros=None):
+    """Dias com VENDA (codoper='S') nos últimos 12 meses, agrupados por `cols`:
+    [(col1, ..., dtsaida_iso)]. `filtros` = {col: valor} de igualdade. Espelha o
+    _ciclos_venda_12m do app (régua do ciclo do Radar e do Mix). Colunas só da lista branca."""
+    filtros = filtros or {}
+    for c in list(cols) + list(filtros):
+        if c not in _DATAS_VENDA_COLS:
+            raise ValueError(f'coluna fora da lista: {c}')
+    d0, _ = periodo_sql("12m")
+    d1 = hoje_analitico()
+    we = ''.join(f" AND {c}=%s" for c in filtros)
+    sel = ', '.join(cols)
+    with analytics_conn() as c:
+        cur = c.cursor()
+        cur.execute(f"""SELECT DISTINCT {sel}, dtsaida FROM faturamento_vendas
+            WHERE codoper='S' AND dtsaida BETWEEN %s AND %s{we}""",
+                    (d0, d1, *[int(v) for v in filtros.values()]))
+        return [tuple(r[:-1]) + (r[-1].isoformat(),) for r in cur.fetchall()]
+
+
 def mix_abandonado_raw(codepto=None, fornecedor=None):
     """Pares cliente×depto dos últimos 12m: [{CODCLI, CODEPTO, UltimaCompra, VendaCat12m, LucroCat12m}]."""
     we, args = "", []

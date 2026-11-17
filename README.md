@@ -102,7 +102,55 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
     Sem card, por decisão. Gate: `tests/test_carteira_margem.py`.
 - **Vendedores** — ranking YoY, positivação, cockpit individual.
 - **Categorias** — treemap de deptos (tamanho=venda, cor=margem) + top fornecedores + drill.
-- **Mix abandonado** — clientes que pararam de comprar um depto há X dias; drill top 5 deptos perdidos; export CSV.
+- **Mix abandonado** — clientes que pararam de comprar um depto há X dias **e passaram do próprio ciclo
+  nele**; drill top 5 deptos e fornecedores; export CSV/PDF.
+- 🩹 **Régua ÚNICA do ciclo** (17/11/2026, revisão geral pedida pelo João Victor: *"59 dias sem compra
+  aparece como Comprando"*). Cinco telas respondiam "esse cliente parou?" com cinco réguas e usavam
+  as mesmas palavras com sentidos diferentes. Agora é **uma régua, um vocabulário**:
+  `rfm.faixa_ciclo` = os MESMOS cortes da `status_regua_personalizada` (1× / 2× / 3× o ciclo) com os
+  nomes **No prazo · Atenção · Atrasado · Parou** (+ **Esporádico** = 1 dia de compra, sem ciclo).
+  Muda só o grão em que o ciclo é medido: Carteira/Gerencial no cliente, **Mix no cliente × depto**,
+  **Radar no cliente × produto** (`_ciclos_venda_12m`, mesma `rfm.ciclo_pessoal`, só VENDA, 12 m).
+  - **Radar (drill e visão por cliente):** situação pelo ciclo, não mais pela janela (perdido ≥ 2×
+    janela / parou ≥ janela). Medido no BI: **mais da metade dos "Parou" com histórico estavam no
+    ritmo deles** e metade dos "Comprando" comprava 1–2 vezes no ano.
+    Card "Fora do ciclo" = Atenção + Atrasado + Parou. A janela segue valendo para o board, para o
+    Antes → Agora e para quem não tem ciclo (**sem ciclo, vale a janela** — como a Recuperação).
+  - **Mix:** entra o par parado há ≥ N dias **E** fora do próprio ciclo no depto (as duas condições da
+    Recuperação) — a lista encolhe. Cards passaram a somar a **lista inteira**
+    (`totais`; antes somavam só as 200 linhas da tabela e se chamavam "Receita 12m em risco").
+    Lista de fornecedores do filtro = a completa (`/api/radar/fornecedores`; antes top 50 —
+    fornecedor menor não aparecia).
+  - **Gerencial:** "Dentro do ciclo" = **< 1× o ciclo** (`cobertura.no_ciclo`; antes `ok`+`normal`,
+    até 2×). Clientes saíam "dentro do ciclo" aqui e "em risco" na Recuperação ao mesmo tempo; a
+    contradição caiu quase a zero. O resíduo é porque a Recuperação mede o ciclo nos 365 dias até a
+    ÚLTIMA compra e a Carteira nos 12 meses até hoje (alinhar = mudar a definição do ciclo da
+    Carteira; não feito). O % cai, porque deixa de contar quem já passou do ciclo.
+    Linha "em dia" segue o toggle (era fixa em 0–30 com o padrão em 60). "Base morta" →
+    **"Inativo no ERP (91+)"**.
+  - **Carteira / Próximo Pedido:** só o NOME exibido mudou (`rfm.STATUS_CICLO_PT`): "Normal" →
+    Atenção, "Atenção" → Atrasado, "Urgente" → Parou. As chaves da API (`ok/normal/atencao/urgente`)
+    ficaram — filtros, exports e testes dependem delas.
+  - **Vocabulário reservado:** "perdido" = > 365 dias (Recuperação); "em risco" = Recuperação. No
+    board do Radar: "Receita em risco" → **Queda de receita**, "Clientes perdidos" → **Não
+    recompraram** (CSV: `QuedaReceita`, `NaoRecompraram`).
+  - **Última compra = última VENDA** (`_DAX_ULTIMA_VENDA`, CODOPER 'S') no Radar e no Mix: o
+    `MAX(DTSAIDA)` contava bonificação (cliente "Comprando" só por bonificação). O Postgres já filtrava 'S'.
+  - Chaves de cache com versão: `radar:produto` v2, `radar:cliente` v2, `radar:board` v5,
+    `mix:abandonado` v2, `mix:cliente:fornec` v2, `gerencial:cobertura` v2, `mix:ciclos:v1` (global).
+  - Gate: `tests/test_regua_ciclo_harmonia.py` + `test_cobertura.py` (inclui "quem está dentro do
+    ciclo nunca está em risco").
+  - ⚠️ **Achado junto: o ciclo da Carteira era calculado sobre resposta CORTADA.** `datas_t1..t4`
+    eram `SELECTCOLUMNS(FILTER(FATURAMENTO_VENDAS…))` — uma linha por ITEM de nota, bem acima de
+    100 mil por trimestre, e o `executeQueries` devolvia **100.000 em silêncio**. Parte dos clientes
+    ficava **sem nenhuma data** e o ciclo de outros saía longo demais. Agora é
+    `SUMMARIZECOLUMNS(CODCLI, DTSAIDA)` só com VENDA (uma linha por cliente × dia, folgada no teto),
+    como o modo Postgres e a Recuperação: muitos clientes passaram a ter ciclo (entram no Próximo
+    Pedido) e o de outros encurtou. Chave `carteira:full:global:v5`. O Mix inteiro (cliente × depto
+    × dia passa de 100 mil) vem em **12 blocos mensais** e bloco no teto **levanta**
+    (`_ciclos_venda_12m`).
+    **Regra: consulta que devolve exatamente 100.000 linhas está cortada** — agrupe por coluna antes
+    de trazer (dia, não item), quebre em blocos e confira o teto.
 - 🩹 **Radar — o board contava por VENDA e o drill listava por CADASTRO** (08/2026, achado pelo
   diretor). O board dizia "1 cliente perdido" e o drill abria **"Nenhum cliente"**. As duas telas
   estavam certas, cada uma na sua régua: o board filtrava `FATURAMENTO_VENDAS[CODSUPERVISOR]` (quem

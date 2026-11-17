@@ -47,9 +47,13 @@ def test_a_lista_conta_o_mesmo_que_a_linha_clicada():
         lo, hi = rng[b['faixa']]
         r = server._filtrar_carteira(clientes, {'vendedor': '29', 'dias_min': str(lo), 'dias_max': str(hi)})
         assert r['total'] == b['clientes'], b['faixa']
-    lo, hi = rng['0-30']
-    r = server._filtrar_carteira(clientes, {'vendedor': '29', 'dias_min': str(lo), 'dias_max': str(hi)})
-    assert r['total'] == vend['rollup_0_30']['clientes']
+    # Linha "0–N dias (em dia)" segue o toggle (11/2026; antes era fixa em 0–30 com o padrão em 60):
+    # clicar nela lista exatamente os positivados do card de cobertura.
+    assert "f === 'em_dia' ? [0, _coberto]" in HTML
+    for coberto in (30, 45, 60):
+        v = next(x for x in cob.agregar_niveis(clientes, coberto_dias=coberto)['vendedores'] if x['id'] == 29)
+        r = server._filtrar_carteira(clientes, {'vendedor': '29', 'dias_min': '0', 'dias_max': str(coberto)})
+        assert r['total'] == v['clientes_cobertos'], coberto
     toda = server._filtrar_carteira(clientes, {'vendedor': '29', 'dias_min': '0', 'dias_max': str(base)})
     assert toda['total'] == vend['total_clientes'], "sem faixa = a base inteira do escopo"
 
@@ -66,6 +70,6 @@ def test_a_lista_usa_a_api_da_carteira_e_o_plano_de_acao():
 
 
 def test_na_empresa_o_clique_segue_para_a_carteira():
-    corpo = HTML[HTML.index('function drillFaixa'):HTML.index('function drillRollup0_30')]
+    corpo = HTML[HTML.index('function drillFaixa'):HTML.index('function drillRollupEmDia')]
     assert "_scope.level === 'empresa'" in corpo and "'/carteira?'" in corpo
     assert "card.classList.toggle('hidden', naEmpresa)" in HTML

@@ -153,7 +153,7 @@
           <th class="num">Cobertura valor</th>
           <th class="num">Dentro do ciclo</th>
           <th class="num">Receita perdida acumulada</th>
-          <th class="ctr">Base morta</th>
+          <th class="ctr">Inativo no ERP (91+)</th>
           <th class="ctr">⚑</th>
         </tr></thead>
         <tbody id="rankBody"></tbody>
@@ -312,7 +312,7 @@ function renderKpis() {
     { cls:cc, label:'Cobertura por clientes', value:PCT(g.cobertura_clientes), sub:`${NUM.format(g.clientes_cobertos)} de ${NUM.format(g.total_clientes)} clientes ≤${_coberto}d` },
     { cls:cv, label:'Cobertura por valor', value:PCT(g.cobertura_valor), sub:`${BRL.format(g.valor_coberto)} de ${BRL.format(g.valor_total)}` },
     { cls:'r', label:'Receita perdida acumulada', value:BRL.format(g.receita_em_risco), sub:'venda mensal × meses de atraso além do ciclo (cresce enquanto o cliente não volta) — o valor MENSAL em risco está na página Recuperação' },
-    { cls:'b', label:'Dentro do ciclo (justo)', value:PCT(g.cobertura_ciclo), sub:`base morta (91+): ${NUM.format(g.base_morta)} clientes` },
+    { cls:'b', label:'Dentro do ciclo (justo)', value:PCT(g.cobertura_ciclo), sub:`compraram há menos de 1× o próprio ciclo · inativos no ERP (91+): ${NUM.format(g.base_morta)} clientes` },
   ];
   document.getElementById('kpis').innerHTML = kpis.map(k =>
     `<div class="kpi ${k.cls}"><div class="label">${k.label}</div><div class="value">${k.value}</div><div class="sub">${k.sub}</div></div>`
@@ -333,7 +333,8 @@ function renderFaixas() {
     `<span><i class="dot" style="background:${FAIXA_COR[b.faixa]}"></i>${FAIXA_LABEL[b.faixa]}d: <b style="color:var(--text)">${NUM.format(b.clientes)}</b></span>`
   ).join('');
 
-  // Tabela: 6 faixas + linha rollup 0-30 destacada
+  // Tabela: 6 faixas + linha "em dia" destacada. A linha segue o toggle (≤30/45/60) — até 11/2026
+  // era fixa em 0–30 e o card ao lado dizia que "em dia" era ≤60 (o padrão desde 09/2026).
   const rows = g.buckets.map(b => `
     <tr class="click${_faixaSel === b.faixa ? ' sel' : ''}" onclick="drillFaixa('${b.faixa}')">
       <td><i class="dot" style="background:${FAIXA_COR[b.faixa]}"></i> ${FAIXA_LABEL[b.faixa]} dias</td>
@@ -342,14 +343,13 @@ function renderFaixas() {
       <td class="num">${BRL.format(b.valor)}</td>
       <td class="num">${PCT(b.pct_valor)}</td>
     </tr>`).join('');
-  const r = g.rollup_0_30;
   const rollup = `
-    <tr class="click${_faixaSel === '0-30' ? ' sel' : ''}" onclick="drillRollup0_30()" style="background:rgba(52,211,153,.06); font-weight:600;">
-      <td>✓ 0–30 dias (em dia)</td>
-      <td class="num">${NUM.format(r.clientes)}</td>
-      <td class="num">${PCT(r.pct_clientes)}</td>
-      <td class="num">${BRL.format(r.valor)}</td>
-      <td class="num">${PCT(r.pct_valor)}</td>
+    <tr class="click${_faixaSel === 'em_dia' ? ' sel' : ''}" onclick="drillRollupEmDia()" style="background:rgba(52,211,153,.06); font-weight:600;">
+      <td>✓ 0–${_coberto} dias (em dia)</td>
+      <td class="num">${NUM.format(g.clientes_cobertos)}</td>
+      <td class="num">${PCT(g.cobertura_clientes)}</td>
+      <td class="num">${BRL.format(g.valor_coberto)}</td>
+      <td class="num">${PCT(g.cobertura_valor)}</td>
     </tr>`;
   document.getElementById('faixaBody').innerHTML = rollup + rows;
 }
@@ -358,7 +358,9 @@ function renderFaixas() {
 // ⚠️ O 91+ tem TETO de 365: o placar só conta a BASE ATIVA (cobertura.na_base, compra em até
 // 365 d). Sem o teto a lista trazia clientes de até 24 meses — mais do que a linha clicada dizia.
 const BASE_DIAS = 365;
-const FAIXA_RANGE = { '0-15':[0,15], '16-30':[16,30], '31-45':[31,45], '46-60':[46,60], '61-90':[61,90], '91+':[91,BASE_DIAS], '0-30':[0,30] };
+const FAIXA_RANGE = { '0-15':[0,15], '16-30':[16,30], '31-45':[31,45], '46-60':[46,60], '61-90':[61,90], '91+':[91,BASE_DIAS] };
+// "em dia" = a janela do toggle (≤30/45/60), igual ao card de cobertura.
+function faixaRange(f) { return f === 'em_dia' ? [0, _coberto] : (FAIXA_RANGE[f] || [null, null]); }
 let _faixaSel = null;      // faixa clicada (null = a base inteira do escopo)
 
 // No time/RCA a faixa filtra a lista ABAIXO (pedido do João 10/2026: "temos que ir para outra tela
@@ -366,7 +368,7 @@ let _faixaSel = null;      // faixa clicada (null = a base inteira do escopo)
 // deep-link para a Carteira — a lista da empresa inteira seriam milhares de linhas sem dono.
 function drillFaixa(faixa) {
   if (_scope.level === 'empresa') {
-    const [lo, hi] = FAIXA_RANGE[faixa] || [null, null];
+    const [lo, hi] = faixaRange(faixa);
     window.location.href = '/carteira?' + _paramsFaixa(lo, hi).toString();
     return;
   }
@@ -375,7 +377,7 @@ function drillFaixa(faixa) {
   renderClientes();
   document.getElementById('cliCard').scrollIntoView({ behavior:'smooth', block:'start' });
 }
-function drillRollup0_30() { drillFaixa('0-30'); }   // linha "0-30 (em dia)"
+function drillRollupEmDia() { drillFaixa('em_dia'); }   // linha "0–N dias (em dia)"
 function _paramsFaixa(lo, hi) {
   const params = new URLSearchParams();
   if (lo != null) params.set('dias_min', lo);
@@ -404,13 +406,13 @@ function renderClientes() {
 }
 
 async function carregarClientes(mais) {
-  const [lo, hi] = _faixaSel ? FAIXA_RANGE[_faixaSel] : [0, BASE_DIAS];
+  const [lo, hi] = _faixaSel ? faixaRange(_faixaSel) : [0, BASE_DIAS];
   const params = _paramsFaixa(lo, hi);
   const chave = params.toString();
   if (!mais || _cli.chave !== chave) _cli = { rows:[], total:0, chave };
   params.set('sort', 'venda_12m'); params.set('dir', 'desc');
   params.set('limit', CLI_PAGINA); params.set('offset', _cli.rows.length);
-  const faixaTxt = _faixaSel ? `${(FAIXA_LABEL[_faixaSel] || '0–30')} dias sem comprar` : `toda a base (compra em até ${BASE_DIAS} dias)`;
+  const faixaTxt = _faixaSel ? `${(FAIXA_LABEL[_faixaSel] || ('0–' + _coberto))} dias sem comprar` : `toda a base (compra em até ${BASE_DIAS} dias)`;
   document.getElementById('cliTitulo').textContent = `Clientes — ${_scope.nome} · ${faixaTxt}`;
   document.getElementById('cliCarteira').href = '/carteira?' + _paramsFaixa(lo, hi).toString();
   if (!mais) document.getElementById('cliBody').innerHTML = '<tr><td class="small">Carregando…</td></tr>';

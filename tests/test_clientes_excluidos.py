@@ -184,7 +184,7 @@ def test_NAO_entra_na_query_de_cadastro_da_carteira():
     """A `meta` já está no limite em que o executeQueries trunca (~260 clientes sem cadastro)."""
     src = inspect.getsource(server._carregar_carteira_full)
     assert 'DTEXCLUSAO' not in src
-    assert "'multpel:carteira:full:global:v4'" in src
+    assert "'multpel:carteira:full:global:v5'" in src
 
 
 # ─────────────────────── quem usa ───────────────────────

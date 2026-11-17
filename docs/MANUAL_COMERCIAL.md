@@ -1,6 +1,6 @@
 # Manual do Módulo COMERCIAL — JOGA Analytics
 
-**Versão 4.0 · Atualizado em 06/10/2026 · Base de conhecimento do agente de IA de dúvidas.**
+**Versão 4.1 · Atualizado em 17/11/2026 · Base de conhecimento do agente de IA de dúvidas.**
 
 > **Escopo:** este manual cobre o **módulo Comercial** (Dashboard, Carteira, Vendedores, Categorias,
 > Curva ABC, Mix, Radar, Tendências, Metas, Gerencial, Recuperação, Performance, Evolução, Plano de
@@ -16,6 +16,17 @@
 > carteira** (§17); **Plano de ação por cliente** (§18); **Agente de IA do Comercial** (§19); Carteira
 > ganhou classe ABC de clientes, praça e margem 12m (§6); Radar ganhou cards de total (§11);
 > **"Saldo de recuperação"** com sinal positivo = bom (§15.4).
+>
+> **O que mudou na v4.1 (17/11/2026) — régua ÚNICA do ciclo:** toda tela que diz se o cliente
+> "parou" usa agora o **ciclo dele** com os mesmos cortes e os mesmos nomes (§3.3): **No prazo** ·
+> **Atenção** · **Atrasado** · **Parou** · **Esporádico**. O Radar mede o ciclo do cliente **no
+> produto** (§11), o Mix **no departamento** (§10), a Carteira e o Gerencial **no geral** (§6.2, §14).
+> "Dentro do ciclo" do Gerencial passou a ser **menos de 1× o ciclo** (antes, até 2×) e nunca mais
+> contradiz o "em risco" da Recuperação; a linha "em dia" das faixas segue o seletor; "Base morta"
+> virou **"Inativo no ERP (91+)"**. "Última compra" é a última **venda** (bonificação não conta).
+> O ciclo da Carteira estava sendo calculado com datas faltando (a consulta era cortada em 100 mil
+> linhas) e foi corrigido — muitos clientes passaram a ter ciclo. Os 60 dias continuam sendo a régua
+> comercial da cobertura, o piso da Recuperação e o período padrão do Mix.
 >
 > **Regra de precedência:** quando o comportamento observado divergir deste manual, **o código
 > manda**. Fontes da verdade: `server.py` (rotas/DAX), e os módulos puros `rfm.py`, `cohort.py`,
@@ -183,6 +194,22 @@ A **régua personalizada** mede o atraso **relativo ao padrão do próprio clien
 (`dias ÷ ciclo`), não a um número fixo. Uma padaria que compra a cada 7 dias e está há 14 sem
 comprar está **pior** (2× o ciclo) que um hotel que compra a cada 90 e está há 30.
 
+**Régua ÚNICA do ciclo (desde 17/11/2026)** — os mesmos cortes e os mesmos nomes em todas as telas:
+
+| Faixa | Nome | Onde aparece |
+|---|---|---|
+| menos de 1× o ciclo | **No prazo** (= "dentro do ciclo") | Carteira, Próximo Pedido, Gerencial, Radar |
+| 1× a 2× | **Atenção** (já passou do ciclo; antes se chamava "Normal") | todas |
+| 2× a 3× | **Atrasado** | todas |
+| 3× ou mais | **Parou** | todas |
+| 1 compra só no período | **Esporádico** (sem ciclo — não dá para medir o ritmo) | Radar, Mix |
+
+Muda só **onde as compras são contadas**: Carteira/Gerencial = o cliente inteiro; Mix = o cliente
+naquele **departamento** (ou fornecedor); Radar = o cliente naquele **produto**. O ciclo é sempre a
+mesma conta (mediana dos intervalos, 12 meses, só **venda**). **Sem ciclo, vale a janela:** quem
+comprou 1 vez dentro da janela da tela está no prazo; quem não voltou é Esporádico — a mesma saída da
+Recuperação (sem ciclo = ativo até 60 dias).
+
 ### 3.4 Clientes fora da análise por cliente
 
 **CONSUMIDOR FINAL** (cadastros genéricos, ex.: codcli 1, venda de balcão no caixa RCA 4) fica
@@ -305,11 +332,12 @@ ciclo_pessoal = max(7, mediana(intervalos entre compras nos últimos 12m))
                 (None se o cliente tem < 2 compras)
 
 Régua PERSONALIZADA (padrão do app):   razao = dias_sem_comprar ÷ ciclo
-  razao < 1  → ok        (dentro do ciclo)
-  razao < 2  → normal
-  razao < 3  → atenção
-  razao ≥ 3  → urgente
-  (sem ciclo → cai na régua fixa)
+  razao < 1  → ok        → exibido "No prazo"   (dentro do ciclo)
+  razao < 2  → normal    → exibido "Atenção"
+  razao < 3  → atencao   → exibido "Atrasado"
+  razao ≥ 3  → urgente   → exibido "Parou"
+  (sem ciclo → cai na régua fixa; no Radar/Mix → "Esporádico", ver §3.3)
+  As chaves da API não mudaram em 11/2026 — só o nome exibido (rfm.STATUS_CICLO_PT).
 
 Régua FIXA (planilha original do cliente):
   ≤10 → ok · ≤30 → normal · ≤45 → atenção · >45 → urgente
@@ -442,6 +470,8 @@ Previsão de recompra = **última compra + ciclo pessoal** (§4.8).
 
 - **Janela:** "A ligar hoje" · "A ligar nos próximos 7 dias" · "Vencidos (até 15 dias)".
   Cliente parado há mais tempo **não** está aqui: está na **Recuperação** (§15).
+- **Status** pela régua única (§3.3): No prazo · **Atenção** (antes "Normal") · **Atrasado** (antes
+  "Atenção") · **Parou** (antes "Urgente"). Só o nome mudou; os cortes (1×/2×/3×) são os mesmos.
 - **Cards:** A ligar hoje · Próximos 7 dias · Vencido +15 dias · Receita perdida acumulada ·
   **Com tratativa X de N** (clique = só os sem tratativa) · **⏰ Retornos p/ hoje** (quando houver).
 - **Filtros:** Time, Vendedor, Busca, **Tratativa** (com / sem plano registrado).
@@ -569,15 +599,21 @@ time dela"*).
 
 **Pergunta que responde:** "Quem parou de comprar um DEPARTAMENTO?" (cross-sell perdido)
 
-Lista pares **Cliente × Departamento**: quem comprava o departamento nos últimos 12m mas **parou**
-nos últimos N dias — continuando a comprar outras coisas.
+Lista pares **Cliente × Departamento**: quem comprava o departamento nos últimos 12m, **não
+comprou nos últimos N dias E já passou do próprio ciclo naquele departamento** — continuando a
+comprar outras coisas. Desde 17/11/2026 o ciclo entra: quem compra o depto a cada 90 dias **não**
+aparece no dia 61 (são as mesmas duas condições da Recuperação: passou da janela e de 1× o ciclo).
 
-- **Filtros:** Período (30/60/90/180 dias) · Departamento · Fornecedor · Vendedor/Busca.
-- **Cards:** nº de pares parados · Lucro 12m em risco · Top 5 maiores perdas.
+- **Filtros:** Período (30/60/90/180 dias) · Departamento · Fornecedor (lista **completa**; até
+  11/2026 eram só os 50 maiores) · Vendedor/Busca.
+- **Cards:** nº de pares (com a divisão Atenção/Atrasado/Parou/Esporádico) · **Venda 12m desses
+  pares** · **Lucro 12m desses pares** · Top 5 maiores perdas. Os cards somam a **lista inteira**
+  (até 11/2026 somavam só as 200 linhas da tabela).
 - **Tabela:** Cliente · Cidade/UF · Departamento · Última compra · **Dias parado** (amarelo 30–60,
-  laranja 60–90, vermelho 90+) · Venda/Lucro da categoria 12m · Vendedor.
-- **Drills:** clique no cliente → **top 5 departamentos perdidos**; drill de **fornecedores
-  abandonados por cliente**, com export CSV e PDF próprios.
+  laranja 60–90, vermelho 90+) · **Situação** (régua única + ciclo do cliente no depto) ·
+  Venda/Lucro da categoria 12m · Vendedor.
+- **Drills:** clique no cliente → **top 5 departamentos** fora do ciclo; drill de **fornecedores
+  abandonados por cliente** (mesma régua), com export CSV e PDF próprios.
 - **Export** CSV/PDF da lista completa.
 
 Cliente que parou **tudo** não está aqui: está na **Recuperação** (§15).
@@ -603,18 +639,30 @@ Compara a **janela recente** com a **janela anterior** do mesmo tamanho (padrão
 
 ### 11.2 Board e drills
 - **Board:** produtos ordenados por queda de receita.
-- **"Clientes perdidos"** = quem comprou o produto na janela anterior e **cuja última compra ficou
-  antes da janela recente** (diferença de conjuntos — corrigido em 08/2026; antes era um saldo que
-  escondia quem parou quando entravam clientes novos).
-- **Status do cliente** em relação ao produto: perdido · parou · esfriando (compra < 50% do que
-  comprava) · ativo; e **"Trocou (outro do depto)"** quando migrou para um item similar — separa
-  perda real de substituição.
+- **"Não recompraram"** (antes "Clientes perdidos") = quem comprou o produto (venda) na janela
+  anterior e **cuja última compra ficou antes da janela recente** (diferença de conjuntos —
+  corrigido em 08/2026; antes era um saldo que escondia quem parou quando entravam clientes novos).
+  A coluna "Receita em risco" do board chama-se agora **"Queda de receita"**.
+- **Situação do cliente no produto** (desde 17/11/2026) = régua única do ciclo (§3.3), medida no
+  **ciclo dele naquele produto**: No prazo · Esfriando (no prazo, mas o volume da janela recente caiu
+  mais de 50%) · Atenção · Atrasado · Parou · Esporádico (1 compra no ano e não voltou na janela).
+  Cada linha mostra o ciclo ("ciclo ~56d · 6 compras em 12m"). Até 11/2026 era pela janela da tela,
+  e o João achou cliente com 59 dias "Comprando" e cliente de ciclo 90 dias "Parou" com 61.
+- **Cards do drill:** Clientes do produto · **Fora do ciclo** (Atenção + Atrasado + Parou) ·
+  Trocaram · **Venda 12m de quem saiu do ciclo**. Os chips de filtro vêm com os fora do ciclo e os
+  esporádicos ligados.
+- **"Trocou (outro do depto)"** quando saiu do ciclo do item mas comprou outro do mesmo departamento
+  na janela — separa perda real de substituição.
+- **Antes → Agora** (antes "Comprava→Agora") = venda da janela anterior → da recente. Quem não
+  comprou em nenhuma das duas aparece como "sem compra nas 2 janelas" (parou antes delas).
+- "Última compra" = última **venda**: bonificação e transferência não contam (havia cliente
+  aparecendo "Comprando" só por ter recebido bonificação).
 - Drill por produto, por cliente e série produto × cliente. **Exports** CSV/PDF em todos os níveis.
 - Escopo por **cadastro** (o board e o drill partem do mesmo conjunto de clientes).
 
-⚠️ O board compara 60 × 60 dias; o drill olha 12 meses — são perguntas diferentes, e o tooltip
-declara. A "receita em risco" do Radar (venda 12m dos produtos que o cliente parou) é um **terceiro**
-sentido de "receita em risco" (§26).
+⚠️ O board compara 60 × 60 dias; o drill olha o ciclo de cada cliente em 12 meses — são perguntas
+diferentes, e o tooltip declara. "Receita em risco" e "perdido" **não** são mais usados no Radar
+(reservados para a Recuperação, §26).
 
 **Mix × Radar:** Mix = parou de comprar um **departamento**; Radar = parou de comprar um **produto**.
 
@@ -699,19 +747,28 @@ a carteira já carregada (sem query nova ao BI), respeitando o RBAC por cadastro
 Base (denominador) = carteira ATIVA: clientes do cadastro com compra em 365 dias
 Cobertura clientes = positivados (compraram na janela, de qualquer vendedor) ÷ base
 Cobertura valor    = venda 12m dos positivados ÷ venda 12m da base
-Dentro do ciclo    = clientes com status personalizado ∈ {ok, normal} ÷ base   (a régua "justa")
+Dentro do ciclo    = clientes que compraram há MENOS de 1× o próprio ciclo ÷ base  (a régua "justa")
+                     sem ciclo (1 compra): vale a janela "em dia"
 Receita perdida acumulada = Σ receita_perdida_acumulada (§4.7)
-Base morta         = clientes da base na faixa 91+ dias
+Inativo no ERP (91+) = clientes da base na faixa 91+ dias (antes "Base morta")
 ```
 - **Janela "em dia":** 30 / 45 / **60** dias (padrão 60 desde 09/2026; o valor salvo no Admin vence o
   padrão).
+- **"Dentro do ciclo" mudou em 17/11/2026:** contava até **2×** o ciclo (ok + "normal") e havia
+  clientes "dentro do ciclo" aqui e "em risco" na Recuperação ao mesmo tempo. Agora é **menos de
+  1×** — o "No prazo" da Carteira. O número cai, porque deixa de contar quem já passou do ciclo.
+  Sobram poucos casos de divergência com a Recuperação porque ela mede o ciclo nos 365 dias até a
+  **última compra**, e a Carteira nos 12 meses até **hoje**.
+- **"Inativo no ERP (91+)"** (antes "Base morta"): é a marca que o Winthor põe sozinho. Não é base
+  perdida — a Recuperação mostra que parte dos que estão entre 91 e 180 dias volta no mês.
 - **Cobertura por clientes × por valor** lado a lado: base atendida × faturamento protegido (ex.: 35%
   dos clientes e 82% do valor = os grandes estão em dia, a cauda sumiu).
 
 ### 14.2 Faixas de recência
 Faixas **fixas** (não mudam com a janela), com nº de clientes e venda 12m:
-`0–15 · 16–30 · 31–45 · 46–60 · 61–90 · 91+` (+ rollup 0–30 "em dia"). O 91+ vai até 365 dias:
-o placar só conta a base ativa.
+`0–15 · 16–30 · 31–45 · 46–60 · 61–90 · 91+` (+ linha **"0–N dias (em dia)"**, que segue o
+seletor da janela — até 11/2026 era fixa em 0–30 enquanto o padrão já era 60). O 91+ vai até 365
+dias: o placar só conta a base ativa.
 
 **Clientes na própria tela (10/2026, pedido do João):** num **time** ou num **RCA**, a lista dos
 clientes aparece abaixo da tabela de faixas — clicar numa faixa filtra a lista (clicar de novo volta
@@ -728,7 +785,7 @@ abrindo a Carteira (deep-link, §6.1), também com o teto de 365 dias no 91+.
   89,9% · verde a partir de 90% (só cor — a meta segue 100%).
 - **Distribuição por faixa:** barra empilhada + tabela.
 - **Ranking (pior → melhor):** Nome · Positivados / Carteira · Cobertura clientes · Cobertura valor ·
-  Dentro do ciclo · Receita perdida acumulada · Base morta · ⚑. Linha de time → drilla nos
+  Dentro do ciclo · Receita perdida acumulada · Inativo no ERP (91+) · ⚑. Linha de time → drilla nos
   vendedores; linha de vendedor → abre o cockpit.
 - **Ordem:** placar → faixas → ranking → lista de clientes (04/11/2026, pedido do João: primeiro se
   escolhe o vendedor, depois se olham os clientes). Clicar numa faixa rola a tela até a lista.
@@ -1201,19 +1258,24 @@ O app roda de **Power BI OU Postgres** com o **mesmo código**, decidido por var
 | **Positivação** | Quatro sentidos — cobertura da base, positivação por classe ABC, alcance, "positivados" do cockpit (§3.6) |
 | **Alcance** | Tudo que o vendedor atendeu ÷ base ativa (pode passar de 100%) |
 | **Fora da base** | Clientes de outras bases atendidos pelo vendedor, em 4 tipos (§7.1) |
-| **Em risco** (Recuperação) | > 60 dias sem comprar **e** além do ciclo (≠ segmento RFM "Em Risco") |
-| **Perdido** (Recuperação) | > 365 dias sem comprar (≠ segmento RFM "Perdidos", que é R/F/M baixos) |
-| **Base morta** (Gerencial) | Clientes da base na faixa 91+ dias |
+| **Em risco** (Recuperação) | > 60 dias sem comprar **e** além do ciclo (≠ segmento RFM "Em Risco") — único sentido desde 11/2026 fora do RFM |
+| **Perdido** (Recuperação) | > 365 dias sem comprar (≠ segmento RFM "Perdidos", que é R/F/M baixos) — o Radar não usa mais a palavra |
+| **No prazo / Atenção / Atrasado / Parou / Esporádico** | Régua única do ciclo: < 1× · 1–2× · 2–3× · ≥ 3× o ciclo · 1 compra só (§3.3) |
+| **Dentro do ciclo** | Compra há menos de 1× o próprio ciclo (= No prazo). Até 11/2026 o Gerencial contava até 2× |
+| **Fora do ciclo** | Atenção + Atrasado + Parou (passou de 1× o ciclo) |
+| **Inativo no ERP (91+)** (Gerencial) | Clientes da base na faixa 91+ dias (antes "Base morta") |
+| **Não recompraram** (Radar, board) | Compraram o item na janela anterior e não na recente (antes "Clientes perdidos") |
+| **Queda de receita** (Radar, board) | Venda anterior − venda recente do item (antes "Receita em risco") |
 | **Valor mensal** | Venda dos 365 dias até a última compra ÷ 12 (não acumula) |
 | **Receita perdida acumulada** | Valor mensal × meses de atraso além do ciclo (acumula) — Gerencial/Próximo Pedido |
-| **"Receita em risco" do Radar** | Venda 12m dos produtos que o cliente parou — 3º sentido; nunca somar com os outros dois |
+| **Venda 12m de quem saiu do ciclo** (Radar) | Venda 12m dos clientes fora do ciclo no item (antes "Receita em risco" do Radar) — não somar com a Recuperação |
 | **Saldo de recuperação** | Recuperados (risco + perdida) − entraram em risco; positivo = bom (§15.4) |
 | **Dinheiro na mesa** | Valor mensal em risco + potencial de positivação (§15.3) |
 | **Curva ABC de clientes** | Pareto 80/95 da venda 12m dos clientes, no início do mês (Carteira) |
 | **Curva ABC de produtos** | Pareto 80/95 da venda dos produtos na janela escolhida (aba Curva ABC) |
 | **Ticket médio** | Dashboard = venda ÷ nº de pedidos; Vendedores = medida do BI; "por cliente/mês" é outro número — sempre dizer qual |
 | **Margem** | Comercial = lucro ÷ venda LÍQUIDA; Metas = lucro ÷ realizado BRUTO |
-| **Ciclo pessoal** | Mediana dos intervalos entre compras do cliente (12m), piso de 7 dias |
+| **Ciclo pessoal** | Mediana dos intervalos entre os dias com VENDA do cliente (12m), piso de 7 dias. No Radar/Mix, o mesmo cálculo no produto/departamento |
 | **Recência (R)** | Dias desde a última compra |
 | **Cohort** | Turma de clientes com 1ª compra no mesmo mês |
 | **Mês fechado** | Último mês completo — base da Performance, Vendedores (cobertura), Recuperação e Evolução |

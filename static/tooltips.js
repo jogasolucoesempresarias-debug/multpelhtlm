@@ -11,7 +11,7 @@
   var COMMON = {
     'Lucro 12m': 'Lucro dos últimos 12 meses.',
     'Venda 12m': 'Venda líquida dos últimos 12 meses (venda − devoluções).',
-    'Positivação': '% da carteira que comprou nos últimos 12 meses (clientes que positivaram ÷ carteira).',
+    'Positivação': 'Clientes da base ativa (compraram em até 365 dias) que compraram nos últimos 60 dias ÷ base ativa — a régua única de cobertura do Gerencial, Vendedores e Performance.',
     'YoY': 'Variação da receita vs. o mesmo período do ano anterior.'
   };
 
@@ -25,12 +25,13 @@
     },
     radar: {
       'Radar de Produtos': 'Produtos e clientes que reduziram ou pararam de comprar — onde a receita está escorrendo.',
-      'Receita em risco': 'Queda de receita do item vs. o período anterior — quanto se está deixando de faturar.',
+      'Queda de receita': 'Quanto o item vendeu a MENOS na janela recente do que na anterior. Não é "receita em risco" (esse nome é da Recuperação, por cliente).',
       '% queda': 'Queda percentual da receita vs. o período anterior.',
-      'Clientes perdidos': 'Clientes que compravam o item na janela anterior e NÃO voltaram a comprar na janela recente. Não é o saldo entre as duas janelas: 20 clientes que param e 20 que entram dariam zero e esconderiam a perda. Ao abrir o produto, a lista pode mostrar MAIS clientes — lá o recorte é de 12 meses, aqui é só a janela escolhida.',
-      'Situação': 'Situação do cliente no item: esfriando (volume caiu >50%), parou (sem comprar há ≥ a janela) ou perdido (há ≥2× a janela, ou nunca).',
+      'Não recompraram': 'Clientes que compraram o item (venda) na janela anterior e NÃO voltaram a comprar na janela recente. Não é o saldo entre as duas janelas: 20 clientes que param e 20 que entram dariam zero e esconderiam a perda. Ao abrir o produto a lista usa o ciclo de cada cliente, não a janela — por isso os números não precisam bater.',
+      'Situação': 'Pelo ciclo do cliente NESTE item (mediana do intervalo entre as compras em 12 meses), a mesma régua da Carteira: No prazo (antes de 1× o ciclo) · Esfriando (no prazo, mas o volume caiu mais de 50%) · Atenção (1–2×) · Atrasado (2–3×) · Parou (3× ou mais) · Esporádico (1 compra só no ano e não voltou na janela; quem comprou 1 vez dentro da janela está No prazo).',
+      'Fora do ciclo': 'Clientes que já passaram do próprio ciclo de compra do item (Atenção, Atrasado ou Parou) — a mesma fronteira do "dentro do ciclo" do Gerencial e do "em risco" da Recuperação.',
       'Dias parado': 'Dias desde a última compra desse item pelo cliente.',
-      'Comprava→Agora': 'Quanto o cliente comprava do item antes vs. agora — mostra a queda de volume.',
+      'Antes → Agora': 'Venda do item na janela ANTERIOR (de 2× a 1× a janela atrás) → na janela RECENTE (os últimos dias escolhidos). "Sem compra nas 2 janelas" = o cliente parou antes delas; veja a última compra.',
       'Receita ganha': 'Quanto o item vendeu A MAIS na janela recente do que na anterior. Um item que sobe no mesmo departamento de outro que caiu costuma ser troca, não perda.',
       '% alta': 'Crescimento percentual da receita vs. o período anterior. "novo" = o item não vendia na janela anterior.',
       'Clientes antes → agora': 'Quantos clientes compraram o item na janela anterior e na recente.'
@@ -60,9 +61,9 @@
       'Positivados / Carteira': 'Clientes que compraram na janela de cobertura (≤ dias configurados) ÷ total de clientes da carteira.',
       'Cobertura clientes': 'Clientes em dia (última compra dentro da janela) ÷ total de clientes.',
       'Cobertura valor': 'Valor dos clientes em dia ÷ valor total da carteira.',
-      'Dentro do ciclo': 'Clientes dentro do próprio ciclo de compra — régua justa que não pune quem compra espaçado.',
+      'Dentro do ciclo': 'Clientes que compraram há menos de 1× o próprio ciclo (o "No prazo" da Carteira) — régua justa que não pune quem compra espaçado. Sem ciclo (1 compra) vale a janela em dia. Quem está aqui nunca aparece "em risco" na Recuperação.',
       'Receita perdida acumulada': 'Soma da receita projetada perdida dos clientes atrasados (venda mensal × meses de atraso além do ciclo). ACUMULA: cresce a cada mês que o cliente não volta. O valor MENSAL em risco está na página Recuperação.',
-      'Base morta': 'Clientes sem comprar há 91 dias ou mais.',
+      'Inativo no ERP (91+)': 'Clientes da base sem comprar há 91 dias ou mais — o Winthor já os marcou como inativos. Não é base perdida: a Recuperação mostra que parte dos que estão entre 91 e 180 dias volta no mês.',
       '⚑': 'Marca times/vendedores com cobertura abaixo do limiar (alerta).'
     },
     carteira: {
@@ -111,7 +112,8 @@
     },
     mix: {
       'Mix Abandonado': 'Pares cliente × departamento que o cliente comprava e parou — oportunidade de recompra.',
-      'Dias parado': 'Dias desde a última compra desse departamento por esse cliente.',
+      'Dias parado': 'Dias desde a última compra (venda) desse departamento por esse cliente.',
+      'Situação': 'Pelo ciclo do cliente NESSE departamento (mediana do intervalo entre as compras em 12 meses): Atenção (1–2×), Atrasado (2–3×), Parou (3× ou mais), Esporádico (1 compra só no ano). Quem ainda está antes de 1× o ciclo dele não entra na lista, mesmo parado há mais dias que o período.',
       'Última compra': 'Data da última compra do departamento pelo cliente.',
       'Venda Cat 12m': 'Venda líquida do departamento por esse cliente nos últimos 12 meses.',
       'Lucro Cat 12m': 'Lucro do departamento por esse cliente nos últimos 12 meses.',

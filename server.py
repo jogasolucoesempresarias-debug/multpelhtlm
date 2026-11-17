@@ -1210,7 +1210,7 @@ def _gerar_relatorio_para_usuario(usuario):
             pp_lines.append(_csv_linha([
                 c.get('codcli'), c.get('cliente'), c.get('cidade'), c.get('uf'), c.get('vendedor'),
                 c.get('telefone'), c.get('ultima_compra'), c.get('ciclo_pessoal'),
-                c.get('proximo_pedido_previsto'), c.get('dias_atraso'), c.get('status_personalizada'),
+                c.get('proximo_pedido_previsto'), c.get('dias_atraso'), rfm.STATUS_CICLO_PT.get(c.get('status_personalizada'), c.get('status_personalizada')),
                 c.get('venda_12m') or 0, c.get('receita_perdida_proj') or 0, tp,
             ]).rstrip('\n'))
         pp_bytes = ('\n'.join(pp_lines) + '\n').encode('utf-8')
@@ -3039,7 +3039,9 @@ def _carregar_carteira_full():
     O recorte por usuário NÃO é feito aqui: use sempre _carteira_no_escopo(), que filtra
     pelo CADASTRO (CODUSUR1 → vendedor → supervisor). Cache compartilhado entre todos os
     usuários (1 entrada global). NÃO expor esta função direto nos endpoints."""
-    key = 'multpel:carteira:full:global:v4'  # v3: sem cadastros genéricos (CONSUMIDOR FINAL) · v4: sem os excluídos
+    # v3: sem cadastros genéricos (CONSUMIDOR FINAL) · v4: sem os excluídos · v5 (11/2026): datas do
+    # ciclo = dias com VENDA, 1 linha por cliente × dia (antes cortadas em 100 mil — ver datas_t*)
+    key = 'multpel:carteira:full:global:v5'
     cached = _cache_get(key)
     if cached:
         return cached
@@ -3084,13 +3086,25 @@ SUMMARIZECOLUMNS(
     PCCLIENT[CODUSUR1], PCCLIENT[BLOQUEIO]
 )""",
     }
-    # Chunking datas: 4 trimestres
+    # Datas do CICLO PESSOAL: 1 linha por cliente × dia com VENDA (CODOPER 'S'), em 4 trimestres.
+    # ⚠️ Até 11/2026 era SELECTCOLUMNS(FILTER(FATURAMENTO_VENDAS…)) — uma linha por ITEM de nota,
+    # bem acima de 100 mil por trimestre, e o executeQueries devolvia 100.000 SEM avisar (medido em
+    # 17/11/2026). Faltavam dias de compra e o ciclo de parte dos clientes saía mais longo que o da
+    # Recuperação para o mesmo cliente — Próximo Pedido, régua, "dentro do ciclo" e receita perdida
+    # herdavam o erro. Por cliente × dia cabe com folga no teto.
+    # Só venda, como a Recuperação e o modo Postgres (provider_sql.carteira_dados).
     chunks = [(-3, 0), (-6, -3), (-9, -6), (-12, -9)]
     for idx, (ini, fim) in enumerate(chunks, start=1):
         fim_clausula = "" if fim == 0 else f" && FATURAMENTO_VENDAS[DTSAIDA] < EDATE(TODAY(), {fim})"
         queries[f'datas_t{idx}'] = f"""EVALUATE
 SELECTCOLUMNS(
-    FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), {ini}){fim_clausula}{rbac_frag}),
+    SUMMARIZECOLUMNS(
+        FATURAMENTO_VENDAS[CODCLI], FATURAMENTO_VENDAS[DTSAIDA],
+        FILTER(ALL(FATURAMENTO_VENDAS[DTSAIDA]),
+            FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), {ini}){fim_clausula}),
+        TREATAS({{"S"}}, FATURAMENTO_VENDAS[CODOPER]),
+        "LinhasDia", COUNTROWS(FATURAMENTO_VENDAS)
+    ),
     "CodCli", FATURAMENTO_VENDAS[CODCLI],
     "Data",   FATURAMENTO_VENDAS[DTSAIDA]
 )"""
@@ -3130,6 +3144,8 @@ SELECTCOLUMNS(
     datas_por_cliente = {}
     for idx in range(1, 5):
         rows = clean_rows(_todas_linhas(resultados[f'datas_t{idx}']))
+        if len(rows) >= 99_999:   # resposta cortada = ciclo errado sem erro; melhor avisar
+            print(f'[CARTEIRA] ⚠️ datas_t{idx} voltou no teto de linhas do Power BI — ciclos podem sair longos')
         for r in rows:
             cc = r.get('CodCli')
             d = r.get('Data')
@@ -4995,7 +5011,7 @@ def _gerar_pdf_proximo_pedido(filtrados, filtros_resumo=''):
     story.append(Paragraph(f"Gerado em {_date.today().strftime('%d/%m/%Y')} · {len(filtrados)} clientes a contatar" + (f" · {filtros_resumo}" if filtros_resumo else ''), sub_style))
     story.append(Spacer(1, 0.3*cm))
 
-    STATUS_PT = {'ok': 'No prazo', 'normal': 'Normal', 'atencao': 'Atenção', 'urgente': 'Urgente'}
+    STATUS_PT = rfm.STATUS_CICLO_PT   # No prazo · Atenção (1–2× o ciclo) · Atrasado · Parou
     header = ['Cliente', 'Cidade/UF', 'Telefone', 'Últ.compra', 'Ciclo', 'Previsão', 'Atraso', 'Status', 'Venda 12m', 'Rec. perdida acum.']
     data = [header]
     for c in filtrados:
@@ -5119,7 +5135,7 @@ def api_carteira_proximo_pedido_csv():
         linhas.append(_csv_linha([
             c.get('codcli'), c.get('cliente'), c.get('cidade'), c.get('uf'), c.get('telefone'),
             c.get('ultima_compra'), c.get('ciclo_pessoal'), c.get('proximo_pedido_previsto'),
-            c.get('dias_atraso'), c.get('status_personalizada'),
+            c.get('dias_atraso'), rfm.STATUS_CICLO_PT.get(c.get('status_personalizada'), c.get('status_personalizada')),
             c.get('venda_12m') or 0, c.get('receita_perdida_proj') or 0,
         ]).rstrip('\n'))
     csv_bytes = ('\n'.join(linhas) + '\n').encode('utf-8')
@@ -5228,7 +5244,8 @@ def api_gerencial_cobertura():
     do usuário. O frontend faz o drill in-memory a partir deste payload único."""
     coberto_dias = _coberto_dias_arg()
     limiar_pct = _cobertura_limiar_pct()
-    key = cache_key_for_user('gerencial:cobertura', {'coberto_dias': coberto_dias, 'limiar': limiar_pct})
+    # v2 (17/11/2026): "dentro do ciclo" passou a ser < 1× o ciclo (cobertura.no_ciclo).
+    key = cache_key_for_user('gerencial:cobertura', {'v': 2, 'coberto_dias': coberto_dias, 'limiar': limiar_pct})
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)
@@ -5265,7 +5282,7 @@ def _cobertura_csv_linhas(niveis):
     faixas = [chave for chave, _, _ in cob.FAIXAS]
     cabecalho = (
         ['Nivel', 'Nome', 'TotalClientes', 'ValorTotal', 'Cobertura%Clientes', 'Cobertura%Valor',
-         '0-30Clientes', 'DentroDoCiclo%', 'ReceitaEmRisco', 'BaseMorta']
+         'EmDiaClientes', 'DentroDoCiclo%', 'ReceitaPerdidaAcumulada', 'InativoERP91+']
         + [f'Faixa {f} (clientes)' for f in faixas]
         + [f'Faixa {f} (valor)' for f in faixas]
     )
@@ -5276,7 +5293,7 @@ def _cobertura_csv_linhas(niveis):
         vals = [
             nivel, g.get('nome', ''), g['total_clientes'], g['valor_total'],
             round(g['cobertura_clientes'] * 100, 1), round(g['cobertura_valor'] * 100, 1),
-            g['rollup_0_30']['clientes'], round(g['cobertura_ciclo'] * 100, 1),
+            g['clientes_cobertos'], round(g['cobertura_ciclo'] * 100, 1),
             g['receita_em_risco'], g['base_morta'],
         ]
         vals += [buckets[f]['clientes'] for f in faixas]
@@ -5387,7 +5404,7 @@ def _gerar_pdf_cobertura(niveis, coberto_dias, limiar_pct):
 
     def _tabela_ranking(titulo, itens):
         story.append(Paragraph(f"<b>{titulo}</b>", sub_style))
-        header = ['Nome', 'Clientes', 'Cob.% clientes', 'Cob.% valor', 'Dentro do ciclo', 'Rec. perdida acum.', 'Base morta', '⚑']
+        header = ['Nome', 'Clientes', 'Cob.% clientes', 'Cob.% valor', 'Dentro do ciclo', 'Rec. perdida acum.', 'Inativo ERP 91+', '⚑']
         data = [header]
         for g in itens:
             abaixo = g['cobertura_clientes'] < limiar_frac
@@ -7097,9 +7114,43 @@ TOPN({top},
     return jsonify(resp)
 
 
+def _mix_ciclos_cli_depto(codepto=None, fornecedor=None):
+    """{(codcli, codepto): {'ciclo', 'compras'}} — ciclo de cada cliente em cada departamento
+    (12 m, só venda), nos MESMOS filtros da lista. GLOBAL (o recorte por cadastro vem depois),
+    por isso o cache é um só para todos os usuários. Ver _ciclos_venda_12m (blocos mensais)."""
+    key = f"mix:ciclos:v1:{codepto or '-'}:{fornecedor or '-'}"
+    cached = _cache_get(key)
+    if cached is not None:
+        return {tuple(int(x) for x in k.split('|')): v for k, v in cached.items()}
+    filtros = {}
+    for col, val in (('codepto', codepto), ('codfornecprinc', fornecedor)):
+        try:
+            if val not in (None, ''):
+                filtros[col] = int(val)
+        except (TypeError, ValueError):
+            pass
+    ciclos = _ciclos_venda_12m(('codcli', 'codepto'), filtros, blocos_mensais=not filtros)
+    _cache_set(key, {f'{k[0]}|{k[1]}': v for k, v in ciclos.items()}, 'dax_agregado')
+    return ciclos
+
+
+def _mix_situacao(dias_sem, dias, ciclo):
+    """Régua do Mix (cliente × departamento ou × fornecedor): parado há ≥ `dias` (o filtro da tela)
+    E fora do PRÓPRIO ciclo naquele grão — o mesmo par de condições da Recuperação (passou de 60
+    dias e de 1× o ciclo). Quem comprou 1 vez só no período entra como 'esporadico'.
+    Devolve a faixa (rfm.faixa_ciclo) ou None quando o par ainda está no prazo dele."""
+    if dias_sem < dias:
+        return None
+    faixa = rfm.faixa_ciclo(dias_sem, ciclo)
+    return None if faixa == 'no_prazo' else faixa
+
+
 def _mix_abandonado_rows(dias, codepto=None, fornecedor=None):
-    """Lista COMPLETA de pares (cliente × departamento) abandonados há >= dias, no escopo de
-    CADASTRO do usuário, ordenada por lucro do depto desc. Números totais do cliente."""
+    """Lista COMPLETA de pares (cliente × departamento) abandonados há >= dias E fora do próprio
+    ciclo no depto (ver _mix_situacao), no escopo de CADASTRO do usuário, ordenada por lucro do
+    depto desc. Números totais do cliente.
+    ⚠️ Até 11/2026 bastava passar de `dias`: o cliente que compra o depto a cada 90 dias saía
+    "parado" no dia 61, e quem comprou 1 vez no ano aparecia igual a quem comprava toda semana."""
     filtros_extra = []
     if codepto:
         try:
@@ -7119,7 +7170,7 @@ SUMMARIZECOLUMNS(
     FATURAMENTO_VENDAS[CODEPTO],
     FILTER(FATURAMENTO_VENDAS,
         FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12){filtros_str}),
-    "UltimaCompra", MAX(FATURAMENTO_VENDAS[DTSAIDA]),
+    "UltimaCompra", {_DAX_ULTIMA_VENDA},
     "VendaCat12m",  [VENDA LIQUIDA],
     "LucroCat12m",  [LUCRO TOTAL]
 )"""
@@ -7134,6 +7185,7 @@ SUMMARIZECOLUMNS(
         hoje = _date.today()
     deptos_nomes = _carregar_deptos_map()['deptos']
     carteira_idx = {c['codcli']: c for c in _carteira_no_escopo()}
+    ciclos = _mix_ciclos_cli_depto(codepto, fornecedor)
 
     out = []
     for r in rows:
@@ -7147,7 +7199,9 @@ SUMMARIZECOLUMNS(
         except ValueError:
             continue
         dias_sem = (hoje - d_ultima).days
-        if dias_sem < dias:
+        cic = ciclos.get((cc, cd)) or {}
+        situacao = _mix_situacao(dias_sem, dias, cic.get('ciclo'))
+        if situacao is None:
             continue
         cli_meta = carteira_idx.get(cc, {})
         out.append({
@@ -7159,6 +7213,9 @@ SUMMARIZECOLUMNS(
             'depto_nome':                   deptos_nomes.get(str(cd)) if cd is not None else '(sem depto)',
             'ultima_compra':                str(ultima)[:10],
             'dias_sem_comprar_categoria':   dias_sem,
+            'status':                       situacao,
+            'ciclo':                        cic.get('ciclo'),
+            'compras_12m':                  cic.get('compras') or 0,
             'venda_cat_12m':                r.get('VendaCat12m') or 0,
             'lucro_cat_12m':                r.get('LucroCat12m') or 0,
             'lucro_total_12m':              cli_meta.get('lucro_12m') or 0,
@@ -7188,7 +7245,9 @@ def api_mix_abandonado():
     busca = (request.args.get('busca') or '').strip()
     codcli = request.args.get('codcli')
 
-    key = cache_key_for_user('mix:abandonado', {'dias': dias, 'codepto': codepto or '', 'fornecedor': fornecedor or ''})
+    # v2 (17/11/2026): régua do ciclo no depto + última compra = última VENDA.
+    key = cache_key_for_user('mix:abandonado', {'v': 2, 'dias': dias, 'codepto': codepto or '',
+                                                'fornecedor': fornecedor or ''})
     cached = _cache_get(key)
     if cached:
         full = cached['rows']
@@ -7197,14 +7256,30 @@ def api_mix_abandonado():
         _cache_set(key, {'ok': True, 'dias': dias, 'total': len(full), 'rows': full}, 'dax_agregado')
 
     total = len(full)
+    totais = _mix_totais(full)
     if codcli or busca:
         # Filtra a lista COMPLETA (cacheada) por cliente exato (seleção no autocomplete) OU
         # busca (nome/prefixo de código) → mesmos pares, mesmo formato dos 200, cobrindo TODOS
         # os clientes (não só o top-200). Filtro em memória.
         filtrados = _mix_aplicar_filtros_locais(full, None, None, busca, codcli)
         return jsonify({'ok': True, 'dias': dias, 'total': total, 'filtrado': len(filtrados),
-                        'busca': busca, 'codcli': codcli, 'rows': filtrados})
-    return jsonify({'ok': True, 'dias': dias, 'total': total, 'rows': full[:limit]})
+                        'busca': busca, 'codcli': codcli, 'rows': filtrados,
+                        'totais': _mix_totais(filtrados)})
+    return jsonify({'ok': True, 'dias': dias, 'total': total, 'rows': full[:limit], 'totais': totais})
+
+
+def _mix_totais(rows):
+    """Totais da lista INTEIRA (não só das linhas que a tela mostra). Até 11/2026 os cards somavam
+    só os 200 da tabela e diziam "Receita 12m em risco" — era a soma do top 200, não do total."""
+    from collections import Counter
+    st = Counter(r.get('status') for r in rows)
+    return {
+        'pares':    len(rows),
+        'clientes': len({r['codcli'] for r in rows}),
+        'venda':    round(sum(r.get('venda_cat_12m') or 0 for r in rows), 2),
+        'lucro':    round(sum(r.get('lucro_cat_12m') or 0 for r in rows), 2),
+        'por_status': {k: st.get(k, 0) for k in ('atencao', 'atrasado', 'parou', 'esporadico')},
+    }
 
 
 @app.route('/api/mix/abandonado/<int:codcli>/deptos')
@@ -7228,7 +7303,7 @@ SUMMARIZECOLUMNS(
     FILTER(FATURAMENTO_VENDAS,
         FATURAMENTO_VENDAS[CODCLI] = {codcli}
         && FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12)),
-    "UltimaCompra", MAX(FATURAMENTO_VENDAS[DTSAIDA]),
+    "UltimaCompra", {_DAX_ULTIMA_VENDA},
     "VendaCat12m",  [VENDA LIQUIDA],
     "LucroCat12m",  [LUCRO TOTAL]
 )"""
@@ -7242,6 +7317,7 @@ SUMMARIZECOLUMNS(
         rows = clean_rows(_todas_linhas(payload))
         hoje = _date.today()
     deptos_nomes = _carregar_deptos_map()['deptos']
+    ciclos = _ciclos_venda_12m(('codepto',), {'codcli': int(codcli)})
     out = []
     for r in rows:
         cd = r.get('CODEPTO')
@@ -7253,13 +7329,17 @@ SUMMARIZECOLUMNS(
         except ValueError:
             continue
         dias_sem = (hoje - d_ultima).days
-        if dias_sem < dias:
-            continue  # esse depto ainda está ativo
+        cic = ciclos.get(cd) or {}
+        situacao = _mix_situacao(dias_sem, dias, cic.get('ciclo'))
+        if situacao is None:
+            continue  # esse depto ainda está no prazo dele
         out.append({
             'codepto':       cd,
             'depto_nome':    deptos_nomes.get(str(cd)) if cd is not None else '(sem depto)',
             'ultima_compra': str(ultima)[:10],
             'dias_parado':   dias_sem,
+            'status':        situacao,
+            'ciclo':         cic.get('ciclo'),
             'venda_cat_12m': r.get('VendaCat12m') or 0,
             'lucro_cat_12m': r.get('LucroCat12m') or 0,
         })
@@ -7295,7 +7375,7 @@ SUMMARIZECOLUMNS(
     FILTER(FATURAMENTO_VENDAS,
         FATURAMENTO_VENDAS[CODCLI] = {int(codcli)}
         && FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12)),
-    "UltimaCompra", MAX(FATURAMENTO_VENDAS[DTSAIDA]),
+    "UltimaCompra", {_DAX_ULTIMA_VENDA},
     "VendaCat12m",  [VENDA LIQUIDA],
     "LucroCat12m",  [LUCRO TOTAL]
 )"""
@@ -7307,6 +7387,7 @@ SUMMARIZECOLUMNS(
         payload = retry_dax(execute_dax)(token, query)
         rows = clean_rows(_todas_linhas(payload))
         hoje = _date.today()
+    ciclos = _ciclos_venda_12m(('codfornecprinc',), {'codcli': int(codcli)})
     out = []
     for r in rows:
         cf = r.get('CODFORNECPRINC')
@@ -7318,13 +7399,17 @@ SUMMARIZECOLUMNS(
         except ValueError:
             continue
         dias_sem = (hoje - d_ultima).days
-        if dias_sem < dias:
-            continue  # esse fornecedor ainda está ativo
+        cic = ciclos.get(cf) or {}
+        situacao = _mix_situacao(dias_sem, dias, cic.get('ciclo'))
+        if situacao is None:
+            continue  # esse fornecedor ainda está no prazo dele
         out.append({
             'codfornec':     cf,
             'fornec_nome':   r.get('FORNECPRINC') or (f'Fornec {cf}' if cf is not None else '(sem fornecedor)'),
             'ultima_compra': str(ultima)[:10],
             'dias_parado':   dias_sem,
+            'status':        situacao,
+            'ciclo':         cic.get('ciclo'),
             'venda_cat_12m': r.get('VendaCat12m') or 0,
             'lucro_cat_12m': r.get('LucroCat12m') or 0,
         })
@@ -7342,7 +7427,7 @@ def api_mix_cliente_fornecedores(codcli):
     except (TypeError, ValueError):
         dias = 60
 
-    key = cache_key_for_user(f'mix:cliente:fornec:{codcli}', {'dias': dias})
+    key = cache_key_for_user(f'mix:cliente:fornec:{codcli}', {'v': 2, 'dias': dias})   # v2: régua do ciclo
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)
@@ -7381,7 +7466,8 @@ def api_mix_cliente_fornecedores_csv(codcli):
     if cli_meta is None:
         return jsonify({'ok': False, 'error': 'Cliente fora da sua carteira'}), 404
 
-    cabecalho = ['Fornecedor', 'CodFornec', 'UltimaCompra', 'DiasParado', 'VendaCat12m', 'LucroCat12m']
+    cabecalho = ['Fornecedor', 'CodFornec', 'UltimaCompra', 'DiasParado', 'CicloDias', 'Situacao',
+                 'VendaCat12m', 'LucroCat12m']
 
     def gerar():
         yield CSV_PREAMBULO  # BOM UTF-8
@@ -7389,7 +7475,8 @@ def api_mix_cliente_fornecedores_csv(codcli):
         for c in out:
             yield _csv_linha_br([
                 c.get('fornec_nome'), c.get('codfornec'), c.get('ultima_compra'),
-                c.get('dias_parado'), c.get('venda_cat_12m'), c.get('lucro_cat_12m'),
+                c.get('dias_parado'), c.get('ciclo'), rfm.FAIXA_CICLO_PT.get(c.get('status'), ''),
+                c.get('venda_cat_12m'), c.get('lucro_cat_12m'),
             ])
 
     nome_cli = _slug_export(cli_meta.get('cliente') or f'cliente-{codcli}')
@@ -7437,21 +7524,23 @@ def api_mix_cliente_fornecedores_pdf(codcli):
     story.append(Paragraph(f"<b>JOGA Analytics</b> — Fornecedores parados · {cliente}", titulo_style))
     sub = (f"Gerado em {_date.today().strftime('%d/%m/%Y')} · #{codcli} · "
            f"{(cli_meta.get('cidade') or '')}/{cli_meta.get('uf') or ''} · "
-           f"{cli_meta.get('vendedor') or '—'} · {len(out)} fornecedor(es) parado(s) há ≥ {dias} dias")
+           f"{cli_meta.get('vendedor') or '—'} · {len(out)} fornecedor(es) parado(s) há ≥ {dias} dias"
+           f" e fora do ciclo do cliente")
     story.append(Paragraph(sub, sub_style))
     story.append(Spacer(1, 0.3*cm))
 
-    header = ['Fornecedor', 'Última compra', 'Dias parado', 'Venda 12m', 'Lucro 12m']
+    header = ['Fornecedor', 'Última compra', 'Dias parado', 'Situação', 'Venda 12m', 'Lucro 12m']
     data = [header]
     for c in out:
         data.append([
-            (c.get('fornec_nome') or '')[:44],
+            (c.get('fornec_nome') or '')[:36],
             str(c.get('ultima_compra') or '')[:10],
             c.get('dias_parado') or '',
+            rfm.FAIXA_CICLO_PT.get(c.get('status'), ''),
             f"R$ {(c.get('venda_cat_12m') or 0):,.0f}".replace(',', '.'),
             f"R$ {(c.get('lucro_cat_12m') or 0):,.0f}".replace(',', '.'),
         ])
-    tbl = Table(data, repeatRows=1, colWidths=[8*cm, 2.6*cm, 2.2*cm, 2.7*cm, 2.7*cm])
+    tbl = Table(data, repeatRows=1, colWidths=[6.4*cm, 2.4*cm, 2*cm, 2*cm, 2.6*cm, 2.6*cm])
     tbl.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e293b')),
         ('TEXTCOLOR',  (0,0), (-1,0), colors.white),
@@ -7460,7 +7549,7 @@ def api_mix_cliente_fornecedores_pdf(codcli):
         ('GRID',       (0,0), (-1,-1), 0.3, colors.HexColor('#cbd5e1')),
         ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8fafc')]),
         ('ALIGN',      (2,0), (2,-1), 'CENTER'),
-        ('ALIGN',      (3,0), (4,-1), 'RIGHT'),
+        ('ALIGN',      (4,0), (5,-1), 'RIGHT'),
         ('VALIGN',     (0,0), (-1,-1), 'MIDDLE'),
         ('LEFTPADDING',(0,0), (-1,-1), 4),
         ('RIGHTPADDING',(0,0), (-1,-1), 4),
@@ -7601,7 +7690,8 @@ def api_mix_abandonado_csv():
         request.args.get('codcli'),
     )
     cabecalho = ['CodCli', 'Cliente', 'Cidade', 'UF', 'Departamento', 'UltimaCompra',
-                 'DiasParado', 'VendaCat12m', 'LucroCat12m', 'Vendedor', 'Time', 'Telefone']
+                 'DiasParado', 'CicloDias', 'Situacao', 'VendaCat12m', 'LucroCat12m', 'Vendedor', 'Time',
+                 'Telefone']
 
     def gerar():
         yield CSV_PREAMBULO  # BOM UTF-8
@@ -7610,7 +7700,8 @@ def api_mix_abandonado_csv():
             yield _csv_linha_br([
                 c.get('codcli'), c.get('cliente'), c.get('cidade'), c.get('uf'),
                 c.get('depto_nome'), c.get('ultima_compra'),
-                c.get('dias_sem_comprar_categoria'),
+                c.get('dias_sem_comprar_categoria'), c.get('ciclo'),
+                rfm.FAIXA_CICLO_PT.get(c.get('status'), ''),
                 c.get('venda_cat_12m'), c.get('lucro_cat_12m'),
                 c.get('vendedor'), c.get('time'), c.get('telefone'),
             ])
@@ -7649,12 +7740,13 @@ def _gerar_pdf_mix_abandonado(linhas, filtros_resumo='', dias=60):
     story = []
     story.append(Paragraph('<b>JOGA Analytics</b> — Mix Abandonado', titulo_style))
     sub = (f"Gerado em {_date.today().strftime('%d/%m/%Y')} · {len(linhas)} oportunidades · "
-           f"parados há ≥ {dias} dias" + (f" · {filtros_resumo}" if filtros_resumo else ''))
+           f"parados há ≥ {dias} dias e fora do ciclo do cliente no departamento"
+           + (f" · {filtros_resumo}" if filtros_resumo else ''))
     story.append(Paragraph(sub, sub_style))
     story.append(Spacer(1, 0.3*cm))
 
     header = ['CodCli', 'Cliente', 'Cidade/UF', 'Departamento', 'Última Compra',
-              'Dias Parado', 'Venda 12m', 'Lucro 12m', 'Telefone']
+              'Dias Parado', 'Situação', 'Venda 12m', 'Lucro 12m', 'Telefone']
     data = [header]
     for c in linhas:
         venda = c.get('venda_cat_12m') or 0
@@ -7667,12 +7759,13 @@ def _gerar_pdf_mix_abandonado(linhas, filtros_resumo='', dias=60):
             (c.get('depto_nome') or '')[:22],
             str(c.get('ultima_compra') or '')[:10],
             c.get('dias_sem_comprar_categoria') or '',
+            rfm.FAIXA_CICLO_PT.get(c.get('status'), ''),
             f"R$ {venda:,.0f}".replace(',', '.'),
             f"R$ {lucro:,.0f}".replace(',', '.'),
             c.get('telefone') or '—',
         ])
     tbl = Table(data, repeatRows=1,
-                colWidths=[1.5*cm, 6*cm, 3.4*cm, 3.4*cm, 2.3*cm, 1.8*cm, 2.3*cm, 2.3*cm, 3.4*cm])
+                colWidths=[1.5*cm, 5.2*cm, 3.2*cm, 3.2*cm, 2.2*cm, 1.7*cm, 1.9*cm, 2.3*cm, 2.3*cm, 3.2*cm])
     tbl.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e293b')),
         ('TEXTCOLOR',  (0,0), (-1,0), colors.white),
@@ -7681,7 +7774,7 @@ def _gerar_pdf_mix_abandonado(linhas, filtros_resumo='', dias=60):
         ('GRID',       (0,0), (-1,-1), 0.3, colors.HexColor('#cbd5e1')),
         ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8fafc')]),
         ('ALIGN',      (5,0), (5,-1), 'CENTER'),
-        ('ALIGN',      (6,0), (7,-1), 'RIGHT'),
+        ('ALIGN',      (7,0), (8,-1), 'RIGHT'),
         ('VALIGN',     (0,0), (-1,-1), 'MIDDLE'),
         ('LEFTPADDING',(0,0), (-1,-1), 4),
         ('RIGHTPADDING',(0,0), (-1,-1), 4),
@@ -7890,16 +7983,82 @@ def _radar_filtrar_carteira_idx(carteira_idx):
     return carteira_idx
 
 
-def _radar_status(dias_parado, venda_rec, venda_ant, dias):
-    """Classifica o cliente em relação ao produto:
-    perdido (≥2×dias ou nunca) · parou (≥dias) · esfriando (comprou mas volume caiu >50%) · ativo."""
-    if dias_parado is None or dias_parado >= 2 * dias:
-        return 'perdido'
-    if dias_parado >= dias:
-        return 'parou'
-    if venda_ant > 0 and venda_rec < 0.5 * venda_ant:
-        return 'esfriando'
-    return 'ativo'
+_DIAS_VENDA_COLS = {'codcli': 'CODCLI', 'codprod': 'CODPROD', 'codepto': 'CODEPTO',
+                    'codfornecprinc': 'CODFORNECPRINC'}
+
+
+def _ciclos_venda_12m(cols, filtros=None, blocos_mensais=False):
+    """Ciclo de compra por chave: {chave: {'ciclo', 'compras'}} — rfm.ciclo_pessoal (mediana dos
+    intervalos) sobre os DIAS com VENDA (CODOPER 'S') dos últimos 12 meses.
+
+    `cols` = colunas da chave (ex.: ('codcli',) → chave int; ('codcli', 'codepto') → tupla).
+    `filtros` = {col: valor} de igualdade (ex.: {'codprod': 12345}).
+    É a régua do Radar (cliente × produto) e do Mix (cliente × departamento/fornecedor): a MESMA
+    função de ciclo da Carteira, só que contada no grão da tela.
+
+    ⚠️ `blocos_mensais=True` quebra a consulta em 12 (uma por mês). O Mix inteiro passa de 100 mil
+    linhas cliente × depto × dia (medido em 17/11/2026) e o executeQueries corta em 100 mil SEM
+    avisar — um ciclo calculado sobre parte das datas sai errado sem erro nenhum. Por mês cabe com
+    folga; bloco no teto levanta em vez de devolver ciclo torto."""
+    filtros = {k: v for k, v in (filtros or {}).items() if v is not None}
+    if CONFIG['data_source'] == 'postgres':          # modo BD: lê do banco analítico
+        linhas = provider_sql.datas_venda_12m(cols, filtros)
+    else:
+        grupo = ', '.join(f'FATURAMENTO_VENDAS[{_DIAS_VENDA_COLS[c]}]' for c in cols)
+        treatas = ''.join(f',\n    TREATAS({{{int(v)}}}, FATURAMENTO_VENDAS[{_DIAS_VENDA_COLS[c]}])'
+                          for c, v in filtros.items())
+        janelas = ([(f'EDATE(TODAY(), -{m + 1})', 'TODAY() + 1' if m == 0 else f'EDATE(TODAY(), -{m})')
+                    for m in range(12)] if blocos_mensais
+                   else [('EDATE(TODAY(), -12)', 'TODAY() + 1')])
+        queries = {f'm{i}': f"""EVALUATE
+SUMMARIZECOLUMNS(
+    {grupo}, FATURAMENTO_VENDAS[DTSAIDA],
+    FILTER(ALL(FATURAMENTO_VENDAS[DTSAIDA]),
+        FATURAMENTO_VENDAS[DTSAIDA] >= {ini} && FATURAMENTO_VENDAS[DTSAIDA] < {fim}),
+    TREATAS({{"S"}}, FATURAMENTO_VENDAS[CODOPER]){treatas},
+    "LinhasDiaVenda", COUNTROWS(FATURAMENTO_VENDAS)
+)""" for i, (ini, fim) in enumerate(janelas)}
+        res = _executar_dax_paralelo_n(queries, max_workers=4)
+        linhas = []
+        for k in queries:
+            rows = clean_rows(_todas_linhas(res[k]))
+            if len(rows) >= 99_999:
+                raise RuntimeError(f'ciclos {cols}: bloco {k} voltou no teto de linhas do Power BI')
+            for r in rows:
+                linhas.append(tuple(r.get(_DIAS_VENDA_COLS[c]) for c in cols) + (r.get('DTSAIDA'),))
+    if len(cols) == 1:
+        pares = ((ln[0], ln[-1]) for ln in linhas)
+    else:
+        pares = ((None if any(x is None for x in ln[:-1]) else tuple(ln[:-1]), ln[-1]) for ln in linhas)
+    return rfm.ciclos_por_chave(pares)
+
+
+def _radar_status(dias_parado, venda_rec, venda_ant, ciclo, dias):
+    """Situação do cliente no produto pela régua ÚNICA do ciclo (rfm.faixa_ciclo, a mesma da
+    Carteira): ativo/esfriando (< 1× o ciclo DELE nesse produto) · atencao (1–2×) · atrasado
+    (2–3×) · parou (≥ 3×) · esporadico (1 dia de compra em 12 m e não voltou na janela `dias`;
+    quem comprou 1 vez DENTRO da janela está no prazo — sem ciclo, vale a janela).
+    'esfriando' = no prazo, mas o volume da janela recente caiu mais de 50% vs. a anterior.
+
+    ⚠️ Até 11/2026 era pela JANELA da tela (parou ≥ dias, perdido ≥ 2× dias). O João achou
+    (16/11) cliente com 59 dias "Comprando" e cliente de ciclo 90 dias "Parou" com 61: medido no
+    BI, mais da metade dos "Parou" com histórico estavam no ritmo deles e metade dos "Comprando"
+    comprava 1–2 vezes no ano. A janela continua valendo para o board e para o Comprava → Agora."""
+    faixa = rfm.faixa_ciclo(dias_parado, ciclo, janela_sem_ciclo=dias)
+    if faixa == 'no_prazo':
+        if venda_ant > 0 and venda_rec < 0.5 * venda_ant:
+            return 'esfriando'
+        return 'ativo'
+    return faixa
+
+
+_RADAR_FORA_DO_CICLO = rfm.FORA_DO_CICLO   # atencao · atrasado · parou
+
+# Última compra = última VENDA (CODOPER 'S'). MAX(DTSAIDA) puro contava bonificação, transferência
+# e as outras operações: havia cliente "Comprando" só porque recebeu bonificação (16/11/2026).
+# O modo Postgres já filtrava 'S' — era o Power BI que destoava.
+_DAX_ULTIMA_VENDA = ('MAXX(FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[CODOPER] = "S"), '
+                     'FATURAMENTO_VENDAS[DTSAIDA])')
 
 
 def _radar_detalhe_rows(codprod, dias):
@@ -7918,7 +8077,7 @@ def _radar_detalhe_rows(codprod, dias):
 SUMMARIZECOLUMNS(
     FATURAMENTO_VENDAS[CODCLI],
     FILTER(FATURAMENTO_VENDAS, {f_prod} && FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12)),
-    "Ultima",   MAX(FATURAMENTO_VENDAS[DTSAIDA]),
+    "Ultima",   {_DAX_ULTIMA_VENDA},
     "Venda12m", [VENDA LIQUIDA],
     "Qt12m",    SUM(FATURAMENTO_VENDAS[QT])
 )""",
@@ -7962,6 +8121,7 @@ SUMMARIZECOLUMNS(
             canib = {r['CODCLI'] for r in clean_rows(_todas_linhas(resultados['canib'])) if r.get('CODCLI') is not None}
         cli_rows = clean_rows(_todas_linhas(resultados['cli']))
         hoje = _date.today()
+    ciclos = _ciclos_venda_12m(('codcli',), {'codprod': int(codprod)})
     carteira_idx = {c['codcli']: c for c in _carteira_no_escopo()}   # recorte por cadastro
     carteira_idx = _radar_filtrar_carteira_idx(carteira_idx)         # +filtro supervisor/vendedor (admin)
 
@@ -7971,18 +8131,19 @@ SUMMARIZECOLUMNS(
         if cc is None or cc not in carteira_idx:   # fora do escopo do usuário
             continue
         ultima = r.get('Ultima')
-        dias_parado = None
-        if ultima:
-            try:
-                dias_parado = (hoje - _date.fromisoformat(str(ultima)[:10])).days
-            except ValueError:
-                dias_parado = None
+        try:
+            dias_parado = (hoje - _date.fromisoformat(str(ultima)[:10])).days if ultima else None
+        except ValueError:
+            dias_parado = None
+        if dias_parado is None:
+            continue   # nenhuma VENDA em 12 m (só bonificação/transferência): não é cliente do item
         venda_rec = (rec_idx.get(cc, {}).get('VendaRec')) or 0
         qt_rec    = (rec_idx.get(cc, {}).get('QtRec')) or 0
         venda_ant = (ant_idx.get(cc, {}).get('VendaAnt')) or 0
         qt_ant    = (ant_idx.get(cc, {}).get('QtAnt')) or 0
-        status = _radar_status(dias_parado, venda_rec, venda_ant, dias)
-        parou = status in ('parou', 'perdido')
+        cic = ciclos.get(cc) or {}
+        status = _radar_status(dias_parado, venda_rec, venda_ant, cic.get('ciclo'), dias)
+        parou = status in _RADAR_FORA_DO_CICLO
         meta = carteira_idx.get(cc, {})
         linhas.append({
             'codcli':        cc,
@@ -8001,7 +8162,9 @@ SUMMARIZECOLUMNS(
             'venda_ant':     round(venda_ant, 2),
             'qt_ant':        round(qt_ant, 2),
             'status':        status,
-            # parou DESTE produto mas comprou OUTRO do mesmo depto → trocou (não é churn puro)
+            'ciclo':         cic.get('ciclo'),          # ciclo DELE neste produto (None = esporádico)
+            'compras_12m':   cic.get('compras') or 0,   # dias com venda do produto em 12 m
+            # saiu do ciclo DESTE produto mas comprou OUTRO do mesmo depto → trocou (não é churn puro)
             'trocou':        bool(parou and cc in canib),
         })
     gen = _clientes_genericos()
@@ -8022,8 +8185,10 @@ def api_radar_produto(codprod):
 
     sup = _supervisores_filtro()
     vend = _radar_vendedor_filtro()
+    # v2 (17/11/2026): situação pelo ciclo do cliente no produto + última compra = última VENDA.
     key = cache_key_for_user(f'radar:produto:{codprod}',
-                             {'dias': dias, 'supervisor': _sup_cache_key(sup), 'vendedor': vend if vend is not None else '-'})
+                             {'v': 2, 'dias': dias, 'supervisor': _sup_cache_key(sup),
+                              'vendedor': vend if vend is not None else '-'})
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)
@@ -8032,7 +8197,9 @@ def api_radar_produto(codprod):
 
     deptos_nomes = _carregar_deptos_map()['deptos']
     codepto = info.get('codepto')
-    parados = [c for c in linhas if c['status'] in ('parou', 'perdido')]
+    parados = [c for c in linhas if c['status'] in _RADAR_FORA_DO_CICLO]
+    from collections import Counter
+    por_status = Counter(c['status'] for c in linhas)
     resp = {
         'ok': True,
         'codprod': codprod,
@@ -8046,10 +8213,14 @@ def api_radar_produto(codprod):
         },
         'kpis': {
             'clientes':         len(linhas),
+            # `parados` = FORA DO CICLO (atenção + atrasado + parou) — a mesma fronteira do
+            # "dentro do ciclo" do Gerencial e do "em risco" da Recuperação (passou de 1× o ciclo).
             'parados':          len(parados),
-            'esfriou_ou_parou': sum(1 for c in linhas if c['status'] in ('esfriando', 'parou', 'perdido')),
+            'esfriou_ou_parou': sum(1 for c in linhas if c['status'] == 'esfriando' or c['status'] in _RADAR_FORA_DO_CICLO),
             'trocaram':         sum(1 for c in parados if c['trocou']),
             'receita_em_risco': round(sum(c['venda_12m'] for c in parados), 2),
+            'por_status':       {s: por_status.get(s, 0) for s in
+                                 ('ativo', 'esfriando', 'atencao', 'atrasado', 'parou', 'esporadico')},
         },
         'rows': linhas,
     }
@@ -8180,8 +8351,9 @@ def _radar_board_payload(dias):
     # porque nao da erro. Subiu para 2 em 08/2026 com duas mudancas: escopo por CADASTRO e
     # `clientes_perdidos` por CONJUNTO. **Suba sempre que mudar o resultado desta funcao.**
     # v3 (10/2026): o payload ganhou `por_fornec` (cards de total do board); v4: lista `alta`.
+    # v5 (11/2026): `clientes_perdidos` conta só VENDA (CODOPER 'S'), como o modo Postgres.
     key = cache_key_for_user('radar:board',
-                             {'v': 4, 'dias': dias, 'supervisor': _sup_cache_key(sup),
+                             {'v': 5, 'dias': dias, 'supervisor': _sup_cache_key(sup),
                               'vendedor': vend if vend is not None else '-'})
     cached = _cache_get(key)
     if cached:
@@ -8236,7 +8408,8 @@ SUMMARIZECOLUMNS(
             'perdidos': f"""EVALUATE
 SUMMARIZECOLUMNS(
     FATURAMENTO_VENDAS[CODPROD],
-    FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[DTSAIDA] >= TODAY() - {d2}{rbac_frag}),
+    FILTER(FATURAMENTO_VENDAS, FATURAMENTO_VENDAS[DTSAIDA] >= TODAY() - {d2}
+        && FATURAMENTO_VENDAS[CODOPER] = "S"{rbac_frag}),
     "CliPerdidos",
         COUNTROWS(
             FILTER(
@@ -8324,9 +8497,11 @@ SUMMARIZECOLUMNS(
 
 
 # Métricas de ordenação do board (mesmas do select "Ordenar board por" do front).
+# "Perdido" e "em risco" ficaram reservados (revisão 11/2026): perdido = mais de 365 dias sem
+# comprar (Recuperação) e em risco = passou do ciclo e de 60 dias. Aqui é queda da janela.
 _RADAR_BOARD_METRICAS = {
-    'queda_receita':     'Receita em risco',
-    'clientes_perdidos': 'Clientes perdidos',
+    'queda_receita':     'Queda de receita',
+    'clientes_perdidos': 'Não recompraram',
     'pct_queda':         '% de queda',
 }
 
@@ -8410,8 +8585,8 @@ def api_radar_board_csv():
         cabecalho = ['#', 'CodProd', 'Produto', 'Departamento', 'Fornecedor', 'ReceitaGanha',
                      'PctAlta', 'ClientesAntes', 'ClientesAgora', 'VendaAnterior', 'VendaRecente']
     else:
-        cabecalho = ['#', 'CodProd', 'Produto', 'Departamento', 'Fornecedor', 'ReceitaEmRisco',
-                     'PctQueda', 'ClientesPerdidos', 'VendaAnterior', 'VendaRecente']
+        cabecalho = ['#', 'CodProd', 'Produto', 'Departamento', 'Fornecedor', 'QuedaReceita',
+                     'PctQueda', 'NaoRecompraram', 'VendaAnterior', 'VendaRecente']
 
     def gerar():
         yield CSV_PREAMBULO  # BOM UTF-8
@@ -8474,7 +8649,7 @@ def _gerar_pdf_radar_board(rows, dias, metrica, resumo='', lista='queda'):
     if alta:
         header = ['#', 'Produto', 'Departamento', 'Fornecedor', 'Receita ganha', '% alta', 'Clientes antes -> agora']
     else:
-        header = ['#', 'Produto', 'Departamento', 'Fornecedor', 'Receita em risco', '% queda', 'Clientes perdidos']
+        header = ['#', 'Produto', 'Departamento', 'Fornecedor', 'Queda de receita', '% queda', 'Não recompraram']
     data = [header]
     for i, r in enumerate(rows, 1):
         base = [i, (r.get('descricao') or '')[:40], (r.get('depto_nome') or '')[:20],
@@ -8602,12 +8777,14 @@ def api_radar_board():
                     'rows': full[:limit], 'totais': totais})
 
 
-_RADAR_STATUS_PT = {'ativo': 'Comprando', 'esfriando': 'Esfriando', 'parou': 'Parou', 'perdido': 'Perdido'}
+# Nomes da régua única (rfm.FAIXA_CICLO_PT); 'ativo' = No prazo, 'esfriando' = no prazo com volume em queda.
+_RADAR_STATUS_PT = {'ativo': 'No prazo', 'esfriando': 'Esfriando', 'atencao': 'Atenção', 'atrasado': 'Atrasado',
+                    'parou': 'Parou', 'esporadico': 'Esporádico'}
 
 
 def _radar_situacao(c):
     """Rótulo troca-vs-abandono pra quem parou; vazio pra quem ainda compra."""
-    if c['status'] not in ('parou', 'perdido'):
+    if c['status'] not in _RADAR_FORA_DO_CICLO:
         return ''
     return 'Trocou (outro do depto)' if c.get('trocou') else 'Abandonou'
 
@@ -8623,8 +8800,9 @@ def api_radar_produto_csv(codprod):
         dias = 60
     info, linhas = _radar_detalhe_rows(codprod, dias)
 
-    cabecalho = ['CodCli', 'Cliente', 'Cidade', 'UF', 'UltimaCompra', 'DiasParado', 'Situacao',
-                 'Situacao_Troca', 'Venda12m', 'Qtd12m', 'VendaAnterior', 'VendaRecente', 'Vendedor', 'Telefone']
+    cabecalho = ['CodCli', 'Cliente', 'Cidade', 'UF', 'UltimaCompra', 'DiasParado', 'CicloDias', 'Compras12m',
+                 'Situacao', 'Situacao_Troca', 'Venda12m', 'Qtd12m', 'VendaAnterior', 'VendaRecente',
+                 'Vendedor', 'Telefone']
 
     def gerar():
         yield CSV_PREAMBULO  # BOM UTF-8
@@ -8632,7 +8810,7 @@ def api_radar_produto_csv(codprod):
         for c in linhas:
             yield _csv_linha([
                 c.get('codcli'), c.get('cliente'), c.get('cidade'), c.get('uf'),
-                c.get('ultima_compra'), c.get('dias_parado'),
+                c.get('ultima_compra'), c.get('dias_parado'), c.get('ciclo'), c.get('compras_12m'),
                 _RADAR_STATUS_PT.get(c.get('status'), c.get('status')), _radar_situacao(c),
                 c.get('venda_12m'), c.get('qt_12m'), c.get('venda_ant'), c.get('venda_rec'),
                 c.get('vendedor'), c.get('telefone'),
@@ -8669,22 +8847,24 @@ def _gerar_pdf_radar_produto(produto, linhas, dias=60):
 
     story = []
     story.append(Paragraph(f"<b>JOGA Analytics</b> — Radar · {produto.get('descricao') or ''}", titulo_style))
-    parados = [c for c in linhas if c['status'] in ('parou', 'perdido')]
+    parados = [c for c in linhas if c['status'] in _RADAR_FORA_DO_CICLO]
     sub = (f"Gerado em {_date.today().strftime('%d/%m/%Y')} · {produto.get('depto_nome') or ''}"
-           f" · {produto.get('fornec_nome') or ''} · {len(linhas)} clientes · {len(parados)} pararam (≥ {dias} dias)")
+           f" · {produto.get('fornec_nome') or ''} · {len(linhas)} clientes · {len(parados)} fora do ciclo"
+           f" (passaram do próprio ciclo de compra do item) · janela de comparação {dias} dias")
     story.append(Paragraph(sub, sub_style))
     story.append(Spacer(1, 0.3*cm))
 
-    header = ['Cliente', 'Cidade/UF', 'Última compra', 'Dias', 'Situação', 'Troca/Abandono',
+    header = ['Cliente', 'Cidade/UF', 'Última compra', 'Dias', 'Ciclo', 'Situação', 'Troca/Abandono',
               'Comprava (R$)', 'Agora (R$)', 'Venda 12m', 'Vendedor', 'Telefone']
     data = [header]
     for c in linhas:
         cidade_uf = f"{(c.get('cidade') or '')[:16]}/{c.get('uf') or ''}"
         data.append([
-            (c.get('cliente') or '')[:34],
+            (c.get('cliente') or '')[:30],
             cidade_uf,
             str(c.get('ultima_compra') or '')[:10],
             c.get('dias_parado') if c.get('dias_parado') is not None else '',
+            f"{c['ciclo']}d" if c.get('ciclo') else '—',
             _RADAR_STATUS_PT.get(c.get('status'), ''),
             _radar_situacao(c),
             f"R$ {(c.get('venda_ant') or 0):,.0f}".replace(',', '.'),
@@ -8694,7 +8874,7 @@ def _gerar_pdf_radar_produto(produto, linhas, dias=60):
             c.get('telefone') or '',
         ])
     tbl = Table(data, repeatRows=1,
-                colWidths=[5.2*cm, 3*cm, 2*cm, 1.1*cm, 1.8*cm, 3*cm, 2.1*cm, 2.1*cm, 2.1*cm, 3*cm, 2.3*cm])
+                colWidths=[4.6*cm, 3*cm, 2*cm, 1.1*cm, 1.1*cm, 1.8*cm, 2.5*cm, 2.1*cm, 2.1*cm, 2.1*cm, 3*cm, 2.3*cm])
     tbl.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e293b')),
         ('TEXTCOLOR',  (0,0), (-1,0), colors.white),
@@ -8702,8 +8882,8 @@ def _gerar_pdf_radar_produto(produto, linhas, dias=60):
         ('FONTSIZE',   (0,0), (-1,-1), 6.5),
         ('GRID',       (0,0), (-1,-1), 0.3, colors.HexColor('#cbd5e1')),
         ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8fafc')]),
-        ('ALIGN',      (3,0), (3,-1), 'CENTER'),
-        ('ALIGN',      (6,0), (8,-1), 'RIGHT'),
+        ('ALIGN',      (3,0), (4,-1), 'CENTER'),
+        ('ALIGN',      (7,0), (9,-1), 'RIGHT'),
         ('VALIGN',     (0,0), (-1,-1), 'MIDDLE'),
         ('LEFTPADDING',(0,0), (-1,-1), 3),
         ('RIGHTPADDING',(0,0), (-1,-1), 3),
@@ -8792,9 +8972,10 @@ SUMMARIZECOLUMNS(
 def _radar_cliente_rows(codcli, dias):
     """Transposto de _radar_detalhe_rows: fixa CODCLI e agrupa por CODPROD → produtos que ESTE
     cliente parou de comprar. Janela recente vs anterior (queda de volume), status via
-    _radar_status. Retorna (cli_meta | None, linhas). cli_meta None = fora do escopo (404).
-    Só produtos com status parou/perdido (o que ele 'não está comprando'), ordenados por
-    venda 12m desc (potencial de recuperação)."""
+    _radar_status (ciclo DELE em cada produto). Retorna (cli_meta | None, linhas). cli_meta None =
+    fora do escopo (404). Entram os produtos FORA DO CICLO (atenção/atrasado/parou) e os
+    esporádicos (1 dia de compra em 12 m) sem compra há ≥ a janela — a tela separa os dois por
+    filtro. Ordenados por venda 12m desc (potencial de recuperação)."""
     from datetime import date as _date
 
     carteira_idx = {c['codcli']: c for c in _carteira_no_escopo()}
@@ -8809,7 +8990,7 @@ def _radar_cliente_rows(codcli, dias):
 SUMMARIZECOLUMNS(
     FATURAMENTO_VENDAS[CODPROD],
     FILTER(FATURAMENTO_VENDAS, {f_cli} && FATURAMENTO_VENDAS[DTSAIDA] >= EDATE(TODAY(), -12)),
-    "Ultima",   MAX(FATURAMENTO_VENDAS[DTSAIDA]),
+    "Ultima",   {_DAX_ULTIMA_VENDA},
     "Venda12m", [VENDA LIQUIDA],
     "Qt12m",    SUM(FATURAMENTO_VENDAS[QT])
 )""",
@@ -8840,6 +9021,7 @@ SUMMARIZECOLUMNS(
         ant_idx = {r['CODPROD']: r for r in clean_rows(_todas_linhas(resultados['ant'])) if r.get('CODPROD') is not None}
         prod_rows = clean_rows(_todas_linhas(resultados['prod']))
         hoje = _date.today()
+    ciclos = _ciclos_venda_12m(('codprod',), {'codcli': int(codcli)})
 
     prod_map = _carregar_produtos_map()
     deptos_nomes = _carregar_deptos_map()['deptos']
@@ -8850,18 +9032,19 @@ SUMMARIZECOLUMNS(
         if cp is None:
             continue
         ultima = r.get('Ultima')
-        dias_parado = None
-        if ultima:
-            try:
-                dias_parado = (hoje - _date.fromisoformat(str(ultima)[:10])).days
-            except ValueError:
-                dias_parado = None
+        try:
+            dias_parado = (hoje - _date.fromisoformat(str(ultima)[:10])).days if ultima else None
+        except ValueError:
+            dias_parado = None
+        if dias_parado is None:
+            continue   # nenhuma VENDA do item em 12 m (só bonificação/transferência)
         venda_rec = (rec_idx.get(cp, {}).get('VendaRec')) or 0
         qt_rec    = (rec_idx.get(cp, {}).get('QtRec')) or 0
         venda_ant = (ant_idx.get(cp, {}).get('VendaAnt')) or 0
         qt_ant    = (ant_idx.get(cp, {}).get('QtAnt')) or 0
-        status = _radar_status(dias_parado, venda_rec, venda_ant, dias)
-        if status not in ('parou', 'perdido'):
+        cic = ciclos.get(cp) or {}
+        status = _radar_status(dias_parado, venda_rec, venda_ant, cic.get('ciclo'), dias)
+        if status not in _RADAR_FORA_DO_CICLO and status != 'esporadico':
             continue  # só o que o cliente DEIXOU de comprar
         info = prod_map.get(str(cp)) or {}
         codepto = info.get('codepto')
@@ -8880,6 +9063,8 @@ SUMMARIZECOLUMNS(
             'venda_ant':     round(venda_ant, 2),
             'qt_ant':        round(qt_ant, 2),
             'status':        status,
+            'ciclo':         cic.get('ciclo'),
+            'compras_12m':   cic.get('compras') or 0,
         })
     linhas.sort(key=lambda x: x['venda_12m'], reverse=True)
     return cli_meta, linhas
@@ -8895,7 +9080,7 @@ def api_radar_cliente(codcli):
     except (TypeError, ValueError):
         dias = 60
 
-    key = cache_key_for_user(f'radar:cliente:{codcli}', {'dias': dias})
+    key = cache_key_for_user(f'radar:cliente:{codcli}', {'v': 2, 'dias': dias})   # v2: régua do ciclo (11/2026)
     cached = _cache_get(key)
     if cached:
         return jsonify(cached)
@@ -8903,6 +9088,7 @@ def api_radar_cliente(codcli):
     cli_meta, linhas = _radar_cliente_rows(codcli, dias)
     if cli_meta is None:
         return jsonify({'ok': False, 'error': 'Cliente fora da sua carteira'}), 404
+    fora = [c for c in linhas if c['status'] in _RADAR_FORA_DO_CICLO]
 
     resp = {
         'ok': True,
@@ -8917,8 +9103,10 @@ def api_radar_cliente(codcli):
             'telefone': cli_meta.get('telefone'),
         },
         'kpis': {
-            'produtos_parados': len(linhas),
-            'receita_em_risco': round(sum(c['venda_12m'] for c in linhas), 2),
+            # fora do ciclo (atenção/atrasado/parou); os esporádicos vêm na lista, mas não somam aqui
+            'produtos_parados': len(fora),
+            'receita_em_risco': round(sum(c['venda_12m'] for c in fora), 2),
+            'esporadicos':      len(linhas) - len(fora),
         },
         'rows': linhas,
     }
@@ -8941,7 +9129,7 @@ def api_radar_cliente_csv(codcli):
         return jsonify({'ok': False, 'error': 'Cliente fora da sua carteira'}), 404
 
     cabecalho = ['CodProd', 'Produto', 'Departamento', 'Fornecedor', 'UltimaCompra', 'DiasParado',
-                 'Situacao', 'Venda12m', 'Qtd12m', 'VendaAnterior', 'VendaRecente']
+                 'CicloDias', 'Compras12m', 'Situacao', 'Venda12m', 'Qtd12m', 'VendaAnterior', 'VendaRecente']
 
     def gerar():
         yield CSV_PREAMBULO  # BOM UTF-8
@@ -8949,7 +9137,7 @@ def api_radar_cliente_csv(codcli):
         for c in linhas:
             yield _csv_linha([
                 c.get('codprod'), c.get('descricao'), c.get('depto_nome'), c.get('fornec_nome'),
-                c.get('ultima_compra'), c.get('dias_parado'),
+                c.get('ultima_compra'), c.get('dias_parado'), c.get('ciclo'), c.get('compras_12m'),
                 _RADAR_STATUS_PT.get(c.get('status'), c.get('status')),
                 c.get('venda_12m'), c.get('qt_12m'), c.get('venda_ant'), c.get('venda_rec'),
             ])
@@ -8999,27 +9187,30 @@ def api_radar_cliente_pdf(codcli):
     story.append(Paragraph(f"<b>JOGA Analytics</b> — Produtos parados · {cliente}", titulo_style))
     sub = (f"Gerado em {_date.today().strftime('%d/%m/%Y')} · #{codcli} · "
            f"{(cli_meta.get('cidade') or '')}/{cli_meta.get('uf') or ''} · "
-           f"{cli_meta.get('vendedor') or '—'} · {len(linhas)} produto(s) parado(s) há ≥ {dias} dias")
+           f"{cli_meta.get('vendedor') or '—'} · "
+           f"{sum(1 for c in linhas if c['status'] in _RADAR_FORA_DO_CICLO)} produto(s) fora do ciclo"
+           f" · {sum(1 for c in linhas if c['status'] == 'esporadico')} esporádico(s) sem compra há ≥ {dias} dias")
     story.append(Paragraph(sub, sub_style))
     story.append(Spacer(1, 0.3*cm))
 
-    header = ['Produto', 'Departamento', 'Fornecedor', 'Última compra', 'Dias', 'Situação',
+    header = ['Produto', 'Departamento', 'Fornecedor', 'Última compra', 'Dias', 'Ciclo', 'Situação',
               'Comprava (R$)', 'Agora (R$)', 'Venda 12m']
     data = [header]
     for c in linhas:
         data.append([
-            (c.get('descricao') or '')[:34],
+            (c.get('descricao') or '')[:32],
             (c.get('depto_nome') or '')[:16],
             (c.get('fornec_nome') or '')[:20],
             str(c.get('ultima_compra') or '')[:10],
             c.get('dias_parado') if c.get('dias_parado') is not None else '',
+            f"{c['ciclo']}d" if c.get('ciclo') else '—',
             _RADAR_STATUS_PT.get(c.get('status'), ''),
             f"R$ {(c.get('venda_ant') or 0):,.0f}".replace(',', '.'),
             f"R$ {(c.get('venda_rec') or 0):,.0f}".replace(',', '.'),
             f"R$ {(c.get('venda_12m') or 0):,.0f}".replace(',', '.'),
         ])
     tbl = Table(data, repeatRows=1,
-                colWidths=[6*cm, 3*cm, 3.4*cm, 2.1*cm, 1.1*cm, 1.8*cm, 2.2*cm, 2.2*cm, 2.2*cm])
+                colWidths=[5.6*cm, 3*cm, 3.2*cm, 2.1*cm, 1.1*cm, 1.1*cm, 1.8*cm, 2.2*cm, 2.2*cm, 2.2*cm])
     tbl.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e293b')),
         ('TEXTCOLOR',  (0,0), (-1,0), colors.white),
@@ -9027,8 +9218,8 @@ def api_radar_cliente_pdf(codcli):
         ('FONTSIZE',   (0,0), (-1,-1), 6.5),
         ('GRID',       (0,0), (-1,-1), 0.3, colors.HexColor('#cbd5e1')),
         ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8fafc')]),
-        ('ALIGN',      (4,0), (4,-1), 'CENTER'),
-        ('ALIGN',      (6,0), (8,-1), 'RIGHT'),
+        ('ALIGN',      (4,0), (5,-1), 'CENTER'),
+        ('ALIGN',      (7,0), (9,-1), 'RIGHT'),
         ('VALIGN',     (0,0), (-1,-1), 'MIDDLE'),
         ('LEFTPADDING',(0,0), (-1,-1), 3),
         ('RIGHTPADDING',(0,0), (-1,-1), 3),
