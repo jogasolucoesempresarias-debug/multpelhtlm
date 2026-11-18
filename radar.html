@@ -397,8 +397,14 @@ function _scopeQS() {
 }
 
 async function loadScopeMaps() {
-  if (_role !== 'admin' && _role !== 'viewer') return;
+  // Admin/viewer: empresa inteira. SUPERVISOR: só os times dele (o campo Time aparece se tiver
+  // mais de um) e os RCAs desses times — estreita o próprio escopo, nunca amplia: o servidor
+  // ignora código de fora (_radar_escopo_filtros, mesma regra da Curva ABC). Vendedor: sem filtro.
+  const isAdmin = _role === 'admin' || _role === 'viewer';
+  const meusTimes = (_me && Array.isArray(_me.codsupervisores)) ? _me.codsupervisores.map(String) : [];
+  if (!isAdmin && !(_role === 'supervisor' && meusTimes.length)) return;
   document.querySelectorAll('.scope-filtro').forEach(el => el.classList.remove('hidden'));
+  if (!isAdmin && meusTimes.length < 2) document.getElementById('filt_sup').closest('.scope-filtro').classList.add('hidden');
   try {
     const [vs, ss] = await Promise.all([
       fetchJSON('/api/_internal/vendedores-map'),
@@ -406,6 +412,10 @@ async function loadScopeMaps() {
     ]);
     _vendMap = vs.vendedores || {};
     _supMap = ss.supervisores || {};
+    if (!isAdmin) {
+      _supMap = Object.fromEntries(Object.entries(_supMap).filter(([cs]) => meusTimes.includes(cs)));
+      _vendMap = Object.fromEntries(Object.entries(_vendMap).filter(([_, v]) => meusTimes.includes(String(v.codsupervisor))));
+    }
     document.getElementById('dl_sup').innerHTML = Object.entries(_supMap)
       .sort((a, b) => (a[1].nome || '').localeCompare(b[1].nome || ''))
       .map(([cs, v]) => `<option value="${v.nome} (${cs})">`).join('');
@@ -468,10 +478,11 @@ function atualizarEscopo() {
   recarregarTudo();
 }
 
+let _me = null;
 async function loadMe() {
   try {
-    const j = await fetchJSON('/api/me');
-    _role = j.role;
+    _me = await fetchJSON('/api/me');
+    _role = _me.role;
   } catch (e) {}
 }
 

@@ -7981,15 +7981,23 @@ def _radar_vendedor_filtro():
         return None
 
 
+def _radar_escopo_filtros():
+    """(supervisores, vendedor) escolhidos na tela do Radar — os MESMOS helpers da Curva ABC e da
+    Recuperação: admin/viewer escolhe qualquer time/RCA; SUPERVISOR só ESTREITA o próprio escopo
+    (um dos times dele, um RCA desses times — código de fora é ignorado, a querystring nunca
+    amplia); vendedor: (None, None).
+    ⚠️ Até 11/2026 o Radar aceitava os filtros só de admin/viewer e a tela nem mostrava os campos
+    para o supervisor (pedido do João, 18/11/2026)."""
+    return _abc_supervisores_filtro(), _abc_vendedor_filtro()
+
+
 def _radar_filtrar_carteira_idx(carteira_idx):
-    """Aplica o filtro de supervisor/vendedor escolhido (admin/viewer) sobre o índice de
-    clientes do cadastro. Vendedor tem precedência. Retorna o idx filtrado (ou o mesmo)."""
-    if session.get('role') not in ('admin', 'viewer'):
-        return carteira_idx
-    vend = _radar_vendedor_filtro()
+    """Aplica o filtro de supervisor/vendedor escolhido sobre o índice de clientes do cadastro
+    (já recortado pelo RBAC em _carteira_no_escopo). Vendedor tem precedência. Retorna o idx
+    filtrado (ou o mesmo)."""
+    sup, vend = _radar_escopo_filtros()
     if vend is not None:
         return {k: v for k, v in carteira_idx.items() if v.get('codusur') == vend}
-    sup = _supervisores_filtro()
     if sup:
         sset = set(sup)
         return {k: v for k, v in carteira_idx.items() if v.get('codsupervisor') in sset}
@@ -8196,8 +8204,7 @@ def api_radar_produto(codprod):
     except (TypeError, ValueError):
         dias = 60
 
-    sup = _supervisores_filtro()
-    vend = _radar_vendedor_filtro()
+    sup, vend = _radar_escopo_filtros()
     # v2 (17/11/2026): situação pelo ciclo do cliente no produto + última compra = última VENDA.
     key = cache_key_for_user(f'radar:produto:{codprod}',
                              {'v': 2, 'dias': dias, 'supervisor': _sup_cache_key(sup),
@@ -8278,12 +8285,11 @@ def _radar_frag_codcli():
     não virar bug silencioso se a base crescer.
     """
     role = session.get('role')
-    if role not in ('admin', 'viewer'):
-        return _frag_codcli_cadastro()          # não-admin: trava de RBAC, inalterada
-
-    vend = _radar_vendedor_filtro()
-    sup = _supervisores_filtro()
+    admin = role in ('admin', 'viewer')
+    sup, vend = _radar_escopo_filtros()
     if vend is None and not sup:
+        if not admin:
+            return _frag_codcli_cadastro()      # não-admin sem filtro: trava de RBAC, inalterada
         return ('', True)                        # sem filtro escolhido: empresa toda, como sempre
 
     idx = _radar_filtrar_carteira_idx({c['codcli']: c for c in _carteira_no_escopo()
@@ -8295,6 +8301,10 @@ def _radar_frag_codcli():
     if len(escopo) <= 2500:
         lista = ', '.join(str(c) for c in sorted(escopo))
         return (f' && FATURAMENTO_VENDAS[CODCLI] IN {{{lista}}}', True)
+    if not admin:
+        # o complemento abaixo é da EMPRESA: para supervisor ele abriria clientes de fora do
+        # escopo. Fica a trava de cadastro (mais larga que o filtro, nunca mais larga que o RBAC).
+        return _frag_codcli_cadastro()
     todos = {c['codcli'] for c in _carregar_carteira_full() if c.get('codcli') is not None}
     complemento = todos - escopo
     if len(complemento) <= 2500:
@@ -8357,8 +8367,7 @@ def _radar_totais(rows, por_fornec, fornecedor=None):
 def _radar_board_payload(dias):
     """Payload cacheado do board: `rows` (só quem caiu) + `por_fornec` (agregado de todos)."""
     d2 = 2 * dias
-    sup = _supervisores_filtro()
-    vend = _radar_vendedor_filtro()
+    sup, vend = _radar_escopo_filtros()
     # ⚠️ `v` na chave = VERSAO DO PAYLOAD. Sem ela, um deploy que muda a forma ou o significado
     # do board continua servindo o payload velho do cache ate o TTL expirar — e ninguem percebe,
     # porque nao da erro. Subiu para 2 em 08/2026 com duas mudancas: escopo por CADASTRO e
@@ -8563,12 +8572,12 @@ def _nome_arquivo_radar_board(ext, dias, metrica):
                     'pct_alta': 'pct-alta', 'clientes_rec': 'clientes'}.get(metrica, 'receita-risco')
     partes = [f"{dias}d"] + (['em-alta'] if metrica in _RADAR_ALTA_METRICAS else []) + [slug_metrica]
 
-    vend = _radar_vendedor_filtro()
+    sup_f, vend = _radar_escopo_filtros()
     if vend is not None:
         v = _carregar_vendedores_map().get(str(vend))
         partes.append(_slug_export(v.get('nome') if v else f'RCA{vend}'))
     else:
-        for cs in (_supervisores_filtro() or []):
+        for cs in (sup_f or []):
             s = _carregar_supervisores_map().get(str(cs))
             partes.append(_slug_export(s.get('nome') if s else f'Sup{cs}'))
     fornecedor = request.args.get('fornecedor')
@@ -8724,12 +8733,12 @@ def api_radar_board_pdf():
 
     # Resumo (fornecedor/escopo) pro subtítulo do PDF
     parts = []
-    vend = _radar_vendedor_filtro()
+    sup_f, vend = _radar_escopo_filtros()
     if vend is not None:
         v = _carregar_vendedores_map().get(str(vend))
         parts.append(f"Vendedor: {v.get('nome') if v else vend}")
     else:
-        for cs in (_supervisores_filtro() or []):
+        for cs in (sup_f or []):
             s = _carregar_supervisores_map().get(str(cs))
             parts.append(f"Time: {s.get('nome') if s else cs}")
     if fornecedor:

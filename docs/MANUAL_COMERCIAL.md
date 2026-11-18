@@ -675,6 +675,10 @@ Compara a **janela recente** com a **janela anterior** do mesmo tamanho (padrão
   - No PDF, textos longos (cliente, cidade, produto, vendedor, "Trocou (outro do depto)") quebram
     linha dentro da coluna.
 - Escopo por **cadastro** (o board e o drill partem do mesmo conjunto de clientes).
+- **Filtros Supervisor (time) e Vendedor:** admin/viewer escolhem qualquer um. Desde 18/11/2026 o
+  **supervisor** também vê os dois, limitados aos times dele (o campo Time só aparece para quem tem
+  mais de um) e aos vendedores desses times — mesma regra da Curva ABC e da Recuperação. O
+  vendedor não vê filtro (só a carteira dele).
 
 ⚠️ O board compara 60 × 60 dias; o drill olha o ciclo de cada cliente em 12 meses — são perguntas
 diferentes, e o tooltip declara. "Receita em risco" e "perdido" **não** são mais usados no Radar
@@ -1181,7 +1185,8 @@ Ficam na própria página Performance (§16.4), visíveis só para admin.
 **Consequências:**
 - Admin filtrando uma área == supervisor daquela área, cliente por cliente.
 - O filtro é aplicado **no servidor**: trocar a URL não amplia acesso (403 ou o parâmetro é
-  ignorado). Filtros de supervisor/vendedor só **estreitam**.
+  ignorado). Filtros de supervisor/vendedor só **estreitam**. Na Curva ABC, na Recuperação e no
+  Radar o **supervisor** também pode estreitar para um dos times dele ou um vendedor desses times.
 - A **chave de cache inclui o RBAC**, então escopos não vazam entre si.
 
 ---
