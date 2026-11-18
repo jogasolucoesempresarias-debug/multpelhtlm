@@ -1027,9 +1027,6 @@ const cobFaixaLabel=arr=>!arr.length?'Todas':(arr.length===1?((FX_COB.find(f=>f.
 function cobToggle(k){ const a=S.cli.cobFaixa||[]; S.cli.cobFaixa=a.includes(k)?a.filter(x=>x!==k):[...a,k]; S.cli.cobSub=''; render(); }
 
 function renderRuptura(P){
-  // distribuição da cobertura sobre a base inteira (igual à planilha), com valor por faixa
-  const faixas=FX_COB.map(f=>{const it=P.filter(p=>p.cobertura_faixa===f.key);
-    return{...f,valor:it.reduce((s,p)=>s+(p.valor||0),0),qt:it.length};});
   // colunas em caixa (mesmo padrão da aba Produtos): mantém unidade e ACRESCENTA cx
   P.forEach(p=>{const cx=p.caixa||1; p._giroCx=cx>1?Math.round((p.giro_mes||0)/cx):null; p._dispCx=cx>1?Math.round((p.qtdisp||0)/cx):null;});
   const cols=[colCod,colProd,colForn,{key:'curva_abc',label:'ABC',badge:true},{key:'codcomprador',label:'Comprador',fmt:(v,p)=>esc((p.comprador||'').split(' ')[0]||'—')},
@@ -1051,23 +1048,31 @@ function renderRuptura(P){
   if(is121) cols.push({key:'_tipo',label:'Tipo',html:p=>p.sem_giro
     ?'<span class="badge" style="background:#64748b22;color:#94a3b8">sem giro</span>'
     :'<span class="badge" style="background:#c084fc22;color:#c084fc">excesso</span>'});
-  let rf=P;
+  // RECORTE da tela = filtros do topo (já em P) + "Pedido em aberto" + "Entrou nos últimos X dias".
+  // Os cards e o gráfico somam o RECORTE e ignoram só a FAIXA marcada — eles são o seletor de faixa,
+  // então mostram todas as faixas, mas do que está filtrado. ⚠️ Até 18/11/2026 somavam P inteiro:
+  // com "entrou no último dia" a tabela mostrava só o que chegou e os cards seguiam no total do estoque
+  // (João Victor). Mesma correção da Curva ABC em 12/11 ("cards no recorte da tela").
+  const passaPed=p=>(S.cli.cobPed!=='com'||(p.qtd_ja_pedida||0)>0)&&(S.cli.cobPed!=='sem'||(p.qtd_ja_pedida||0)<=0);
+  let recorte=P.filter(passaPed);
+  // "Entrou nos últimos X dias": lista do que chegou, para avisar vendas. Inclui o que chegou e
+  // JÁ SAIU (estoque zero, sem venda — fora da lista principal; só entra com este filtro ligado)
+  const entDias=entradaDias();
+  if(entDias!=null){
+    const extra=filtered(false,S.chegouSaiu||[]).filter(passaPed);
+    recorte=[...recorte,...extra].filter(p=>p.dias_sem_entrada!=null&&p.dias_sem_entrada>=0&&p.dias_sem_entrada<=entDias);
+  }
+  // distribuição da cobertura por faixa (sem filtro: a base inteira, igual à planilha)
+  const faixas=FX_COB.map(f=>{const it=recorte.filter(p=>p.cobertura_faixa===f.key);
+    return{...f,valor:it.reduce((s,p)=>s+(p.valor||0),0),qt:it.length};});
+  let rf=recorte;
   if(cf.length) rf=rf.filter(p=>cf.includes(p.cobertura_faixa));
   if(is121&&S.cli.cobSub==='semgiro') rf=rf.filter(p=>p.sem_giro);
   if(is121&&S.cli.cobSub==='excesso') rf=rf.filter(p=>p.excesso_real);
-  if(S.cli.cobPed==='com') rf=rf.filter(p=>(p.qtd_ja_pedida||0)>0);
-  if(S.cli.cobPed==='sem') rf=rf.filter(p=>(p.qtd_ja_pedida||0)<=0);
-  // "Entrou nos últimos X dias": lista do que chegou, para avisar vendas. Inclui o que chegou e
-  // JÁ SAIU (estoque zero, sem venda — fora da lista principal para não mexer nas faixas)
-  const entDias=entradaDias();
-  if(entDias!=null){
-    const extra=filtered(false,S.chegouSaiu||[])
-      .filter(p=>(!cf.length||cf.includes(p.cobertura_faixa))
-        &&(S.cli.cobPed!=='com'||(p.qtd_ja_pedida||0)>0)&&(S.cli.cobPed!=='sem'||(p.qtd_ja_pedida||0)<=0));
-    rf=[...rf,...extra].filter(p=>p.dias_sem_entrada!=null&&p.dias_sem_entrada>=0&&p.dias_sem_entrada<=entDias)
-      .sort((a,b)=>(b.dtultent||'').localeCompare(a.dtultent||'')||(b.valor||0)-(a.valor||0));  // mais recente 1º
-  } else rf=[...rf].sort((a,b)=>(b.valor||0)-(a.valor||0));  // maior estoque primeiro (P1)
-  const semG=P.filter(p=>p.cobertura_faixa==='121+'&&p.sem_giro), exc=P.filter(p=>p.excesso_real);
+  rf = entDias!=null
+    ? [...rf].sort((a,b)=>(b.dtultent||'').localeCompare(a.dtultent||'')||(b.valor||0)-(a.valor||0))  // mais recente 1º
+    : [...rf].sort((a,b)=>(b.valor||0)-(a.valor||0));  // maior estoque primeiro (P1)
+  const semG=recorte.filter(p=>p.cobertura_faixa==='121+'&&p.sem_giro), exc=recorte.filter(p=>p.excesso_real);
   const el=$('#v-ruptura');
   el.innerHTML=head('Cobertura de estoque por faixa','ruptura')+
     resumoFaixasBlock('Por faixa de cobertura (valor de estoque)'+tipT('Valor de estoque em cada faixa de cobertura. Clique numa faixa para filtrar a tabela.'),faixas,rf,p=>p.valor,cf,'ch-cob')+
