@@ -2003,6 +2003,56 @@ def api_evolucao():
                     "filtros": filtros, "resumo": _resumo_evolucao(dias, log)})
 
 
+def _periodo_meta(periodo, hoje):
+    """(ini, fim, rótulo) do período da média da Meta de ruptura. `mes` = 1º do mês até hoje;
+    `mes_ant` = o mês fechado anterior. Hoje ANCORADO (`_hoje`), como o resto do módulo."""
+    ini = hoje.replace(day=1)
+    if periodo == "mes_ant":
+        fim = ini - timedelta(days=1)
+        ini = fim.replace(day=1)
+    else:
+        fim = hoje
+    nomes = ("jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez")
+    return ini, fim, f"{nomes[ini.month - 1]}/{str(ini.year)[2:]}"
+
+
+@bp.route("/api/meta-ruptura/media")
+def api_meta_ruptura_media():
+    """Média do PERÍODO do placar da Meta de ruptura (comprador × curva), da foto diária.
+
+    Pedido do João Victor (24/11/2026): a meta do comprador é a da COMPRA (% sem pedido), e ela
+    se fecha no período — o placar só mostrava o retrato de agora. Conta em
+    `historico.agregar_meta`, sobre a MESMA foto da aba Evolução.
+
+    ⚠️ Aberta a quem tem a área Compras (como o placar), não só ao ADM como a Evolução: o placar
+    já mostra todos os compradores, e a média é o mesmo número no tempo.
+    Degrada para `indisponivel` — a média é acréscimo; o placar de agora não pode cair junto."""
+    periodo = "mes_ant" if request.args.get("periodo") == "mes_ant" else "mes"
+    ini, fim, rotulo = _periodo_meta(periodo, _hoje())
+    base = {"ok": True, "periodo": periodo, "rotulo": rotulo,
+            "ini": ini.isoformat(), "fim": fim.isoformat()}
+    if not store.ensure():
+        return jsonify({**base, "indisponivel": "Postgres indisponível"})
+    unidade = _unidade()
+    key = f"meta_media:{unidade}:{ini}:{fim}"
+    res = pbi._CACHE.get(key)
+    if res is None:
+        try:
+            res = historico.meta_ruptura_media(unidade, ini, fim)
+        except Exception as e:                                    # noqa: BLE001
+            print(f"[meta_ruptura] média indisponível ({e}).")
+            return jsonify({**base, "indisponivel": "foto diária indisponível"})
+        # a foto muda no máximo 1x/dia (18h-22h): 10 min não esconde foto nova por muito tempo
+        pbi._CACHE.set(key, res, 600)
+    # nome de quem só aparece na média (saiu do snapshot de hoje) — o placar nomeia o resto
+    try:
+        mapa = _compradores_map() or {}
+        nomes = {k: mapa.get(int(k)) for k in res.get("compradores", {}) if mapa.get(int(k))}
+    except Exception:                                             # noqa: BLE001
+        nomes = {}
+    return jsonify({**base, **res, "nomes": nomes})
+
+
 def _evolucao_serie():
     """(unidade, dias, log, filtros) da série da Evolução no recorte da querystring — fonte ÚNICA
     da tela e do Excel (a exportação não pode recalcular por conta própria e divergir)."""
@@ -2053,6 +2103,13 @@ _EVO_XLSX_COLS = [
     ("% ideal", lambda d: _pct100(d.get("pct_ideal"))),
     ("SKUs", lambda d: d.get("n_skus")),
     ("Rup. s/ prov.", lambda d: d.get("n_rup_sem_prov")),
+    # régua do PLACAR da Meta de ruptura, por curva (zerado com giro sem providência ÷ SKUs)
+    ("S/ ped. A %", lambda d: _g(d, "ruptura_curva", "A", "pct_sem_prov")),
+    ("S/ ped. A itens", lambda d: _g(d, "ruptura_curva", "A", "sem_prov")),
+    ("S/ ped. B %", lambda d: _g(d, "ruptura_curva", "B", "pct_sem_prov")),
+    ("S/ ped. B itens", lambda d: _g(d, "ruptura_curva", "B", "sem_prov")),
+    ("S/ ped. C %", lambda d: _g(d, "ruptura_curva", "C", "pct_sem_prov")),
+    ("S/ ped. C itens", lambda d: _g(d, "ruptura_curva", "C", "sem_prov")),
     ("Desacel. R$", lambda d: d.get("valor_desacel")),
     ("Desacel. itens", lambda d: d.get("n_desacel")),
     ("Ocupação %", lambda d: _pct100(d.get("ocupacao_pct"))),

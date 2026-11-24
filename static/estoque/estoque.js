@@ -179,7 +179,7 @@ const TIPS = {
     'Curva A':'Itens da curva A (≈80% do faturamento) zerados e ainda sem pedido de compra em aberto ÷ TOTAL de produtos do comprador na curva A. Entre parênteses, o absoluto — base pequena faz 1 item virar um % alto.',
     'Curva B':'Mesma conta na curva B (≈15% do faturamento). Separada da C a pedido do diretor 07/2026: B e C num bloco só escondiam comportamentos diferentes.',
     'Curva C':'Mesma conta na curva C — a cauda longa (item sem curva entra aqui). O limite é o mais frouxo das três porque é onde a ruptura custa menos.',
-    'Status':'Acima da meta se QUALQUER uma das três curvas estourar o seu limite. Limites editáveis em ⚙ Parâmetros.',
+    'Status':'Acima da meta se QUALQUER uma das três curvas estourar o seu limite — julgado pela MÉDIA do período (mês atual ou anterior, seletor ao lado do título). Sem foto diária no período, vale o número de agora. Limites editáveis em ⚙ Parâmetros.',
   },
   ruptura:{
     _title:'Distribuição do estoque por dias de cobertura. Cobertura = ARREDONDA.CIMA(estoque ÷ giro diário); giro 0 = não calculável (cai em 121+). Métrica oficial da planilha.',
@@ -715,6 +715,12 @@ async function renderEvolucao(){
        dia em que alguém a fotografou. Célula vazia aqui = não medido naquele dia, não zero. */
     {k:'n_rup_sem_prov',label:'Rup. s/ prov.',num:1,fmt:(x,d)=>x==null?'—':
       `${int(x)} <small class="muted">(${d.n_ruptura?dec(x/d.n_ruptura*100,0):0}%)</small>`},
+    /* régua do PLACAR da Meta de ruptura, por curva: zerado com giro SEM providência ÷ todos os
+       SKUs da curva (pedido do João Victor 24/11/2026 — a meta do comprador é a da compra). É a
+       base da "média do período" que a aba Meta de ruptura mostra. */
+    ...EVO_CV.map(c=>({k:'sp'+c[0],label:'S/ ped. '+c[0],num:1,
+      fmt:(_v,d)=>{const r=(d.ruptura_curva||{})[c[0]]||{};
+        return r.pct_sem_prov==null?'—':`${dec(r.pct_sem_prov,1)}% <small class="muted">(${int(r.sem_prov)})</small>`;}})),
     {k:'valor_desacel',label:'Desacel. R$',num:1,fmt:(x,d)=>x==null?'—':
       `${money(x)} <small class="muted">(${int(d.n_desacel||0)})</small>`},
     {k:'ocupacao_pct',label:'Ocupação',num:1,fmt:(x,d)=>x==null?'—':
@@ -2158,6 +2164,19 @@ function renderRupturaComprador(P){
    seletor "Venda" do topo. Pelo mesmo motivo o placar ignora os filtros de tela. */
 const META_PER='90d';
 const _metaBase={key:null,produtos:null};
+/* Média do PERÍODO (pedido do João Victor 24/11/2026: "a meta do comprador é em cima da compra…
+   trazer o registro diário da ruptura e colocar a média do período no card"). Vem da foto diária
+   (`historico.agregar_meta`): média simples dos % de cada dia fotografado. O status passa a ser
+   julgado pela MÉDIA; o número de agora fica embaixo, como referência. */
+const _metaMedia={key:null,dado:null};
+async function metaMediaDados(){
+  const per=S.metaPer==='mes_ant'?'mes_ant':'mes';
+  const key=S.unidade+'|'+per;
+  if(_metaMedia.key===key&&_metaMedia.dado) return _metaMedia.dado;
+  const d=await getJSON('/estoque/api/meta-ruptura/media?unidade='+encodeURIComponent(S.unidade)+'&periodo='+per);
+  _metaMedia.key=key; _metaMedia.dado=d;
+  return d;
+}
 
 function metaBaseQS(){ const p=new URLSearchParams(serverQS()); p.set('venda_periodo',META_PER); return p.toString(); }
 
@@ -2198,55 +2217,101 @@ async function renderMetaRuptura(){
   const _cache=(S.vperiodo===META_PER)?S.produtosAll:(_metaBase.key===metaBaseQS()?_metaBase.produtos:null);
   if(!_cache) el.innerHTML='<div class="count-line">Carregando a base de 90 dias…</div>';
   let P;
+  // a média é ACRÉSCIMO: se a foto falhar, o placar de agora tem de sair assim mesmo
+  const _med=metaMediaDados().catch(e=>({indisponivel:e.message}));
   try{ P=await metaBaseProdutos(); }
   catch(e){ el.innerHTML=`<div class="count-line">Falha ao carregar a base da meta: ${esc(e.message)}</div>`; return; }
+  const M=await _med;
   if(S.view!=='meta_ruptura') return;                      // trocou de aba durante o fetch
 
+  const metas={A:mA,B:mB,C:mC}, CVS=['A','B','C'];
+  const temMed=!!(M&&!M.indisponivel&&(M.dias||[]).length);
+  // cod null = EMPRESA
+  const medDe=(cod,cv)=>{ if(!temMed) return null;
+    const g=cod==null?M.empresa:(M.compradores||{})[String(cod)]; return (g||{})[cv]||null; };
+  // valor que JULGA a meta: a média do período quando há foto; sem foto nenhuma, o de agora
+  const jul=(r,cv)=>{ if(!temMed) return r['pct'+cv]; const m=medDe(r.cod,cv); return m?m.pct:null; };
   // fora da meta = QUALQUER uma das três curvas estourar o seu limite (regra de antes, com 3)
-  const fora=r=>(r.pctA!=null&&r.pctA>mA)||(r.pctB!=null&&r.pctB>mB)||(r.pctC!=null&&r.pctC>mC);
-  const rows0=metaAgrega(P).map(r=>({...r,st:fora(r)?1:0}));   // `st` numérico p/ a coluna Status ordenar
+  const fora=r=>CVS.some(cv=>{const v=jul(r,cv); return v!=null&&v>metas[cv];});
+  const rows0=metaAgrega(P);
+  // comprador que só aparece na média (saiu do snapshot de hoje) não pode sumir do período
+  if(temMed){ const tem=new Set(rows0.map(r=>String(r.cod)));
+    Object.keys(M.compradores||{}).forEach(k=>{ if(!tem.has(k)) rows0.push({cod:+k,
+      nome:(M.nomes||{})[k]||('Comprador '+k),nA:0,sA:0,nB:0,sB:0,nC:0,sC:0,pctA:null,pctB:null,pctC:null}); }); }
+  // sem NENHUMA média no período (comprador novo, ou sem item na foto) não é "dentro da meta":
+  // é não medido — verde ali seria aprovar quem ninguém mediu
+  const semMed=r=>temMed&&CVS.every(cv=>!medDe(r.cod,cv));
+  rows0.forEach(r=>{ CVS.forEach(cv=>{ r['j'+cv]=jul(r,cv); }); r.st=fora(r)?1:(semMed(r)?0.5:0); });   // chaves de ordenação
   const T=rows0.reduce((s,r)=>({nA:s.nA+r.nA,sA:s.sA+r.sA,nB:s.nB+r.nB,sB:s.sB+r.sB,
                                 nC:s.nC+r.nC,sC:s.sC+r.sC}),{nA:0,sA:0,nB:0,sB:0,nC:0,sC:0});
-  const tA=T.nA?T.sA/T.nA*100:null, tB=T.nB?T.sB/T.nB*100:null, tC=T.nC?T.sC/T.nC*100:null;
-  const foraEmpresa=(tA!=null&&tA>mA)||(tB!=null&&tB>mB)||(tC!=null&&tC>mC);
+  const tot={cod:null,pctA:T.nA?T.sA/T.nA*100:null,pctB:T.nB?T.sB/T.nB*100:null,pctC:T.nC?T.sC/T.nC*100:null};
+  const foraEmpresa=fora(tot);
   const nFora=rows0.filter(fora).length;
+  const perLbl=M&&M.rotulo?(M.periodo==='mes_ant'?'mês fechado ':'mês ')+M.rotulo:'';
+  const nDias=temMed?M.dias.length:0;
 
-  // célula: % + absoluto (2% sobre base pequena vira 1 item — o absoluto evita leitura errada)
-  const cel=(pctv,semp,n,meta)=>{
-    if(!n) return '<td class="num muted">—</td>';
-    const ok=pctv<=meta, c=ok?C.green:C.red;
-    return `<td class="num"><b style="color:${c}">${dec(pctv,1)}%</b> <span class="muted">(${int(semp)}/${int(n)})</span> ${ok?'✓':'⚠'}</td>`;
+  // célula: MÉDIA do período (julga a meta) + "agora" com o absoluto embaixo (2% sobre base
+  // pequena vira 1 item — o absoluto evita leitura errada). Sem foto no período, só o agora.
+  const cel=(r,cv)=>{
+    const meta=metas[cv], ag=r['pct'+cv], semp=r['s'+cv], n=r['n'+cv];
+    if(!temMed){
+      if(!n) return '<td class="num muted">—</td>';
+      const ok=ag<=meta, c=ok?C.green:C.red;
+      return `<td class="num"><b style="color:${c}">${dec(ag,1)}%</b> <span class="muted">(${int(semp)}/${int(n)})</span> ${ok?'✓':'⚠'}</td>`;
+    }
+    const agTxt=n?`agora ${dec(ag,1)}% (${int(semp)}/${int(n)})`:'agora —';
+    const m=medDe(r.cod,cv);
+    if(!m) return `<td class="num"><span class="muted">—</span><div class="muted" style="font-size:11px">${agTxt}</div></td>`;
+    const ok=m.pct<=meta, c=ok?C.green:C.red;
+    return `<td class="num"><b style="color:${c}">${dec(m.pct,1)}%</b> ${ok?'✓':'⚠'}<div class="muted" style="font-size:11px">${agTxt}</div></td>`;
   };
+  // card da curva: MÉDIA do período em destaque; agora e nº de dias embaixo
+  const card=cv=>{
+    const meta=metas[cv], ag=tot['pct'+cv], s=T['s'+cv], n=T['n'+cv], m=medDe(null,cv);
+    if(m) return kpi(`Empresa · curva ${cv} · média (meta ${dec(meta,1)}%)`,dec(m.pct,1)+'%',
+      `agora ${ag!=null?dec(ag,1)+'%':'—'} · ${int(s)} de ${int(n)} itens`,m.pct>meta?C.red:C.green);
+    return kpi(`Empresa · curva ${cv} (meta ${dec(meta,1)}%)`,ag!=null?dec(ag,1)+'%':'—',
+      int(s)+' de '+int(n)+' itens',ag!=null&&ag>meta?C.red:C.green);
+  };
+  const perSel=`<select id="mr-per" title="Período da média" style="margin-left:12px;font-size:12px">
+      <option value="mes"${S.metaPer!=='mes_ant'?' selected':''}>Média do mês atual</option>
+      <option value="mes_ant"${S.metaPer==='mes_ant'?' selected':''}>Média do mês anterior</option></select>`;
+  const avisoMed=!M||M.indisponivel?`<b style="color:${C.red}">⚠ Média do período indisponível</b> (${esc((M&&M.indisponivel)||'?')}) — o status abaixo é o de agora.`
+    :!temMed?`<b>Sem foto diária no ${esc(perLbl)}</b> — o status abaixo é o de agora.`
+    :`<b>Média do ${esc(perLbl)}</b> = média simples do % de cada dia fotografado (${int(nDias)} dia${nDias===1?'':'s'}, ${dLbl(M.dias[0])} a ${dLbl(M.dias[nDias-1])}). É ela que decide <b>dentro/acima da meta</b>; o <b>agora</b> embaixo é a posição atual. A foto sai à noite, então o dia de hoje entra na média amanhã.`;
   const selo=(ok,txt)=>`<span class="badge" style="background:${ok?C.green:C.red}22;color:${ok?C.green:C.red}">${ok?'✓':'⚠'} ${txt}</span>`;
 
   // `tipk` = chave estável no catálogo TIPS (o label carrega a meta e muda com o parâmetro)
-  const cols=[{k:'nome',label:'Comprador'},{k:'pctA',label:`Curva A (meta ${dec(mA,1)}%)`,tipk:'Curva A',num:1},
-    {k:'pctB',label:`Curva B (meta ${dec(mB,1)}%)`,tipk:'Curva B',num:1},
-    {k:'pctC',label:`Curva C (meta ${dec(mC,1)}%)`,tipk:'Curva C',num:1},{k:'st',label:'Status',tipk:'Status'}];
-  const sk=S.sort['metarupt']||{key:'pctC',dir:-1};
+  // ordenação pelo valor que JULGA a meta (`j*`); ordenação salva antes da média ainda vale
+  const cols=[{k:'nome',label:'Comprador'},{k:'jA',label:`Curva A (meta ${dec(mA,1)}%)`,tipk:'Curva A',num:1},
+    {k:'jB',label:`Curva B (meta ${dec(mB,1)}%)`,tipk:'Curva B',num:1},
+    {k:'jC',label:`Curva C (meta ${dec(mC,1)}%)`,tipk:'Curva C',num:1},{k:'st',label:'Status',tipk:'Status'}];
+  const sk0=S.sort['metarupt']||{key:'jC',dir:-1};
+  const sk={...sk0,key:({pctA:'jA',pctB:'jB',pctC:'jC'})[sk0.key]||sk0.key};
   const headr=cols.map(c=>`<th class="${c.num?'num':''}" data-k="${c.k}">${c.label}${c.tipk?tip('meta_ruptura',c.tipk):''}${sk.key===c.k?(sk.dir<0?' ↓':' ↑'):''}</th>`).join('');
   const rows=_sortArr(rows0,sk);
   const body=rows.map(r=>`<tr>
       <td><span class="prod">${esc(r.nome)}</span></td>
-      ${cel(r.pctA,r.sA,r.nA,mA)}${cel(r.pctB,r.sB,r.nB,mB)}${cel(r.pctC,r.sC,r.nC,mC)}
-      <td>${selo(!fora(r),fora(r)?'Acima da meta':'Dentro da meta')}</td></tr>`).join('')
+      ${cel(r,'A')}${cel(r,'B')}${cel(r,'C')}
+      <td>${semMed(r)?'<span class="badge muted">Sem foto no período</span>':selo(!fora(r),fora(r)?'Acima da meta':'Dentro da meta')}</td></tr>`).join('')
     ||'<tr><td colspan="5" class="muted">Sem produtos no escopo.</td></tr>';
+  const totT={...tot,sA:T.sA,nA:T.nA,sB:T.sB,nB:T.nB,sC:T.sC,nC:T.nC};
   const totRow=rows.length?`<tr style="border-top:2px solid var(--border);font-weight:700">
-      <td>EMPRESA</td>${cel(tA,T.sA,T.nA,mA)}${cel(tB,T.sB,T.nB,mB)}${cel(tC,T.sC,T.nC,mC)}
+      <td>EMPRESA</td>${cel(totT,'A')}${cel(totT,'B')}${cel(totT,'C')}
       <td>${selo(!foraEmpresa,foraEmpresa?'Acima da meta':'Dentro da meta')}</td></tr>`:'';
 
-  el.innerHTML=`<h2 class="section"><span>Meta de ruptura — % sem pedido${tip('meta_ruptura','_title')}</span></h2>
+  el.innerHTML=`<h2 class="section"><span>Meta de ruptura — % sem pedido${tip('meta_ruptura','_title')}</span>${perSel}</h2>
     <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
-      ${kpi('Compradores acima da meta',int(nFora)+' de '+int(rows0.length),'basta uma das curvas estourar',nFora?C.red:C.green)}
-      ${kpi(`Empresa · curva A (meta ${dec(mA,1)}%)`,tA!=null?dec(tA,1)+'%':'—',int(T.sA)+' de '+int(T.nA)+' itens',tA!=null&&tA>mA?C.red:C.green)}
-      ${kpi(`Empresa · curva B (meta ${dec(mB,1)}%)`,tB!=null?dec(tB,1)+'%':'—',int(T.sB)+' de '+int(T.nB)+' itens',tB!=null&&tB>mB?C.red:C.green)}
-      ${kpi(`Empresa · curva C (meta ${dec(mC,1)}%)`,tC!=null?dec(tC,1)+'%':'—',int(T.sC)+' de '+int(T.nC)+' itens',tC!=null&&tC>mC?C.red:C.green)}
+      ${kpi('Compradores acima da meta',int(nFora)+' de '+int(rows0.filter(r=>!semMed(r)).length),temMed?'pela média do '+esc(perLbl)+' · basta uma curva estourar':'basta uma das curvas estourar',nFora?C.red:C.green)}
+      ${card('A')}${card('B')}${card('C')}
     </div>
-    <div class="count-line"><b>% s/ ped.</b> = itens zerados (estoque ≤ 0 com giro) <b>ainda sem pedido de compra em aberto</b> ÷ total de produtos do comprador naquela curva. Entre parênteses, o absoluto. Limites editáveis em <b>⚙ Parâmetros</b>.</div>
+    <div class="count-line">${avisoMed}</div>
+    <div class="count-line"><b>% s/ ped.</b> = itens zerados (estoque ≤ 0 com giro) <b>ainda sem pedido de compra em aberto</b> ÷ total de produtos do comprador naquela curva. Entre parênteses, o absoluto. Limites editáveis em <b>⚙ Parâmetros</b>. O registro dia a dia está em <b>Visão → Evolução do estoque</b>, colunas <b>S/ ped. A/B/C</b>.</div>
     <div class="count-line">Escopo fixo: <b>${esc(S.unidadeNome||'unidade atual')}</b> · curva ABC apurada sobre os <b>últimos 90 dias</b> de venda. O placar <b>não responde aos filtros do topo</b> de propósito — meta que muda de valor conforme o filtro não é meta. Para investigar item a item, use <b>Estoque → Ruptura</b>.</div>
     <div class="panel" id="mr-tab"><div class="tbl-wrap"><table>
       <thead><tr>${headr}</tr></thead>
       <tbody>${body}${totRow}</tbody></table></div></div>`;
+  const ps=$('#mr-per'); if(ps) ps.onchange=e=>{ S.metaPer=e.target.value; renderMetaRuptura(); };
   wireSortTbl($('#mr-tab'),'metarupt',renderMetaRuptura);
 }
 

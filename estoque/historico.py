@@ -649,7 +649,11 @@ _ROLLUP_CHAVES = ("valor_estoque", "valor_parado", "n_ruptura", "pct_ideal", "fa
 #       SKUs) — o indicador D da Nota do comprador. Aqui as chaves são NOVAS, então a checagem
 #       por chaves já pegaria; o selo sobe assim mesmo porque depender de qual dos dois
 #       mecanismos salvou foi exatamente como o `valor_parado` passou despercebido.
-_ROLLUP_VERSAO = 6
+#   7 → 11/2026: `ruptura_curva[c].sem_prov`/`pct_sem_prov` — a régua da Meta de ruptura POR
+#       CURVA (pedido do João Victor: a meta do comprador é a da compra, não a ruptura real).
+#       ⚠️ Subchave NOVA dentro de uma chave que JÁ existe: a checagem por chaves de topo não vê,
+#       então só o selo garante que o rollup velho (sem a subchave) deixe de ser servido.
+_ROLLUP_VERSAO = 7
 
 
 def _rollup_atual(payload):
@@ -807,6 +811,85 @@ def rebuild_rollup(unidade=None):
 CURVAS = ("A", "B", "C")
 
 
+def _sem_prov_cru(ja_ped, transito):
+    """`core._sem_providencia` sobre as colunas CRUAS da foto (lá ela lê um dict de produto).
+
+    ⚠️ Fonte única do lado da foto: a série da Evolução (`agregar`) e a média da Meta de ruptura
+    (`agregar_meta`) chamam esta. Duas contas inline do mesmo conceito são como o "4 na aba
+    Ruptura × 3 no Estoque zerado" nasceu."""
+    return core._sem_providencia({"qtd_ja_pedida": core._n(ja_ped),
+                                  "qt_transicao": core._n(transito)})
+
+
+def agregar_meta(linhas):
+    """Média do PERÍODO do placar da Meta de ruptura, por comprador × curva — função PURA.
+
+    Pedido do João Victor (24/11/2026): *"a meta do comprador é em cima da compra, não em cima
+    da meta real … trazer o registro diário da ruptura e colocar a média do período no card"*.
+    O placar mostrava só o retrato de AGORA; meta de pessoa se fecha no período.
+
+    `linhas`: (data, codcomprador, curva_abc, qtdisp, giro_dia, qtd_ja_pedida, qt_transicao).
+
+    Por dia: `s` = zerado com giro e sem providência, `n` = TODOS os SKUs do comprador na curva —
+    a mesma conta do `metaAgrega()` da tela (sem curva → C, sem comprador → 0). Do período:
+    **média simples dos % diários** (cada dia pesa igual) sobre os dias em que o grupo existiu.
+    Dia sem foto não entra — não foi medido, não é zero.
+
+    ⚠️ O comprador é o DA FOTO daquele dia: remanejar um item amanhã não reescreve a ruptura que
+    ele deixou ontem com outro comprador."""
+    dia_grp = {}          # (dia, cod, curva) -> [s, n]
+    for dia, cod, curva, qtdisp, giro_dia, ja_ped, transito in linhas:
+        cod = int(core._n(cod)) if cod not in (None, "") else 0
+        cv = curva_de(curva)
+        for chave in ((dia, cod, cv), (dia, None, cv)):        # None = EMPRESA
+            g = dia_grp.setdefault(chave, [0, 0])
+            g[1] += 1
+            if core._n(qtdisp) <= 0 and core._n(giro_dia) > 0 and _sem_prov_cru(ja_ped, transito):
+                g[0] += 1
+    acc = {}              # (cod, curva) -> [Σ pct, Σ s, Σ n, dias]
+    for (dia, cod, cv), (s, n) in dia_grp.items():
+        a = acc.setdefault((cod, cv), [0.0, 0, 0, 0])
+        a[0] += s / n * 100
+        a[1] += s
+        a[2] += n
+        a[3] += 1
+
+    def _res(cod):
+        out = {}
+        for c in CURVAS:
+            a = acc.get((cod, c))
+            out[c] = (None if not a else
+                      {"pct": round(a[0] / a[3], 2), "dias": a[3],
+                       # médias diárias do absoluto: o "(2/240)" do placar, no período
+                       "s": round(a[1] / a[3], 1), "n": round(a[2] / a[3], 1)})
+        return out
+
+    cods = sorted({cod for (cod, _c) in acc if cod is not None})
+    return {"dias": sorted({d.isoformat() for (d, _cod, _c) in dia_grp}),
+            "compradores": {str(cod): _res(cod) for cod in cods},
+            "empresa": _res(None)}
+
+
+_SQL_META = """
+    SELECT data, codcomprador, curva_abc, qtdisp, giro_dia, qtd_ja_pedida, qt_transicao
+      FROM estoque_foto_item
+     WHERE unidade=%s AND data>=%s AND data<=%s
+"""
+
+
+def meta_ruptura_media(unidade, ini, fim):
+    """Lê a foto do período e devolve o `agregar_meta`. A foto é a do robô (curva em 90 dias,
+    régua oficial) — a mesma base que o placar usa ao vivo (`META_PER = '90d'`)."""
+    conn = store.get_db()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(_SQL_META, (unidade, ini, fim))
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return agregar_meta(rows)
+
+
 def curva_de(c):
     """Curva do item NA FOTO, normalizada. **Item sem curva entra na C** — mesma leitura do
     placar da Meta de ruptura ("a cauda longa; item sem curva entra aqui"). Divergir disso faria
@@ -849,6 +932,7 @@ def agregar(linhas, params=None):
                                      "faixas": {n: 0.0 for n, _ in core._FAIXAS_COB_LIM},
                                      "ideal_n": 0, "risco_n": 0, "semgiro_n": 0,
                                      "_rup_cv": {c: 0 for c in CURVAS},
+                                     "_semprov_cv": {c: 0 for c in CURVAS},
                                      "_skus_cv": {c: 0 for c in CURVAS}})
         qtdisp = core._n(qtdisp); valor = core._n(valor); giro_dia = core._n(giro_dia)
         cv = curva_de(curva)
@@ -867,8 +951,9 @@ def agregar(linhas, params=None):
             # Saiu **de graça e com histórico retroativo**: `qtd_ja_pedida` e `qt_transicao` já
             # eram gravadas no grão do item desde o 1º dia, só não eram lidas. Espelha
             # `core._sem_providencia`.
-            if core._n(ja_ped) <= 0 and core._n(transito) <= 0:
+            if _sem_prov_cru(ja_ped, transito):
                 d["n_rup_sem_prov"] += 1
+                d["_semprov_cv"][cv] += 1
         # "parado" reconstruído pela MESMA régua do Cockpit, a partir das datas gravadas.
         # ⚠️ Mudou em 08/2026: usava `parado_faixa_de`, cujo piso é 15 dias — a série dizia
         # R$ 433.647 onde o Cockpit dizia R$ 181.182, no mesmo dia e na mesma base. Não eram
@@ -948,9 +1033,16 @@ def agregar(linhas, params=None):
         d["pct_ruptura"] = (core._round(d["n_ruptura"] / d["n_skus"] * 100, 1)
                             if d["n_skus"] else None)
         rup_cv, skus_cv = d.pop("_rup_cv"), d.pop("_skus_cv")
+        semprov_cv = d.pop("_semprov_cv")
+        # `sem_prov`/`pct_sem_prov` = a régua do PLACAR da Meta de ruptura (zerado com giro E sem
+        # providência ÷ TODOS os SKUs da curva), ao lado da ruptura real (`n`/`pct`). Mesmo
+        # denominador das duas, então a diferença entre elas é exatamente "o que já tem pedido".
         d["ruptura_curva"] = {c: {"n": rup_cv[c], "skus": skus_cv[c],
                                   "pct": (core._round(rup_cv[c] / skus_cv[c] * 100, 1)
-                                          if skus_cv[c] else None)}
+                                          if skus_cv[c] else None),
+                                  "sem_prov": semprov_cv[c],
+                                  "pct_sem_prov": (core._round(semprov_cv[c] / skus_cv[c] * 100, 1)
+                                                   if skus_cv[c] else None)}
                               for c in CURVAS}
         d["pct_parado"] = (core._round(d["valor_parado"] / d["valor_estoque"] * 100, 1)
                            if d["valor_estoque"] else None)

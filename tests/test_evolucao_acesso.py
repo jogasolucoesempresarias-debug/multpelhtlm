@@ -216,10 +216,11 @@ def test_ruptura_por_curva_sai_na_foto_do_dia():
     assert s["n_ruptura"] == 2 and s["n_skus"] == 6
     assert s["pct_ruptura"] == 33.3
     rc = s["ruptura_curva"]
-    assert rc["A"] == {"n": 1, "skus": 2, "pct": 50.0}
-    assert rc["C"] == {"n": 1, "skus": 4, "pct": 25.0}
+    # `sem_prov`/`pct_sem_prov` (11/2026) = a régua do placar da Meta de ruptura, ao lado da real
+    assert rc["A"] == {"n": 1, "skus": 2, "pct": 50.0, "sem_prov": 1, "pct_sem_prov": 50.0}
+    assert rc["C"] == {"n": 1, "skus": 4, "pct": 25.0, "sem_prov": 1, "pct_sem_prov": 25.0}
     # ⚠️ curva sem NENHUM item existe e não pode virar 0% — 0% se leria como "sem ruptura"
-    assert rc["B"] == {"n": 0, "skus": 0, "pct": None}
+    assert rc["B"] == {"n": 0, "skus": 0, "pct": None, "sem_prov": 0, "pct_sem_prov": None}
 
 
 def test_o_percentual_por_curva_e_o_que_torna_A_e_C_comparaveis():

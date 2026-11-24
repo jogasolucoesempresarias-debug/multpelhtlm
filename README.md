@@ -1368,6 +1368,29 @@ Nasceu de um pedido para **derrubar o piso do capital parado de 60 para 20 dias*
 operação**: os itens C que estouravam o teto do bloco passam a ter orçamento próprio. Comparar
 antes×depois uma vez, senão parece ganho operacional.
 
+**Meta de ruptura — média do PERÍODO** (24/11/2026, João Victor: *"a meta do comprador é em cima
+da compra, não em cima da meta real … trazer o registro diário da ruptura e colocar a média do
+período no card"*). O placar mostrava só o retrato de agora; agora cada card e cada célula
+comprador × curva mostram a **média do mês** (seletor: mês atual | mês fechado anterior) em
+destaque e o **agora** embaixo. **É a média que decide dentro/acima da meta.**
+- Conta: `historico.agregar_meta` sobre a `estoque_foto_item` (`/estoque/api/meta-ruptura/media`,
+  aberta a quem tem a área Compras, cache 10 min). **Média simples dos % diários** (cada dia
+  fotografado pesa igual); dia sem foto não entra. Comprador = o **da foto daquele dia**.
+- Saiu **com histórico retroativo**: curva, comprador, `qtd_ja_pedida` e `qt_transicao` já
+  estavam no grão do item desde o 1º dia. A pré-entrada dos dias antes de 10/11/2026 foi gravada
+  com a regra antiga (sem o piso de metade da entrada) — outubro sai um pouco mais baixo.
+- **Registro diário** na Foto dia a dia: colunas **S/ ped. A/B/C** (`ruptura_curva[c].sem_prov` /
+  `pct_sem_prov`, mesmo denominador da ruptura real) + Excel. `_ROLLUP_VERSAO` → **7** (subchave
+  nova dentro de chave existente: a checagem por chaves não pega).
+- Regra única do lado da foto: `historico._sem_prov_cru` (chama `core._sem_providencia`). É a
+  **4ª** leitura do conceito, ao lado de `ruptura_por_comprador`, `agrupa()` e `metaAgrega()` —
+  mexeu numa, mexa em todas. Gate `test_media_e_foto_contam_igual`.
+- Comprador **sem nenhuma média** no período sai **"Sem foto no período"** (neutro) e fica fora do
+  "N de M" — verde ali aprovaria quem ninguém mediu. Sem foto nenhuma no período, o placar volta
+  a julgar pelo número de agora e diz isso na tela.
+- ⚠️ **A Nota do comprador (aba Performance) NÃO mudou**: o indicador Ruptura segue na ruptura
+  REAL (decisão do diretor 08/2026). O pedido foi só o placar. Gate: `tests/test_meta_ruptura_media.py`.
+
 **Aba Performance — a Metodologia de Performance do diretor** (09/2026, documento
 `METODOLOGIA PERFORMANCE.docx` de 30/08). Nota de 0 a 10 por comprador a partir de **5 indicadores
 com pesos fixos** — Ruptura 25% · Cobertura A+B 20% · Margem×Meta 20% · Estoque Parado 20% ·
