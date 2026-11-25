@@ -222,10 +222,10 @@ const TIPS = {
   },
   parado:{
     _title:'Itens com estoque e 15 dias ou mais sem venda, por faixa de dias parados. As faixas somam o total.',
-    'Última venda':'Data da última saída do produto.',
-    'Dias parado':'Dias desde a última venda (“nunca” = sem saída registrada).',
+    'Última venda':'Data da última VENDA do produto (base de vendas do RCA). Saída que não é venda — ajuste, inventário, consumo — não conta.',
+    'Dias parado':'Dias desde a última venda (“nunca” = sem venda registrada).',
     'Valor':'Valor do estoque parado a custo.',
-    'Saída':'Recência da última saída: recente (≤30d), média (≤90d) ou antiga (>90d).',
+    'Saída':'Recência da última venda: recente (≤30d), média (≤90d) ou antiga (>90d).',
     'Faixa':'Faixa de dias sem venda em que o item cai.',
     'Ação':'Plano de ação cadastrado para o item (clique para criar ou editar).',
   },
@@ -468,14 +468,43 @@ async function loadData(){
     S.produtosAll=snap.produtos; S.chegouSaiu=snap.chegou_e_saiu||[]; S.meta=snap; S.validade=val; S.planos=planos.planos||{};
     if(snap.unidade_nome) S.unidadeNome=snap.unidade_nome;
     const br=snap.bi_refresh;
+    S.biEnd=br&&br.end||null;
     $('#meta-gerado').textContent = (br&&br.end_fmt)
       ? ('BI atualizado '+br.end_fmt+(br.in_progress?' · atualizando…':''))
       : ('Atualizado em '+snap.gerado_em);
+    if(!S._biTimer) S._biTimer=setInterval(biNovoCheca, 5*60*1000);
     const fnome=f=>S.nomesFilial[f]||f, fils=Array.isArray(snap.filiais)?snap.filiais.map(fnome).join(' + '):snap.filiais;
     $('#meta-filiais').textContent=(snap.unidade_nome||'')+' · '+fils+' · '+snap.n+' itens · gerencial';
   }catch(e){ toast('Falha ao carregar: '+e.message,true); console.error(e); }
   $('#loader').style.display='none'; $('#content').style.display='block';
   render();
+}
+
+/* A tabela é a FOTO da carga da página; o BI atualiza ~7×/dia com a tela aberta. Caso de
+   24/11/2026 (João Victor): a tabela dizia zerado com mercadoria a liberar e a gaveta, buscada
+   depois, já liberado — a mesma tela com duas verdades. A cada 5 min pergunta a hora do BI e, se
+   mudou desde a carga, troca o "BI atualizado" do topo por um botão de recarregar. */
+async function biNovoCheca(){
+  if(document.hidden||!S.biEnd) return;
+  try{
+    const br=(await getJSON('/estoque/api/bi-refresh')).bi_refresh;
+    if(br&&br.end&&br.end!==S.biEnd) biNovoAviso(br.end_fmt);
+  }catch(e){ /* sem rede/sessão: tenta de novo no próximo ciclo */ }
+}
+function biNovoAviso(quando){
+  const el=$('#meta-gerado'); if(!el) return;
+  el.innerHTML=`<a href="#" id="bi-novo" style="color:${C.orange};font-weight:700">⟳ BI atualizou${quando?' '+esc(quando):''} — recarregar</a>`;
+  $('#bi-novo').onclick=e=>{ e.preventDefault(); loadData(); };
+}
+
+/* A gaveta pede o item NA HORA; a linha da tabela é da carga. Se o BI atualizou no meio, a
+   linha passa a ser a da gaveta (a mais nova) e o topo oferece recarregar o resto da tela. */
+const _SYNC_CAMPOS=['qtdisp','qt_transicao','qt_avaria','valor','cobertura_dias','qtd_ja_pedida','dias_sem_venda','giro_mes'];
+function sincronizaLinha(p){
+  const L=S.produtosAll||[], i=L.findIndex(x=>x.codprod===p.codprod);
+  if(i<0||_SYNC_CAMPOS.every(k=>L[i][k]===p[k])) return;
+  const novo={...L[i]}; Object.keys(L[i]).forEach(k=>{ if(k in p) novo[k]=p[k]; });
+  L[i]=novo; render(); biNovoAviso('');
 }
 
 /* ───────── Evolução do estoque (foto diária) ─────────
@@ -3636,6 +3665,7 @@ async function openProduto(cod){
     const j=await getJSON('/estoque/api/produto/'+cod+'?'+serverQS());
     if(!j.produto){ dr.innerHTML='<span class="d-close">×</span><div class="empty">Produto sem posição.</div>'; wireDrawer(); return; }
     const p=j.produto,lotes=j.lotes||[];
+    try{ sincronizaLinha(p); }catch(e){ console.error(e); }   // nunca derruba a gaveta
     const endVal=endsByValidade(j.enderecos);   // posições por data de validade
     const cobPct=p.cobertura!=null?Math.min(100,p.cobertura/(S.params.cob*2)*100):0;
     dr.innerHTML=`<span class="d-close">×</span>
@@ -3666,7 +3696,7 @@ async function openProduto(cod){
       <div class="lote-row"><span>Ruptura</span><span>${p.status_ruptura?badge('0-15',p.status_ruptura+'d'):'—'}</span></div>
       <div class="lote-row"><span>Parado</span><span>${p.status_parado?badge(p.status_parado):badge('ok','ok')}</span></div>
       <div class="lote-row"><span>Última entrada</span><span>${dt(p.dtultent)} ${p.dias_sem_entrada!=null?'('+p.dias_sem_entrada+'d)':''}</span></div>
-      <div class="lote-row"><span>Última saída</span><span>${dt(p.dtultsaida)} ${p.dias_sem_venda!=null?'('+p.dias_sem_venda+'d)':''}</span></div>
+      <div class="lote-row"><span>Última venda</span><span>${dt(p.dtultsaida)} ${p.dias_sem_venda!=null?'('+p.dias_sem_venda+'d)':''}</span></div>
       <div class="d-sec">Abastecimento (lead ${int(p.lead_efetivo)}d)</div>
       <div class="lote-row"><span>Embalagem</span><span>${embCell(p)}</span></div>
       <div class="lote-row"><span>Já pedido (aberto)</span><span>${p.qtd_ja_pedida>0?int(p.qtd_ja_pedida)+' un':'—'}</span></div>

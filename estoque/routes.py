@@ -787,6 +787,36 @@ def _vendas_ano_ant_map(periodo, hoje, filiais=None):
     return _vendas_liquidas(_ano_antes(ini), _ano_antes(fim), filiais)
 
 
+def _ultima_venda(filiais, hoje):
+    """{"por_cod": {cod: date}, "desde": date} — última venda REAL por item (régua de "dias sem
+    venda"; ver `core.data_ultima_venda`). Cache 30 min, como o resto da venda.
+    ⚠️ Degrada para `None`, nunca para `{}`: um mapa vazio com `desde` preenchido diria "nenhum
+    item vendeu" e jogaria o catálogo inteiro em 121+. `None` = régua antiga (`DTULTSAIDA`)."""
+    key = f"ultvenda:{_filiais_key(filiais)}:{hoje.isoformat()}"
+    hit = pbi._CACHE.get(key)
+    if hit is not None:
+        return hit
+    try:
+        if _pg():
+            por_cod, desde = PS.ultima_venda(filiais)
+        else:
+            rows = pbi.run_dax_rca(Q.q_ultima_venda_rca(filiais))
+            por_cod = {}
+            for r in rows:
+                dt = core._parse_dt(r.get("ult"))
+                if dt and r.get("CODPROD") not in (None, ""):
+                    por_cod[int(core._n(r["CODPROD"]))] = dt
+            desde = core._parse_dt(rows[0].get("desde")) if rows else None
+    except Exception as e:                                        # noqa: BLE001
+        print(f"[ultima-venda] RCA indisponível ({e}). Dias sem venda pelo DTULTSAIDA.")
+        return None
+    if not desde or not por_cod:
+        return None
+    out = {"por_cod": por_cod, "desde": desde}
+    pbi._CACHE.set(key, out, 1800)
+    return out
+
+
 def _vendas_liquidas(ini, fim, filiais=None):
     """{cod: {venda, custo, qtd}} líquido (venda − devoluções − devol. avaria) do RCA no
     intervalo, escopado por filiais de VENDA. Degrada p/ {} se o RCA estiver indisponível."""
@@ -1121,7 +1151,10 @@ def _build_produtos(venda_periodo=None):
                                        bloqueio_map=_bloqueio_map(filiais_e),
                                        # demanda que nao passa por venda (rotina 1122)
                                        consumo_map=_consumo_map(filiais_e, _hoje()),
-                                       giro_industria_map=giro_ind)
+                                       giro_industria_map=giro_ind,
+                                       # "dias sem venda" pela última VENDA, não pela última
+                                       # saída de qualquer tipo (João Victor 25/11/2026)
+                                       ultima_venda=_ultima_venda(filiais_v, _hoje()))
     # quando chega o que já foi comprado (coluna "Previsão" do Estoque zerado + `zerado_vendas`):
     # mesmos cabeçalhos e itens do já-pedido — nenhuma query nova
     chegadas = core.chegadas_por_produto(_peddata["cab"], _peddata.get("itens") or [], forn_map,
@@ -1262,6 +1295,9 @@ def api_filtros():
 
 @bp.route("/api/snapshot")
 def api_snapshot():
+    # ANTES do _build_produtos: se o BI acabou de atualizar, isto limpa o cache e a tela já sai
+    # com o dado novo (ver `pbi.get_dataset_refresh`).
+    bi_refresh = pbi.get_dataset_refresh()
     produtos, params, filiais = _build_produtos()
     # ⚠️ ciclo de compras / verba NÃO entram aqui de propósito: exigiriam o cab de pedidos 12m e a
     # PCVERBA, que hoje só são pagos por quem abre Lead time/Verbas. Pendurá-los no snapshot (o
@@ -1270,7 +1306,7 @@ def api_snapshot():
     return jsonify({
         "ok": True,
         "gerado_em": date.today().isoformat(),
-        "bi_refresh": pbi.get_dataset_refresh(),
+        "bi_refresh": bi_refresh,
         "filiais": filiais or "ALL",
         "unidade": _unidade(),
         "unidade_nome": UNIDADES[_unidade()]["nome"],
@@ -1287,6 +1323,14 @@ def api_snapshot():
         "fornecedores": core.fornecedores(produtos, params),
         "compradores": core.por_comprador(produtos),
     })
+
+
+@bp.route("/api/bi-refresh")
+def api_bi_refresh():
+    """Hora da última atualização do BI — a tela aberta pergunta a cada 5 min e, se mudou desde
+    que carregou, oferece recarregar (a tabela é a foto da carga; ver `biNovoCheca` no JS).
+    Barato: a consulta ao Power BI fica 5 min no cache."""
+    return jsonify({"ok": True, "bi_refresh": pbi.get_dataset_refresh()})
 
 
 @bp.route("/api/fornecedores_extra")
@@ -3165,7 +3209,7 @@ _FICHA_COLS = {
         ("Situação", "status_parado", "Parado", "text"),
         ("Situação", "dtultent", "Última entrada", "date"),
         ("Situação", "dias_sem_entrada", "Dias s/ entrada", "int"),
-        ("Situação", "dtultsaida", "Última saída", "date"),
+        ("Situação", "dtultsaida", "Última venda", "date"),
         ("Situação", "dias_sem_venda", "Dias s/ venda", "int"),
         ("Abastecimento", "lead_efetivo", "Lead (d)", "int"),
         ("Abastecimento", "embalagem_caixa", "Embalagem", "text"),

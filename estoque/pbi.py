@@ -217,6 +217,10 @@ def _para_brasilia(iso_utc):
         return dt.astimezone(timezone(timedelta(hours=-3)))  # Brasil é UTC-3 o ano todo
 
 
+# fim da última atualização VISTA por dataset — detecta a troca para limpar o cache
+_REFRESH_VISTO = {}
+
+
 def get_dataset_refresh(dataset_id=None):
     """Última atualização concluída do dataset via API REST do Power BI (refresh history).
     Retorna {'end','end_fmt','in_progress'} ou None (degrada se a API não responder)."""
@@ -246,5 +250,15 @@ def get_dataset_refresh(dataset_id=None):
                    "in_progress": in_progress}
     except Exception as e:
         print(f"[pbi] refresh history indisponível ({e}).")
+    # ⚠️ BI atualizou → o cache inteiro é de ANTES. Os dados ficam até 30 min no _CACHE, então
+    # quem recarregava a tela logo depois da atualização recebia o dado velho, e a gaveta (que
+    # pede o item na hora) já trazia o novo — caso de 24/11/2026: a tabela dizia zerado com
+    # mercadoria a liberar e a gaveta já liberado. Limpa uma vez por atualização; o cadastro (24h) vem do mesmo dataset.
+    if out:
+        ant = _REFRESH_VISTO.get(ds)
+        _REFRESH_VISTO[ds] = out["end"]
+        if ant and ant != out["end"]:
+            _CACHE.clear()
+            print(f"[pbi] dataset atualizado ({ant} → {out['end']}): cache limpo.")
     _CACHE.set(key, out or False, 300)  # cache 5min; False = 'consultado, sem dado'
     return out

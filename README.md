@@ -1167,6 +1167,25 @@ mesmo tendo chegado ontem.
   "nunca" nesses itens, e ganhou a coluna ordenável **"Chegou há"**.
   Gate: `tests/test_parado_novos.py` (18 testes, incluindo a partição das faixas).
 
+**Estoque parado — "dias sem venda" pela última VENDA, não pela última saída** (25/11/2026, João
+Victor: "esse item não tem venda, deveria estar em estoque parado"). O `PCEST[DTULTSAIDA]` é a
+última SAÍDA de qualquer tipo: dois itens tinham saída na véspera com o estoque
+intacto e nenhuma venda havia meses, e sumiam do Parado como "saíram ontem".
+- `core.data_ultima_venda` + `routes._ultima_venda` (`q_ultima_venda_rca`: MAX(DTSAIDA) com
+  CODOPER='S', filiais de venda da unidade, filtro de COLUNA). O RCA começa em 02/01/2024: saída
+  dentro do histórico sem venda nele cai em `desde − 1` (121+), nunca em "nunca vendeu". Item que
+  se move por **consumo de produção** segue no `DTULTSAIDA` (bobina não vende). RCA fora → régua
+  antiga. Medido no BI: o Parado ganha alguns itens e outros trocam de faixa; a Nota não mudou.
+- ⚠️ **A régua continua a da ÚLTIMA VENDA + caixas Novos/Recém-chegados** (`novo_dias`). Contar
+  pela entrada (zerar o relógio na compra que chegou zerada) foi medido no mesmo dia — triplicava os
+  Novos e tirava muito valor do capital parado — e **descartado pelo próprio João**: "o ideal era
+  deixar como estava, última venda, usando o filtro de itens novos". Não reabrir.
+- **Tabela × gaveta** (a tabela dizia zerado com mercadoria a liberar; a gaveta, buscada depois, já liberado). A tabela é a foto
+  da carga e o `_CACHE` segurava o dado até 30 min depois do refresh. Agora o
+  `pbi.get_dataset_refresh` **limpa o cache quando o refresh muda**; a tela pergunta a hora do BI a
+  cada 5 min (`/estoque/api/bi-refresh`) e oferece "⟳ BI atualizou — recarregar"; e a gaveta
+  atualiza a linha do item (`sincronizaLinha`). Gate: `tests/test_parado_ultima_venda.py`.
+
 **Horário da foto: 18h-22h, minuto 40** (era 6h-12h até 08/2026). A mudança veio de **medição**,
 não de preferência: o dataset Estoque atualiza **7x por dia** — 06:26 · 08:28 · 10:24 · 12:25 ·
 14:24 · 16:23 · **17:44** (BRT, apurado no *refresh history* da API). Fotografando de manhã, a 1ª

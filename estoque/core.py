@@ -181,6 +181,33 @@ def _parse_dt(s):
         return None
 
 
+def data_ultima_venda(dt_saida_estoque, dt_venda, desde):
+    """Data da última VENDA de verdade — a régua de "dias sem venda" (Parado, Cockpit, foto).
+
+    ⚠️ O `PCEST[DTULTSAIDA]` é a última SAÍDA de qualquer tipo, não a última venda. Caso de
+    25/11/2026 (João Victor): dois itens tinham `DTULTSAIDA` na véspera com o estoque
+    intacto e **nenhuma** linha na FATURAMENTO_VENDAS havia meses — nem venda, nem
+    transferência, nem bonificação. O painel os dava
+    como "saíram ontem" e eles sumiam do Estoque parado. Medido no BI no mesmo dia: outros itens
+    escondidos do Parado assim e mais de cem em faixa de dias errada.
+
+    `dt_venda` = MAX(DTSAIDA) com CODOPER='S' no RCA (filiais de venda da unidade); `desde` = 1º dia
+    do histórico do RCA. Sem venda no histórico, o RCA não sabe se o item vendeu antes dele:
+    - `DTULTSAIDA` anterior ao histórico → vale ela (é o que se sabe);
+    - `DTULTSAIDA` DENTRO do histórico sem venda nele → essa saída não foi venda; a última venda,
+      se houve, é anterior ao histórico. Fica em `desde − 1` (cai em 121+, o lado conservador:
+      na dúvida aparece como parado em vez de sumir). Nunca `None`: `None` = "nunca vendeu", e
+      com entrada recente viraria "Novo", escondendo item que pode ter vendido em 2023.
+    `desde=None` (RCA fora) → devolve a `DTULTSAIDA` crua, o comportamento de antes."""
+    if desde is None:
+        return dt_saida_estoque
+    if dt_venda is not None:
+        return dt_venda
+    if dt_saida_estoque is None or dt_saida_estoque < desde:
+        return dt_saida_estoque
+    return desde - timedelta(days=1)
+
+
 def _giro_mensal(row, base, consumo=None):
     """Giro mensal do item = venda + CONSUMO DE PRODUÇÃO, nos mesmos 3 meses fechados.
 
@@ -1044,7 +1071,7 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
                        hoje=None, venda_mensal_map=None, ja_pedida_map=None, embalagem_map=None,
                        preco_venda_map=None, venda_ant_map=None, venda_mensal_rs_map=None,
                        tributacao_map=None, trib_entrada_map=None, bloqueio_map=None,
-                       consumo_map=None, giro_industria_map=None):
+                       consumo_map=None, giro_industria_map=None, ultima_venda=None):
     """snapshot: linhas do PCEST; end_map: {cod: qt_end}; prod_map/forn_map: cadastro;
     comprador_map: {matricula: nome}; venda_map: {cod:{venda,custo,qtd}} líquido do RCA.
     venda_mensal_map: {cod:{AnoMes:qtd}} p/ forecast (opcional; só quando forecast ligado).
@@ -1062,6 +1089,11 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
       produção, nunca de venda (bobina não vende, se transforma). Quando o item está aqui, este
       giro SUBSTITUI o de venda em vez de somar: somar seria contar a mesma demanda duas vezes
       se um dia o item passasse a ter venda também. Janela de 12 meses (ver `routes._industria`).
+    ultima_venda: {"por_cod": {cod: date}, "desde": date} — última venda REAL (CODOPER='S') do RCA
+      e o início do histórico. Troca o `DTULTSAIDA` (qualquer saída) em "dias sem venda" — ver
+      `data_ultima_venda`. ⚠️ Item que se move por CONSUMO de produção (matéria-prima ou consumo
+      1122 nos 3 meses) segue no `DTULTSAIDA`: bobina da fábrica não vende, e pela régua de venda
+      viraria parada. `None` (RCA fora) = comportamento anterior.
     Mantém só produtos do cadastro (revenda/não-FL, + a matéria-prima quando a unidade produz)."""
     hoje = hoje or date.today()
     base = params["base_estoque"]
@@ -1155,6 +1187,11 @@ def construir_produtos(snapshot, end_map, prod_map, forn_map, comprador_map, ven
         excesso_real = giro_dia > 0 and cobertura_dias > 120
 
         dt_saida = _parse_dt(r.get("dtultsaida"))
+        _move_por_consumo = giro_ind is not None or any(
+            _n(v) > 0 for v in (((consumo_map or {}).get(cod)) or {}).values())
+        if ultima_venda is not None and not _move_por_consumo:
+            dt_saida = data_ultima_venda(dt_saida, (ultima_venda.get("por_cod") or {}).get(cod),
+                                         ultima_venda.get("desde"))
         dias_sem_venda = (hoje - dt_saida).days if dt_saida else None
         # última ENTRADA (PCEST[DTULTENT]) — pedido do diretor 07/2026: sem ela dá pra ver que o
         # item não sai, mas não dá pra saber se é estoque velho parado ou compra recente errada.

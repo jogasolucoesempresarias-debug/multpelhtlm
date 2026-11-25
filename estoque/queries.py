@@ -340,6 +340,29 @@ FILTER(
 )"""
 
 
+def q_ultima_venda_rca(filiais=None):
+    """Última VENDA (CODOPER='S') por CODPROD em todo o histórico do RCA + o 1º dia dele.
+
+    Régua de "dias sem venda" (ver `core.data_ultima_venda`): o `PCEST[DTULTSAIDA]` é a última
+    saída de QUALQUER tipo. ⚠️ Filtro de COLUNA (`TREATAS`), não `FILTER(FATURAMENTO_VENDAS, …)`:
+    o histórico inteiro num filtro de tabela é o que estoura o teto de memória
+    por consulta do RCA (README, armadilha 24). Medido em 25/11/2026: segundos, uma linha por item.
+    `desde` sai do histórico inteiro (sem filtro de filial), igual em toda unidade."""
+    lst = _filiais_txt_dax(filiais)
+    fil = f",\n        TREATAS({lst}, FATURAMENTO_VENDAS[CODFILIAL])" if lst else ""
+    return f"""EVALUATE
+VAR Desde = CALCULATE(MIN(FATURAMENTO_VENDAS[DTSAIDA]), ALL(FATURAMENTO_VENDAS))
+RETURN
+ADDCOLUMNS(
+    SUMMARIZECOLUMNS(
+        FATURAMENTO_VENDAS[CODPROD],
+        TREATAS({{"S"}}, FATURAMENTO_VENDAS[CODOPER]){fil},
+        "ult", MAX(FATURAMENTO_VENDAS[DTSAIDA])
+    ),
+    "desde", Desde
+)"""
+
+
 def q_devol_rca(data_ini, data_fim, filiais=None):
     """Devolução (valor+custo+QUANTIDADE) por CODPROD no período (DTENT) — alinha receita líquida.
 

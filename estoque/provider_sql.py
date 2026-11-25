@@ -336,6 +336,19 @@ def filiais():
 
 
 # ───────────────────────── Inc.2: venda por produto (RCA→joga_demo) ─────────────────────────
+def ultima_venda(filiais=None):
+    """({cod: date da última VENDA codoper='S'}, 1º dia do histórico) — espelha o
+    `q_ultima_venda_rca` (ver `core.data_ultima_venda`)."""
+    with analytics_conn() as c:
+        cur = c.cursor()
+        cur.execute("SELECT min(dtsaida) FROM faturamento_vendas")
+        desde = cur.fetchone()[0]
+        cur.execute(f"""SELECT codprod, max(dtsaida) FROM faturamento_vendas
+            WHERE codoper = 'S'{_fil(filiais)} GROUP BY codprod""")
+        por_cod = {int(cod): dt for cod, dt in cur.fetchall() if cod is not None and dt is not None}
+    return por_cod, desde
+
+
 def vendas_por_produto(ini, fim, filiais=None):
     """{cod: {venda, custo, qtd}} LÍQUIDA (venda − devoluções − devol. avulsa) por CODPROD no
     intervalo [ini,fim] (DTSAIDA p/ venda, DTENT p/ devolução), escopado por filiais de VENDA.
