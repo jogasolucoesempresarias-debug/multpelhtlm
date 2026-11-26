@@ -2597,6 +2597,7 @@ import recuperacao as recup  # módulo puro: carteira em risco × recuperada (p�
 import potencial  # módulo puro: potencial de positivação (dinheiro na mesa, camada b)
 import performance_comercial  # módulo puro: nota 0–10 por vendedor (página /performance)
 import plano_cliente as plano  # módulo puro: plano de ação por cliente (CRM leve, 29/09/2026)
+import tratativas as trat  # módulo puro: o histórico das tratativas para o líder (26/11/2026)
 
 VENDEDORES_TECNICOS = {999, 900, 4, 272}  # excluir das listas de vendedor (técnicos)
 
@@ -4619,6 +4620,155 @@ def api_plano_resumo():
     res = _plano_resumos(clientes)
     vazio = plano.resumo([], _hoje_ref())
     return jsonify({'ok': True, 'resumos': {str(c['codcli']): res.get(c['codcli']) or vazio for c in clientes}})
+
+
+# ═════════════ Tratativas — o histórico do CRM leve para o líder (26/11/2026) ═════════════
+# Regras em tratativas.py. Fonte: `cliente_plano` (o que foi feito) × `_carregar_compras_dia` (o que
+# o cliente comprou — a MESMA base da Recuperação, então "comprou" quer dizer a mesma coisa nas duas).
+_TRAT_MEMO = {'chave': None, 'idx': None}
+
+
+def _trat_registros(codcli=None):
+    """Todos os registros (inclusive excluídos) com o papel e o RCA de quem registrou."""
+    conn = _plano_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT p.id, p.codcli, p.data_acao, p.status, p.descricao, p.autor_id, p.autor_nome,
+                                  p.criado_em, p.excluido_em, p.excluido_por, u.role, u.codusur
+                             FROM cliente_plano p LEFT JOIN multpel_users u ON u.id = p.autor_id
+                            WHERE (%s::int IS NULL OR p.codcli = %s)""", (codcli, codcli))
+            cols = ('id', 'codcli', 'data_acao', 'status', 'descricao', 'autor_id', 'autor_nome',
+                    'criado_em', 'excluido_em', 'excluido_por', 'autor_role', 'autor_codusur')
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def _trat_compras_idx():
+    """Compras por cliente × dia, indexadas uma vez por processo enquanto a base não muda."""
+    compras = _carregar_compras_dia()
+    chave = (len(compras), tuple(compras[-1]) if compras else None)
+    if _TRAT_MEMO['chave'] != chave:
+        _TRAT_MEMO['idx'] = trat.indexar_compras(compras)
+        _TRAT_MEMO['chave'] = chave
+    return _TRAT_MEMO['idx']
+
+
+def _trat_escopo():
+    """None = tudo (admin/viewer); senão o conjunto de clientes da carteira do usuário."""
+    if session.get('role') in ('admin', 'viewer'):
+        return None
+    return {c['codcli'] for c in _carteira_no_escopo() if c.get('codcli') is not None}
+
+
+def _trat_cli_map():
+    return {c['codcli']: c for c in _carregar_carteira_full() if c.get('codcli') is not None}
+
+
+def _trat_reg_json(r, cli):
+    c = cli.get(r['codcli']) or {}
+    return {'id': r['id'], 'codcli': r['codcli'], 'cliente': c.get('cliente') or f"Cliente {r['codcli']}",
+            'vendedor_atual': c.get('vendedor'), 'status': r['status'],
+            'rotulo': plano.ROTULO.get(r['status'], r['status']), 'dia': r['dia'].isoformat(),
+            'data_acao': str(r.get('data_acao') or '')[:10], 'autor': r.get('autor_nome') or '—',
+            'descricao': r.get('descricao') or '', 'faixa': r.get('faixa'),
+            'dias_sem_compra': r.get('dias_sem_compra'),
+            'comprou': r.get('comprou') if r.get('janela_ok') else None}
+
+
+@app.route('/tratativas')
+@login_required
+def tratativas_page():
+    return send_from_directory('.', 'tratativas.html')
+
+
+@app.route('/api/tratativas')
+@login_required
+def api_tratativas():
+    """Painel das tratativas. ?dias=30|60|90|0 (0 = desde o 1º registro) · ?supervisor= (time do
+    cliente, carteira atual) · ?autor= (id de quem registrou). Escopo: o da carteira do usuário."""
+    from datetime import date
+    try:
+        dias = int(request.args.get('dias', trat.PERIODO_PADRAO))
+    except (TypeError, ValueError):
+        dias = trat.PERIODO_PADRAO
+    dias = dias if dias in trat.PERIODOS else trat.PERIODO_PADRAO
+    hoje = _hoje_ref()
+    try:
+        todos = _trat_registros()
+    except Exception as e:                                     # noqa: BLE001
+        return jsonify({'ok': False, 'error': f'Banco das tratativas indisponível ({e})'}), 503
+    escopo = _trat_escopo()
+    cli = _trat_cli_map()
+    if escopo is not None:
+        todos = [r for r in todos if r['codcli'] in escopo]
+    excluidos = [r for r in todos if r.get('excluido_em')]
+    validos = trat.deduplicar([r for r in todos if not r.get('excluido_em')])
+    # opções dos filtros saem ANTES do recorte por time/pessoa (senão o filtro esconde as outras opções)
+    sups = _carregar_supervisores_map()
+    times = sorted({(cli.get(r['codcli']) or {}).get('codsupervisor') for r in validos} - {None}, key=str)
+    opcoes = {'times': [{'cod': t, 'nome': (sups.get(str(t)) or {}).get('nome') or f'Time {t}'} for t in times],
+              'autores': sorted(({'id': r['autor_id'], 'nome': r.get('autor_nome') or '—'}
+                                 for r in {r['autor_id']: r for r in validos if r.get('autor_id') is not None}.values()),
+                                key=lambda a: a['nome'])}
+    sup = request.args.get('supervisor')
+    if sup not in (None, ''):
+        validos = [r for r in validos if str((cli.get(r['codcli']) or {}).get('codsupervisor')) == str(sup)]
+    autor = request.args.get('autor')
+    if autor not in (None, ''):
+        validos = [r for r in validos if str(r.get('autor_id')) == str(autor)]
+    idx = _trat_compras_idx()
+    trat.enriquecer(validos, idx, hoje)
+    for r in excluidos:
+        r['dia'] = trat.dia_local(r['criado_em'])
+    inicio = (hoje - timedelta(days=dias)) if dias else date.min
+    periodo = [r for r in validos if r['dia'] > inicio]
+    res = trat.resumo(periodo, validos, idx, hoje)
+    res['kpis']['excluidos'] = sum(1 for r in excluidos if r['dia'] > inicio)
+    feed = sorted(periodo, key=lambda r: (r['criado_em'], r['id']), reverse=True)[:200]
+    return jsonify({
+        'ok': True, 'hoje': hoje.isoformat(), 'dias': dias,
+        'inicio': (inicio.isoformat() if dias else (min((r['dia'] for r in validos), default=hoje)).isoformat()),
+        'janela': trat.JANELA_CONV, 'prazo_faturar': trat.PRAZO_FATURAR, 'faixas': list(trat.FAIXAS),
+        'status_opcoes': [{'codigo': s, 'rotulo': r} for s, r in plano.STATUS], 'acoes': list(trat.ACOES),
+        'opcoes': opcoes, 'kpis': res['kpis'], 'conversao': res['conversao'], 'status': res['status'],
+        'autores': res['autores'], 'semanas': res['semanas'],
+        'retornos_pendentes': [{**_trat_reg_json(x['reg'], cli), 'marcado': x['marcado'].isoformat(),
+                                'dias_atraso': x['dias_atraso']} for x in res['retornos_pendentes']],
+        'transferencias_pendentes': [{**_trat_reg_json(x['reg'], cli), 'vezes': x['n'], 'dias': x['dias']}
+                                     for x in res['transferencias_pendentes']],
+        'feed': [_trat_reg_json(r, cli) for r in feed],
+    })
+
+
+@app.route('/api/tratativas/cliente/<int:codcli>')
+@login_required
+def api_tratativas_cliente(codcli):
+    """Linha do tempo de UM cliente: tratativas + notas dos últimos 12 meses + trocas de vendedor.
+    Fora do escopo → 404 (não revela o cliente). Tratativa excluída só aparece para o admin."""
+    c = _plano_cliente_no_escopo(codcli)
+    if c is None:
+        return jsonify({'ok': False, 'error': 'Cliente não encontrado na sua carteira'}), 404
+    hoje = _hoje_ref()
+    regs = _trat_registros(codcli)
+    hist = []
+    try:
+        conn = get_db()
+        try:
+            with conn, conn.cursor() as cur:
+                cur.execute(_CARTEIRA_FOTO_DDL)
+                cur.execute("SELECT anomes, codusur FROM carteira_foto WHERE codcli = %s ORDER BY anomes", (codcli,))
+                hist = cur.fetchall()
+        finally:
+            conn.close()
+    except Exception as e:                                     # noqa: BLE001
+        print(f'[tratativas] carteira_foto indisponível ({e}).')
+    nomes = {k: v.get('nome') for k, v in (_carregar_vendedores_map() or {}).items()}
+    ev = trat.linha_do_tempo(regs, _trat_compras_idx(), codcli, hist, nomes, hoje - timedelta(days=365),
+                             mostrar_excluidos=session.get('role') == 'admin')
+    return jsonify({'ok': True, 'codcli': codcli, 'cliente': c.get('cliente'), 'vendedor': c.get('vendedor'),
+                    'ultima_compra': c.get('ultima_compra'), 'recencia_dias': c.get('recencia_dias'),
+                    'ciclo': c.get('ciclo_pessoal'), 'venda_12m': c.get('venda_12m'), 'eventos': ev})
 
 
 @app.route('/api/carteira/cliente/<int:codcli>/produtos')

@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>JOGA Analytics — Tratativas</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/static/joga-mark.svg" type="image/svg+xml">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+<script src="/static/fetch-resiliente.js"></script>
+<link rel="stylesheet" href="/static/tooltips.css">
+<script defer src="/static/tooltips.js"></script>
+<link rel="stylesheet" href="/static/tema.css">
+<script>try{var t=localStorage.getItem("joga:tema");if(t==="claro")document.documentElement.dataset.tema=t;}catch(e){}</script>
+<script src="/static/chart-tema.js"></script>
+<script defer src="/static/plano-cliente.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+  @keyframes fadeUp { from { opacity:0; transform:translateY(16px);} to { opacity:1; transform:translateY(0);} }
+  .dashboard { padding:24px; max-width:1600px; margin:0 auto; animation:fadeUp .4s ease; }
+  .top-bar { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; flex-wrap:wrap; gap:14px; }
+  .brand { display:flex; align-items:center; gap:12px; }
+  .brand .mark { width:36px; height:36px; border-radius:8px; background:linear-gradient(135deg,var(--accent),var(--accent2)); display:flex; align-items:center; justify-content:center; font-weight:700; color: var(--sobre-accent); flex:0 0 36px; }
+  .top-bar h1 { font-size:1.3rem; font-weight:700; background:linear-gradient(135deg,var(--accent),var(--accent2)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+  .meta { font-size:.74rem; color:var(--text-dim); font-family:'JetBrains Mono',monospace; }
+  .nav { display:flex; gap:8px; flex-wrap:wrap; }
+  .nav .btn-sm, .nav a { text-decoration:none; }
+  .btn-sm { padding:7px 14px; background:var(--surface2); border:1px solid var(--border); color:var(--text); font-weight:500; font-size:.78rem; border-radius:7px; cursor:pointer; text-decoration:none; display:inline-block; font-family:inherit; }
+  .btn-sm:hover, .btn-sm.on { border-color:var(--accent); color:var(--accent); }
+
+  .controls { display:flex; gap:10px; flex-wrap:wrap; align-items:center; background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:12px 16px; margin-bottom:10px; }
+  .ctrl-label { font-size:.66rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.04em; font-weight:600; }
+  .ctrl-gap { width:10px; }
+  select, input[type=search] { background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 10px; font-family:inherit; font-size:.8rem; }
+  .regua { font-size:.74rem; color:var(--text-dim); margin:0 2px 14px; line-height:1.55; }
+  .regua b { color:var(--text); }
+
+  .kpis { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:18px; }
+  @media (max-width:1200px){ .kpis { grid-template-columns:repeat(3,1fr);} }
+  @media (max-width:700px){ .kpis { grid-template-columns:repeat(2,1fr);} }
+  @media (max-width:460px){ .kpis { grid-template-columns:1fr;} .dashboard { padding:16px; } }
+  .kpi { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px 18px; position:relative; overflow:hidden; }
+  .kpi::before { content:''; position:absolute; top:0; left:0; right:0; height:4px; background:var(--border); }
+  .kpi.g::before { background:var(--green);} .kpi.r::before { background:var(--red);} .kpi.b::before{ background:var(--accent);} .kpi.o::before{ background:var(--orange);} .kpi.p::before{ background:var(--purple);}
+  .kpi.click { cursor:pointer; } .kpi.click:hover { border-color:var(--accent); }
+  .kpi .label { font-size:.68rem; font-weight:600; color:var(--text-dim); text-transform:uppercase; letter-spacing:.05em; margin-bottom:8px; }
+  .kpi .value { font-size:1.7rem; font-weight:700; font-family:'JetBrains Mono',monospace; line-height:1.1; }
+  .kpi .sub { font-size:.72rem; color:var(--text-dim); margin-top:6px; line-height:1.45; }
+
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:18px; }
+  .card h3 { font-size:.72rem; font-weight:600; color:var(--text-dim); text-transform:uppercase; letter-spacing:.05em; margin-bottom:12px; }
+  .card-head { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+  .card-head h3 { margin:0; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  @media (max-width:1100px){ .grid2 { grid-template-columns:1fr; } }
+  .chart-wrap { position:relative; height:250px; }
+
+  table { width:100%; border-collapse:collapse; font-size:.8rem; }
+  thead th { text-align:left; font-weight:600; font-size:.66rem; text-transform:uppercase; letter-spacing:.04em; color:var(--text-dim); border-bottom:1px solid var(--border); padding:9px 8px; white-space:nowrap; }
+  thead tr.grp th { border-bottom:none; padding-bottom:0; text-align:center; }
+  thead th.num, td.num { text-align:right; }
+  td { padding:8px; border-bottom:1px solid var(--border); vertical-align:top; }
+  td.num { font-family:'JetBrains Mono',monospace; white-space:nowrap; }
+  tbody tr.click { cursor:pointer; }
+  tbody tr.click:hover { background:rgba(var(--accent-rgb), .05); }
+  tbody tr.sel { background:rgba(var(--accent-rgb), .09); }
+  .table-scroll { overflow-x:auto; }
+  .lista-scroll { max-height:420px; overflow:auto; }
+  .small { font-size:.68rem; color:var(--text-dim); }
+  .aviso { font-size:.74rem; color:var(--text-dim); line-height:1.55; margin-top:10px; }
+  .aviso b { color:var(--text); }
+  .vazio { text-align:center; padding:18px; color:var(--text-dim); font-size:.78rem; }
+  .desc { color:var(--text-dim); font-size:.74rem; max-width:340px; }
+
+  .chip { padding:2px 8px; border-radius:9px; font-size:.66rem; font-weight:700; white-space:nowrap; display:inline-block; }
+  .ok { color:var(--green); font-weight:700; } .nao { color:var(--text-dim); }
+  /* célula de conversão: n pequeno fica apagado — 1 de 1 = 100% não diz nada */
+  .conv { font-family:'JetBrains Mono',monospace; font-size:.74rem; white-space:nowrap; }
+  .conv .barra { display:block; height:4px; border-radius:2px; background:var(--surface2); margin-top:3px; overflow:hidden; min-width:56px; }
+  .conv .barra i { display:block; height:100%; background:var(--accent); }
+  .conv.pouco { opacity:.45; }
+
+  .drawer-bg { position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:800; }
+  .drawer { position:fixed; top:0; right:0; bottom:0; width:min(560px, 100vw); background:var(--surface); border-left:1px solid var(--border); z-index:801; overflow-y:auto; padding:20px 22px; box-shadow:-14px 0 40px rgba(0,0,0,.35); }
+  .drawer h2 { font-size:1.05rem; margin:0 30px 4px 0; }
+  .drawer .fechar { position:absolute; top:14px; right:16px; background:none; border:none; color:var(--text-dim); font-size:1.3rem; cursor:pointer; }
+  .d-meta { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin:12px 0 14px; }
+  .d-meta div { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:8px 10px; font-size:.74rem; }
+  .d-meta b { display:block; font-size:.92rem; margin-top:2px; font-family:'JetBrains Mono',monospace; }
+  .tl { list-style:none; border-left:2px solid var(--border); margin-left:6px; }
+  .tl li { position:relative; padding:0 0 14px 16px; font-size:.8rem; }
+  .tl li::before { content:''; position:absolute; left:-6px; top:4px; width:10px; height:10px; border-radius:50%; background:var(--ponto, var(--accent)); }
+  .tl .q { font-size:.68rem; color:var(--text-dim); font-family:'JetBrains Mono',monospace; }
+  .tl .exc { opacity:.5; text-decoration:line-through; }
+  .loading-screen { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:60vh; gap:14px; }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body data-page="tratativas">
+
+<div id="loading" class="loading-screen">
+  <img src="/static/joga-loader.svg" alt="JOGA" width="78" height="78" style="object-fit: contain;">
+  <div style="color:var(--text-dim); font-size:.85rem;">Cruzando as tratativas com as compras…</div>
+</div>
+
+<div id="app" class="dashboard hidden">
+  <div class="top-bar" data-joga-header data-titulo="Tratativas"></div>
+  <script src="/static/joga-header.js"></script>
+
+  <div class="controls">
+    <span class="ctrl-label">Período</span>
+    <div style="display:flex;gap:6px" id="periodos"></div>
+    <span class="ctrl-gap"></span>
+    <span class="ctrl-label" id="lblTime">Time</span>
+    <select id="selTime" onchange="setFiltro('supervisor', this.value)"></select>
+    <span class="ctrl-label">Pessoa</span>
+    <select id="selAutor" onchange="setFiltro('autor', this.value)"></select>
+    <button class="btn-sm" onclick="limpar()" id="btnLimpar">Limpar</button>
+  </div>
+  <p class="regua" id="regua"></p>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>Ritmo — tratativas por semana (12 semanas)</h3>
+      <div class="chart-wrap"><canvas id="chartSem"></canvas></div>
+    </div>
+    <div class="card">
+      <h3 id="tituloConv">Clientes tratados que compraram — por dias sem compra</h3>
+      <div class="chart-wrap"><canvas id="chartConv"></canvas></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h3 id="tituloAutores">Por pessoa</h3><span class="small">Clique numa pessoa para ver só o trabalho dela.</span></div>
+    <div class="table-scroll"><table>
+      <thead>
+        <tr class="grp"><th colspan="6"></th><th colspan="4" class="num" id="thConvGrp">Compraram em até 15 dias, por dias sem compra</th><th colspan="3"></th></tr>
+        <tr>
+          <th>Pessoa</th>
+          <th class="num" data-tip="Tratativas registradas no período (clique duplo no mesmo minuto conta uma vez)">Registros</th>
+          <th class="num">Clientes</th>
+          <th class="num" data-tip="Dias em que a pessoa registrou alguma coisa. Muitos registros em poucos dias = lançamento em lote">Dias</th>
+          <th class="num">Último</th>
+          <th class="num" data-tip="Dos clientes que ela tratou, quantos estavam há 61+ dias sem comprar">% em risco</th>
+          <th class="num">0–30</th><th class="num">31–60</th><th class="num">61–90</th><th class="num">90+</th>
+          <th class="num" data-tip="Retornos agendados que venceram: cumpridos (registro ou compra até 1 dia depois) / vencidos">Retornos</th>
+          <th class="num" data-tip="Pedidos feitos que viraram nota em até 5 dias / pedidos feitos">Pedidos faturados</th>
+          <th class="num" data-tip="Transferências que ninguém assumiu e o cliente não comprou">Transf. sem dono</th>
+        </tr>
+      </thead>
+      <tbody id="tabAutores"></tbody>
+    </table></div>
+    <p class="aviso" id="avisoAutores"></p>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <div class="card-head"><h3 id="tituloRet">Retornos vencidos sem nada desde então</h3></div>
+      <div class="lista-scroll"><table>
+        <thead><tr><th>Cliente</th><th>Agendou</th><th class="num">Marcado p/</th><th class="num">Atraso</th></tr></thead>
+        <tbody id="tabRet"></tbody>
+      </table></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3 id="tituloTr">Transferências sem dono</h3></div>
+      <div class="lista-scroll"><table>
+        <thead><tr><th>Cliente</th><th>Transferiu</th><th>Vendedor hoje</th><th class="num">Há</th></tr></thead>
+        <tbody id="tabTr"></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h3 id="tituloFeed">Últimas tratativas</h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <select id="selStatus" onchange="renderFeed()"></select>
+        <input type="search" id="busca" placeholder="Buscar cliente, pessoa ou texto…" oninput="renderFeed()" style="min-width:240px">
+      </div>
+    </div>
+    <div class="table-scroll lista-scroll" style="max-height:560px"><table>
+      <thead><tr><th>Dia</th><th>Cliente</th><th>Status</th><th>Pessoa</th><th class="num" data-tip="Dias sem comprar quando a tratativa foi registrada">Sem comprar</th><th class="num" data-tip="Comprou em até 15 dias depois do registro (— = a janela ainda não terminou)">Comprou</th><th>O que foi feito</th></tr></thead>
+      <tbody id="tabFeed"></tbody>
+    </table></div>
+    <p class="aviso">Clique num cliente para ver a linha do tempo dele: tratativas, compras e trocas de vendedor.</p>
+  </div>
+
+  <p class="aviso" id="avisoGeral"></p>
+</div>
+
+<div id="drawerBg" class="drawer-bg hidden" onclick="fecharDrawer()"></div>
+<aside id="drawer" class="drawer hidden" aria-label="Linha do tempo do cliente"></aside>
+
+<script>
+const NUM = new Intl.NumberFormat('pt-BR');
+const BRL = new Intl.NumberFormat('pt-BR', { style:'currency', currency:'BRL', maximumFractionDigits:0 });
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const DIA = iso => { if (!iso) return '—'; const [a, m, d] = String(iso).slice(0, 10).split('-'); return `${d}/${m}/${a.slice(2)}`; };
+const PCT = (ok, n) => n ? Math.round(100 * ok / n) + '%' : '—';
+const cor = nome => getComputedStyle(document.documentElement).getPropertyValue(nome).trim() || '#94a3b8';
+
+// cor de cada status: verde = resultado bom, vermelho = perda, laranja = pendência para alguém
+const COR_STATUS = { ligacao_feita:'--accent', sem_contato:'--text-dim', retorno_agendado:'--yellow',
+                     pedido_prometido:'--purple', pedido_feito:'--green', nao_compra_mais:'--red', transferir:'--orange' };
+const chip = (st, rot) => { const c = cor(COR_STATUS[st] || '--accent');
+  return `<span class="chip" style="background:${c}22;color:${c};border:1px solid ${c}55">${esc(rot)}</span>`; };
+
+const PERIODOS = [[30, '30 dias'], [60, '60 dias'], [90, '90 dias'], [0, 'Tudo']];
+const params = new URLSearchParams(location.search);
+const F = { dias: params.get('dias') || '60', supervisor: params.get('supervisor') || '', autor: params.get('autor') || '' };
+let _d = null, _cSem = null, _cConv = null;
+
+function qs() { const p = new URLSearchParams(); Object.entries(F).forEach(([k, v]) => { if (v !== '' && !(k === 'dias' && v === '60')) p.set(k, v); }); return p.toString(); }
+function navegar() { history.replaceState(null, '', '/tratativas' + (qs() ? '?' + qs() : '')); carregar(); }
+function setFiltro(k, v) { F[k] = String(v); navegar(); }
+function limpar() { F.supervisor = ''; F.autor = ''; navegar(); }
+function irAutor(id) { F.autor = (String(id) === F.autor) ? '' : String(id); navegar(); }
+
+async function carregar() {
+  try {
+    _d = await fetchJSON('/api/tratativas?' + qs());
+    if (!_d.ok) throw new Error(_d.error || 'falha');
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+    render();
+  } catch (e) {
+    document.getElementById('loading').innerHTML = `<div style="color:var(--red)">Não consegui carregar as tratativas: ${esc(e.message)}</div>`;
+  }
+}
+
+function render() {
+  renderControles(); renderRegua(); renderKpis(); renderGraficos(); renderAutores(); renderPendencias(); renderFeed(); renderAvisos();
+}
+
+function renderControles() {
+  document.getElementById('periodos').innerHTML = PERIODOS.map(([v, r]) =>
+    `<button class="btn-sm ${String(v) === String(_d.dias) ? 'on' : ''}" onclick="setFiltro('dias', ${v})">${r}</button>`).join('');
+  const st = document.getElementById('selTime'), times = _d.opcoes.times;
+  st.innerHTML = '<option value="">Todos os times</option>' + times.map(t =>
+    `<option value="${esc(t.cod)}" ${String(t.cod) === F.supervisor ? 'selected' : ''}>${esc(t.nome)}</option>`).join('');
+  const umTime = times.length <= 1;
+  st.classList.toggle('hidden', umTime); document.getElementById('lblTime').classList.toggle('hidden', umTime);
+  document.getElementById('selAutor').innerHTML = '<option value="">Todas as pessoas</option>' + _d.opcoes.autores.map(a =>
+    `<option value="${esc(a.id)}" ${String(a.id) === F.autor ? 'selected' : ''}>${esc(a.nome)}</option>`).join('');
+  document.getElementById('btnLimpar').classList.toggle('hidden', !F.supervisor && !F.autor);
+  const ss = document.getElementById('selStatus'), atual = ss.value;
+  ss.innerHTML = '<option value="">Todos os status</option>' + _d.status_opcoes.map(s =>
+    `<option value="${s.codigo}" ${s.codigo === atual ? 'selected' : ''}>${esc(s.rotulo)} (${NUM.format(_d.status[s.codigo] || 0)})</option>`).join('');
+}
+
+function renderRegua() {
+  const per = _d.dias ? `nos últimos ${_d.dias} dias` : `desde ${DIA(_d.inicio)}`;
+  document.getElementById('regua').innerHTML =
+    `Tudo o que foi registrado no plano do cliente ${per}, cruzado com as notas fiscais. ` +
+    `<b>"Comprou"</b> = o cliente teve nota em até ${_d.janela} dias depois do registro. A conversão conta só as <b>ações</b> ` +
+    `(ligação, retorno, sem contato) — "pedido feito" e "pedido prometido" são resultado e converteriam sozinhos — e sai sempre ` +
+    `<b>por faixa de dias sem compra</b>: cliente ativo compra muito mais que cliente em risco, então comparar pessoas sem a faixa engana.`;
+}
+
+function renderKpis() {
+  const k = _d.kpis, conv = Object.values(_d.conversao).reduce((a, [n, ok]) => [a[0] + n, a[1] + ok], [0, 0]);
+  const cards = [
+    { c:'b', l:'Tratativas', v:NUM.format(k.registros), s:`${NUM.format(k.clientes)} clientes · ${NUM.format(k.pessoas)} pessoa(s) · ${k.dias} dia(s) com registro` },
+    { c:'p', l:'Em clientes em risco', v:k.pct_risco + '%', s:'das tratativas foram em cliente há 61+ dias sem comprar' },
+    { c:'g', l:'Clientes tratados que compraram', v:PCT(conv[1], conv[0]), s:`${NUM.format(conv[1])} de ${NUM.format(conv[0])} em até ${_d.janela} dias (só ações; ver por faixa no gráfico)` },
+    { c:'o', l:'Retornos sem nada', v:NUM.format(k.retornos_pendentes), s:`vencidos e sem registro nem compra desde então · no período, ${NUM.format(k.retornos_cumpridos)} de ${NUM.format(k.retornos_vencidos)} cumpridos`, alvo:'tituloRet' },
+    { c:'r', l:'Transferências sem dono', v:NUM.format(k.transferencias_pendentes), s:'ninguém assumiu e o cliente não comprou', alvo:'tituloTr' },
+  ];
+  document.getElementById('kpis').innerHTML = cards.map(x =>
+    `<div class="kpi ${x.c} ${x.alvo ? 'click' : ''}" ${x.alvo ? `onclick="document.getElementById('${x.alvo}').scrollIntoView({behavior:'smooth', block:'center'})"` : ''}>
+       <div class="label">${x.l}</div><div class="value">${x.v}</div><div class="sub">${x.s}</div></div>`).join('');
+}
+
+function renderGraficos() {
+  const acc = cor('--accent'), dim = cor('--text-dim'), grn = cor('--green');
+  if (_cSem) _cSem.destroy();
+  // semanas zeradas ANTES do 1º registro não são queda de uso — a ferramenta ainda não existia
+  const i0 = _d.semanas.findIndex(s => s.registros > 0);
+  const sem = i0 > 0 ? _d.semanas.slice(i0) : _d.semanas;
+  _cSem = new Chart(document.getElementById('chartSem'), {
+    data:{ labels:sem.map(s => DIA(s.inicio).slice(0, 5)), datasets:[
+      { type:'bar', label:'Tratativas', data:sem.map(s => s.registros), backgroundColor:acc + 'aa', yAxisID:'y' },
+      { type:'line', label:'Pessoas que registraram', data:sem.map(s => s.pessoas), borderColor:grn, backgroundColor:grn, tension:.25, yAxisID:'y2' }] },
+    options:{ responsive:true, maintainAspectRatio:false, interaction:{ mode:'index', intersect:false },
+      plugins:{ tooltip:{ callbacks:{ title:it => 'Semana de ' + DIA(sem[it[0].dataIndex].inicio) } } },
+      scales:{ y:{ beginAtZero:true, title:{ display:true, text:'tratativas' } },
+               y2:{ beginAtZero:true, position:'right', grid:{ drawOnChartArea:false }, ticks:{ precision:0 }, title:{ display:true, text:'pessoas' } } } } });
+  if (_cConv) _cConv.destroy();
+  const fx = _d.faixas, cv = _d.conversao;
+  _cConv = new Chart(document.getElementById('chartConv'), {
+    type:'bar', data:{ labels:fx.map(f => f + ' dias'), datasets:[{ label:'Compraram', minBarLength:3,
+      data:fx.map(f => cv[f][0] ? 100 * cv[f][1] / cv[f][0] : null), backgroundColor:fx.map((_, i) => [grn, acc, cor('--yellow'), cor('--red')][i] + 'cc') }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false },
+      tooltip:{ callbacks:{ label:c => { const [n, ok] = cv[fx[c.dataIndex]]; return `${ok} de ${n} clientes tratados compraram (${PCT(ok, n)})`; } } } },
+      scales:{ y:{ beginAtZero:true, max:100, ticks:{ callback:v => v + '%' } },
+               x:{ ticks:{ callback:function (v, i) { return [this.getLabelForValue(v), cv[fx[i]][0] + ' clientes']; } } } } } });
+  document.getElementById('tituloConv').textContent = `Clientes tratados que compraram em até ${_d.janela} dias — por dias sem compra`;
+}
+
+function convCel(par) {
+  const [n, ok] = par || [0, 0];
+  if (!n) return '<td class="num small">—</td>';
+  const p = Math.round(100 * ok / n);
+  return `<td class="num"><span class="conv ${n < 3 ? 'pouco' : ''}" title="${ok} de ${n} clientes compraram">${ok}/${n} · ${p}%<span class="barra"><i style="width:${p}%"></i></span></span></td>`;
+}
+
+function renderAutores() {
+  const linhas = _d.autores;
+  document.getElementById('thConvGrp').textContent = `Compraram em até ${_d.janela} dias, por dias sem compra`;
+  document.getElementById('tituloAutores').textContent = 'Por pessoa' + (F.autor ? ' — filtrado' : '');
+  document.getElementById('tabAutores').innerHTML = linhas.length ? linhas.map(a => {
+    const r = a.retornos, pd = a.pedidos;
+    return `<tr class="click ${String(a.autor_id) === F.autor ? 'sel' : ''}" onclick="irAutor('${esc(a.autor_id ?? '')}')">
+      <td><b>${esc(a.autor)}</b>${a.role && a.role !== 'vendedor' ? ` <span class="small">${esc(a.role)}</span>` : ''}</td>
+      <td class="num">${NUM.format(a.registros)}</td><td class="num">${NUM.format(a.clientes)}</td>
+      <td class="num">${a.dias}</td><td class="num">${DIA(a.ultimo)}</td><td class="num">${a.pct_risco}%</td>
+      ${_d.faixas.map(f => convCel(a.conversao[f])).join('')}
+      <td class="num">${r.vencidos ? `${r.cumpridos}/${r.vencidos}` : '—'}</td>
+      <td class="num">${pd.n ? `${pd.faturados}/${pd.n}` : '—'}</td>
+      <td class="num ${a.transferencias.pendentes ? 'ruim' : ''}" style="${a.transferencias.pendentes ? 'color:var(--orange);font-weight:700' : ''}">${a.transferencias.n ? a.transferencias.pendentes : '—'}</td></tr>`;
+  }).join('') : '<tr><td colspan="13" class="vazio">Ninguém registrou tratativa neste período.</td></tr>';
+  document.getElementById('avisoAutores').innerHTML =
+    `Número apagado = menos de 3 clientes na faixa (1 de 1 = 100% não diz nada). Quem só trata cliente ativo converte quase tudo; ` +
+    `por isso cada faixa tem a sua coluna. <b>Correlação não é causa</b>: o vendedor tende a ligar para quem já ia comprar.`;
+}
+
+function linhaCliente(x) {
+  return `<td><a href="#" onclick="event.preventDefault();abrirCliente(${x.codcli})"><b>${esc(x.cliente)}</b></a>
+    <div class="small">${x.codcli}${x.descricao ? ' · ' + esc(x.descricao.slice(0, 90)) : ''}</div></td>`;
+}
+
+function renderPendencias() {
+  const rp = _d.retornos_pendentes, tp = _d.transferencias_pendentes;
+  document.getElementById('tituloRet').textContent = `Retornos vencidos sem nada desde então (${rp.length})`;
+  document.getElementById('tabRet').innerHTML = rp.length ? rp.map(x => `<tr>${linhaCliente(x)}
+      <td>${esc(x.autor)}<div class="small">${DIA(x.dia)}</div></td><td class="num">${DIA(x.marcado)}</td>
+      <td class="num" style="color:var(--orange);font-weight:700">${x.dias_atraso}d</td></tr>`).join('')
+    : '<tr><td colspan="4" class="vazio">Nenhum retorno esquecido. 👏</td></tr>';
+  document.getElementById('tituloTr').textContent = `Transferências sem dono (${tp.length})`;
+  document.getElementById('tabTr').innerHTML = tp.length ? tp.map(x => `<tr>${linhaCliente(x)}
+      <td>${esc(x.autor)}${x.vezes > 1 ? `<div class="small">transferido ${x.vezes}×</div>` : ''}</td>
+      <td>${esc(x.vendedor_atual || '—')}</td><td class="num">${x.dias}d</td></tr>`).join('')
+    : '<tr><td colspan="4" class="vazio">Toda transferência foi assumida.</td></tr>';
+}
+
+function renderFeed() {
+  if (!_d) return;
+  const st = document.getElementById('selStatus').value, q = document.getElementById('busca').value.trim().toLowerCase();
+  const xs = _d.feed.filter(x => (!st || x.status === st) &&
+    (!q || (x.cliente + ' ' + x.autor + ' ' + x.descricao + ' ' + x.codcli).toLowerCase().includes(q)));
+  document.getElementById('tituloFeed').textContent = `Últimas tratativas (${xs.length}${_d.feed.length >= 200 ? ' das 200 mais recentes' : ''})`;
+  document.getElementById('tabFeed').innerHTML = xs.length ? xs.map(x => `<tr>
+      <td class="num">${DIA(x.dia)}</td>${linhaCliente({ ...x, descricao:'' })}
+      <td>${chip(x.status, x.rotulo)}${x.status === 'retorno_agendado' ? `<div class="small">para ${DIA(x.data_acao)}</div>` : ''}</td>
+      <td>${esc(x.autor)}</td>
+      <td class="num">${x.dias_sem_compra == null ? '90+' : x.dias_sem_compra + 'd'}</td>
+      <td class="num">${x.comprou == null ? '<span class="small">—</span>' : (x.comprou ? '<span class="ok">sim</span>' : '<span class="nao">não</span>')}</td>
+      <td class="desc">${esc(x.descricao)}</td></tr>`).join('')
+    : '<tr><td colspan="7" class="vazio">Nada com esse filtro.</td></tr>';
+}
+
+function renderAvisos() {
+  const k = _d.kpis;
+  document.getElementById('avisoGeral').innerHTML =
+    `<b>Como ler.</b> Os dias contam pela data em que o registro foi FEITO, não pela data informada nele. ` +
+    `Clique duplo no mesmo minuto conta uma vez. O time é o do cliente na carteira de hoje. ` +
+    (k.excluidos ? `${NUM.format(k.excluidos)} registro(s) excluído(s) no período ficam fora das contas (o rastro fica no histórico do cliente para o admin).` : '');
+}
+
+// ── linha do tempo do cliente ──────────────────────────────────────────────────────────────
+async function abrirCliente(codcli) {
+  const dr = document.getElementById('drawer');
+  document.getElementById('drawerBg').classList.remove('hidden'); dr.classList.remove('hidden');
+  dr.innerHTML = '<div class="vazio">Carregando…</div>';
+  try {
+    const j = await fetchJSON('/api/tratativas/cliente/' + codcli);
+    if (!j.ok) throw new Error(j.error || 'falha');
+    const ev = j.eventos.map(e => {
+      if (e.tipo === 'compra') return `<li style="--ponto:${cor('--green')}"><div class="q">${DIA(e.dia)}</div><b>Comprou</b> ${BRL.format(e.valor)}</li>`;
+      if (e.tipo === 'carteira') return `<li style="--ponto:${cor('--purple')}"><div class="q">${DIA(e.dia).slice(3)}</div>Carteira: <b>${esc(e.de)}</b> → <b>${esc(e.para)}</b></li>`;
+      return `<li class="${e.excluido ? 'exc' : ''}" style="--ponto:${cor(COR_STATUS[e.status] || '--accent')}">
+        <div class="q">${DIA(e.dia)} ${String(e.quando).slice(11, 16)} · ${esc(e.autor)}${e.excluido ? ' · excluído' : ''}</div>
+        ${chip(e.status, e.rotulo)}${e.status === 'retorno_agendado' ? ` <span class="small">para ${DIA(e.data_acao)}</span>` : ''}
+        ${e.descricao ? `<div style="margin-top:4px">${esc(e.descricao)}</div>` : ''}</li>`;
+    }).join('');
+    dr.innerHTML = `<button class="fechar" onclick="fecharDrawer()" title="Fechar">✕</button>
+      <h2>${esc(j.cliente)}</h2><div class="small">${codcli} · vendedor hoje: ${esc(j.vendedor || '—')}</div>
+      <div class="d-meta">
+        <div>Última compra<b>${DIA(j.ultima_compra)}</b></div>
+        <div>Dias sem comprar<b>${j.recencia_dias ?? '—'}</b></div>
+        <div>Compra a cada<b>${j.ciclo ? j.ciclo + ' dias' : '—'}</b></div>
+        <div>Venda 12 meses<b>${j.venda_12m != null ? BRL.format(j.venda_12m) : '—'}</b></div>
+      </div>
+      ${window.PlanoCliente ? `<button class="btn-sm" onclick="PlanoCliente.abrir(${codcli}, this)" style="margin-bottom:14px">+ Registrar tratativa</button>` : ''}
+      <ul class="tl">${ev || '<li>Sem tratativas nem compras nos últimos 12 meses.</li>'}</ul>
+      <p class="aviso">Compras dos últimos 12 meses. A troca de vendedor vem da foto mensal da carteira.</p>`;
+  } catch (e) {
+    dr.innerHTML = `<button class="fechar" onclick="fecharDrawer()">✕</button><div class="vazio" style="color:var(--red)">Não consegui abrir: ${esc(e.message)}</div>`;
+  }
+}
+function fecharDrawer() { document.getElementById('drawer').classList.add('hidden'); document.getElementById('drawerBg').classList.add('hidden'); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') fecharDrawer(); });
+
+carregar();
+</script>
+</body>
+</html>

@@ -433,6 +433,23 @@ relatórios de Compras o usuário recebe por email) · `tema` (`escuro`|`claro`,
       300 linhas — filtrar na tela esconderia em silêncio quem está depois da 300ª. Valor
       desconhecido não filtra. CSV ganhou "Plano (último)" e "Data do plano".
       Gate: `tests/test_recuperacao_plano_filtro.py`.
+  - **Tratativas** (`/tratativas`, `tratativas.py`, 26/11/2026) — o histórico do plano do cliente
+    visto pelo LÍDER. A tabela `cliente_plano` já guardava tudo (só INSERT, exclusão lógica); a tela só
+    mostrava cliente por cliente. A página traz ritmo semanal, conversão, tabela por pessoa (clique =
+    filtra), retornos vencidos sem nada desde então, transferências sem dono, as últimas tratativas e a
+    **linha do tempo do cliente** (tratativas + notas dos últimos 12 meses + troca de vendedor da
+    `carteira_foto`). Escopo = o da carteira (`_carteira_no_escopo`); "comprou" = a MESMA base da
+    Recuperação (`_carregar_compras_dia`).
+    - ⚠️ **Conversão só das AÇÕES** (ligação, retorno, sem contato) e **sempre por faixa de dias sem
+      compra**. "Pedido feito"/"prometido" são resultado e converteriam sozinhos; e quem só trata
+      cliente ativo converte quase tudo — um número bruto por vendedor engana.
+    - Janela de **15 dias** (com 30, o último mês ficaria sem número). O dia que vale é o em que o
+      registro foi FEITO (não a `data_acao`, que aceita 60 dias para trás). Clique duplo no mesmo
+      minuto conta uma vez.
+    - Retorno cumprido = registro ou compra até 1 dia depois da data marcada. Transferência pendente =
+      ninguém além de quem transferiu registrou nada e o cliente não comprou.
+    - Gate: `tests/test_tratativas.py`. ⚠️ QA local sem Redis: cada leitura de cache espera o timeout
+      (rota de minutos) — trocar `server._R` **e** `server._R_LOGIN` por fakeredis.
   - **Performance Comercial** (`/performance`, `performance_comercial.py`): nota 0–10 do mês fechado,
     pesos do cliente (Rentab 35 · Cobertura 25 · Mix 20 · Receita 10 · Frequência 10) editáveis no
     Admin **por competência**. Rentab/receita/mix = % de atingimento da meta do Metas (absoluto mede

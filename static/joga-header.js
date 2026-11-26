@@ -35,6 +35,7 @@
     { href: '/metas', rotulo: 'Metas' },
     { href: '/gerencial', rotulo: 'Gerencial' },
     { href: '/recuperacao', rotulo: 'Recuperação' },
+    { href: '/tratativas', rotulo: 'Tratativas' },
     { href: '/performance', rotulo: 'Performance' },
     { href: '/evolucao', rotulo: 'Evolução' },
   ];
