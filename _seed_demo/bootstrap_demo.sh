@@ -57,6 +57,7 @@ DEMO_SEED=1 python -X utf8 _seed_demo/seed_usuarios_demo.py || echo "[bootstrap]
 # nao roda la — sem este seed a aba abriria VAZIA na apresentacao comercial.
 echo "[bootstrap] 7/7 historico de estoque (aba Evolucao)..."
 DEMO_SEED=1 python -X utf8 _seed_demo/seed_historico_demo.py --dias 90 || echo "[bootstrap] historico falhou — a aba Evolucao abre vazia, o resto da demo segue."
+DEMO_SEED=1 python -X utf8 _seed_demo/seed_tratativas_demo.py --refazer || echo "[bootstrap] tratativas falharam — a pagina Tratativas abre vazia, o resto da demo segue."
 python -X utf8 - <<'PY'
 import os, json, psycopg2
 c = psycopg2.connect(host=os.getenv("DB_HOST"), port=os.getenv("DB_PORT", "5432"),

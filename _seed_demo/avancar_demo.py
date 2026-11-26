@@ -56,6 +56,11 @@ TABELAS = {
     "estoque_foto_item": ["data", "dtultsaida", "dtultent"],
     "estoque_foto_log": ["data"],
     "estoque_foto_dia": ["data"],
+    # Tratativas (página /tratativas, 11/2026). Na demo são todas sintéticas — as do
+    # `seed_tratativas_demo.py` e as que alguém registra apresentando. Sem andar junto, a página
+    # "envelhece" contra as vendas: em poucas semanas o período padrão (60 dias) fica vazio e a
+    # conversão deixa de fazer sentido. `criado_em`/`excluido_em` são TIMESTAMPTZ (ver `_soma`).
+    "cliente_plano": ["data_acao", "criado_em", "excluido_em"],
 }
 
 # A referência do "fim" da base — é o que o app usa para ancorar o `hoje` (provider_sql.hoje_analitico)
@@ -88,6 +93,20 @@ def conectar():
         user=os.getenv("ANALYTICS_DB_USER") or os.getenv("DB_USER"),
         password=os.getenv("ANALYTICS_DB_PASSWORD") or os.getenv("DB_PASSWORD"),
     )
+
+
+def _soma(coluna, tipo):
+    """`coluna + N dias` no tipo certo: DATE soma inteiro; TIMESTAMP(TZ) não aceita inteiro e
+    precisa de intervalo (`criado_em + 3` é erro no Postgres)."""
+    if tipo and tipo.startswith("timestamp"):
+        return f"{coluna} = {coluna} + make_interval(days => %s)"
+    return f"{coluna} = {coluna} + %s"
+
+
+def tipos_colunas(cur, tabela):
+    cur.execute("""SELECT column_name, data_type FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name=%s""", (tabela,))
+    return dict(cur.fetchall())
 
 
 def colunas_existentes(cur, tabela):
@@ -150,14 +169,15 @@ def main():
 
     total = 0
     for tabela, colunas in TABELAS.items():
-        existentes = colunas_existentes(cur, tabela)
+        tipos = tipos_colunas(cur, tabela)
+        existentes = set(tipos)
         if not existentes:
             print(f"  {tabela:30s} — não existe, pulando")
             continue
         alvo = [c for c in colunas if c in existentes]
         if not alvo:
             continue
-        sets = ", ".join(f"{c} = {c} + %s" for c in alvo)
+        sets = ", ".join(_soma(c, tipos.get(c)) for c in alvo)
         # `WHERE ... IS NOT NULL` em qualquer uma: evita reescrever linha que não tem data
         onde = " OR ".join(f"{c} IS NOT NULL" for c in alvo)
         cur.execute(f"UPDATE {tabela} SET {sets} WHERE {onde}", [dias] * len(alvo))
